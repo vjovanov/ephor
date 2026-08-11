@@ -1,0 +1,147 @@
+{
+  "organizations": [
+    {
+      "id": "acme",
+      "name": "Acme",
+      "description": "Work projects",
+      "root": "$HOME/code/acme",
+      "default_tags": [
+        "work"
+      ]
+    },
+    {
+      "id": "personal",
+      "name": "Personal Projects",
+      "description": "Personal research and tooling",
+      "root": "$HOME/code/personal",
+      "default_tags": [
+        "personal"
+      ]
+    }
+  ],
+  "project_types": [
+    {
+      "id": "monorepo",
+      "layout": "monorepo",
+      "repos": [
+        {
+          "id": "root",
+          "path": ".",
+          "role": "The repository itself",
+          "required": true,
+          "update_mode": "branch",
+          "default_branch": "{branch}",
+          "agents_description": "The repository root."
+        }
+      ],
+      "agents": {
+        "template": "templates/root_agents.md.tmpl",
+        "structure_intro": "This workspace is a single repository:",
+        "summary_with_ticket_template": "Refer to the following configurations for ticket context:\n\n* @./ticket-number.md\n* @./ticket-content.md",
+        "summary_without_ticket_template": "This workspace is for branch `{branch}`."
+      }
+    },
+    {
+      "id": "product-workspace",
+      "layout": "polyrepo",
+      "repos": [
+        {
+          "id": "app",
+          "path": "app",
+          "role": "Application repository",
+          "required": true,
+          "update_mode": "branch",
+          "default_branch": "{branch}",
+          "agents_description": "`app/` is the main application repository.",
+          "agents_guide": "app/AGENTS.md"
+        },
+        {
+          "id": "plugins",
+          "path": "plugins",
+          "role": "Plugin repository",
+          "required": true,
+          "update_mode": "branch",
+          "default_branch": "{branch}",
+          "agents_description": "`plugins/` holds the plugins released alongside the application."
+        }
+      ],
+      "agents": {
+        "template": "templates/root_agents.md.tmpl",
+        "structure_intro": "This workspace contains separate repositories:",
+        "summary_with_ticket_template": "Refer to the following configurations for ticket context:\n\n* @./ticket-number.md\n* @./ticket-content.md",
+        "summary_without_ticket_template": "This workspace is for branch `{branch}`.",
+        "validations": [
+          {
+            "cwd": "app",
+            "command": "just test"
+          }
+        ],
+        "update_hooks": {
+          "pre": [],
+          "post": []
+        }
+      }
+    }
+  ],
+  "hook_sets": [],
+  "projects": [
+    {
+      "id": "widget",
+      "organization": "acme",
+      "type": "product-workspace",
+      "display_name": "Widget",
+      "root": "$HOME/code/acme/widget",
+      "main_branch": "main",
+      "branch_root_template": "{project_root}/{branch}",
+      "required_branch_ids": [
+        "widget-main"
+      ],
+      "tags": [
+        "work"
+      ],
+      "release_branches": [
+        {
+          "id": "widget-main",
+          "branch": "main",
+          "active": true,
+          "display_name": "Widget main"
+        },
+        {
+          "id": "widget-2.1",
+          "branch": "release/2.1",
+          "active": false,
+          "display_name": "Widget 2.1"
+        }
+      ],
+      "branches": [
+        {
+          "id": "widget-abc-42",
+          "branch": "you/ABC-42-retry-window",
+          "active": true,
+          "ticket": "ABC-42",
+          "display_name": "Widen the retry window"
+        }
+      ]
+    },
+    {
+      "id": "notes",
+      "organization": "personal",
+      "type": "monorepo",
+      "display_name": "Notes",
+      "root": "$HOME/code/personal/notes",
+      "main_branch": "main",
+      "clone_mode": "full-clone",
+      "tags": [
+        "personal"
+      ],
+      "branches": [
+        {
+          "id": "notes-main",
+          "branch": "main",
+          "active": true,
+          "display_name": "Notes"
+        }
+      ]
+    }
+  ]
+}

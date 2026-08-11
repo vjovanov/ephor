@@ -1,0 +1,67 @@
+{
+  "project": "demo",
+  "providers": {
+    "custom-status": {
+      "items": [
+        {
+          "id": "custom-status:demo",
+          "kind": "status",
+          "needs_response": false,
+          "project": "demo",
+          "source": "custom-status",
+          "title": "all systems go"
+        }
+      ],
+      "ok": true,
+      "stale": false
+    },
+    "github-ci": {
+      "items": [
+        {
+          "id": "github-ci:acme/widget#42",
+          "kind": "ci",
+          "needs_response": true,
+          "project": "demo",
+          "source": "github-ci",
+          "state": "failing",
+          "title": "#42 Fix condition errors: 1/2 checks passing, 1 failing",
+          "updated_at": "2026-08-01T10:00:00Z",
+          "url": "https://github.com/acme/widget/pull/42"
+        }
+      ],
+      "ok": true,
+      "stale": false
+    },
+    "github-prs": {
+      "items": [
+        {
+          "id": "github-prs:acme/widget#42",
+          "kind": "pr",
+          "needs_response": true,
+          "project": "demo",
+          "raw": {
+            "branch": "you/ABC-42-work",
+            "gate": {
+              "repos": [
+                {
+                  "failed": 1,
+                  "passed": 1,
+                  "repo": "acme/widget",
+                  "running": 0
+                }
+              ]
+            }
+          },
+          "role": "author",
+          "source": "github-prs",
+          "state": "open:changes_requested",
+          "title": "Fix condition errors",
+          "updated_at": "2026-08-01T10:00:00Z",
+          "url": "https://github.com/acme/widget/pull/42"
+        }
+      ],
+      "ok": true,
+      "stale": false
+    }
+  }
+}

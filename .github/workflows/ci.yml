@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  # Treat rustc warnings as errors for the binary itself. NOTE: this does not
+  # deny clippy lints — clippy is intentionally not part of CI here. Add a
+  # `cargo clippy --no-deps -- -D warnings` step if/when we want lint enforcement.
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  test:
+    name: cargo test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Run every matrix leg even if one fails so we can see Linux + macOS +
+      # Windows results together rather than aborting after the first failure.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v6
+
+      # Pinned to a tagged release rather than @master so a compromise of the
+      # action repo doesn't silently change CI behavior on unrelated PRs.
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Install Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v5
+        continue-on-error: true
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+      # §FS-002-release.1: every pull request is represented in ## Unreleased.
+      - name: changelog PR entry
+        if: github.event_name == 'pull_request'
+        run: python scripts/check_changelog_pr_entry.py --pr-number "${{ github.event.pull_request.number }}"
+
+      - name: python tests
+        run: python -m unittest discover -s tests -p 'test_*.py'
+
+      - name: cargo build
+        run: cargo build --all-targets --locked
+
+      # The version the binary reports and the version in Cargo.toml are the
+      # same number; the release workflow refuses to run when the tag disagrees
+      # with the manifest, so a drifting `--version` would be found only there.
+      - name: version self-check
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="$(cargo metadata --no-deps --format-version 1 \
+            | python -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')"
+          reported="$(cargo run --locked --quiet -- --version)"
+          if [ "$reported" != "ephor $manifest" ]; then
+            echo "error: ephor --version says '$reported', expected 'ephor $manifest'" >&2
+            exit 1
+          fi
+          echo "$reported"
+
+      - name: cargo test
+        run: cargo test --all-targets --locked
+
+  # The tree is a grund tree: citations in requirements.md, docs/, and src/ must
+  # resolve. One platform — it checks the repository's text, not behaviour.
+  grund:
+    name: grund check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v5
+        continue-on-error: true
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-grund-0.7.0
+
+      - name: Install grund
+        run: cargo install grund --version 0.7.0 --locked
+
+      - name: grund check
+        run: grund check
+
+      - name: grund fmt --check
+        run: grund fmt --check

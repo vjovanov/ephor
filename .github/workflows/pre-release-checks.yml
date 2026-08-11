@@ -1,0 +1,65 @@
+name: Pre-release checks
+
+# Everything a release would verify, on demand and without publishing
+# anything — run it before cutting a release, and to watch §RM-001-forge-interface
+# converge.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  site-specific:
+    name: verify nothing site-specific ships
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # §FS-002-release.4. Expected to fail until §RM-001-forge-interface lands;
+      # that is the point — it is the gate on the first publication.
+      - name: Check for site-specific content
+        run: bash scripts/check-no-site-specific.sh
+
+  registry-names:
+    name: verify package-name availability
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check package names
+        run: bash scripts/check-registry-names.sh
+
+  pgo-release-binary:
+    name: build and self-check PGO release binary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # llvm-profdata, used by scripts/pgo-build.sh to merge the .profraw profiles.
+          components: llvm-tools-preview
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-prerelease-pgo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-prerelease-pgo-
+            ${{ runner.os }}-cargo-
+
+      - name: Build PGO release binary
+        run: bash scripts/pgo-build.sh
+
+      - name: Self-check PGO release binary
+        run: |
+          set -euo pipefail
+          ./target/release/ephor --version
+          ./target/release/ephor --help >/dev/null

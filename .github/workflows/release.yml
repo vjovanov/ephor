@@ -1,0 +1,543 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, without the leading v"
+        required: true
+      publish_crates:
+        description: "Publish ephor to crates.io"
+        type: boolean
+        default: true
+      create_github_release:
+        description: "Create or update the GitHub release and upload artifacts"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  # Pin the Rust toolchain used by every release job so all six PGO binaries are
+  # produced by the same compiler version (avoids drift between the
+  # outside-container `dtolnay/rust-toolchain` and the inside-container `rustup`
+  # install).
+  RUST_TOOLCHAIN: "1.95.0"
+
+jobs:
+  verify:
+    name: verify release inputs
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      publish_crates: ${{ steps.mode.outputs.publish_crates }}
+      create_github_release: ${{ steps.mode.outputs.create_github_release }}
+      create_tag: ${{ steps.mode.outputs.create_tag }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Resolve release version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            tag="${GITHUB_REF_NAME}"
+            version="${tag#v}"
+            requested="${{ inputs.version }}"
+            if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && [ -n "$requested" ] && [ "$requested" != "$version" ]; then
+              echo "error: workflow ref ${tag} does not match requested v${requested}" >&2
+              exit 1
+            fi
+          else
+            version="${{ inputs.version }}"
+            tag="v${version}"
+          fi
+
+          case "$version" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *)
+              echo "error: version must look like 0.1.0, got '$version'" >&2
+              exit 1
+              ;;
+          esac
+
+          manifest_ref="HEAD"
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            git fetch --force origin "refs/tags/${tag}:refs/tags/${tag}"
+            manifest_ref="$tag"
+          fi
+
+          manifest_version() {
+            local ref="$1"
+            git show "${ref}:Cargo.toml" | awk '
+              /^\[package\]/ { in_package = 1; next }
+              /^\[/ && in_package { exit }
+              in_package && /^[[:space:]]*version[[:space:]]*=/ {
+                line = $0
+                sub(/^[^=]*=[[:space:]]*"/, "", line)
+                sub(/".*/, "", line)
+                print line
+                exit
+              }
+            '
+          }
+
+          root_version="$(manifest_version "$manifest_ref")"
+          if [ "$root_version" != "$version" ]; then
+            echo "error: ${manifest_ref}: package version is $root_version, expected $version" >&2
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve release mode
+        id: mode
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            publish_crates="true"
+            create_github_release="true"
+            create_tag="false"
+          else
+            publish_crates="${{ inputs.publish_crates }}"
+            create_github_release="${{ inputs.create_github_release }}"
+
+            if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+              if [ "${GITHUB_REF_NAME}" != "${{ steps.version.outputs.tag }}" ]; then
+                echo "error: workflow ref ${GITHUB_REF_NAME} does not match requested ${{ steps.version.outputs.tag }}" >&2
+                exit 1
+              fi
+              create_tag="false"
+            elif [ "$publish_crates" = "true" ] || [ "$create_github_release" = "true" ]; then
+              create_tag="true"
+            else
+              create_tag="false"
+            fi
+          fi
+
+          echo "publish_crates=$publish_crates" >> "$GITHUB_OUTPUT"
+          echo "create_github_release=$create_github_release" >> "$GITHUB_OUTPUT"
+          echo "create_tag=$create_tag" >> "$GITHUB_OUTPUT"
+
+      # Fail fast: the actual `cargo publish` step lives behind a 20+ minute PGO
+      # matrix, so an unset secret would otherwise be discovered very late.
+      - name: Preflight crates.io token
+        if: steps.mode.outputs.publish_crates == 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
+            echo "error: publish_crates=true but the CARGO_REGISTRY_TOKEN secret is not set" >&2
+            echo "       set it under repo settings > secrets, or re-dispatch with publish_crates=false" >&2
+            exit 1
+          fi
+
+      # §FS-002-release.4: nothing is published while the tree still carries a
+      # person's employer-specific configuration or vendor CLI names. Only gates
+      # runs that would actually upload something, so a dry run stays useful
+      # while §RM-001-forge-interface is open.
+      - name: Check for site-specific content
+        if: steps.mode.outputs.publish_crates == 'true' || steps.mode.outputs.create_github_release == 'true'
+        run: bash scripts/check-no-site-specific.sh
+
+      - name: Check registry names
+        if: steps.mode.outputs.publish_crates == 'true'
+        run: bash scripts/check-registry-names.sh
+
+  prepare-release-ref:
+    name: prepare release tag
+    needs: verify
+    runs-on: ubuntu-latest
+    outputs:
+      release_ref: ${{ steps.ref.outputs.release_ref }}
+      release_sha: ${{ steps.ref.outputs.release_sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Create or resolve release tag
+        id: ref
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="${{ needs.verify.outputs.tag }}"
+          version="${{ needs.verify.outputs.version }}"
+
+          manifest_version() {
+            local ref="$1"
+            git show "${ref}:Cargo.toml" | awk '
+              /^\[package\]/ { in_package = 1; next }
+              /^\[/ && in_package { exit }
+              in_package && /^[[:space:]]*version[[:space:]]*=/ {
+                line = $0
+                sub(/^[^=]*=[[:space:]]*"/, "", line)
+                sub(/".*/, "", line)
+                print line
+                exit
+              }
+            '
+          }
+
+          emit_release_ref() {
+            local ref="$1"
+            local sha
+            local root_version
+
+            root_version="$(manifest_version "$ref")"
+            if [ "$root_version" != "$version" ]; then
+              echo "error: ${ref}: package version is ${root_version}, expected ${version}" >&2
+              exit 1
+            fi
+
+            sha="$(git rev-list -n 1 "$ref")"
+            echo "release_ref=$ref" >> "$GITHUB_OUTPUT"
+            echo "release_sha=$sha" >> "$GITHUB_OUTPUT"
+            echo "release source: $ref ($sha)"
+          }
+
+          # Manual releases create the tag from the selected commit. Tag-triggered
+          # releases already have the ref; dry runs with publishing disabled do
+          # not need a tag.
+          if [ "${{ needs.verify.outputs.create_tag }}" != "true" ]; then
+            echo "release tag $tag already selected or not required"
+            emit_release_ref "$GITHUB_SHA"
+            exit 0
+          fi
+
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            git fetch --force origin "refs/tags/${tag}:refs/tags/${tag}"
+            existing="$(git rev-list -n 1 "${tag}")"
+            echo "release tag $tag already points at $existing"
+            emit_release_ref "$tag"
+            exit 0
+          fi
+
+          git tag "$tag" "$GITHUB_SHA"
+          git push origin "refs/tags/${tag}"
+          emit_release_ref "$tag"
+
+  build-linux-gnu-pgo:
+    name: PGO binary (${{ matrix.triple }})
+    needs:
+      - verify
+      - prepare-release-ref
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # manylinux2014 images pinned by digest (tag 2026.05.13-1) so a
+          # registry-side rebuild cannot shift the glibc 2.17 baseline mid-release.
+          - triple: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            image: "quay.io/pypa/manylinux2014_x86_64@sha256:8149fab622c82b6f5feb63df797b6d762551c5780d3a6c188893609700775fc7"
+          - triple: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            image: "quay.io/pypa/manylinux2014_aarch64@sha256:abd9b0ca7c11710ac3c5ab22ac699e50a0b579a9cbdfb3e84cb9d2709d33b5da"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare-release-ref.outputs.release_ref }}
+
+      - name: Build PGO release binary in manylinux2014
+        env:
+          IMAGE: ${{ matrix.image }}
+          RUST_TOOLCHAIN: ${{ env.RUST_TOOLCHAIN }}
+        run: |
+          docker run --rm \
+            -e RUST_TOOLCHAIN \
+            -v "$PWD:/work" \
+            -w /work \
+            "$IMAGE" \
+            bash -lc '
+              set -euo pipefail
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs \
+                | sh -s -- -y --profile minimal --default-toolchain "$RUST_TOOLCHAIN"
+              source "$HOME/.cargo/env"
+              rustup component add llvm-tools-preview
+              bash scripts/pgo-build.sh
+            '
+
+      # Files written from inside the container are root-owned on the host.
+      # Restore ownership so subsequent steps (read/copy/tar) run as the normal
+      # runner user without surprises.
+      - name: Restore ownership of build outputs
+        run: sudo chown -R "$(id -u):$(id -g)" target
+
+      - name: Self-check PGO release binary
+        run: |
+          set -euo pipefail
+          ./target/release/ephor --version
+          ./target/release/ephor --help >/dev/null
+
+      - name: Package binary
+        id: package
+        run: |
+          set -euo pipefail
+
+          version="${{ needs.verify.outputs.version }}"
+          base="ephor-${version}-${{ matrix.triple }}"
+          dir="dist/${base}"
+          mkdir -p "$dir"
+
+          cp ./target/release/ephor "$dir/"
+          cp README.md LICENSE "$dir/"
+
+          archive="${base}.tar.gz"
+          tar -czf "$archive" -C dist "$base"
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$archive" > "${archive}.sha256"
+          else
+            shasum -a 256 "$archive" > "${archive}.sha256"
+          fi
+
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: ${{ steps.package.outputs.archive }}
+          path: |
+            ${{ steps.package.outputs.archive }}
+            ${{ steps.package.outputs.archive }}.sha256
+          if-no-files-found: error
+
+  build-native-pgo:
+    name: PGO binary (${{ matrix.os }})
+    needs:
+      - verify
+      - prepare-release-ref
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15-intel    # x86_64-apple-darwin
+            pgo_required: true
+          - os: macos-15          # aarch64-apple-darwin
+            pgo_required: true
+          - os: windows-latest    # x86_64-pc-windows-msvc
+            pgo_required: true
+          - os: windows-11-arm    # aarch64-pc-windows-msvc
+            pgo_required: false
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare-release-ref.outputs.release_ref }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: llvm-tools-preview
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-release-pgo-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cargo-release-pgo-${{ env.RUST_TOOLCHAIN }}-
+            ${{ runner.os }}-${{ runner.arch }}-cargo-release-pgo-
+            ${{ runner.os }}-${{ runner.arch }}-cargo-
+
+      - name: Build PGO release binary
+        id: pgo
+        continue-on-error: ${{ ! matrix.pgo_required }}
+        shell: bash
+        run: bash scripts/pgo-build.sh
+
+      # Windows ARM hosted runners can fail during LLVM PGO training even though
+      # the ordinary release binary is sound; keep the platform artifact
+      # self-checked without blocking registry publication.
+      - name: Build LTO release binary fallback
+        if: ${{ ! matrix.pgo_required && steps.pgo.outcome == 'failure' }}
+        shell: bash
+        run: cargo build --release --locked
+
+      - name: Self-check release binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="./target/release/ephor"
+          if [[ "$(rustc -vV | awk '/^host:/ { print $2 }')" == *windows* ]]; then
+            bin="${bin}.exe"
+          fi
+          "$bin" --version
+          "$bin" --help >/dev/null
+
+      - name: Package binary
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          host="$(rustc -vV | awk '/^host:/ { print $2 }')"
+          version="${{ needs.verify.outputs.version }}"
+          base="ephor-${version}-${host}"
+          dir="dist/${base}"
+          mkdir -p "$dir"
+
+          bin="./target/release/ephor"
+          if [[ "$host" == *windows* ]]; then
+            bin="${bin}.exe"
+          fi
+
+          cp "$bin" "$dir/"
+          cp README.md LICENSE "$dir/"
+
+          if [[ "$host" == *windows* ]]; then
+            archive="${base}.zip"
+            powershell -NoProfile -Command \
+              "Compress-Archive -Path 'dist/${base}' -DestinationPath '${archive}' -Force"
+          else
+            archive="${base}.tar.gz"
+            tar -czf "$archive" -C dist "$base"
+          fi
+
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$archive" > "${archive}.sha256"
+          else
+            shasum -a 256 "$archive" > "${archive}.sha256"
+          fi
+
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: ${{ steps.package.outputs.archive }}
+          path: |
+            ${{ steps.package.outputs.archive }}
+            ${{ steps.package.outputs.archive }}.sha256
+          if-no-files-found: error
+
+  publish-crate:
+    name: publish crates.io package
+    needs:
+      - verify
+      - prepare-release-ref
+      - build-linux-gnu-pgo
+      - build-native-pgo
+    if: needs.verify.outputs.publish_crates == 'true'
+    runs-on: ubuntu-latest
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare-release-ref.outputs.release_ref }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Verify crates.io token
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
+            echo "error: CARGO_REGISTRY_TOKEN secret is required to publish" >&2
+            exit 1
+          fi
+
+      # Re-running this job after a partial success must be safe: skip the crate
+      # when its exact <name>@<version> already exists on crates.io rather than
+      # letting `cargo publish` fail with "already uploaded".
+      - name: Check crates.io publication state
+        id: state
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ needs.verify.outputs.version }}"
+          code="$(curl -sS -o /dev/null -w '%{http_code}' \
+            -A 'ephor-release/0.1' \
+            "https://crates.io/api/v1/crates/ephor/${version}")"
+          case "$code" in
+            200) published="true" ;;
+            404) published="false" ;;
+            *)
+              echo "error: unexpected HTTP $code querying crates.io for ephor ${version}" >&2
+              exit 1
+              ;;
+          esac
+          echo "published=$published" >> "$GITHUB_OUTPUT"
+          echo "ephor $version already on crates.io: $published"
+
+      - name: Publish ephor
+        if: steps.state.outputs.published == 'false'
+        run: cargo publish --locked
+
+  github-release:
+    name: publish GitHub release
+    needs:
+      - verify
+      - prepare-release-ref
+      - build-linux-gnu-pgo
+      - build-native-pgo
+      - publish-crate
+    if: always() && needs.verify.outputs.create_github_release == 'true' && needs.build-linux-gnu-pgo.result == 'success' && needs.build-native-pgo.result == 'success' && (needs.publish-crate.result == 'success' || needs.publish-crate.result == 'skipped')
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare-release-ref.outputs.release_ref }}
+
+      - name: Checkout release tooling
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          path: release-tools
+
+      - name: Download binary artifacts
+        uses: actions/download-artifact@v5
+        with:
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Extract release notes
+        run: python3 release-tools/scripts/prepare_changelog_release.py notes "${{ needs.verify.outputs.version }}" --output release-notes.md
+
+      - name: Create or update release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="${{ needs.verify.outputs.tag }}"
+          version="${{ needs.verify.outputs.version }}"
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release edit "$tag" --notes-file release-notes.md
+            gh release upload "$tag" release-artifacts/* --clobber
+          else
+            gh release create "$tag" release-artifacts/* \
+              --verify-tag \
+              --title "ephor ${version}" \
+              --notes-file release-notes.md
+          fi

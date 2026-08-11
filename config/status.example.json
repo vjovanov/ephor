@@ -1,0 +1,52 @@
+{
+  "defaults": {
+    "ttl_seconds": 600,
+    "provider_timeout_seconds": 30,
+    "github_user": "you"
+  },
+  "actions": [
+    {
+      "icon": "⎇",
+      "description": "check out the PR branch",
+      "command": "gh pr checkout -R \"$EPHOR_REPO\" \"$EPHOR_NUMBER\"",
+      "kinds": ["pr"]
+    },
+    {
+      "icon": "🧪",
+      "description": "run the tests",
+      "command": "just test"
+    }
+  ],
+  "projects": {
+    "widget": {
+      "checkout": {
+        "description": "create the branch workspace",
+        "command": "git worktree add \"$EPHOR_WORKSPACE\" \"$EPHOR_BRANCH\""
+      },
+      "actions": [
+        {
+          "icon": "💡",
+          "description": "open the app in the editor",
+          "command": "nohup $EDITOR \"$EPHOR_WORKSPACE/app\" >/dev/null 2>&1 &",
+          "requires_checkout": true
+        }
+      ],
+      "providers": [
+        { "provider": "github-prs", "repos": ["acme/widget"], "reviews": true },
+        { "provider": "github-ci", "repos": ["acme/widget"] },
+        { "provider": "github-threads", "repos": ["acme/widget"] },
+        {
+          "provider": "custom-status",
+          "command": "git -C app status --short | head -5",
+          "format": "text"
+        }
+      ]
+    },
+    "notes": {
+      "providers": [
+        { "provider": "github-prs", "repos": ["you/notes"], "reviews": true },
+        { "provider": "github-ci", "repos": ["you/notes"] }
+      ]
+    }
+  }
+}

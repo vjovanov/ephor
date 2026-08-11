@@ -1,0 +1,46 @@
+[package]
+name = "ephor"
+version = "0.1.0"
+edition = "2021"
+description = "Project registry, AGENTS.md rendering, workspace updates, and per-project status feed"
+license = "MIT"
+repository = "https://github.com/vjovanov/ephor"
+homepage = "https://github.com/vjovanov/ephor"
+# §FS-001-forge-interface.5 / §FS-002-release.4: a published artifact carries no
+# one person's registry or feed configuration, and none of the inherited
+# documentation set. `scripts/check-no-site-specific.sh` enforces it before a
+# release uploads anything; this keeps it out of the tarball meanwhile.
+exclude = ["docs/", "ai/", "e2e/", "systemd/", ".github/", "scripts/", "tests/golden/"]
+
+[lib]
+name = "ephor"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ephor"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1" }
+jsonschema = { version = "0.26", default-features = false }
+chrono = { version = "0.4", features = ["serde"] }
+wait-timeout = "0.2"
+ratatui = "0.29"
+unicode-width = "0.2"
+
+[dev-dependencies]
+assert_cmd = "2"
+tempfile = "3"
+predicates = "3"
+
+[profile.release]
+strip = true
+# Distributed release binaries are additionally profile-guided-optimized via
+# `scripts/pgo-build.sh` (§FS-002-release.3). PGO is a multi-phase
+# generate/run/rebuild pipeline that needs a profile absent on a fresh clone, so
+# it cannot live here or in the dev loop; a plain `cargo build --release` (and
+# `cargo install ephor`) is LTO-only and behaviour-identical.
+lto = true
+codegen-units = 1

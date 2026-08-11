@@ -1,0 +1,6 @@
+[Unit]
+Description=Refresh ephor project status feeds
+
+[Service]
+Type=oneshot
+ExecStart=%h/.cargo/bin/ephor refresh --quiet

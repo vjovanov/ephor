@@ -1,0 +1,6 @@
+/target
+__pycache__/
+
+# Private word list for scripts/check-private-words.sh. Committing it would
+# publish the very names the check keeps out of this repository.
+/.private-words

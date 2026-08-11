@@ -1,0 +1,108 @@
+grund_config_version = 1
+project_name = "ephor"
+project_description = "Project registry and per-project status feed across forges and issue trackers"
+
+[reference]
+marker = "§"
+trigger = "$$"
+strict = true
+require_grounding = false
+inline_style = "citation-with-note" # citation-with-note | citation-only
+inline_note_suggested_lines = 1
+inline_note_max_lines = 25
+inline_note_max_columns = 180
+warn_on_suggested = false
+
+[id]
+format = "{kind}-{number}-{slug}" # placeholders: {kind} required; use {number}, {slug}, or both
+section_separator = "."
+section_heading_levels = "strict" # strict | warn | loose
+number_pattern = "\\d+"
+slug_pattern = "[a-z0-9][a-z0-9-]*"
+
+[[kinds]]
+prefix = "GRUND"
+file = "docs/grund.md"
+title = "Why: project motivation"
+
+[[kinds]]
+prefix = "GOAL"
+file = "docs/goals.md"
+title = "Where: project direction and outcomes"
+
+[[kinds]]
+prefix = "FS"
+file = "requirements.md"
+title = "What: behavior, requirements, and constraints"
+
+[[kinds]]
+prefix = "AR"
+folder = "docs/architecture"
+title = "How: high-level implementation, structure, and design"
+
+[[kinds]]
+prefix = "DF"
+folder = "docs/decisions/functional"
+title = "Product behavior decisions and tradeoffs"
+
+[[kinds]]
+prefix = "DA"
+folder = "docs/decisions/architectural"
+title = "Architecture decisions and tradeoffs"
+
+[[kinds]]
+prefix = "E2E"
+folder = "e2e/cases"
+title = "Executable user scenarios"
+
+[[kinds]]
+prefix = "RM"
+file = "docs/roadmap.md"
+title = "Planned milestones and sequencing"
+
+[scan]
+include = ["requirements.md", "docs", "e2e", "src"]
+exclude = ["target", "node_modules", ".git", "dist", "build", ".venv"]
+extensions = ["md", "rs", "go", "java", "kt", "ts", "tsx", "js", "py", "c", "cpp", "swift", "scala", "rb", "php", "cs"]
+comment_prefixes = ["//", "#", ";", "--", "*", "/*"]
+docstring_python = true
+respect_gitignore = true
+
+[output]
+format = "text" # text | json
+color = "auto" # auto | always | never
+relative_paths = true
+
+[fmt.cross_refs]
+enabled = true
+anchor_format = "github" # github | gitlab | mkdocs | pandoc | none
+
+# Citation directions (FS-config.3.9): encode which kinds may cite which, with
+# RFC-2119 levels. must/must-not gate `grund check`; should/should-not surface
+# under `grund check --suggestions` and render into this entrypoint. Uncomment
+# to adopt the canonical climbing ruleset; `code` is the reserved pseudo-kind
+# for citation sites outside any kind home.
+# [citations]
+# default = "may"                # global default level for unlisted pairs
+#
+# [citations.GOAL]
+# should = ["GRUND|GOAL"]
+#
+# [citations.FS]
+# should = ["GOAL|FS"]
+# must-not = ["AR"]              # the What may never depend on the How
+#
+# [citations.AR]
+# should = ["FS|GOAL"]
+#
+# [citations.DF]
+# should = ["FS|GOAL"]
+#
+# [citations.DA]
+# should = ["AR|FS"]
+#
+# [citations.E2E]
+# must = ["FS"]                  # a scenario tests a spec
+#
+# [citations.code]
+# should = ["FS|AR"]
