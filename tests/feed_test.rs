@@ -370,9 +370,12 @@ fn failing_provider_keeps_previous_items_as_stale() {
     for (key, value) in feed_env(tmp.path()) {
         cmd.env(key, value);
     }
+    // Keeping the last-good items is not the same as the refresh succeeding:
+    // the github providers delivered nothing this time, and a run that says
+    // "success" while a source is down is what lets an outage go unnoticed.
     cmd.args(["refresh", "demo"])
         .assert()
-        .success()
+        .code(4)
         .stderr(predicate::str::contains("github-prs"));
 
     let cache: serde_json::Value = serde_json::from_str(

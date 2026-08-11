@@ -34,11 +34,21 @@ pub struct ProviderSlot {
     pub error: Option<String>,
     #[serde(default)]
     pub stale: bool,
+    /// The failure was "could not reach the destination" rather than anything
+    /// the reader can fix — so the items below are last-good data waiting out
+    /// a network, not evidence that this source has nothing. Written only when
+    /// true: a healthy slot should not carry a field about how it failed.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub unreachable: bool,
     #[serde(default)]
     pub items: Vec<Item>,
     /// Incremental fetch cursor for message providers (slack/discord/email).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 impl ProjectFeed {

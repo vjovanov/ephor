@@ -882,7 +882,12 @@ impl App {
     fn refresh(&mut self, config: &StatusConfig) -> Result<()> {
         let registry_doc = crate::feed::commands::load_registry_doc()?;
         let filter_project = self.navigator.refresh_filter(&self.ctx);
-        let mut errors = 0usize;
+        // Named, not counted. "6 provider warnings" is the same sentence
+        // whether a forge has been uninstalled for months or a laptop is off
+        // the VPN for a minute, and in both cases the sections those providers
+        // fill just look empty.
+        let mut lost: Vec<String> = Vec::new();
+        let mut unreachable = 0usize;
         for (project_id, project_config) in &config.projects {
             if let Some(filter) = &filter_project {
                 if project_id != filter {
@@ -895,18 +900,45 @@ impl App {
                 project_config,
                 &config.defaults,
             ) {
-                Ok(outcome) => errors += outcome.errors.len(),
+                Ok(outcome) => {
+                    unreachable += outcome.unreachable_count();
+                    lost.extend(
+                        outcome
+                            .failures
+                            .iter()
+                            .map(|failure| format!("{project_id}/{}", failure.provider)),
+                    );
+                }
                 Err(err) => {
                     self.message = format!("Refresh failed for {project_id}: {err}");
-                    errors += 1;
+                    lost.push(project_id.clone());
                 }
             }
         }
         self.reload_feeds()?;
-        self.message = if errors == 0 {
+        self.message = if lost.is_empty() {
             "Refreshed".to_string()
         } else {
-            format!("Refreshed with {errors} provider warnings")
+            // Enough names to act on, then a count for the rest.
+            const NAMED: usize = 3;
+            let mut shown = lost
+                .iter()
+                .take(NAMED)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ");
+            if lost.len() > NAMED {
+                shown = format!("{shown} +{} more", lost.len() - NAMED);
+            }
+            let network = if unreachable > 0 {
+                format!(" ({unreachable} unreachable — check the network/VPN)")
+            } else {
+                String::new()
+            };
+            format!(
+                "Refreshed — NO DATA from {}: {shown}{network}",
+                lost.len()
+            )
         };
         Ok(())
     }

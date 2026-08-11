@@ -22,6 +22,7 @@ impl std::fmt::Display for ProviderError {
 pub type ProviderResult = Result<Vec<Item>, ProviderError>;
 
 /// Everything a provider may need about the project it is fetching for.
+#[derive(Clone)]
 pub struct ProviderContext {
     pub project_id: String,
     pub project_root: PathBuf,
@@ -42,6 +43,14 @@ pub trait Provider: Send + Sync {
     /// Cheap gate: required tool on PATH, secret file present, ...
     fn available(&self, _ctx: &ProviderContext) -> bool {
         true
+    }
+
+    /// What `available` looked for and did not find. A provider that can name
+    /// it should: "missing tool or secret" sends the reader hunting for a
+    /// credential when the answer is usually an executable that was never
+    /// installed.
+    fn unavailable_reason(&self) -> Option<String> {
+        None
     }
 
     fn fetch(&self, ctx: &ProviderContext) -> ProviderResult;

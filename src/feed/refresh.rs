@@ -12,15 +12,45 @@ use crate::error::{registry_error, Result};
 use crate::feed::cache::{load_feed, store_feed, ProjectFeed, ProviderSlot};
 use crate::feed::config::{Defaults, ProjectFeedConfig};
 use crate::feed::provider::ProviderContext;
+use crate::feed::reachability;
 use crate::feed::providers::build_provider;
 use crate::paths;
 use crate::registry::{self, Workspace};
 
+/// One provider that did not deliver, and whether it is the reader's to fix.
+pub struct ProviderFailure {
+    pub provider: String,
+    pub message: String,
+    /// The destination could not be reached at all. Kept apart from every
+    /// other failure because it asks nothing of the reader but a working
+    /// network, and because the items left on screen are last-good data
+    /// rather than this source's current state.
+    pub unreachable: bool,
+}
+
+impl ProviderFailure {
+    /// One warning line: which provider, what happened, and whether this is a
+    /// network condition or a configuration to go and fix.
+    pub fn describe(&self) -> String {
+        if self.unreachable {
+            format!("{}: unreachable — {}", self.provider, self.message)
+        } else {
+            format!("{}: {}", self.provider, self.message)
+        }
+    }
+}
+
 pub struct RefreshOutcome {
     pub item_count: usize,
-    pub errors: Vec<String>,
+    pub failures: Vec<ProviderFailure>,
     /// True when every configured provider failed.
     pub total_failure: bool,
+}
+
+impl RefreshOutcome {
+    pub fn unreachable_count(&self) -> usize {
+        self.failures.iter().filter(|f| f.unreachable).count()
+    }
 }
 
 /// Build the provider context for one project from the registry.
@@ -63,6 +93,20 @@ pub fn build_context(
     })
 }
 
+/// A provider block's own timeout ceiling, when it sets one.
+///
+/// `provider_timeout_seconds` is the shared default, sized for a local `gh`
+/// call. A forge reached over a VPN, or one that walks a pull request's
+/// comment threads, needs longer — and raising the default for its sake would
+/// make every genuinely hung provider take that long to give up.
+fn provider_timeout(config: &Value) -> Option<Duration> {
+    config
+        .get("timeout_seconds")
+        .and_then(Value::as_u64)
+        .filter(|seconds| *seconds > 0)
+        .map(Duration::from_secs)
+}
+
 fn workspace_ticket(workspace: &Workspace) -> Option<String> {
     if let Some(ticket) = workspace.vars.get("ticket").and_then(Value::as_str) {
         if !ticket.is_empty() {
@@ -100,18 +144,25 @@ pub fn refresh_project(
             let ctx = &ctx;
             let results = &results;
             scope.spawn(move || {
+                let raised;
+                let ctx = match provider_timeout(provider_config) {
+                    Some(timeout) => {
+                        raised = ProviderContext {
+                            timeout,
+                            ..ctx.clone()
+                        };
+                        &raised
+                    }
+                    None => ctx,
+                };
                 let (name, outcome) = match build_provider(provider_config) {
                     Ok(provider) => {
                         let name = provider.name().to_string();
                         if !provider.available(ctx) {
-                            (
-                                name.clone(),
-                                (
-                                    false,
-                                    Some("unavailable (missing tool or secret)".to_string()),
-                                    Vec::new(),
-                                ),
-                            )
+                            let reason = provider.unavailable_reason().unwrap_or_else(|| {
+                                "unavailable (missing tool or secret)".to_string()
+                            });
+                            (name.clone(), (false, Some(reason), Vec::new()))
                         } else {
                             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                                 provider.fetch(ctx)
@@ -146,7 +197,7 @@ pub fn refresh_project(
         fetched_at: Some(now),
         providers: BTreeMap::new(),
     };
-    let mut errors = Vec::new();
+    let mut failures = Vec::new();
     let mut ok_count = 0usize;
 
     for (name, (ok, error, items)) in results {
@@ -157,6 +208,7 @@ pub fn refresh_project(
                 ok: true,
                 error: None,
                 stale: false,
+                unreachable: false,
                 items,
                 cursor: previous
                     .providers
@@ -165,7 +217,12 @@ pub fn refresh_project(
             }
         } else {
             let message = error.unwrap_or_else(|| "unknown error".to_string());
-            errors.push(format!("{name}: {message}"));
+            let unreachable = reachability::is_unreachable(&message);
+            failures.push(ProviderFailure {
+                provider: name.clone(),
+                message: message.clone(),
+                unreachable,
+            });
             let previous_slot = previous.providers.get(&name);
             ProviderSlot {
                 fetched_at: previous_slot.and_then(|slot| slot.fetched_at),
@@ -174,6 +231,7 @@ pub fn refresh_project(
                 stale: previous_slot
                     .map(|slot| !slot.items.is_empty())
                     .unwrap_or(false),
+                unreachable,
                 items: previous_slot
                     .map(|slot| slot.items.clone())
                     .unwrap_or_default(),
@@ -188,7 +246,7 @@ pub fn refresh_project(
     store_feed(&feed)?;
     Ok(RefreshOutcome {
         item_count,
-        errors,
+        failures,
         total_failure,
     })
 }

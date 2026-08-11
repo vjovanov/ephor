@@ -73,7 +73,24 @@ pub fn render_project(feed: &ProjectFeed, seen: &Seen, style: &Style, recent_day
 
     for (name, slot) in &feed.providers {
         if let Some(error) = &slot.error {
-            eprintln!("  {} {}", style.dim(&format!("[{name}]")), style.red(error));
+            // Say what the reader lost, not just that something went wrong:
+            // a failed provider leaves either its last-good items or nothing,
+            // and on screen both look like a source with no news.
+            let lost = if slot.stale {
+                " — showing last-good items"
+            } else {
+                " — NO DATA"
+            };
+            let kind = if slot.unreachable {
+                "unreachable: "
+            } else {
+                ""
+            };
+            eprintln!(
+                "  {} {}",
+                style.dim(&format!("[{name}]")),
+                style.red(&format!("{kind}{error}{lost}"))
+            );
         }
     }
 

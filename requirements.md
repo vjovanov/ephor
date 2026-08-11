@@ -82,6 +82,42 @@ nothing else.
 *Not satisfied today* — see
 [§RM-001-forge-interface](docs/roadmap.md#rm-001-forge-interface-put-every-forge-behind-the-interface).
 
+### 6. A source that did not answer says so, and says which kind of not
+
+ephor's whole purpose is to be believed when it says there is nothing to do.
+An empty section therefore has to mean "nothing is waiting", never "this
+source could not be read" — the two are indistinguishable on screen, and the
+second one silently costs exactly the work the reader opened ephor to find.
+
+So a provider that cannot deliver **fails explicitly**, and never substitutes
+an empty or partial answer for a failure:
+
+1. **No silent degradation, in either transport.** An implementation that
+   cannot complete an answer — a fetch that failed, output it cannot parse, a
+   shape it does not recognise — reports the failure. Returning the part it
+   managed is not allowed where the missing part changes meaning: a pull
+   request whose conversation was dropped reads as one that needs no reply.
+2. **A failed capability probe is a failure, not an empty declaration.** §1
+   lets an implementation decline a capability, and ephor degrades to what is
+   declared. That applies to an implementation that *answered*; one that could
+   not be asked has declared nothing, and is reported as broken rather than as
+   a forge that does very little.
+3. **Failures are visible without being looked for.** Every failed provider is
+   named — with its project — on stderr and in the interactive header, and a
+   run that lost any provider exits non-zero. A partial refresh reported as
+   success is how a source stays dark indefinitely: whatever runs the refresh
+   on a timer sees exit 0 and no one is told.
+4. **An unreachable destination is its own condition.** A host that could not
+   be reached at all — DNS, refused connection, no route, a VPN that is down —
+   is reported as unreachable rather than as a generic failure. It asks
+   nothing of the reader but a working network, where every other failure asks
+   them to go and change something, and the distinction also says whether the
+   items still on screen are last-good values waiting out an outage.
+5. **Last-good items are labelled, never passed off as current.** Keeping the
+   previous answer when a provider fails is right — one flaky source must not
+   blank the feed — but those items are marked stale wherever they appear, and
+   the provider that failed is reported alongside them.
+
 ## FS-002-release: ephor releases from a tag, with a changelog entry per change
 
 Versions are semver, and a version exists exactly when a `vX.Y.Z` tag does. The

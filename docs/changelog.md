@@ -61,6 +61,39 @@ ships, the previous "latest" section moves verbatim to
   ephor now names no forge, tracker, or vendor tool anywhere in its source, and
   `scripts/check-no-site-specific.sh` passes.
 
+### Fixed
+
+- A provider block's `timeout_seconds` was read from the configuration and
+  then ignored: every provider ran under the shared
+  `defaults.provider_timeout_seconds`. A forge behind a VPN, configured with
+  the longer ceiling it needs, timed out on every refresh and its whole
+  section of the feed stayed empty
+  ([§FS-001-forge-interface.6](../requirements.md#6-a-source-that-did-not-answer-says-so-and-says-which-kind-of-not)).
+- An out-of-process forge whose `capabilities` probe failed was recorded as
+  having declared no capabilities, which described an unreachable host or a
+  crashed extension as a malformed one. The probe's own error is now reported.
+- `unavailable (missing tool or secret)` never said what was missing. An
+  extension is resolved from the provider's *name*, so the executable it looked
+  for appears nowhere the reader can check; the diagnostic now names it.
+
+### Changed
+
+- **A refresh that lost any provider now exits non-zero** (`4`; `3` still means
+  every provider failed) and reports each failure as `error:` naming the
+  project and provider. A partial refresh used to exit 0, so a source could
+  stay dark indefinitely behind a timer that saw nothing wrong
+  ([§FS-001-forge-interface.6](../requirements.md#6-a-source-that-did-not-answer-says-so-and-says-which-kind-of-not)).
+- Destinations that cannot be reached — DNS failure, refused connection, no
+  route, a downed VPN — are classified as **unreachable** and reported as such
+  in the refresh output, in `ephor status`, and in the interactive header. The
+  distinction is between a network that will heal itself and a configuration
+  the reader has to go and change.
+- The interactive header names the providers that failed instead of counting
+  them: "Refreshed with 6 provider warnings" reads the same whether an
+  extension has been uninstalled for months or a laptop is briefly off the VPN.
+- `ephor status` says what a failed provider cost — `NO DATA`, or that the
+  items shown are the last good ones.
+
 ## 2. [0.1.0] — 2026-08-11
 
 First version. Not yet tagged or published — publication is gated on

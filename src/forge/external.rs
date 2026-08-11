@@ -84,9 +84,20 @@ impl Forge for ExternalForge {
         command_exists(&self.command)
     }
 
-    /// An implementation that cannot say what it does answers nothing, rather
-    /// than failing the whole refresh.
-    fn capabilities(&self) -> Capabilities {
+    /// An out-of-process forge is missing exactly one thing, and naming it is
+    /// the difference between an install command and an afternoon: the
+    /// configuration names a forge, so the executable is inferred rather than
+    /// written down anywhere the reader can check.
+    fn unavailable_reason(&self) -> Option<String> {
+        Some(format!("`{}` is not on PATH", self.command))
+    }
+
+    /// The probe is a real process launch, so it fails for every reason a
+    /// fetch does — the executable crashed, the VPN is down, the host refused
+    /// the connection. Each of those is reported as itself; answering
+    /// "declared nothing" instead would describe a working extension behind an
+    /// unreachable host as a broken one.
+    fn capabilities(&self) -> Result<Capabilities, ProviderError> {
         let probe = Request {
             config: Value::Null,
             project: String::new(),
@@ -94,10 +105,8 @@ impl Forge for ExternalForge {
             user: None,
             timeout_seconds: 15,
         };
-        match self.call("capabilities", &probe, json!({})) {
-            Ok(value) => serde_json::from_value(value).unwrap_or_default(),
-            Err(_) => Capabilities::default(),
-        }
+        let value = self.call("capabilities", &probe, json!({}))?;
+        self.decode("capabilities", value)
     }
 
     fn pull_requests(&self, request: &Request) -> Result<Vec<PullRequest>, ProviderError> {

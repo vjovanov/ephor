@@ -60,14 +60,20 @@ impl Provider for ForgeProvider {
         self.forge.available()
     }
 
+    fn unavailable_reason(&self) -> Option<String> {
+        self.forge.unavailable_reason()
+    }
+
     fn fetch(&self, ctx: &ProviderContext) -> ProviderResult {
         let request = Request::new(self.config.clone(), ctx);
-        let capabilities = self.forge.capabilities();
+        // The probe's own failure is reported verbatim: it is the first thing
+        // this forge does, so it is where an unreachable host, a crash or a
+        // missing dependency surfaces, and each of those needs its own answer.
+        let capabilities = self.forge.capabilities()?;
         if capabilities == crate::forge::Capabilities::default() {
             // Declaring nothing is indistinguishable from answering nothing, so
-            // treat it as the failure it almost always is: the executable is
-            // missing, crashed, or does not speak the protocol. Reported as a
-            // provider warning, which keeps the last-good items marked stale.
+            // treat it as the failure it almost always is: the executable ran,
+            // but does not speak the protocol.
             return Err(ProviderError(format!(
                 "{} declared no capabilities — is it answering `capabilities` with JSON?",
                 self.name

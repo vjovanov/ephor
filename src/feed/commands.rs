@@ -43,7 +43,7 @@ fn refresh_projects(
     config: &StatusConfig,
     projects: &[String],
     quiet: bool,
-) -> Result<(usize, usize)> {
+) -> Result<RefreshTally> {
     let registry_doc = load_registry_doc()?;
     let selected: Vec<&String> = if projects.is_empty() {
         config.projects.keys().collect()
@@ -51,23 +51,42 @@ fn refresh_projects(
         projects.iter().collect()
     };
 
-    let mut failures = 0usize;
+    let mut total_failures = 0usize;
+    let mut degraded = 0usize;
     let mut refreshed = 0usize;
     for project in selected {
         let project_config = known_project(config, project)?;
         let outcome = refresh_project(&registry_doc, project, project_config, &config.defaults)?;
         refreshed += 1;
-        for error in &outcome.errors {
-            eprintln!("warning: {project}: {error}");
+        // A provider that did not deliver is an error, not a warning: its
+        // section of the feed is last-good data or nothing at all, and either
+        // reads exactly like "you have no work here".
+        for failure in &outcome.failures {
+            eprintln!("error: {project}: {}", failure.describe());
         }
         if outcome.total_failure {
-            failures += 1;
+            total_failures += 1;
+        } else if !outcome.failures.is_empty() {
+            degraded += 1;
         }
         if !quiet {
             println!("{project}: {} items", outcome.item_count);
         }
     }
-    Ok((refreshed, failures))
+    Ok(RefreshTally {
+        refreshed,
+        total_failures,
+        degraded,
+    })
+}
+
+/// How a whole refresh went, across every selected project.
+struct RefreshTally {
+    refreshed: usize,
+    /// Projects where every provider failed.
+    total_failures: usize,
+    /// Projects that lost some providers but not all.
+    degraded: usize,
 }
 
 /// Refresh when the cache is missing or older than the TTL (unless --cached).
@@ -91,8 +110,8 @@ fn ensure_fresh(config: &StatusConfig, project: &str, args: &StatusArgs) -> Resu
     let registry_doc = load_registry_doc()?;
     let project_config = known_project(config, project)?;
     let outcome = refresh_project(&registry_doc, project, project_config, &config.defaults)?;
-    for error in &outcome.errors {
-        eprintln!("warning: {project}: {error}");
+    for failure in &outcome.failures {
+        eprintln!("error: {project}: {}", failure.describe());
     }
     cache::load_feed(project)?
         .ok_or_else(|| EphorError::Command(format!("Refresh produced no cache for '{project}'.")))
@@ -233,11 +252,18 @@ pub fn feed(args: &FeedArgs) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// Exit codes: 3 when nothing could be fetched at all, 4 when some providers
+/// were lost and others survived. A partial refresh had been reported as
+/// success, which is how a forge stayed uninstalled without anyone noticing —
+/// the timer that runs this saw exit 0 every time.
 pub fn refresh(args: &RefreshArgs) -> Result<ExitCode> {
     let config = load_config()?;
-    let (refreshed, failures) = refresh_projects(&config, &args.projects, args.quiet)?;
-    if refreshed > 0 && failures == refreshed {
+    let tally = refresh_projects(&config, &args.projects, args.quiet)?;
+    if tally.refreshed > 0 && tally.total_failures == tally.refreshed {
         return Ok(ExitCode::from(3));
+    }
+    if tally.total_failures > 0 || tally.degraded > 0 {
+        return Ok(ExitCode::from(4));
     }
     Ok(ExitCode::SUCCESS)
 }

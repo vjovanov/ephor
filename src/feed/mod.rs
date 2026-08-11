@@ -8,6 +8,7 @@ pub mod gate;
 pub mod model;
 pub mod provider;
 pub mod providers;
+pub mod reachability;
 pub mod react;
 pub mod refresh;
 pub mod render;

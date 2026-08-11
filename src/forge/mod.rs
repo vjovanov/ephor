@@ -188,12 +188,22 @@ impl Request {
 pub trait Forge: Send + Sync {
     fn name(&self) -> String;
 
-    fn capabilities(&self) -> Capabilities;
+    /// What this implementation answers. Fallible: for an out-of-process
+    /// forge this is a process launch that can fail for every reason a fetch
+    /// can, and reporting "declared nothing" in place of the real error turns
+    /// an unreachable host into what reads like a malformed extension.
+    fn capabilities(&self) -> Result<Capabilities, ProviderError>;
 
     /// Cheap check that the implementation can run at all — its CLI is on
     /// PATH, its credentials exist.
     fn available(&self) -> bool {
         true
+    }
+
+    /// What `available` looked for and did not find, named precisely enough
+    /// to act on.
+    fn unavailable_reason(&self) -> Option<String> {
+        None
     }
 
     fn pull_requests(&self, _request: &Request) -> Result<Vec<PullRequest>, ProviderError> {
