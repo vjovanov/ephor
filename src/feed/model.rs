@@ -91,6 +91,35 @@ impl Item {
     pub fn is_visible(&self, now: DateTime<Utc>, recent_days: u64) -> bool {
         !self.is_finished() || self.within_recent_window(now, recent_days)
     }
+
+    /// The repository, best effort: `raw.repo`, or the `owner/name` between
+    /// the source prefix and `#` in the id (`github-prs:acme/widget#42`).
+    pub fn repo(&self) -> Option<String> {
+        if let Some(repo) = self.raw.get("repo").and_then(Value::as_str) {
+            return Some(repo.to_string());
+        }
+        let tail = self.id.split_once(':')?.1;
+        let (repo, _) = tail.rsplit_once('#')?;
+        if repo.contains('/') {
+            Some(repo.to_string())
+        } else {
+            None
+        }
+    }
+
+    /// The pull request or issue number, best effort: the digits after the
+    /// last `#` (`github-prs:acme/widget#42`) or the last `/`
+    /// (`forge-prs:repo/123`) of the id.
+    pub fn number(&self) -> Option<String> {
+        for separator in ['#', '/'] {
+            if let Some((_, tail)) = self.id.rsplit_once(separator) {
+                if !tail.is_empty() && tail.bytes().all(|byte| byte.is_ascii_digit()) {
+                    return Some(tail.to_string());
+                }
+            }
+        }
+        None
+    }
 }
 
 #[cfg(test)]

@@ -201,3 +201,50 @@ How long finished work stays interesting is a property of a person, not of
 ephor: the window is `defaults.recent_days` in the feed configuration, in
 days, defaulting to 7. Zero drops an item from the feed the moment it is
 finished, which is the behavior for someone who never looks back.
+
+## FS-004-quick-actions: a problem ephor recognizes arrives with the action for it
+
+The action menu starts empty: every entry in it is something the reader wrote
+down first. Yet what a person wants on a problem is nearly always the same
+thing — the failing log, the diff, the conversation — and making them
+configure that is ephor knowing what is wrong and sending them to fetch it
+anyway. The reader would have to leave, find the repository, remember the
+tool's flags, and come back with an answer ephor could have handed them.
+
+So ephor offers those itself. A **quick action** is a menu entry ephor has
+without being told, on an item where it already knows what the problem is.
+
+### 1. A quick action belongs to the source that found the problem
+
+The source that produced an item is the one place that knows which forge it
+came from and which tool reaches it — and naming a forge or a vendor CLI
+anywhere above that is what
+[§FS-001-forge-interface](#fs-001-forge-interface-ephor-reaches-every-forge-and-issue-tracker-through-one-provider-interface)
+forbids. A quick action is therefore offered by the source; ephor's core only
+merges it into the menu and runs it, exactly as it runs a configured action —
+the same checkout resolution, the same `EPHOR_*` environment, the same
+handover of the terminal while it runs. A quick action is an ordinary menu
+entry that nobody had to write, and a source that offers none is complete.
+
+### 2. Offered only where it would work
+
+A quick action appears only when running it would do something: the item has
+the problem the action addresses, the identifiers the command needs are
+known, and the tool it runs is installed. A menu that lists an action which
+cannot work is worse than one that lists nothing, because the reader believes
+it and spends a keystroke and a screen of errors finding out.
+
+### 3. Quick actions come first, and configuration adds to them
+
+They are listed above the configured actions, so that the obvious thing is
+the first key. Configuration never replaces them: a reader whose own action
+does the same job gets both, because ephor cannot tell that two commands mean
+the same thing and silently dropping either one is the failure that matters.
+
+### 4. Failing CI answers what failed and why
+
+The quick action on a pull request whose checks are failing shows the check
+list as the forge reports it — which failed, which passed, which are still
+running — followed by the log of every failed job, one copy per underlying
+run and paged. That is the whole question a red gate asks, and reaching it by
+hand is several commands and a browser tab.

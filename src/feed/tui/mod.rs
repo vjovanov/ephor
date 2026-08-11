@@ -83,6 +83,9 @@ pub(crate) struct Ctx {
     /// Item actions: global, plus per-project extras.
     pub actions: Vec<ActionConfig>,
     pub project_actions: BTreeMap<String, Vec<ActionConfig>>,
+    /// Each project's provider blocks, kept so the source that produced an
+    /// item can be asked what it offers on it (§FS-004-quick-actions.1).
+    pub provider_blocks: BTreeMap<String, Vec<Value>>,
     /// Per-project branch checkout commands.
     pub checkouts: BTreeMap<String, CheckoutConfig>,
     /// How long finished work stays under Recent (§FS-003-feed-categories.3).
@@ -95,13 +98,22 @@ impl Ctx {
         self.feeds.iter().find(|feed| feed.project == project)
     }
 
+    /// The item's menu: what its source offers on it unasked, then the
+    /// configured actions (§FS-004-quick-actions.3).
     pub fn actions_for(&self, item: &Item) -> Vec<ActionConfig> {
         let project = self
             .project_actions
             .get(&item.project)
             .map(Vec::as_slice)
             .unwrap_or_default();
-        actions::applicable(&self.actions, project, item)
+        let blocks = self
+            .provider_blocks
+            .get(&item.project)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        let mut menu = crate::feed::providers::quick_actions(blocks, item);
+        menu.extend(actions::applicable(&self.actions, project, item));
+        menu
     }
 
     pub fn org_projects(&self, org_id: &str) -> Vec<String> {
@@ -567,6 +579,11 @@ impl App {
                     .iter()
                     .map(|(id, project)| (id.clone(), project.actions.clone()))
                     .collect(),
+                provider_blocks: config
+                    .projects
+                    .iter()
+                    .map(|(id, project)| (id.clone(), project.providers.clone()))
+                    .collect(),
                 checkouts: config
                     .projects
                     .iter()
@@ -935,10 +952,7 @@ impl App {
             } else {
                 String::new()
             };
-            format!(
-                "Refreshed — NO DATA from {}: {shown}{network}",
-                lost.len()
-            )
+            format!("Refreshed — NO DATA from {}: {shown}{network}", lost.len())
         };
         Ok(())
     }
@@ -1013,6 +1027,7 @@ mod tests {
             behind: BTreeMap::new(),
             actions: Vec::new(),
             project_actions: BTreeMap::new(),
+            provider_blocks: BTreeMap::new(),
             checkouts: BTreeMap::new(),
             recent_days: 7,
             unread_only: true,
@@ -1032,6 +1047,37 @@ mod tests {
             needs_response: false,
             updated_at: Utc::now(),
             raw: json!({}),
+        }
+    }
+
+    #[test]
+    fn a_sources_own_action_leads_the_menu() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut ctx = ctx_with_branch(tmp.path(), None);
+        ctx.actions = vec![serde_json::from_value(json!({
+            "icon": "🧪", "description": "run the gate", "command": "just gate"
+        }))
+        .unwrap()];
+        ctx.provider_blocks = BTreeMap::from([(
+            "widget".to_string(),
+            vec![json!({ "provider": "github-ci", "repos": ["acme/widget"] })],
+        )]);
+
+        let mut ci = ticket_item();
+        ci.id = "github-ci:acme/widget#42".to_string();
+        ci.source = "github-ci".to_string();
+        ci.kind = ItemKind::Ci;
+        ci.state = Some("failing".to_string());
+
+        // The configured action keeps its place and the source's own goes
+        // ahead of it (§FS-004-quick-actions.3) — where `gh` is installed for
+        // it to be offered at all.
+        let menu = ctx.actions_for(&ci);
+        let quick = usize::from(crate::feed::provider::command_exists("gh"));
+        assert_eq!(menu.len(), quick + 1);
+        assert_eq!(menu.last().unwrap().description, "run the gate");
+        if quick == 1 {
+            assert_eq!(menu[0].description, "see the CI failures");
         }
     }
 

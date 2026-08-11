@@ -49,6 +49,13 @@ ships, the previous "latest" section moves verbatim to
   **Participating** like pull requests, and reachable as `--kind issue`. The
   forge interface's `Issue` gained a `role`, defaulting to author, so an
   existing extension keeps working unchanged.
+- **Quick actions**: the source that produced an item offers what it knows to
+  do about it, so the action menu is worth pressing before anyone has
+  configured it. A pull request whose gate is red gets `✗ see the CI failures`
+  from `github-ci` — the check list, then the log of every failed job, one copy
+  per underlying run and paged — and it leads the menu, ahead of the configured
+  actions
+  ([§FS-004-quick-actions](../requirements.md#fs-004-quick-actions-a-problem-ephor-recognizes-arrives-with-the-action-for-it)).
 - **Recent** category: finished work — closed, merged, done, resolved, declined
   — leaves its category and stays visible for `defaults.recent_days` (7 by
   default), then leaves the feed. An issue closed without a reply is visible

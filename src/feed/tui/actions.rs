@@ -87,42 +87,13 @@ pub(crate) fn item_env(
                 .and_then(|branch| branch.ticket.clone())
                 .unwrap_or_default(),
         ),
-        ("EPHOR_REPO".to_string(), repo_of(item).unwrap_or_default()),
+        ("EPHOR_REPO".to_string(), item.repo().unwrap_or_default()),
         (
             "EPHOR_NUMBER".to_string(),
-            number_of(&item.id).unwrap_or_default(),
+            item.number().unwrap_or_default(),
         ),
         ("EPHOR_RAW".to_string(), item.raw.to_string()),
     ]
-}
-
-/// The PR/issue number from an item id, best effort: the digits after the
-/// last `#` (`github-prs:acme/widget#42`) or the last `/`
-/// (`bitbucket-prs:repo/123`).
-fn number_of(id: &str) -> Option<String> {
-    for separator in ['#', '/'] {
-        if let Some((_, tail)) = id.rsplit_once(separator) {
-            if !tail.is_empty() && tail.bytes().all(|byte| byte.is_ascii_digit()) {
-                return Some(tail.to_string());
-            }
-        }
-    }
-    None
-}
-
-/// The repository, best effort: `raw.repo` (bitbucket) or the
-/// `owner/name` between the source prefix and `#` in a github item id.
-fn repo_of(item: &Item) -> Option<String> {
-    if let Some(repo) = item.raw.get("repo").and_then(serde_json::Value::as_str) {
-        return Some(repo.to_string());
-    }
-    let tail = item.id.split_once(':')?.1;
-    let (repo, _) = tail.rsplit_once('#')?;
-    if repo.contains('/') {
-        Some(repo.to_string())
-    } else {
-        None
-    }
 }
 
 pub(crate) enum MenuOutcome {

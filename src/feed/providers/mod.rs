@@ -15,6 +15,8 @@ use std::process::Command;
 
 use serde_json::Value;
 
+use crate::feed::config::ActionConfig;
+use crate::feed::model::Item;
 use crate::feed::provider::{Provider, ProviderError};
 
 pub fn build_provider(config: &Value) -> Result<Box<dyn Provider>, ProviderError> {
@@ -40,9 +42,29 @@ pub fn build_provider(config: &Value) -> Result<Box<dyn Provider>, ProviderError
     }
 }
 
+/// The quick actions a project's sources offer on one item
+/// (§FS-004-quick-actions.1). Only the source that produced the item is
+/// asked — it is the one that knows what the item means — and a provider
+/// block that no longer builds simply offers nothing, since a menu is not the
+/// place to report a broken configuration.
+pub fn quick_actions(provider_blocks: &[Value], item: &Item) -> Vec<ActionConfig> {
+    provider_blocks
+        .iter()
+        .filter(|block| block.get("provider").and_then(Value::as_str) == Some(item.source.as_str()))
+        .filter_map(|block| build_provider(block).ok())
+        .flat_map(|provider| provider.quick_actions(item))
+        .collect()
+}
+
 /// `serde(default)` for provider flags that are on unless switched off.
 pub(crate) fn enabled() -> bool {
     true
+}
+
+/// A configured value as one `sh` word. Single quotes take everything
+/// literally, so only the single quote itself has to be broken out.
+pub(crate) fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r"'\''"))
 }
 
 pub(crate) fn parse_config<T: serde::de::DeserializeOwned>(
@@ -90,4 +112,52 @@ pub(crate) fn parse_github_time(value: &Value) -> chrono::DateTime<chrono::Utc> 
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
         .map(|dt| dt.with_timezone(&chrono::Utc))
         .unwrap_or_else(chrono::Utc::now)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::feed::model::ItemKind;
+    use crate::feed::provider::command_exists;
+    use serde_json::json;
+
+    fn failing_ci_item(source: &str) -> Item {
+        Item {
+            id: "github-ci:acme/widget#42".to_string(),
+            project: "widget".to_string(),
+            source: source.to_string(),
+            kind: ItemKind::Ci,
+            role: None,
+            title: "#42 Retry window: 1/3 checks passing, 2 failing".to_string(),
+            url: None,
+            state: Some("failing".to_string()),
+            needs_response: true,
+            updated_at: chrono::Utc::now(),
+            raw: Value::Null,
+        }
+    }
+
+    #[test]
+    fn only_the_source_that_produced_the_item_is_asked() {
+        let blocks = vec![
+            json!({ "provider": "custom-status", "command": "true" }),
+            json!({ "provider": "github-ci", "repos": ["acme/widget"] }),
+        ];
+        // The github-ci block answers for its own item — where `gh` is
+        // installed to answer at all (§FS-004-quick-actions.2).
+        let offered = quick_actions(&blocks, &failing_ci_item("github-ci"));
+        assert_eq!(offered.len(), usize::from(command_exists("gh")));
+        assert!(offered
+            .iter()
+            .all(|action| action.description == "see the CI failures"));
+        // The same item attributed to another source asks that source, which
+        // knows nothing about it.
+        assert!(quick_actions(&blocks, &failing_ci_item("custom-status")).is_empty());
+    }
+
+    #[test]
+    fn a_configured_value_survives_becoming_a_shell_word() {
+        assert_eq!(shell_quote("ghe.example.com"), "'ghe.example.com'");
+        assert_eq!(shell_quote("it's"), r"'it'\''s'");
+    }
 }

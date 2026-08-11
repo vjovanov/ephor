@@ -433,10 +433,7 @@ fn a_broken_extension_is_not_reported_as_unreachable() {
 
     assert_eq!(slot["ok"], false, "{slot:#?}");
     // Absent or false — a healthy-shaped slot does not carry the marker.
-    assert!(
-        !slot["unreachable"].as_bool().unwrap_or(false),
-        "{slot:#?}"
-    );
+    assert!(!slot["unreachable"].as_bool().unwrap_or(false), "{slot:#?}");
     assert!(!stderr.contains("unreachable"), "{stderr}");
 }
 

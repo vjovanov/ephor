@@ -182,12 +182,22 @@ refresh.
 
 ### Item actions
 
-`x` on any item (in the tree or the thread screen) summons a menu of
-user-defined actions — `j`/`k` + `Enter` or `1`-`9` runs one, `Esc`
-cancels. Configure them in `status.json`: top-level `actions` apply to
-every project, `projects.<id>.actions` are appended for that project, and
-an optional `kinds` list restricts an action to `pr` / `ci` / `message` /
-`status` items.
+`x` on any item (in the tree or the thread screen) summons its action menu
+— `j`/`k` + `Enter` or `1`-`9` runs one, `Esc` cancels.
+
+**Quick actions** need no configuration and lead the menu
+([§FS-004-quick-actions](requirements.md#fs-004-quick-actions-a-problem-ephor-recognizes-arrives-with-the-action-for-it)):
+the source that produced an item offers what it knows to do about it.
+Today `github-ci` offers `✗ see the CI failures` on a pull request whose
+gate is red — the check list as GitHub reports it, then `gh run view
+--log-failed` for every failed run, paged. One is offered only where it
+would work: the gate is failing, the item still names its pull request,
+and `gh` is installed.
+
+**Configured actions** follow, from `status.json`: top-level `actions`
+apply to every project, `projects.<id>.actions` are appended for that
+project, and an optional `kinds` list restricts an action to `pr` / `ci` /
+`message` / `status` items.
 
 ```json
 {

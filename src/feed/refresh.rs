@@ -12,8 +12,8 @@ use crate::error::{registry_error, Result};
 use crate::feed::cache::{load_feed, store_feed, ProjectFeed, ProviderSlot};
 use crate::feed::config::{Defaults, ProjectFeedConfig};
 use crate::feed::provider::ProviderContext;
-use crate::feed::reachability;
 use crate::feed::providers::build_provider;
+use crate::feed::reachability;
 use crate::paths;
 use crate::registry::{self, Workspace};
 

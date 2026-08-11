@@ -54,6 +54,16 @@ pub trait Provider: Send + Sync {
     }
 
     fn fetch(&self, ctx: &ProviderContext) -> ProviderResult;
+
+    /// Menu entries this provider offers on an item it produced, without the
+    /// reader configuring anything (§FS-004-quick-actions.1). Here — and only
+    /// here — a provider may name the tool its forge is reached with; ephor
+    /// merges what comes back into the action menu and runs it like any
+    /// configured action. Offering none is a complete answer, which is why
+    /// this defaults to empty (§FS-004-quick-actions.2).
+    fn quick_actions(&self, _item: &Item) -> Vec<crate::feed::config::ActionConfig> {
+        Vec::new()
+    }
 }
 
 /// Run a command with a timeout, capturing stdout. Non-zero exits are

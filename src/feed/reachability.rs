@@ -91,7 +91,10 @@ mod tests {
             "HTTP 404: Not Found",
             "HTTP 403: rate limit exceeded",
         ] {
-            assert!(!is_unreachable(message), "should not be unreachable: {message}");
+            assert!(
+                !is_unreachable(message),
+                "should not be unreachable: {message}"
+            );
         }
     }
 }
