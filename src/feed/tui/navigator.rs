@@ -131,21 +131,44 @@ impl NavigatorState {
         };
         let branches = ctx.branches.get(project).cloned().unwrap_or_default();
 
+        // §FS-003-feed-categories.1. Every filter but Recent's excludes
+        // finished work, so an item lands in exactly one category.
         type SectionFilter = fn(&Item) -> bool;
-        let sections: [(&'static str, SectionFilter); 5] = [
+        let sections: [(&'static str, SectionFilter); 8] = [
             ("Status", |item| item.kind == ItemKind::Status),
             ("My Pull Requests", |item| {
-                item.kind == ItemKind::Pr && item.role != Some(ItemRole::Reviewer)
+                item.kind == ItemKind::Pr
+                    && item.role != Some(ItemRole::Reviewer)
+                    && !item.is_finished()
             }),
             ("Reviewing", |item| {
-                item.kind == ItemKind::Pr && item.role == Some(ItemRole::Reviewer)
+                item.kind == ItemKind::Pr
+                    && item.role == Some(ItemRole::Reviewer)
+                    && !item.is_finished()
             }),
-            ("CI", |item| item.kind == ItemKind::Ci),
-            ("Messages", |item| item.kind == ItemKind::Message),
+            ("CI", |item| {
+                item.kind == ItemKind::Ci && !item.is_finished()
+            }),
+            ("My Issues", |item| {
+                item.kind == ItemKind::Issue
+                    && item.role != Some(ItemRole::Reviewer)
+                    && !item.is_finished()
+            }),
+            ("Participating", |item| {
+                item.kind == ItemKind::Issue
+                    && item.role == Some(ItemRole::Reviewer)
+                    && !item.is_finished()
+            }),
+            ("Messages", |item| {
+                item.kind == ItemKind::Message && !item.is_finished()
+            }),
+            ("Recent", |item| item.is_finished()),
         ];
+        let now = Utc::now();
         for (header, section_filter) in sections {
             let mut rows: Vec<Row> = feed
                 .items()
+                .filter(|item| item.is_visible(now, ctx.recent_days))
                 .filter(|item| section_filter(item))
                 .filter(|item| !ctx.unread_only || cache::is_unread(&ctx.seen, item))
                 .map(|item| Row {

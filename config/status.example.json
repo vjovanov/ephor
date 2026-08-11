@@ -2,7 +2,8 @@
   "defaults": {
     "ttl_seconds": 600,
     "provider_timeout_seconds": 30,
-    "github_user": "you"
+    "github_user": "you",
+    "recent_days": 7
   },
   "actions": [
     {
@@ -35,6 +36,7 @@
         { "provider": "github-prs", "repos": ["acme/widget"], "reviews": true },
         { "provider": "github-ci", "repos": ["acme/widget"] },
         { "provider": "github-threads", "repos": ["acme/widget"] },
+        { "provider": "github-issues", "repos": ["acme/widget"] },
         {
           "provider": "custom-status",
           "command": "git -C app status --short | head -5",
@@ -45,7 +47,12 @@
     "notes": {
       "providers": [
         { "provider": "github-prs", "repos": ["you/notes"], "reviews": true },
-        { "provider": "github-ci", "repos": ["you/notes"] }
+        { "provider": "github-ci", "repos": ["you/notes"] },
+        {
+          "provider": "github-issues",
+          "participating": true,
+          "updated_within_days": 30
+        }
       ]
     }
   }

@@ -203,11 +203,12 @@ fn a_bash_extension_is_a_complete_forge_implementation() {
         .iter()
         .find(|i| i["id"] == "demoforge:ABC-42")
         .unwrap();
-    assert_eq!(issue["kind"], "message");
-    assert_eq!(
-        issue["title"],
-        "ABC-42 [In Progress] Retry window is too narrow"
-    );
+    // Issues are their own category (§FS-003-feed-categories.1), and an
+    // implementation that does not report a role is reporting the user's own.
+    assert_eq!(issue["kind"], "issue");
+    assert_eq!(issue["role"], "author");
+    assert_eq!(issue["title"], "ABC-42 Retry window is too narrow");
+    assert_eq!(issue["state"], "in progress");
     assert_eq!(issue["needs_response"], true);
 
     // The gate renders on the row like any other forge's.

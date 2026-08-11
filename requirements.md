@@ -27,8 +27,15 @@ ephor degrades to what is answered rather than failing.
 - **Gate status** — the job counts (passed, failed, running) for a pull
   request, per repository the gate covers, since one change may gate across
   several repositories at once.
-- **Issues** — a ticket by key, with state, title, and its comments, using the
-  same message shape as a PR conversation.
+- **Issues by role** — the ones the user opened, and the ones they are engaged
+  in without having opened them. Each is a ticket by key, with title, url,
+  state as the forge spells it, last-updated time, and its comments in the same
+  message shape as a PR conversation. Where a forge can be searched as a whole,
+  an implementation reports the user's issues wherever they live rather than
+  only in a configured set of repositories: an issue filed against someone
+  else's project is theirs to follow just as much as one on their own. State is
+  reported whatever it is, closed included — an issue's closing is often the
+  activity worth seeing.
 
 ### 2. Two transports, one interface
 
@@ -109,3 +116,52 @@ partially-failed release skips what already exists rather than failing.
 No artifact is published while the tree still violates
 [§FS-001-forge-interface.5](#5-no-site-specific-data-in-the-repository). The
 check is mechanical and runs before anything is uploaded.
+
+## FS-003-feed-categories: the feed sorts itself into categories, and finished work lands in Recent
+
+A feed is read by scanning, not by searching, so items arrive already sorted
+into the categories a person works in. The categories are ephor's, never a
+provider's — a provider reports items and ephor places them
+([§FS-001-forge-interface.3](#3-policy-lives-above-the-interface-never-in-an-implementation))
+— so every forge lands in the same categories and a new implementation
+inherits them without asking.
+
+### 1. The categories
+
+An item belongs to exactly one category, chosen by its kind and by the user's
+role on it:
+
+| Category | Holds |
+| --- | --- |
+| Status | project status lines |
+| My Pull Requests | pull requests the user authored |
+| Reviewing | pull requests the user is on as a reviewer |
+| CI | gate and build results |
+| My Issues | issues the user opened |
+| Participating | issues the user is in but did not open |
+| Messages | conversations that are not attached to a pull request or issue |
+| Recent | finished items — see [§2](#2-recent) |
+
+Exactly one, so that the size of a category is the size of that pile of work
+and not a double count.
+
+### 2. Recent
+
+Work does not stop mattering the moment it is finished. An item whose state is
+terminal — closed, merged, done, resolved, declined, however its forge spells
+it — leaves its category and appears under **Recent** for as long as its last
+activity falls inside the recency window; past that it leaves the feed
+entirely. Being closed is itself activity: an issue closed with no reply shows
+up under Recent precisely because closing it was the answer.
+
+Finished work never awaits a response. Whatever its conversation looks like —
+someone else had the last word, the user was named and never answered — a
+finished item is news and not a task, and nothing that counts work left to do
+counts it.
+
+### 3. The recency window is configured
+
+How long finished work stays interesting is a property of a person, not of
+ephor: the window is `defaults.recent_days` in the feed configuration, in
+days, defaulting to 7. Zero drops an item from the feed the moment it is
+finished, which is the behavior for someone who never looks back.

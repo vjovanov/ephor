@@ -39,6 +39,20 @@ ships, the previous "latest" section moves verbatim to
   a shell script.
 - ephor is now a library as well as a binary, for in-process implementations
   outside this repository.
+- `github-issues` provider: the user's GitHub issues by role — the ones they
+  opened, and the ones they take part in without having opened. With no `repos`
+  it searches the whole forge rather than a configured list, so an issue filed
+  against a stranger's project is followed like any other; `updated_within_days`
+  bounds the search instead of a repository list, and the comment fetch is
+  skipped for issues that have none.
+- Issues are their own feed category, split by role into **My Issues** and
+  **Participating** like pull requests, and reachable as `--kind issue`. The
+  forge interface's `Issue` gained a `role`, defaulting to author, so an
+  existing extension keeps working unchanged.
+- **Recent** category: finished work — closed, merged, done, resolved, declined
+  — leaves its category and stays visible for `defaults.recent_days` (7 by
+  default), then leaves the feed. An issue closed without a reply is visible
+  precisely because closing it was the answer.
 
 ### Removed
 

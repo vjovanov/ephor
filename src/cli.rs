@@ -121,7 +121,7 @@ pub struct FeedArgs {
     #[arg(long)]
     pub unread: bool,
 
-    /// Filter by item kind (pr, ci, message, status).
+    /// Filter by item kind (pr, ci, issue, message, status).
     #[arg(long)]
     pub kind: Option<String>,
 
@@ -149,7 +149,7 @@ pub struct MarkReadArgs {
     #[arg(long)]
     pub id: Option<String>,
 
-    /// Restrict to one item kind.
+    /// Restrict to one item kind (pr, ci, issue, message, status).
     #[arg(long)]
     pub kind: Option<String>,
 }

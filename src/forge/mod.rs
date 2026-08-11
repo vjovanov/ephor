@@ -41,10 +41,13 @@ pub struct Capabilities {
     pub reactions: bool,
 }
 
-/// Which side of a pull request the user is on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Which side of a pull request or issue the user is on. Defaults to author:
+/// an implementation that reports an item without saying is reporting the
+/// user's own work.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
+    #[default]
     Author,
     Reviewer,
 }
@@ -131,6 +134,8 @@ pub struct PullRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Issue {
+    /// Stable within the forge — a tracker key (`ABC-42`) or
+    /// `<owner>/<repo>#<number>`. Becomes the item id.
     pub key: String,
     pub title: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -138,6 +143,11 @@ pub struct Issue {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
     pub updated_at: DateTime<Utc>,
+    /// Whether the user opened this issue or merely takes part in it
+    /// (§FS-001-forge-interface.1). An implementation with no notion of the
+    /// difference omits it and everything it reports counts as the user's own.
+    #[serde(default)]
+    pub role: Role,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub messages: Vec<Message>,
 }

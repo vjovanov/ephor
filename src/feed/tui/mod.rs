@@ -85,6 +85,8 @@ pub(crate) struct Ctx {
     pub project_actions: BTreeMap<String, Vec<ActionConfig>>,
     /// Per-project branch checkout commands.
     pub checkouts: BTreeMap<String, CheckoutConfig>,
+    /// How long finished work stays under Recent (§FS-003-feed-categories.3).
+    pub recent_days: u64,
     pub unread_only: bool,
 }
 
@@ -127,13 +129,16 @@ impl Ctx {
         let Some(feed) = self.feed(project) else {
             return (0, 0, 0);
         };
-        let total = feed.items().count();
-        let unread = feed
-            .items()
+        let now = Utc::now();
+        let visible = || {
+            feed.items()
+                .filter(|item| item.is_visible(now, self.recent_days))
+        };
+        let total = visible().count();
+        let unread = visible()
             .filter(|item| cache::is_unread(&self.seen, item))
             .count();
-        let respond = feed
-            .items()
+        let respond = visible()
             .filter(|item| item.needs_response && cache::is_unread(&self.seen, item))
             .count();
         (total, unread, respond)
@@ -572,6 +577,7 @@ impl App {
                             .map(|checkout| (id.clone(), checkout))
                     })
                     .collect(),
+                recent_days: config.defaults.recent_days,
                 unread_only: true,
             },
             navigator: NavigatorState::new(),
@@ -976,6 +982,7 @@ mod tests {
             actions: Vec::new(),
             project_actions: BTreeMap::new(),
             checkouts: BTreeMap::new(),
+            recent_days: 7,
             unread_only: true,
         }
     }

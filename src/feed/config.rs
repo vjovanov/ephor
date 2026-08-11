@@ -75,6 +75,10 @@ pub struct Defaults {
     pub provider_timeout_seconds: u64,
     #[serde(default)]
     pub github_user: Option<String>,
+    /// How long finished work stays under Recent, in days
+    /// (§FS-003-feed-categories.3). Zero drops it as soon as it finishes.
+    #[serde(default = "default_recent_days")]
+    pub recent_days: u64,
 }
 
 impl Default for Defaults {
@@ -83,6 +87,7 @@ impl Default for Defaults {
             ttl_seconds: default_ttl(),
             provider_timeout_seconds: default_timeout(),
             github_user: None,
+            recent_days: default_recent_days(),
         }
     }
 }
@@ -93,6 +98,10 @@ fn default_ttl() -> u64 {
 
 fn default_timeout() -> u64 {
     30
+}
+
+fn default_recent_days() -> u64 {
+    7
 }
 
 #[derive(Debug, Deserialize)]

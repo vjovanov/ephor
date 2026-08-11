@@ -98,7 +98,7 @@ pub fn pull_request_item(forge: &str, project: &str, pr: &PullRequest) -> Item {
         }
     }
 
-    Item {
+    let mut item = Item {
         id: format!("{forge}:{}", pr.id),
         project: project.to_string(),
         source: forge.to_string(),
@@ -110,11 +110,23 @@ pub fn pull_request_item(forge: &str, project: &str, pr: &PullRequest) -> Item {
         needs_response: needs_response(pr),
         updated_at: pr.updated_at,
         raw: Value::Object(raw),
+    };
+    settle(&mut item);
+    item
+}
+
+/// Finished work is news, not a task (§FS-003-feed-categories.2): whoever had
+/// the last word, a merged or closed item asks nothing of anyone.
+fn settle(item: &mut Item) {
+    if item.is_finished() {
+        item.needs_response = false;
     }
 }
 
 /// One issue as a feed item. An issue awaits the user when its last comment is
-/// someone else's — the same rule a conversation follows.
+/// someone else's — the same rule a conversation follows. Issues are their own
+/// category, split by role like pull requests
+/// (§FS-003-feed-categories.1).
 pub fn issue_item(forge: &str, project: &str, issue: &Issue) -> Item {
     let thread = Thread {
         messages: issue.messages.clone(),
@@ -126,25 +138,24 @@ pub fn issue_item(forge: &str, project: &str, issue: &Issue) -> Item {
     } else {
         json!({ "threads": threads })
     };
-    let status = issue.status.clone().unwrap_or_default();
 
-    Item {
+    // The key leads the title; the status is not repeated into it, because
+    // every renderer already shows `state` beside the title.
+    let mut item = Item {
         id: format!("{forge}:{}", issue.key),
         project: project.to_string(),
         source: forge.to_string(),
-        kind: ItemKind::Message,
-        role: None,
-        title: if status.is_empty() {
-            format!("{} {}", issue.key, issue.title)
-        } else {
-            format!("{} [{}] {}", issue.key, status, issue.title)
-        },
+        kind: ItemKind::Issue,
+        role: Some(issue.role.into()),
+        title: format!("{} {}", issue.key, issue.title),
         url: issue.url.clone(),
         state: issue.status.as_ref().map(|status| status.to_lowercase()),
         needs_response: pending,
         updated_at: issue.updated_at,
         raw,
-    }
+    };
+    settle(&mut item);
+    item
 }
 
 #[cfg(test)]
@@ -286,13 +297,59 @@ mod tests {
             status: Some("In Progress".to_string()),
             url: None,
             updated_at: Utc::now(),
+            role: Role::Author,
             messages: vec![message("them", false)],
         };
         let item = issue_item("tracker", "widget", &issue);
         assert_eq!(item.id, "tracker:ABC-42");
-        assert_eq!(item.title, "ABC-42 [In Progress] Retry window");
+        // The status lives in `state`, which renderers show; it is not also
+        // baked into the title.
+        assert_eq!(item.title, "ABC-42 Retry window");
         assert_eq!(item.state.as_deref(), Some("in progress"));
         assert!(item.needs_response);
-        assert_eq!(item.kind, ItemKind::Message);
+        assert_eq!(item.kind, ItemKind::Issue);
+        assert_eq!(item.role, Some(crate::feed::model::ItemRole::Author));
+    }
+
+    /// §FS-003-feed-categories.2: a closed item asks nothing of anyone, even
+    /// when someone else had the last word in it.
+    #[test]
+    fn finished_work_never_needs_a_response() {
+        let issue = Issue {
+            key: "acme/widget#7".to_string(),
+            title: "Hyperlinks".to_string(),
+            status: Some("closed".to_string()),
+            url: None,
+            updated_at: Utc::now(),
+            role: Role::Author,
+            messages: vec![message("me", true), message("them", false)],
+        };
+        let item = issue_item("github-issues", "widget", &issue);
+        assert!(item.is_finished());
+        assert!(!item.needs_response);
+
+        // The same rule for a pull request whose review asked for changes.
+        let mut merged = pr(Vec::new(), false, "merged:changes_requested", Role::Author);
+        merged.state = Some("merged".to_string());
+        assert!(!pull_request_item("forge", "widget", &merged).needs_response);
+    }
+
+    /// An issue the user did not open is theirs to follow, but under
+    /// Participating rather than My Issues (§FS-003-feed-categories.1).
+    #[test]
+    fn an_issue_carries_the_role_the_implementation_reported() {
+        let issue = Issue {
+            key: "acme/widget#7".to_string(),
+            title: "Hyperlinks".to_string(),
+            status: Some("closed".to_string()),
+            url: None,
+            updated_at: Utc::now(),
+            role: Role::Reviewer,
+            messages: Vec::new(),
+        };
+        let item = issue_item("github-issues", "widget", &issue);
+        assert_eq!(item.role, Some(crate::feed::model::ItemRole::Reviewer));
+        // Closed, so it belongs under Recent rather than Participating.
+        assert!(item.is_finished());
     }
 }

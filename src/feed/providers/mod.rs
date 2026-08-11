@@ -6,6 +6,7 @@ mod discord;
 mod email;
 pub mod forge;
 mod github_ci;
+mod github_issues;
 mod github_prs;
 mod github_threads;
 mod slack;
@@ -24,6 +25,7 @@ pub fn build_provider(config: &Value) -> Result<Box<dyn Provider>, ProviderError
     match name {
         "github-prs" => Ok(Box::new(github_prs::GithubPrs::from_config(config)?)),
         "github-ci" => Ok(Box::new(github_ci::GithubCi::from_config(config)?)),
+        "github-issues" => Ok(Box::new(github_issues::GithubIssues::from_config(config)?)),
         "github-threads" => Ok(Box::new(github_threads::GithubThreads::from_config(
             config,
         )?)),

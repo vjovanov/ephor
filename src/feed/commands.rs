@@ -98,13 +98,21 @@ fn ensure_fresh(config: &StatusConfig, project: &str, args: &StatusArgs) -> Resu
         .ok_or_else(|| EphorError::Command(format!("Refresh produced no cache for '{project}'.")))
 }
 
-fn check_exit(feeds: &[ProjectFeed], seen: &cache::Seen, check: bool) -> ExitCode {
+fn check_exit(
+    feeds: &[ProjectFeed],
+    seen: &cache::Seen,
+    check: bool,
+    recent_days: u64,
+) -> ExitCode {
     if !check {
         return ExitCode::SUCCESS;
     }
+    let now = Utc::now();
+    // Work that aged out of Recent no longer awaits anyone.
     let pending = feeds.iter().any(|feed| {
-        feed.items()
-            .any(|item| item.needs_response && cache::is_unread(seen, item))
+        feed.items().any(|item| {
+            item.needs_response && cache::is_unread(seen, item) && item.is_visible(now, recent_days)
+        })
     });
     if pending {
         ExitCode::from(4)
@@ -132,26 +140,32 @@ pub fn status(args: &StatusArgs) -> Result<ExitCode> {
         }
     };
 
+    let recent_days = config.defaults.recent_days;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&feeds).unwrap());
-        return Ok(check_exit(&feeds, &seen, args.check));
+        return Ok(check_exit(&feeds, &seen, args.check, recent_days));
     }
 
     if args.project.is_some() {
-        render::render_project(&feeds[0], &seen, &style);
+        render::render_project(&feeds[0], &seen, &style, recent_days);
     } else {
         // Summary table across all configured projects.
+        let now = Utc::now();
         println!(
             "{:<30}  {:>6}  {:>6}  {:>7}  {:>7}",
             "Project", "Items", "Unread", "Respond", "Failing"
         );
         for feed in &feeds {
-            let (project, unread, needs, failing) = render::render_summary_row(feed, &seen);
-            let items = feed.items().count();
+            let (project, unread, needs, failing) =
+                render::render_summary_row(feed, &seen, recent_days);
+            let items = feed
+                .items()
+                .filter(|item| item.is_visible(now, recent_days))
+                .count();
             println!("{project:<30}  {items:>6}  {unread:>6}  {needs:>7}  {failing:>7}");
         }
     }
-    Ok(check_exit(&feeds, &seen, args.check))
+    Ok(check_exit(&feeds, &seen, args.check, recent_days))
 }
 
 pub fn feed(args: &FeedArgs) -> Result<ExitCode> {
@@ -160,7 +174,9 @@ pub fn feed(args: &FeedArgs) -> Result<ExitCode> {
     let style = Style::detect();
     let kind_filter = match &args.kind {
         Some(kind) => Some(ItemKind::parse(kind).ok_or_else(|| {
-            registry_error(format!("Unknown kind '{kind}' (pr|ci|message|status)."))
+            registry_error(format!(
+                "Unknown kind '{kind}' (pr|ci|issue|message|status)."
+            ))
         })?),
         None => None,
     };
@@ -180,6 +196,7 @@ pub fn feed(args: &FeedArgs) -> Result<ExitCode> {
     }
 
     let now = Utc::now();
+    let recent_days = config.defaults.recent_days;
     let mut lines: Vec<(chrono::DateTime<Utc>, String, Value)> = Vec::new();
     for feed in &feeds {
         for item in feed.items() {
@@ -189,6 +206,9 @@ pub fn feed(args: &FeedArgs) -> Result<ExitCode> {
                 }
             }
             if args.unread && !cache::is_unread(&seen, item) {
+                continue;
+            }
+            if !item.is_visible(now, recent_days) {
                 continue;
             }
             lines.push((
@@ -227,7 +247,9 @@ pub fn mark_read(args: &MarkReadArgs, all: bool) -> Result<ExitCode> {
     let mut seen = cache::load_seen()?;
     let kind_filter = match &args.kind {
         Some(kind) => Some(ItemKind::parse(kind).ok_or_else(|| {
-            registry_error(format!("Unknown kind '{kind}' (pr|ci|message|status)."))
+            registry_error(format!(
+                "Unknown kind '{kind}' (pr|ci|issue|message|status)."
+            ))
         })?),
         None => None,
     };

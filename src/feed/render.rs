@@ -55,7 +55,7 @@ pub fn age(now: DateTime<Utc>, then: DateTime<Utc>) -> String {
     format!("{}d", hours / 24)
 }
 
-pub fn render_project(feed: &ProjectFeed, seen: &Seen, style: &Style) {
+pub fn render_project(feed: &ProjectFeed, seen: &Seen, style: &Style, recent_days: u64) {
     let now = Utc::now();
     match feed.fetched_at {
         Some(fetched) if age(now, fetched) == "now" => {
@@ -77,23 +77,36 @@ pub fn render_project(feed: &ProjectFeed, seen: &Seen, style: &Style) {
         }
     }
 
-    let mut items: Vec<&Item> = feed.items().collect();
+    let mut items: Vec<&Item> = feed
+        .items()
+        .filter(|item| item.is_visible(now, recent_days))
+        .collect();
     if items.is_empty() {
         println!("  (no items)");
         return;
     }
     items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
 
-    // Group order: status first, then prs, ci, messages.
+    // The categories of §FS-003-feed-categories.1, in the order they are
+    // worked: status, then prs, ci, issues, messages — and Recent last, which
+    // is every finished item whatever its kind. The plain renderer prints no
+    // headers, so a row's category is its position plus its `[state]`.
     for kind in [
         ItemKind::Status,
         ItemKind::Pr,
         ItemKind::Ci,
+        ItemKind::Issue,
         ItemKind::Message,
     ] {
-        for item in items.iter().filter(|item| item.kind == kind) {
+        for item in items
+            .iter()
+            .filter(|item| item.kind == kind && !item.is_finished())
+        {
             println!("{}", render_item_line(item, feed, seen, style, false, now));
         }
+    }
+    for item in items.iter().filter(|item| item.is_finished()) {
+        println!("{}", render_item_line(item, feed, seen, style, false, now));
     }
 }
 
@@ -136,17 +149,23 @@ pub fn render_item_line(
     line
 }
 
-pub fn render_summary_row(feed: &ProjectFeed, seen: &Seen) -> (String, usize, usize, usize) {
-    let unread = feed
-        .items()
+pub fn render_summary_row(
+    feed: &ProjectFeed,
+    seen: &Seen,
+    recent_days: u64,
+) -> (String, usize, usize, usize) {
+    let now = Utc::now();
+    let visible = || {
+        feed.items()
+            .filter(|item| item.is_visible(now, recent_days))
+    };
+    let unread = visible()
         .filter(|item| crate::feed::cache::is_unread(seen, item))
         .count();
-    let needs = feed
-        .items()
+    let needs = visible()
         .filter(|item| item.needs_response && crate::feed::cache::is_unread(seen, item))
         .count();
-    let failing = feed
-        .items()
+    let failing = visible()
         .filter(|item| item.kind == ItemKind::Ci && item.needs_response)
         .count();
     (feed.project.clone(), unread, needs, failing)

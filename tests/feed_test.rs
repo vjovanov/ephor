@@ -28,6 +28,18 @@ case "$args" in
   *"pr checks"*)
     printf '[{"name": "gate", "state": "FAILURE", "link": "https://ci/1"}, {"name": "style", "state": "SUCCESS", "link": "https://ci/2"}]'
     ;;
+  *"search issues"*"--author"*)
+    # One closed issue on a repository nobody configured, with no comments.
+    printf '[{"number": 7951, "title": "OSC 8 hyperlinks disabled", "url": "https://github.com/other/pi/issues/7951", "updatedAt": "2026-08-01T09:00:00Z", "state": "closed", "repository": {"nameWithOwner": "other/pi"}, "commentsCount": 0}]'
+    ;;
+  *"search issues"*"--involves"*)
+    # Returns the authored one too (author is involved) plus one that is
+    # someone else's, with a comment awaiting a reply.
+    printf '[{"number": 7951, "title": "OSC 8 hyperlinks disabled", "url": "https://github.com/other/pi/issues/7951", "updatedAt": "2026-08-01T09:00:00Z", "state": "closed", "repository": {"nameWithOwner": "other/pi"}, "commentsCount": 0}, {"number": 12, "title": "Retry window", "url": "https://github.com/other/lib/issues/12", "updatedAt": "2026-08-01T11:00:00Z", "state": "open", "repository": {"nameWithOwner": "other/lib"}, "commentsCount": 1}]'
+    ;;
+  *graphql*issue*comments*)
+    printf '{"data": {"repository": {"issue": {"comments": {"nodes": [{"id": "IC_1", "author": {"login": "someone"}, "body": "any update?", "createdAt": "2026-08-01T11:00:00Z", "reactions": {"nodes": []}}]}}}}}'
+    ;;
   *)
     printf '[]'
     ;;
@@ -207,6 +219,133 @@ fn github_providers_produce_the_recorded_feed() {
         "github-feed.json",
         &tmp.path().join("state/ephor/feed/demo.json"),
     );
+}
+
+/// Write the shared fixture, then replace its feed config with one whose only
+/// provider is github-issues, searching the whole forge.
+fn write_issues_fixture(tmp: &Path, recent_days: u64) {
+    write_feed_fixture(tmp);
+    fs::write(
+        tmp.join("status.json"),
+        serde_json::to_string_pretty(&json!({
+            "defaults": {
+                "ttl_seconds": 600,
+                "provider_timeout_seconds": 10,
+                "github_user": "tester",
+                "recent_days": recent_days
+            },
+            "projects": {
+                "demo": {
+                    "providers": [
+                        { "provider": "github-issues", "participating": true }
+                    ]
+                }
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+}
+
+/// §FS-001-forge-interface.1: issues arrive by role, from repositories nobody
+/// configured, closed ones included.
+#[test]
+fn issues_arrive_by_role_from_repositories_nobody_configured() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_issues_fixture(tmp.path(), 3650);
+    let path = path_with_fake_gh(tmp.path());
+
+    let mut cmd = ephor_cmd();
+    cmd.env("PATH", &path);
+    for (key, value) in feed_env(tmp.path()) {
+        cmd.env(key, value);
+    }
+    // Two issues, not three: the authored one comes back from the involves
+    // search as well and is counted once, as the user's own.
+    cmd.args(["refresh", "demo"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("demo: 2 items"));
+
+    let cache: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(tmp.path().join("state/ephor/feed/demo.json")).unwrap(),
+    )
+    .unwrap();
+    let items = cache["providers"]["github-issues"]["items"]
+        .as_array()
+        .unwrap();
+    let mine = items
+        .iter()
+        .find(|item| item["id"] == "github-issues:other/pi#7951")
+        .expect("the issue the user opened");
+    assert_eq!(mine["kind"], "issue");
+    assert_eq!(mine["role"], "author");
+    assert_eq!(mine["state"], "closed");
+    // Closed with nobody waiting on the user — it is news, not a task.
+    assert_eq!(mine["needs_response"], false);
+
+    let theirs = items
+        .iter()
+        .find(|item| item["id"] == "github-issues:other/lib#12")
+        .expect("the issue the user only takes part in");
+    assert_eq!(theirs["role"], "reviewer");
+    assert_eq!(theirs["state"], "open");
+    assert_eq!(theirs["needs_response"], true);
+    assert_eq!(
+        theirs["raw"]["threads"][0]["messages"][0]["text"],
+        "any update?"
+    );
+
+    let mut cmd = ephor_cmd();
+    cmd.env("PATH", &path);
+    for (key, value) in feed_env(tmp.path()) {
+        cmd.env(key, value);
+    }
+    cmd.args(["feed"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("other/pi#7951"))
+        .stdout(predicate::str::contains("[closed]"))
+        .stdout(predicate::str::contains("other/lib#12"));
+
+    // Filtering by the new kind reaches both.
+    let mut cmd = ephor_cmd();
+    cmd.env("PATH", &path);
+    for (key, value) in feed_env(tmp.path()) {
+        cmd.env(key, value);
+    }
+    cmd.args(["feed", "--kind", "issue"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("other/pi#7951"))
+        .stdout(predicate::str::contains("other/lib#12"));
+}
+
+/// §FS-003-feed-categories.3: with the recency window shut, finished work
+/// leaves the feed the moment it finishes; unfinished work is untouched.
+#[test]
+fn a_zero_recency_window_drops_finished_work_from_the_feed() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_issues_fixture(tmp.path(), 0);
+    let path = path_with_fake_gh(tmp.path());
+
+    let mut cmd = ephor_cmd();
+    cmd.env("PATH", &path);
+    for (key, value) in feed_env(tmp.path()) {
+        cmd.env(key, value);
+    }
+    cmd.args(["refresh", "demo"]).assert().success();
+
+    let mut cmd = ephor_cmd();
+    cmd.env("PATH", &path);
+    for (key, value) in feed_env(tmp.path()) {
+        cmd.env(key, value);
+    }
+    cmd.args(["feed"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("other/pi#7951").not())
+        .stdout(predicate::str::contains("other/lib#12"));
 }
 
 #[test]
