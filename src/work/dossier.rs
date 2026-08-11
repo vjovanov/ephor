@@ -21,6 +21,9 @@ use crate::feed::model::Item;
 const MESSAGES_PER_THREAD: usize = 8;
 const TOTAL_MESSAGES: usize = 24;
 const MESSAGE_CHARS: usize = 1600;
+/// What every thread keeps before any thread gets a second helping, so no
+/// thread is dropped whole for having been last.
+const RESERVED_PER_THREAD: usize = 2;
 
 /// One item, with where its work belongs — everything both the dossier and a
 /// recipe's brief are rendered from.
@@ -68,6 +71,23 @@ impl Subject<'_> {
         if !threads.is_empty() {
             out.push('\n');
             out.push_str(&render_threads(&threads, self.item.url.as_deref()));
+        } else if expects_conversation(self.item.kind) {
+            // An empty section reads as "there was nothing to say", and work
+            // asked to answer a conversation that is merely unrecorded would
+            // answer the silence (§FS-001-forge-interface.6). ephor does not
+            // fetch an item's own description yet
+            // (§RM-002-dossier-description), so for an issue this is most of
+            // what is missing.
+            out.push_str(
+                "\n## The conversation\n\nThe watch recorded none of it — which is not the \
+                 same as there being none.\n",
+            );
+            if let Some(url) = &self.item.url {
+                out.push_str(&format!(
+                    "Read {url} before anything else: the item's own description is there, and \
+                     it is not here.\n"
+                ));
+            }
         }
         out
     }
@@ -191,33 +211,63 @@ fn threads_of(item: &Item) -> Vec<Thread> {
     let Some(threads) = item.raw.get("threads").and_then(Value::as_array) else {
         return Vec::new();
     };
-    let mut budget = TOTAL_MESSAGES;
-    let mut out = Vec::new();
-    for thread in threads {
-        let Some(messages) = thread.get("messages").and_then(Value::as_array) else {
-            continue;
-        };
-        if messages.is_empty() || budget == 0 {
-            continue;
-        }
-        // The end of a thread is what is being answered, so a thread that does
-        // not fit keeps its last messages rather than its first.
-        let keep = MESSAGES_PER_THREAD.min(budget).min(messages.len());
-        budget -= keep;
-        let kept = messages[messages.len() - keep..]
-            .iter()
-            .map(|message| Message {
-                author: string_at(message, "author"),
-                when: string_at(message, "when"),
-                text: string_at(message, "text"),
-            })
-            .collect();
-        out.push(Thread {
-            messages: kept,
-            total: messages.len(),
-        });
+    let lengths: Vec<usize> = threads
+        .iter()
+        .map(|thread| {
+            thread
+                .get("messages")
+                .and_then(Value::as_array)
+                .map(Vec::len)
+                .unwrap_or(0)
+        })
+        .collect();
+
+    // Two passes, so a total budget cannot be eaten by whatever came first.
+    // A pull request opens with a bot posting the review policy and the
+    // benchmark policy; spending the whole allowance there would drop the
+    // human thread underneath it, which is the only one anyone was answering.
+    let mut keep: Vec<usize> = lengths
+        .iter()
+        .map(|length| (*length).min(RESERVED_PER_THREAD))
+        .collect();
+    let mut budget = TOTAL_MESSAGES.saturating_sub(keep.iter().sum::<usize>());
+    for (index, length) in lengths.iter().enumerate() {
+        let more = (length - keep[index])
+            .min(MESSAGES_PER_THREAD - keep[index])
+            .min(budget);
+        keep[index] += more;
+        budget -= more;
     }
-    out
+
+    threads
+        .iter()
+        .zip(keep)
+        .filter(|(_, keep)| *keep > 0)
+        .filter_map(|(thread, keep)| {
+            let messages = thread.get("messages").and_then(Value::as_array)?;
+            // The end of a thread is what is being answered, so a thread that
+            // does not fit keeps its last messages rather than its first.
+            let kept = messages[messages.len() - keep..]
+                .iter()
+                .map(|message| Message {
+                    author: string_at(message, "author"),
+                    when: string_at(message, "when"),
+                    text: string_at(message, "text"),
+                })
+                .collect();
+            Some(Thread {
+                messages: kept,
+                total: messages.len(),
+            })
+        })
+        .collect()
+}
+
+/// Kinds whose whole point is what people said about them. A status line has
+/// no conversation and saying so about it is noise.
+fn expects_conversation(kind: crate::feed::model::ItemKind) -> bool {
+    use crate::feed::model::ItemKind;
+    matches!(kind, ItemKind::Pr | ItemKind::Issue | ItemKind::Message)
 }
 
 fn string_at(value: &Value, field: &str) -> String {
@@ -405,6 +455,47 @@ mod tests {
         assert!(!text.contains("message 0\n"), "{text}");
         assert!(text.contains("earlier messages not quoted"), "{text}");
         assert!(text.contains("https://forge.example/pr/42"), "{text}");
+    }
+
+    /// The bot posts first and at length; the human posts last. A budget
+    /// spent in order would quote the policy and drop the question.
+    #[test]
+    fn no_thread_is_dropped_whole_for_having_come_last() {
+        let bot: Vec<Value> = (0..40)
+            .map(|index| json!({ "author": "bot", "text": format!("policy {index}") }))
+            .collect();
+        let text = dossier(json!({
+            "threads": [
+                { "messages": bot.clone() },
+                { "messages": bot },
+                { "messages": [{ "author": "Ada", "text": "does this handle windows?" }] },
+            ]
+        }));
+        assert!(text.contains("does this handle windows?"), "{text}");
+        // Still bounded: nothing like eighty messages went in.
+        assert!(text.matches("**bot**").count() <= 16, "{text}");
+        assert!(text.contains("earlier messages not quoted"), "{text}");
+    }
+
+    /// An empty section reads as "nobody said anything", which is the one
+    /// thing it must never mean (§FS-001-forge-interface.6).
+    #[test]
+    fn a_conversation_nobody_recorded_says_so_rather_than_nothing() {
+        let text = dossier(json!({}));
+        assert!(text.contains("recorded none of it"), "{text}");
+        assert!(text.contains("https://forge.example/pr/42"), "{text}");
+
+        // A status line has no conversation to be missing.
+        let mut status = item(json!({}));
+        status.kind = ItemKind::Status;
+        let checkout = checkout();
+        let text = Subject {
+            item: &status,
+            checkout: &checkout,
+            root: Path::new("/w"),
+        }
+        .dossier();
+        assert!(!text.contains("The conversation"), "{text}");
     }
 
     #[test]

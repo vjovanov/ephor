@@ -44,10 +44,18 @@ impl WorkRoot {
     /// not there, install `states_yaml` when the directory has no machine of
     /// its own, and read back whichever machine is in force. An existing
     /// machine is never replaced — a reader who edited it meant it.
+    ///
+    /// A project ephor did not create and that declares no machine is refused
+    /// rather than filled in (§FS-005-dispatch.6). `states.yaml` is how every
+    /// plan in a project resolves its states, so dropping one into someone
+    /// else's project changes what *their* plans run under — to solve a
+    /// problem that is ephor's.
     pub fn ensure(dir: &Path, states_yaml: &str) -> Result<WorkRoot> {
         create_dir(dir)?;
         let manifest = dir.join("index.panta.md");
-        if !manifest.exists() {
+        let states = dir.join("states.yaml");
+        let ours = !manifest.exists();
+        if ours {
             let title = dir
                 .parent()
                 .and_then(Path::file_name)
@@ -65,8 +73,17 @@ impl WorkRoot {
                 "# ephor work — planning state, not repository content\n*\n",
             )?;
         }
-        let states = dir.join("states.yaml");
         if !states.exists() {
+            if !ours {
+                return Err(EphorError::Command(format!(
+                    "{} is a runtime project ephor did not create, and it declares no state \
+                     machine — writing one there would change what its own plans run under. \
+                     Either install ephor's (`ephor work states > {}`) or give ephor a \
+                     directory of its own with `work.root`.",
+                    dir.display(),
+                    states.display()
+                )));
+            }
             write(&states, states_yaml)?;
         }
         Self::read_root(dir, &states)
@@ -494,6 +511,20 @@ mod tests {
             fs::read_to_string(tmp.path().join("states.yaml")).unwrap(),
             mine
         );
+    }
+
+    /// Someone else's runtime project in the same checkout: filling in the
+    /// machine it does not declare would change what its own plans run under
+    /// (§FS-005-dispatch.6).
+    #[test]
+    fn a_project_ephor_did_not_create_is_not_given_a_state_machine() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("index.panta.md"), "# Panta: theirs\n").unwrap();
+        let Err(err) = WorkRoot::ensure(tmp.path(), SHIPPED_STATES) else {
+            panic!("their project, their machine");
+        };
+        assert!(err.to_string().contains("ephor work states"), "{err}");
+        assert!(!tmp.path().join("states.yaml").exists());
     }
 
     #[test]

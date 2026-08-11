@@ -79,6 +79,9 @@ pub enum WorkCommand {
     Run(WorkRunArgs),
     /// Drop ledger entries; the plans they point at stay on disk.
     Forget(WorkForgetArgs),
+    /// Print the state machine ephor's tickets run under, for editing or for
+    /// installing into a runtime project it did not create.
+    States,
 }
 
 #[derive(Args, Debug, Default)]

@@ -267,9 +267,25 @@ ephor work dispatch --dry-run               # what would be opened, and where
 ephor work dispatch [--project P] [--recipe R] [--item ID] [--kind pr]
                     [--updated-within DAYS] [--again]
 ephor work sync [--dry-run]                 # reopen work whose item has moved
-ephor work run [--project P] [-- --parallel 2]   # rhei run, per work root
+ephor work run [--project P] [--item ID] [-- --parallel 2]   # rhei run, per work root
 ephor work forget [--item ID | --done | --missing]
+ephor work states                           # the state machine the tickets run under
 ```
+
+The loop, whole:
+
+```bash
+ephor refresh                                     # what happened
+ephor work dispatch --dry-run --updated-within 14 # what would be handed over
+ephor work dispatch --updated-within 14           # hand it over
+ephor work run                                    # let the runtime work it
+ephor work                                        # what it made of it
+```
+
+and then, whenever the world moves — a new comment, a gate that turned red —
+`ephor refresh && ephor work sync` writes the next round of tickets and
+`ephor work run` works them. A timer can run the first half; running agents is
+left deliberate.
 
 In the TUI, `w` on any item opens its **work screen**: the tickets already
 opened and what they reached, whether the item has moved under them, and the
@@ -335,6 +351,12 @@ and `assets/ephor-work.states.yaml` as `states.yaml`. **An existing
 timeout, or point `work.states` at one of your own. A recipe whose `state` the
 machine in force does not declare is refused by name rather than written.
 
+A rhei project that ephor did *not* create and that declares no state machine
+is also refused: `states.yaml` is how every plan in a project resolves its
+states, so writing one there would change what your own plans run under.
+`ephor work states` prints the machine — install it (`ephor work states >
+panta/states.yaml`) or point `work.root` somewhere of ephor's own.
+
 The shipped machine is two agent passes — `fix` does the work and writes a
 report, `review` reads that against the ticket and writes a verdict whose first
 line is `VERDICT: done | partial | blocked`. ephor reads that line back onto
@@ -372,6 +394,10 @@ ln -sf ~/f/ephor/systemd/ephor-refresh.{service,timer} ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now ephor-refresh.timer
 ```
+
+`ephor-work-sync.{service,timer}` is the same for work: it refreshes and then
+reopens every dispatched item that has moved, half-hourly. It writes tickets
+and runs nothing — spawning agents stays a thing you ask for.
 
 ## Development
 

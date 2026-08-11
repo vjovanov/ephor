@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh ephor feeds and reopen work whose item has moved
+
+[Service]
+Type=oneshot
+# Refresh first: sync compares the item against the snapshot taken when its
+# work was dispatched, so it needs the item as it is now (§FS-005-dispatch.5).
+# Tickets are written; nothing is run — `ephor work run` spawns agents and
+# stays deliberate.
+ExecStart=%h/.cargo/bin/ephor refresh --quiet
+ExecStart=%h/.cargo/bin/ephor work sync

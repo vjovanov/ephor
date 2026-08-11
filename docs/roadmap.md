@@ -49,3 +49,30 @@ nor any host name, in source, tests, or packaged files — checked by
 [§FS-001-forge-interface.1](../requirements.md#1-capabilities). A run configured
 with only example configuration produces a working feed against a public
 GitHub repository.
+
+## RM-002-dossier-description: an item's own words belong in its dossier
+
+Serves [§FS-005-dispatch.2](../requirements.md#2-the-ticket-carries-what-ephor-knows-not-a-link-to-it).
+
+### 1. What
+
+No provider records the text an item opens with — a pull request's description,
+an issue's report. The interface's `PullRequest` and `Issue`
+([§FS-001-forge-interface.1](../requirements.md#1-capabilities)) carry a title
+and a conversation but no body, so ephor has never had it to give.
+
+### 2. Why now
+
+It is the thickest part of what a dossier is for. Work dispatched on an issue
+currently opens on a heading and a metadata table: the ticket says "the issue
+and its comments are above" and above is a url. Every other kind of item at
+least carries its conversation; an issue with no comments carries nothing at
+all, and the first thing the work does is fetch by hand what a refresh could
+have kept.
+
+### 3. Measurable
+
+`Issue` and `PullRequest` gain a body, every in-tree provider fills it, and a
+dispatched ticket on an issue with no comments still opens with what the issue
+says. The dossier's budget covers it as it covers a conversation: bounded,
+and saying so where it cut.

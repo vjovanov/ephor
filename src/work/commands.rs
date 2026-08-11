@@ -32,6 +32,32 @@ pub fn work(args: &WorkArgs) -> Result<ExitCode> {
         WorkCommand::Sync(sync) => sync_work(&config, sync),
         WorkCommand::Run(run) => run_work(&config, run),
         WorkCommand::Forget(forget) => forget_work(&config, forget),
+        WorkCommand::States => {
+            // The one configured for these projects when there is one, so what
+            // is printed is what tickets would actually run under.
+            let configured = config
+                .work
+                .states
+                .as_ref()
+                .or_else(|| {
+                    config
+                        .projects
+                        .values()
+                        .find_map(|project| project.work.states.as_ref())
+                })
+                .map(|path| crate::paths::resolve_path(path));
+            match configured {
+                Some(path) => print!(
+                    "{}",
+                    std::fs::read_to_string(&path).map_err(|err| EphorError::Command(format!(
+                        "Cannot read the configured state machine {}: {err}",
+                        path.display()
+                    )))?
+                ),
+                None => print!("{}", crate::work::plan::SHIPPED_STATES),
+            }
+            Ok(ExitCode::SUCCESS)
+        }
     }
 }
 
