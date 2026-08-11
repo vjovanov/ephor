@@ -403,7 +403,10 @@ than reading it, only when that change is actually on the machine. Where the
 runtime's setup in that checkout cannot run what ephor would write — a state
 machine already there that does not declare the state a recipe starts in —
 dispatch refuses and names both, rather than writing a ticket that will sit
-there unrunnable.
+there unrunnable. It refuses the mirror image too: where the reader's own plans
+are already in that directory under no declared machine, ephor does not install
+one, because a state machine governs every plan in a project and theirs were
+there first.
 
 Matching is on what a gate is doing, not on how red it looks. Jobs that failed
 are work for a checkout; a forge that refuses to merge an otherwise green

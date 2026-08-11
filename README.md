@@ -351,11 +351,12 @@ and `assets/ephor-work.states.yaml` as `states.yaml`. **An existing
 timeout, or point `work.states` at one of your own. A recipe whose `state` the
 machine in force does not declare is refused by name rather than written.
 
-A rhei project that ephor did *not* create and that declares no state machine
-is also refused: `states.yaml` is how every plan in a project resolves its
-states, so writing one there would change what your own plans run under.
-`ephor work states` prints the machine — install it (`ephor work states >
-panta/states.yaml`) or point `work.root` somewhere of ephor's own.
+A rhei project that already holds plans of its own and declares no state
+machine is refused: `states.yaml` is how every plan in a project resolves its
+states, so writing one there would change what those plans run under. An empty
+project — what `rhei init` leaves behind — has nothing to disturb, and ephor
+moves in beside it. `ephor work states` prints the machine, for installing
+deliberately (`ephor work states > panta/states.yaml`) or for editing.
 
 The shipped machine is two agent passes — `fix` does the work and writes a
 report, `review` reads that against the ticket and writes a verdict whose first

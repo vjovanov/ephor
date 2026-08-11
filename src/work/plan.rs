@@ -45,11 +45,12 @@ impl WorkRoot {
     /// its own, and read back whichever machine is in force. An existing
     /// machine is never replaced — a reader who edited it meant it.
     ///
-    /// A project ephor did not create and that declares no machine is refused
-    /// rather than filled in (§FS-005-dispatch.6). `states.yaml` is how every
-    /// plan in a project resolves its states, so dropping one into someone
-    /// else's project changes what *their* plans run under — to solve a
-    /// problem that is ephor's.
+    /// A project that already holds plans of its own and declares no machine
+    /// is refused rather than filled in (§FS-005-dispatch.6): `states.yaml` is
+    /// how every plan in a project resolves its states, so dropping one in
+    /// changes what those plans run under. A project with no plans in it —
+    /// which is exactly what the runtime's own `init` leaves behind — has
+    /// nothing to disturb, and ephor moves in beside it.
     pub fn ensure(dir: &Path, states_yaml: &str) -> Result<WorkRoot> {
         create_dir(dir)?;
         let manifest = dir.join("index.panta.md");
@@ -74,12 +75,12 @@ impl WorkRoot {
             )?;
         }
         if !states.exists() {
-            if !ours {
+            if !ours && holds_plans(dir) {
                 return Err(EphorError::Command(format!(
-                    "{} is a runtime project ephor did not create, and it declares no state \
-                     machine — writing one there would change what its own plans run under. \
-                     Either install ephor's (`ephor work states > {}`) or give ephor a \
-                     directory of its own with `work.root`.",
+                    "{} already holds plans of its own and declares no state machine — \
+                     writing one there would change what they run under. Either install \
+                     ephor's (`ephor work states > {}`) or give ephor a directory of its own \
+                     with `work.root`.",
                     dir.display(),
                     states.display()
                 )));
@@ -136,6 +137,22 @@ impl WorkRoot {
     pub fn state_names(&self) -> Vec<String> {
         self.states.iter().map(|info| info.name.clone()).collect()
     }
+}
+
+/// Whether a runtime project has any plans in it: a `*.rhei.md` file, or a
+/// directory workspace, among its direct non-hidden children — which is where
+/// the runtime looks for them.
+fn holds_plans(dir: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') || name == "runtime" {
+            return false;
+        }
+        name.ends_with(".rhei.md") || entry.path().join("index.rhei.md").is_file()
+    })
 }
 
 /// The `name:` of a states document — the shallowest one, so a state called
@@ -515,16 +532,37 @@ mod tests {
 
     /// Someone else's runtime project in the same checkout: filling in the
     /// machine it does not declare would change what its own plans run under
-    /// (§FS-005-dispatch.6).
+    /// (§FS-005-dispatch.6). An empty one — what the runtime's `init` leaves —
+    /// has no plans to disturb, and is the common case in a checkout where a
+    /// reader ran it once and never wrote a plan.
     #[test]
-    fn a_project_ephor_did_not_create_is_not_given_a_state_machine() {
+    fn only_a_project_with_plans_of_its_own_refuses_a_machine() {
         let tmp = tempfile::tempdir().unwrap();
         fs::write(tmp.path().join("index.panta.md"), "# Panta: theirs\n").unwrap();
+        let root = WorkRoot::ensure(tmp.path(), SHIPPED_STATES)
+            .unwrap_or_else(|err| panic!("an empty project has nothing to lose: {err}"));
+        assert_eq!(root.machine, "ephor-work");
+
+        // The same project once it holds a plan.
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("index.panta.md"), "# Panta: theirs\n").unwrap();
+        fs::write(tmp.path().join("auth.rhei.md"), "# Rhei: Auth\n").unwrap();
         let Err(err) = WorkRoot::ensure(tmp.path(), SHIPPED_STATES) else {
-            panic!("their project, their machine");
+            panic!("their plans, their machine");
         };
         assert!(err.to_string().contains("ephor work states"), "{err}");
         assert!(!tmp.path().join("states.yaml").exists());
+
+        // A workspace-shaped rhei counts as a plan too.
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("index.panta.md"), "# Panta: theirs\n").unwrap();
+        fs::create_dir(tmp.path().join("billing")).unwrap();
+        fs::write(
+            tmp.path().join("billing/index.rhei.md"),
+            "# Rhei: Billing\n",
+        )
+        .unwrap();
+        assert!(WorkRoot::ensure(tmp.path(), SHIPPED_STATES).is_err());
     }
 
     #[test]
