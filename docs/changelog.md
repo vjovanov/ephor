@@ -49,9 +49,14 @@ ships, the previous "latest" section moves verbatim to
   question is no longer a red gate, and reopening it as one would hand the work
   a ticket about a problem that is not there.
 - `ephor work` — `list` (the ledger, with each ticket's state read back out of
-  its plan), `dispatch`, `sync`, `run`, and `forget`. Every one of them answers
-  `--dry-run`, and `dispatch` is the sweep: every item in every project that
-  matches a recipe and has no work yet, bounded by `--updated-within`.
+  its plan), `dispatch`, `sync`, `run`, `forget`, and `states`. Every one that
+  writes answers `--dry-run`, and `dispatch` is the sweep: every item in every
+  project that matches a recipe and has no work yet, bounded by
+  `--updated-within`. `run` names the plans ephor opened rather than the
+  directory holding them, so a runtime project kept in the same checkout for
+  other work is not swept in.
+- `systemd/ephor-work-sync.{service,timer}`: refresh, then reopen everything
+  whose item has moved. It writes tickets and runs nothing.
 - **The work screen** (`w`): what has been asked about an item and what it
   reached — each ticket's state and the verdict its review left — whether the
   item has moved under it, and the recipes that apply now with the exact words
