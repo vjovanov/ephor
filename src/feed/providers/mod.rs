@@ -56,6 +56,49 @@ pub fn quick_actions(provider_blocks: &[Value], item: &Item) -> Vec<ActionConfig
         .collect()
 }
 
+/// What a red gate is asking, answered in one screen (§FS-004-quick-actions.4):
+/// the check list as GitHub reports it, then the log of every failed job, one
+/// copy per underlying run. `gh pr checks` signals check state through its
+/// exit code, so a non-zero status here is the failure being reported and not
+/// a broken command; the run id is read back out of each failing check's link,
+/// which is the only place `gh` hands it over.
+const SHOW_FAILING_CHECKS: &str = r##"{
+  gh pr checks "$EPHOR_NUMBER" --repo "$EPHOR_REPO" || true
+  gh pr checks "$EPHOR_NUMBER" --repo "$EPHOR_REPO" --json state,link --jq '
+        .[] | select(.state as $state
+          | ["FAILURE", "FAILED", "ERROR", "TIMED_OUT", "CANCELLED", "CANCELED"]
+          | index($state)) | .link' \
+    | sed -n 's#.*/runs/\([0-9][0-9]*\)/.*#\1#p' \
+    | sort -u \
+    | while read -r run; do
+        printf '\n===== failed jobs of run %s =====\n\n' "$run"
+        gh run view "$run" --repo "$EPHOR_REPO" --log-failed
+      done
+} 2>&1 | ${PAGER:-less -R}
+"##;
+
+/// The failing-CI quick action, pointed at the host the checks live on: the
+/// enterprise host is configuration, so it is exported rather than named in
+/// the script. Shared by both GitHub sources — the same red gate reached
+/// through the pull request or through its checks asks the same question, and
+/// two copies of this script would drift.
+pub(crate) fn show_failing_checks(host: Option<&str>) -> ActionConfig {
+    let command = match host {
+        Some(host) => format!(
+            "export GH_HOST={}\n{SHOW_FAILING_CHECKS}",
+            shell_quote(host)
+        ),
+        None => SHOW_FAILING_CHECKS.to_string(),
+    };
+    ActionConfig {
+        icon: "✗".to_string(),
+        description: "see the CI failures".to_string(),
+        command,
+        kinds: Vec::new(),
+        requires_checkout: false,
+    }
+}
+
 /// `serde(default)` for provider flags that are on unless switched off.
 pub(crate) fn enabled() -> bool {
     true

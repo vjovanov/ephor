@@ -108,9 +108,9 @@ impl NavigatorState {
 
     pub fn footer(&self) -> &'static str {
         match self.mode {
-            Mode::Stream => " j/k move  enter thread  o browser  x actions  m done  a all done  u unread  tab projects  r refresh  q quit",
+            Mode::Stream => " j/k move  enter thread  c gate  o browser  x actions  m done  a all done  u unread  tab projects  r refresh  q quit",
             Mode::Projects => " j/k move  enter view project  tab stream  r refresh  q quit",
-            Mode::Detail => " j/k move  enter thread  o browser  x actions  m done  [/] project  esc back  u unread  r refresh  q quit",
+            Mode::Detail => " j/k move  enter thread  c gate  o browser  x actions  m done  [/] project  esc back  u unread  r refresh  q quit",
         }
     }
 
@@ -322,6 +322,12 @@ impl NavigatorState {
             },
             KeyCode::Char('x') => match self.selected_item() {
                 Some(item) => Action::OpenActionMenu(item),
+                None => Action::None,
+            },
+            // The counts on the row are a summary of a verdict; `c` is where
+            // the verdict itself is (§FS-001-forge-interface.1).
+            KeyCode::Char('c') => match self.selected_item() {
+                Some(item) => Action::OpenGate(item),
                 None => Action::None,
             },
             KeyCode::Char('m') | KeyCode::Char('d') | KeyCode::Char(' ') => {
@@ -677,6 +683,18 @@ fn item_line(
 fn gate_spans(gate: &Gate) -> Vec<Span<'static>> {
     let mut spans = vec![Span::raw("  ")];
     spans.extend(count_spans(gate.passed(), gate.failed(), gate.running()));
+    // The forge's refusal, where it has one. It goes next to the counts
+    // because it contradicts them: an all-green gate that will not merge is
+    // exactly the row a reader would otherwise skip (§FS-001-forge-interface.1).
+    if gate.blocked {
+        if spans.len() > 1 {
+            spans.push(Span::raw(" "));
+        }
+        spans.push(Span::styled(
+            crate::feed::gate::BLOCKED,
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ));
+    }
     if gate.repos.len() < 2 {
         return spans;
     }

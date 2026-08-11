@@ -166,6 +166,84 @@ pub fn render_item_line(
     line
 }
 
+/// The forge's refusal and the reasons it gave, verbatim
+/// (§FS-001-forge-interface.1). Prints nothing for a gate that does not block.
+pub fn render_gate_blockers(gate: &crate::feed::gate::Gate, style: &Style) {
+    if !gate.blocked && gate.blockers.is_empty() {
+        return;
+    }
+    println!("{}", style.red(crate::feed::gate::BLOCKED));
+    for blocker in &gate.blockers {
+        println!("  • {blocker}");
+    }
+    println!();
+}
+
+/// What failed, one entry per distinct failure (§FS-004-quick-actions.4).
+///
+/// The count line comes first because it is the correction: a reader who saw
+/// `✗6` on the row is about to find out that six jobs hit two problems, and
+/// leading with the traces would let them read the same error six times before
+/// noticing.
+pub fn render_failures(
+    failures: Vec<crate::feed::gate::Failure>,
+    gate: Option<&crate::feed::gate::Gate>,
+    style: &Style,
+) {
+    let jobs = failures.len();
+    let grouped = crate::feed::gate::group(failures);
+    if grouped.is_empty() {
+        // A gate can be red without a failed job — blocked on an approval, on
+        // a downstream repository, on jobs never started. Saying so is the
+        // answer; printing nothing reads as a lookup that quietly failed.
+        let reason = match gate {
+            Some(gate) if gate.failed() > 0 => "the forge reported no detail for them".to_string(),
+            _ => "nothing failed — the gate is blocked for the reasons above".to_string(),
+        };
+        println!("{}", style.dim(&format!("No failures to show: {reason}.")));
+        return;
+    }
+
+    let headline = if grouped.len() == jobs {
+        format!("{jobs} failed jobs")
+    } else {
+        format!("{jobs} failed jobs · {} distinct failures", grouped.len())
+    };
+    println!("{}\n", style.bold(&headline));
+
+    for (failure, count) in grouped {
+        let mut heading = String::new();
+        if count > 1 {
+            heading.push_str(&format!("{count} jobs"));
+        }
+        if !failure.job.is_empty() {
+            if !heading.is_empty() {
+                heading.push_str(" · ");
+            }
+            heading.push_str(&failure.job);
+        }
+        if heading.is_empty() {
+            heading.push_str("failed job");
+        }
+        println!("{} {}", style.red("──"), style.bold(&heading));
+        if let Some(url) = &failure.url {
+            // One link for a group of jobs that failed identically. Saying so
+            // is the difference between a link and a link the reader thinks
+            // covers all six.
+            let note = if count > 1 {
+                "  (log of one of them)"
+            } else {
+                ""
+            };
+            println!("   {}{}", style.dim(url), style.dim(note));
+        }
+        for line in failure.trace.lines() {
+            println!("   {line}");
+        }
+        println!();
+    }
+}
+
 pub fn render_summary_row(
     feed: &ProjectFeed,
     seen: &Seen,

@@ -278,6 +278,8 @@ mod tests {
                 failed: 0,
                 running: 1,
             }],
+            blocked: true,
+            blockers: vec!["Requires approvals".to_string()],
         });
 
         let item = pull_request_item("demo-forge", "widget", &request);
@@ -286,6 +288,10 @@ mod tests {
         assert_eq!(item.raw["repo"], "app");
         assert_eq!(item.raw["threads"][0]["messages"][0]["author"], "them");
         assert_eq!(item.raw["gate"]["repos"][0]["passed"], 3);
+        // The verdict rides along with the counts: it is the half of the gate
+        // the counts cannot express (§FS-001-forge-interface.1).
+        assert_eq!(item.raw["gate"]["blocked"], true);
+        assert_eq!(item.raw["gate"]["blockers"][0], "Requires approvals");
         assert_eq!(item.kind, ItemKind::Pr);
     }
 

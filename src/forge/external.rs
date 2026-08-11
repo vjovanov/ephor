@@ -9,19 +9,23 @@
 //!     ephor-forge-<name> capabilities   <<< '{"config":…,"project":…}'
 //!     ephor-forge-<name> pull-requests  <<< '{"config":…,"tickets":[…],…}'
 //!     ephor-forge-<name> issues         <<< '{"config":…,"tickets":[…],…}'
+//!     ephor-forge-<name> failures       <<< '{"config":…,"repo":…,"number":…}'
 //!     ephor-forge-<name> react          <<< '{"config":…,"target":…,"emoji":…}'
 //! ```
 //!
 //! The [`Request`] goes in on stdin, the answer comes back as JSON on stdout,
 //! and stderr is the implementation's own diagnostics. Calls are coarse on
 //! purpose: `pull-requests` returns conversation and gate inline, so a refresh
-//! costs two spawns rather than one per pull request.
+//! costs two spawns rather than one per pull request. `failures` is the one
+//! call a refresh never makes — it is asked when a reader opens a red gate, so
+//! it may take as long as the forge needs.
 
 use std::process::Command;
 
 use serde_json::{json, Value};
 
 use super::{Capabilities, Forge, Issue, PullRequest, Request};
+use crate::feed::gate::Failure;
 use crate::feed::provider::{command_exists, run_json_stdin, ProviderError};
 
 pub struct ExternalForge {
@@ -117,6 +121,20 @@ impl Forge for ExternalForge {
     fn issues(&self, request: &Request) -> Result<Vec<Issue>, ProviderError> {
         let value = self.call("issues", request, json!({}))?;
         self.decode("issues", value)
+    }
+
+    fn failures(
+        &self,
+        request: &Request,
+        repo: &str,
+        number: &str,
+    ) -> Result<Vec<Failure>, ProviderError> {
+        let value = self.call(
+            "failures",
+            request,
+            json!({ "repo": repo, "number": number }),
+        )?;
+        self.decode("failures", value)
     }
 
     fn react(&self, request: &Request, target: &Value, emoji: &str) -> Result<(), ProviderError> {

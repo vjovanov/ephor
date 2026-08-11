@@ -64,11 +64,26 @@ impl RepoGate {
     }
 }
 
-/// One pull request's gate.
+/// One pull request's gate: what its jobs did, and — where the forge reaches a
+/// verdict of its own — whether it will let the change merge.
+///
+/// The verdict is not derivable from the counts. A gate whose every job is
+/// green may still be blocked on an approval, on a downstream repository, or
+/// on jobs it has not started, and a row that shows only what passed reads as
+/// finished work (§FS-001-forge-interface.1). A forge with no verdict reports
+/// none, and the counts speak for themselves.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Gate {
     #[serde(default)]
     pub repos: Vec<RepoGate>,
+    /// The forge says this gate blocks the merge.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub blocked: bool,
+    /// Why, in the forge's own words, one reason per entry. Shown verbatim:
+    /// the reasons are the forge's vocabulary, and rewording them costs the
+    /// reader the ability to match what ephor says against the forge itself.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blockers: Vec<String>,
 }
 
 impl Gate {
@@ -88,10 +103,19 @@ impl Gate {
         self.repos.iter().map(RepoGate::total).sum()
     }
 
-    /// A gate with no jobs at all is not worth showing (no CI configured, the
-    /// gate has not been started, or the lookup failed).
+    /// A gate that says nothing is not worth showing: no jobs, and no verdict
+    /// either (no CI configured, the gate has not been started, or the lookup
+    /// failed). A gate with no jobs that nonetheless blocks the merge is
+    /// saying the most important thing it has to say.
     pub fn is_empty(&self) -> bool {
-        self.total() == 0
+        self.total() == 0 && !self.blocked && self.blockers.is_empty()
+    }
+
+    /// The gate is red: something ran and did not pass, or the forge refuses
+    /// the merge. This is the condition the failures action is offered on
+    /// (§FS-004-quick-actions.4).
+    pub fn is_red(&self) -> bool {
+        self.failed() > 0 || self.blocked
     }
 
     /// The gate a provider recorded on an item, if any jobs ran.
@@ -107,9 +131,16 @@ impl Gate {
         serde_json::to_value(self).unwrap_or(Value::Null)
     }
 
-    /// Totals across every repo, e.g. `✓72 ✗1 ⋯3`.
+    /// Totals across every repo, e.g. `✓72 ✗1 ⋯3`, with the forge's verdict
+    /// appended when it refuses the merge — `✓118 ⊘ blocked` is a gate whose
+    /// jobs all passed and which still will not go in.
     pub fn summary(&self) -> String {
-        counts_text(self.passed(), self.failed(), self.running())
+        let counts = counts_text(self.passed(), self.failed(), self.running());
+        match (self.blocked, counts.is_empty()) {
+            (false, _) => counts,
+            (true, true) => BLOCKED.to_string(),
+            (true, false) => format!("{counts} {BLOCKED}"),
+        }
     }
 
     /// Per-repo counts, e.g. `widget ✓42 ✗1 · plugins ✓30 ⋯3`. Empty
@@ -131,6 +162,72 @@ impl Gate {
             .collect::<Vec<_>>()
             .join(" · ")
     }
+}
+
+/// The forge's refusal, in the same shorthand as the counts beside it.
+pub const BLOCKED: &str = "⊘ blocked";
+
+/// One thing that went wrong under a red gate (§FS-001-forge-interface.1).
+///
+/// `job` names it as the forge does and `url` reaches its log; `trace` is the
+/// error itself, where the forge can extract one. A forge that can only link
+/// is a complete implementation — the reader still gets a list of what failed
+/// and one keystroke to each log, which is the errand they would otherwise run
+/// by hand.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Failure {
+    /// The job as the forge names it. Empty where the forge reports a failure
+    /// without attributing it to a named job.
+    #[serde(default)]
+    pub job: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// The error text, as close to the compiler or test runner as the forge
+    /// can get it.
+    #[serde(default)]
+    pub trace: String,
+}
+
+impl Failure {
+    /// The line a reader scans for: the first non-empty line of the trace, or
+    /// the job name when there is no trace to show.
+    pub fn headline(&self) -> String {
+        self.trace
+            .lines()
+            .map(str::trim_end)
+            .find(|line| !line.trim().is_empty())
+            .map(String::from)
+            .unwrap_or_else(|| self.job.clone())
+    }
+}
+
+/// Failures that are the same error seen from different jobs, collapsed to one
+/// entry each and counted (§FS-004-quick-actions.4). A gate fans one compile
+/// error across every job that built the file; six copies of it is a worse
+/// answer than one copy that says six.
+///
+/// Sameness is the trace, verbatim — two jobs that printed the same error are
+/// reporting one problem, whatever they are called. Failures with no trace
+/// group by job name instead, which is all that distinguishes them.
+pub fn group(failures: Vec<Failure>) -> Vec<(Failure, usize)> {
+    fn key(failure: &Failure) -> &str {
+        if failure.trace.trim().is_empty() {
+            &failure.job
+        } else {
+            &failure.trace
+        }
+    }
+    let mut grouped: Vec<(Failure, usize)> = Vec::new();
+    for failure in failures {
+        match grouped
+            .iter()
+            .position(|(seen, _)| key(seen) == key(&failure))
+        {
+            Some(index) => grouped[index].1 += 1,
+            None => grouped.push((failure, 1)),
+        }
+    }
+    grouped
 }
 
 /// `✓N ✗N ⋯N`, dropping the counts that are zero.
@@ -157,7 +254,10 @@ pub fn from_check_states(repo: &str, checks: &[Value]) -> Gate {
     if entry.total() == 0 {
         return Gate::default();
     }
-    Gate { repos: vec![entry] }
+    Gate {
+        repos: vec![entry],
+        ..Gate::default()
+    }
 }
 
 #[cfg(test)]
@@ -205,6 +305,76 @@ mod tests {
         let gate = from_check_states("acme/widget", &checks);
         assert_eq!(gate.summary(), "✓1 ✗1 ⋯1");
         assert!(from_check_states("acme/widget", &[]).is_empty());
+    }
+
+    #[test]
+    fn a_verdict_is_part_of_the_gate_even_with_nothing_red_in_the_counts() {
+        let gate = Gate {
+            repos: vec![RepoGate {
+                repo: "app".to_string(),
+                passed: 118,
+                failed: 0,
+                running: 0,
+            }],
+            blocked: true,
+            blockers: vec!["The gate app has 122 jobs not yet run.".to_string()],
+        };
+        // All green and still red: this is the row a reader would skip.
+        assert_eq!(gate.failed(), 0);
+        assert!(gate.is_red());
+        assert_eq!(gate.summary(), "✓118 ⊘ blocked");
+
+        // A gate that never started but refuses the merge says the one thing
+        // it knows, rather than disappearing.
+        let approvals = Gate {
+            blocked: true,
+            blockers: vec!["Requires approvals".to_string()],
+            ..Gate::default()
+        };
+        assert!(!approvals.is_empty());
+        assert_eq!(approvals.summary(), "⊘ blocked");
+
+        // And a gate with counts and no verdict reads exactly as before.
+        let plain = from_check_states("acme/widget", &[json!({ "state": "SUCCESS" })]);
+        assert_eq!(plain.summary(), "✓1");
+        assert!(!plain.is_red());
+    }
+
+    #[test]
+    fn identical_failures_collapse_and_are_counted() {
+        let failure = |job: &str, trace: &str| Failure {
+            job: job.to_string(),
+            url: Some(format!("https://ci.example/{job}")),
+            trace: trace.to_string(),
+        };
+        let grouped = group(vec![
+            failure("build 1", "error: already defined"),
+            failure("build 2", "error: cannot find symbol"),
+            failure("build 3", "error: already defined"),
+            failure("build 4", "error: already defined"),
+        ]);
+        // Four jobs, two problems — and the first job of each group keeps its
+        // link, so the reader still has a log to open.
+        assert_eq!(grouped.len(), 2);
+        assert_eq!(grouped[0].1, 3);
+        assert_eq!(grouped[0].0.job, "build 1");
+        assert_eq!(grouped[1].1, 1);
+
+        // Nothing to compare but the job name: those group by name instead of
+        // collapsing into one nameless entry.
+        let linked = group(vec![failure("build 5", ""), failure("build 6", "")]);
+        assert_eq!(linked.len(), 2);
+        assert_eq!(linked[0].0.headline(), "build 5");
+    }
+
+    #[test]
+    fn a_headline_is_the_first_line_a_reader_would_read() {
+        let failure = Failure {
+            job: "build 7".to_string(),
+            url: None,
+            trace: "\n  \nerror: cannot find symbol\n  location: class Foo\n".to_string(),
+        };
+        assert_eq!(failure.headline(), "error: cannot find symbol");
     }
 
     #[test]

@@ -5,7 +5,7 @@ use std::process::ExitCode;
 use chrono::Utc;
 use serde_json::Value;
 
-use crate::cli::{FeedArgs, MarkReadArgs, RefreshArgs, StatusArgs};
+use crate::cli::{FailuresArgs, FeedArgs, MarkReadArgs, RefreshArgs, StatusArgs};
 use crate::error::{registry_error, EphorError, Result};
 use crate::feed::cache::{self, ProjectFeed};
 use crate::feed::config::{load_config, StatusConfig};
@@ -265,6 +265,73 @@ pub fn refresh(args: &RefreshArgs) -> Result<ExitCode> {
     if tally.total_failures > 0 || tally.degraded > 0 {
         return Ok(ExitCode::from(4));
     }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `ephor failures` — what went wrong under one pull request's red gate
+/// (§FS-004-quick-actions.4).
+///
+/// The pull request is looked up in the cached feed rather than rebuilt from
+/// the arguments: the cached item is the one carrying the gate the reader is
+/// asking about, and answering for a pull request that is not in their feed
+/// would be answering a different question than the one the row asked.
+pub fn failures(args: &FailuresArgs) -> Result<ExitCode> {
+    let config = load_config()?;
+    let project_config = known_project(&config, &args.project)?;
+    let block = project_config
+        .providers
+        .iter()
+        .find(|block| block.get("provider").and_then(Value::as_str) == Some(args.source.as_str()))
+        .ok_or_else(|| {
+            registry_error(format!(
+                "Project '{}' has no source named '{}'.",
+                args.project, args.source
+            ))
+        })?;
+
+    let feed = cache::load_feed(&args.project)?.ok_or_else(|| {
+        registry_error(format!(
+            "No cached feed for '{}' — run `ephor refresh {}` first.",
+            args.project, args.project
+        ))
+    })?;
+    let item = feed
+        .items()
+        .find(|item| {
+            item.source == args.source
+                && item.repo().as_deref() == Some(args.repo.as_str())
+                && item.number().as_deref() == Some(args.number.as_str())
+        })
+        .ok_or_else(|| {
+            registry_error(format!(
+                "{}#{} is not in {}'s cached feed from '{}'.",
+                args.repo, args.number, args.project, args.source
+            ))
+        })?;
+
+    let provider = crate::feed::providers::build_provider(block)
+        .map_err(|err| EphorError::Command(err.to_string()))?;
+    let registry_doc = load_registry_doc()?;
+    let mut ctx =
+        crate::feed::refresh::build_context(&registry_doc, &args.project, &config.defaults)?;
+    // The source's own ceiling, not the refresh default: this is the slow
+    // question, and the block that set a longer timeout for its fetches meant
+    // it for this one too.
+    if let Some(timeout) = crate::feed::refresh::provider_timeout(block) {
+        ctx.timeout = timeout;
+    }
+
+    let style = Style::detect();
+    let gate = crate::feed::gate::Gate::of(item);
+    println!("{}\n", style.bold(&item.title));
+    if let Some(gate) = &gate {
+        render::render_gate_blockers(gate, &style);
+    }
+
+    let found = provider
+        .failures(&ctx, item)
+        .map_err(|err| EphorError::Command(err.to_string()))?;
+    render::render_failures(found, gate.as_ref(), &style);
     Ok(ExitCode::SUCCESS)
 }
 

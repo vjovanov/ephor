@@ -32,7 +32,7 @@ ships, the previous "latest" section moves verbatim to
 
 - Forge interface: one set of types reachable two ways — implement `Forge` in
   Rust, or write an executable named `ephor-forge-<name>` answering
-  `capabilities` / `pull-requests` / `issues` / `react` with JSON. The types
+  `capabilities` / `pull-requests` / `issues` / `failures` / `react` with JSON. The types
   derive serde, so the wire format is their JSON and the transports cannot
   drift. Policy — pending threads, answered citations, `needs_response` — lives
   above the interface, which is what keeps an implementation small enough to be
@@ -51,11 +51,22 @@ ships, the previous "latest" section moves verbatim to
   existing extension keeps working unchanged.
 - **Quick actions**: the source that produced an item offers what it knows to
   do about it, so the action menu is worth pressing before anyone has
-  configured it. A pull request whose gate is red gets `✗ see the CI failures`
-  from `github-ci` — the check list, then the log of every failed job, one copy
-  per underlying run and paged — and it leads the menu, ahead of the configured
-  actions
+  configured it. A pull request whose gate is red gets `✗ see the CI failures`,
+  and it leads the menu, ahead of the configured actions
   ([§FS-004-quick-actions](../requirements.md#fs-004-quick-actions-a-problem-ephor-recognizes-arrives-with-the-action-for-it)).
+  The condition is the red gate rather than the kind of item, so the action is
+  on the row that shows the red count whichever source reported it: `github-prs`
+  and `github-ci` page the failing job's log through `gh`, and a forge that
+  answers the new `failures` capability is asked directly.
+- **`failures`, a forge capability**: what actually failed under a red gate —
+  each failure as a job, a link to its log, and the error text where the forge
+  can extract one. Asked on demand rather than during a refresh, since it is
+  the expensive question and nobody asks it of a green gate. `ephor failures`
+  is the command behind the menu entry; it collapses jobs that failed
+  identically into one entry that says how many, because a gate fans one
+  compile error across every job that built the file.
+- **The gate screen** (`c`): the per-repository counts spelled out, and the
+  forge's own reasons for refusing the merge, verbatim.
 - **Recent** category: finished work — closed, merged, done, resolved, declined
   — leaves its category and stays visible for `defaults.recent_days` (7 by
   default), then leaves the feed. An issue closed without a reply is visible
@@ -85,6 +96,12 @@ ships, the previous "latest" section moves verbatim to
 
 ### Changed
 
+- **A gate now carries the forge's verdict, not only its counts.** A pull
+  request whose every job passed can still be refused — on an approval, on a
+  downstream repository, on jobs the gate never started — and a row showing
+  `✓118` read as finished work. The row now says `⊘ blocked` beside the counts
+  and the reasons are one keystroke away
+  ([§FS-001-forge-interface.1](../requirements.md#1-capabilities)).
 - **A refresh that lost any provider now exits non-zero** (`4`; `3` still means
   every provider failed) and reports each failure as `error:` naming the
   project and provider. A partial refresh used to exit 0, so a source could

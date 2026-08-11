@@ -50,6 +50,8 @@ pub enum Command {
     Refresh(RefreshArgs),
     /// Mark feed items as read.
     MarkRead(MarkReadArgs),
+    /// Show what failed under a pull request's red gate.
+    Failures(FailuresArgs),
     /// Interactive inbox: navigate the feed, open items, mark them done.
     #[command(alias = "inbox")]
     Tui,
@@ -138,6 +140,28 @@ pub struct RefreshArgs {
     /// Print nothing on success.
     #[arg(long)]
     pub quiet: bool,
+}
+
+/// What the failing-CI quick action passes back to ephor. The item is named
+/// by the four things its `EPHOR_*` environment already carries, so the action
+/// is an ordinary shell command like every other one.
+#[derive(Args, Debug)]
+pub struct FailuresArgs {
+    /// Project the pull request belongs to.
+    #[arg(long)]
+    pub project: String,
+
+    /// Source that reported it (the provider name).
+    #[arg(long)]
+    pub source: String,
+
+    /// Repository the pull request lives in.
+    #[arg(long)]
+    pub repo: String,
+
+    /// Pull request number.
+    #[arg(long)]
+    pub number: String,
 }
 
 #[derive(Args, Debug)]

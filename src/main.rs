@@ -30,6 +30,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Command::Feed(args) => return feed::commands::feed(args),
         Command::Refresh(args) => return feed::commands::refresh(args),
         Command::MarkRead(args) => return feed::commands::mark_read(args, cli.all),
+        Command::Failures(args) => return feed::commands::failures(args),
         Command::Tui => return feed::tui::run(),
         _ => {}
     }
@@ -108,6 +109,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         | Command::Feed(_)
         | Command::Refresh(_)
         | Command::MarkRead(_)
+        | Command::Failures(_)
         | Command::Tui => {
             unreachable!("handled above")
         }

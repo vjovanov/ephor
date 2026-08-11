@@ -9,12 +9,15 @@ use std::collections::HashSet;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::feed::config::ActionConfig;
 use crate::feed::gate::{self, Gate};
 use crate::feed::model::{Item, ItemKind, ItemRole};
 use crate::feed::provider::{
     command_exists, run_json, Provider, ProviderContext, ProviderError, ProviderResult,
 };
-use crate::feed::providers::{gh_command, github_login, parse_config, parse_github_time};
+use crate::feed::providers::{
+    gh_command, github_login, parse_config, parse_github_time, show_failing_checks,
+};
 use crate::feed::react;
 
 #[derive(Debug, Deserialize)]
@@ -262,6 +265,20 @@ impl Provider for GithubPrs {
         command_exists("gh")
     }
 
+    /// A pull request whose gate is red is offered its log here, on the row
+    /// that shows the red count (§FS-004-quick-actions.4). The condition is
+    /// the gate rather than the item's kind: on GitHub the same failure is
+    /// reachable through the `github-ci` item as well, and the reader should
+    /// not have to know which of the two rows carries the action.
+    fn quick_actions(&self, item: &Item) -> Vec<ActionConfig> {
+        let red = Gate::of(item).is_some_and(|gate| gate.is_red());
+        let identified = item.repo().is_some() && item.number().is_some();
+        if !red || !identified || !command_exists("gh") {
+            return Vec::new();
+        }
+        vec![show_failing_checks(self.config.host.as_deref())]
+    }
+
     fn fetch(&self, ctx: &ProviderContext) -> ProviderResult {
         let mut items: Vec<Item> = Vec::new();
         for repo in &self.config.repos {
@@ -348,5 +365,81 @@ impl Provider for GithubPrs {
             }
         }
         Ok(items)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::feed::gate::RepoGate;
+    use crate::feed::provider::command_exists;
+
+    fn provider() -> GithubPrs {
+        GithubPrs {
+            config: Config {
+                provider: "github-prs".to_string(),
+                repos: vec!["acme/widget".to_string()],
+                reviews: true,
+                gates: true,
+                host: None,
+            },
+        }
+    }
+
+    fn pr(gate: Option<Gate>) -> Item {
+        let raw = match gate {
+            Some(gate) => json!({ "gate": gate.to_value() }),
+            None => json!({}),
+        };
+        Item {
+            id: "github-prs:acme/widget#42".to_string(),
+            project: "widget".to_string(),
+            source: "github-prs".to_string(),
+            kind: ItemKind::Pr,
+            role: Some(ItemRole::Author),
+            title: "Widen the retry window".to_string(),
+            url: None,
+            state: Some("open".to_string()),
+            needs_response: false,
+            updated_at: parse_github_time(&Value::Null),
+            raw,
+        }
+    }
+
+    fn gate(passed: u64, failed: u64) -> Gate {
+        Gate {
+            repos: vec![RepoGate {
+                repo: "acme/widget".to_string(),
+                passed,
+                failed,
+                running: 0,
+            }],
+            ..Gate::default()
+        }
+    }
+
+    /// The action belongs to the row showing the red count, not to a separate
+    /// CI item the reader has to go and find (§FS-004-quick-actions.4).
+    #[test]
+    fn a_pull_request_with_a_red_gate_is_offered_its_log() {
+        let provider = provider();
+        // Only where `gh` is installed to answer at all — the same condition
+        // the github-ci item's action is under (§FS-004-quick-actions.2).
+        let expected = usize::from(command_exists("gh"));
+        assert_eq!(
+            provider.quick_actions(&pr(Some(gate(1, 2)))).len(),
+            expected
+        );
+        if expected == 1 {
+            assert_eq!(
+                provider.quick_actions(&pr(Some(gate(1, 2))))[0].description,
+                "see the CI failures"
+            );
+        }
+
+        // A green gate, and a pull request whose gate was never recorded, have
+        // nothing to show.
+        assert!(provider.quick_actions(&pr(Some(gate(3, 0)))).is_empty());
+        assert!(provider.quick_actions(&pr(None)).is_empty());
     }
 }

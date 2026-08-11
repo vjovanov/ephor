@@ -99,7 +99,7 @@ pub fn build_context(
 /// call. A forge reached over a VPN, or one that walks a pull request's
 /// comment threads, needs longer — and raising the default for its sake would
 /// make every genuinely hung provider take that long to give up.
-fn provider_timeout(config: &Value) -> Option<Duration> {
+pub fn provider_timeout(config: &Value) -> Option<Duration> {
     config
         .get("timeout_seconds")
         .and_then(Value::as_u64)

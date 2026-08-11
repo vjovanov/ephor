@@ -19,7 +19,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::feed::gate::Gate;
+use crate::feed::gate::{Failure, Gate};
 use crate::feed::model::ItemRole;
 use crate::feed::provider::{ProviderContext, ProviderError};
 
@@ -35,6 +35,11 @@ pub struct Capabilities {
     pub conversation: bool,
     /// Embeds `gate` in the pull requests it returns.
     pub gate: bool,
+    /// Answers [`Forge::failures`] — what went wrong under a red gate. Kept
+    /// apart from `gate` because it is the expensive question: a gate is read
+    /// for every pull request on every refresh, a failure list only when
+    /// somebody asks (§FS-001-forge-interface.1).
+    pub failures: bool,
     /// Answers [`Forge::issues`].
     pub issues: bool,
     /// Answers [`Forge::react`]; without it, messages are display-only.
@@ -212,6 +217,22 @@ pub trait Forge: Send + Sync {
 
     fn issues(&self, _request: &Request) -> Result<Vec<Issue>, ProviderError> {
         Ok(Vec::new())
+    }
+
+    /// What failed under one pull request's red gate. Asked only when a reader
+    /// asks, so it may be as slow as the forge needs it to be, and it may
+    /// return nothing — a gate blocked on an approval has no failed job to
+    /// show and that is an answer, not an error.
+    fn failures(
+        &self,
+        _request: &Request,
+        _repo: &str,
+        _number: &str,
+    ) -> Result<Vec<Failure>, ProviderError> {
+        Err(ProviderError(format!(
+            "{} does not report what failed",
+            self.name()
+        )))
     }
 
     /// Post a reaction, given a message's `react` value verbatim.

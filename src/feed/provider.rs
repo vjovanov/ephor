@@ -64,6 +64,24 @@ pub trait Provider: Send + Sync {
     fn quick_actions(&self, _item: &Item) -> Vec<crate::feed::config::ActionConfig> {
         Vec::new()
     }
+
+    /// What failed under this item's red gate (§FS-001-forge-interface.1).
+    /// Asked on demand, never during a refresh, and only of the source that
+    /// produced the item. A provider that hands the reader a log instead — by
+    /// offering a quick action that pages one — answers nothing here and is
+    /// complete, which is why this defaults to an error rather than to empty:
+    /// an empty list means "the gate is red and nothing failed", which is a
+    /// real answer for a gate blocked on an approval.
+    fn failures(
+        &self,
+        _ctx: &ProviderContext,
+        _item: &Item,
+    ) -> Result<Vec<crate::feed::gate::Failure>, ProviderError> {
+        Err(ProviderError(format!(
+            "{} does not report what failed",
+            self.name()
+        )))
+    }
 }
 
 /// Run a command with a timeout, capturing stdout. Non-zero exits are

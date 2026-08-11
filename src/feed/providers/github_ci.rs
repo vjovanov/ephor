@@ -11,7 +11,7 @@ use crate::feed::model::{Item, ItemKind};
 use crate::feed::provider::{
     command_exists, run_json, Provider, ProviderContext, ProviderError, ProviderResult,
 };
-use crate::feed::providers::{gh_command, parse_config, parse_github_time, shell_quote};
+use crate::feed::providers::{gh_command, parse_config, parse_github_time, show_failing_checks};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -27,47 +27,6 @@ struct Config {
 /// quick action exists for — and its counterpart, still in flight.
 const FAILING: &str = "failing";
 const PENDING: &str = "pending";
-
-/// What a red gate is asking, answered in one screen (§FS-004-quick-actions.4):
-/// the check list as GitHub reports it, then the log of every failed job, one
-/// copy per underlying run. `gh pr checks` signals check state through its
-/// exit code, so a non-zero status here is the failure being reported and not
-/// a broken command; the run id is read back out of each failing check's link,
-/// which is the only place `gh` hands it over.
-const SHOW_FAILING_CHECKS: &str = r##"{
-  gh pr checks "$EPHOR_NUMBER" --repo "$EPHOR_REPO" || true
-  gh pr checks "$EPHOR_NUMBER" --repo "$EPHOR_REPO" --json state,link --jq '
-        .[] | select(.state as $state
-          | ["FAILURE", "FAILED", "ERROR", "TIMED_OUT", "CANCELLED", "CANCELED"]
-          | index($state)) | .link' \
-    | sed -n 's#.*/runs/\([0-9][0-9]*\)/.*#\1#p' \
-    | sort -u \
-    | while read -r run; do
-        printf '\n===== failed jobs of run %s =====\n\n' "$run"
-        gh run view "$run" --repo "$EPHOR_REPO" --log-failed
-      done
-} 2>&1 | ${PAGER:-less -R}
-"##;
-
-/// The failing-CI quick action, pointed at the host the checks live on: the
-/// enterprise host is configuration, so it is exported rather than named in
-/// the script.
-fn show_failing_checks(host: Option<&str>) -> ActionConfig {
-    let command = match host {
-        Some(host) => format!(
-            "export GH_HOST={}\n{SHOW_FAILING_CHECKS}",
-            shell_quote(host)
-        ),
-        None => SHOW_FAILING_CHECKS.to_string(),
-    };
-    ActionConfig {
-        icon: "✗".to_string(),
-        description: "see the CI failures".to_string(),
-        command,
-        kinds: Vec::new(),
-        requires_checkout: false,
-    }
-}
 
 pub struct GithubCi {
     config: Config,

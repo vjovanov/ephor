@@ -26,7 +26,16 @@ ephor degrades to what is answered rather than failing.
   display-only.
 - **Gate status** — the job counts (passed, failed, running) for a pull
   request, per repository the gate covers, since one change may gate across
-  several repositories at once.
+  several repositories at once; and, where the forge reaches a verdict of its
+  own, whether the gate blocks the merge and the reasons it gives for that.
+  Counts alone cannot say it: a gate whose jobs are all green may still be
+  blocked on an approval, on a downstream repository, or on jobs it has not
+  started, and a row showing only what passed reads as finished work.
+- **Failures** — for a pull request whose gate is red, what actually failed:
+  each failure as the job that produced it, a link to its log, and the error
+  text itself where the forge can extract it. Asked on demand rather than
+  during a refresh — it is the expensive question, and nobody asks it of a
+  green gate.
 - **Issues by role** — the ones the user opened, and the ones they are engaged
   in without having opened them. Each is a ticket by key, with title, url,
   state as the forge spells it, last-updated time, and its comments in the same
@@ -243,8 +252,21 @@ the same thing and silently dropping either one is the failure that matters.
 
 ### 4. Failing CI answers what failed and why
 
-The quick action on a pull request whose checks are failing shows the check
-list as the forge reports it — which failed, which passed, which are still
-running — followed by the log of every failed job, one copy per underlying
-run and paged. That is the whole question a red gate asks, and reaching it by
-hand is several commands and a browser tab.
+The quick action on a pull request whose gate is red shows what failed: the
+check list as the forge reports it — which failed, which passed, which are
+still running — and then the failures themselves, each with its log, paged.
+That is the whole question a red gate asks, and reaching it by hand is several
+commands and a browser tab.
+
+The condition is the red gate, not the source that reported it. Every item
+carrying a failing gate is offered the action, whichever source produced it,
+and a source that cannot say what failed offers nothing. Hanging the action off
+one kind of item instead leaves the reader looking at a number with nothing
+behind it on every forge that reports its gate on the pull request itself —
+which is most of them, since a gate is a property of the change, not a separate
+piece of work.
+
+Where ephor renders the failures itself rather than handing over a log,
+identical ones are reported once, with the number of jobs that hit them. A gate
+fans one error across every job that compiled the same file, and six copies of
+one compile error is a worse answer than one copy that says six.

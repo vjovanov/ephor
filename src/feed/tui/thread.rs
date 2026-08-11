@@ -114,7 +114,7 @@ impl ThreadScreen {
         }
         match code {
             KeyCode::Char('q') | KeyCode::Esc | KeyCode::Char('h') | KeyCode::Backspace => {
-                Action::CloseThread
+                Action::Back
             }
             KeyCode::Char('j') | KeyCode::Down => {
                 if self.selected + 1 < self.messages.len() {

@@ -13,6 +13,7 @@
 //! resurfaces when it changes again.
 
 mod actions;
+mod gate;
 mod navigator;
 mod thread;
 
@@ -39,6 +40,7 @@ use crate::paths;
 use crate::registry;
 
 use actions::{ActionMenu, MenuOutcome};
+use gate::GateScreen;
 use navigator::NavigatorState;
 use thread::ThreadScreen;
 
@@ -376,7 +378,11 @@ pub(crate) enum Action {
         item: Item,
         or_url: bool,
     },
-    CloseThread,
+    /// Show the item's gate screen: the counts spelled out and the
+    /// forge's own reasons for refusing the merge.
+    OpenGate(Item),
+    /// Leave the current screen for the navigator.
+    Back,
     OpenUrl(Option<String>),
     /// Mark items read: `(id, updated_at, title)`. `pop` returns to the
     /// navigator afterwards (used by the thread screen).
@@ -402,6 +408,7 @@ pub(crate) enum Action {
 enum Screen {
     Navigator,
     Thread(ThreadScreen),
+    Gate(GateScreen),
 }
 
 struct App {
@@ -668,6 +675,7 @@ impl App {
             let action = match &mut self.screen {
                 Screen::Navigator => self.navigator.handle_key(&self.ctx, key.code),
                 Screen::Thread(thread) => thread.handle_key(key.code),
+                Screen::Gate(gate) => gate.handle_key(key.code),
             };
             if self.apply(action, terminal, config)? {
                 return Ok(ExitCode::SUCCESS);
@@ -692,7 +700,11 @@ impl App {
                 None if or_url => self.open_url(item.url),
                 None => self.message = "No messages recorded for this item".to_string(),
             },
-            Action::CloseThread => self.screen = Screen::Navigator,
+            Action::OpenGate(item) => match GateScreen::open(item) {
+                Some(screen) => self.screen = Screen::Gate(screen),
+                None => self.message = "No gate recorded for this item".to_string(),
+            },
+            Action::Back => self.screen = Screen::Navigator,
             Action::ToggleUnread => {
                 self.ctx.unread_only = !self.ctx.unread_only;
                 self.navigator.rebuild(&self.ctx);
@@ -968,6 +980,7 @@ impl App {
         let title = match &self.screen {
             Screen::Navigator => self.navigator.title(&self.ctx),
             Screen::Thread(thread) => thread.title(),
+            Screen::Gate(gate) => gate.title(),
         };
         frame.render_widget(
             Paragraph::new(format!("{title}   {}", self.message))
@@ -978,6 +991,7 @@ impl App {
         match &mut self.screen {
             Screen::Navigator => self.navigator.draw(&self.ctx, frame, body_area),
             Screen::Thread(thread) => thread.draw(frame, body_area),
+            Screen::Gate(gate) => gate.draw(frame, body_area),
         }
         if let Some(menu) = &self.menu {
             menu.draw(frame, body_area);
@@ -989,6 +1003,7 @@ impl App {
             match &self.screen {
                 Screen::Navigator => self.navigator.footer(),
                 Screen::Thread(thread) => thread.footer(),
+                Screen::Gate(gate) => gate.footer(),
             }
         };
         frame.render_widget(
