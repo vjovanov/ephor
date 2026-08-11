@@ -18,11 +18,38 @@
       "command": "just test"
     }
   ],
+  "work": {
+    "root": "{workspace}/panta",
+    "recipes": [
+      {
+        "id": "fix-gate",
+        "icon": "🛠",
+        "description": "fix the red gate",
+        "state": "fix",
+        "needs_checkout": true,
+        "when": { "kinds": ["pr"], "roles": ["author"], "gate": "failing" },
+        "brief": "The gate on {title} is red. The failing jobs are named above; find what actually broke and fix the cause. Run `just check` in {workspace} before you call it done."
+      }
+    ]
+  },
   "projects": {
     "widget": {
       "checkout": {
         "description": "create the branch workspace",
         "command": "git worktree add \"$EPHOR_WORKSPACE\" \"$EPHOR_BRANCH\""
+      },
+      "work": {
+        "recipes": [
+          {
+            "id": "bench",
+            "icon": "📈",
+            "description": "run the benchmarks against main",
+            "state": "fix",
+            "needs_checkout": true,
+            "when": { "kinds": ["pr"], "roles": ["author"] },
+            "brief": "Run the benchmark suite on {branch} and against {root}'s main branch, and write the comparison into the report. Change nothing."
+          }
+        ]
       },
       "actions": [
         {

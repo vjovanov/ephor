@@ -100,6 +100,8 @@ pub struct TicketStatus {
 pub struct WorkStatus {
     pub project: String,
     pub root: PathBuf,
+    /// The plan's id inside the root, for naming it to the runtime.
+    pub rhei: String,
     pub plan: PathBuf,
     /// The plan the ledger points at is gone — reported, never repaired.
     pub missing: bool,
@@ -118,8 +120,9 @@ impl WorkStatus {
     }
 
     /// One line for a row that has room for one: what the work is doing, or
-    /// what it decided, and whether the item has moved under it.
-    pub fn badge(&self) -> String {
+    /// what it decided, and whether the item has moved under it. `verdict` is
+    /// how much of the verdict's own sentence fits where this is going.
+    pub fn badge(&self, verdict_width: usize) -> String {
         if self.missing {
             return "⚠ plan missing".to_string();
         }
@@ -133,7 +136,9 @@ impl WorkStatus {
                 Some(last) => match &last.verdict {
                     // The verdict's own sentence, cut where a row ends: the
                     // rest of it is in the artifact, one keystroke away.
-                    Some(verdict) => format!("✓ {} · {}", last.recipe, clamp(verdict, 64)),
+                    Some(verdict) => {
+                        format!("✓ {} · {}", last.recipe, clamp(verdict, verdict_width))
+                    }
                     None => format!("✓ {}", last.recipe),
                 },
                 None => "· no tickets".to_string(),
@@ -185,6 +190,18 @@ impl Dispatcher {
     /// The recipes that apply to one item.
     pub fn offers(&self, item: &Item) -> Vec<Recipe> {
         recipe::applicable(&self.recipes(&item.project), item)
+    }
+
+    /// What a recipe would actually ask for about this item — the brief with
+    /// the item's own words in it, which is what a reader has to see before
+    /// pressing the key, not the template it came from. Falls back to the
+    /// template where the item cannot be placed; the refusal that follows
+    /// says why better than a blank line would.
+    pub fn brief(&mut self, item: &Item, recipe: &Recipe) -> String {
+        match self.site(item, recipe) {
+            Ok(site) => dossier::render(&recipe.brief, &site.values),
+            Err(_) => recipe.brief.clone(),
+        }
     }
 
     fn placement(&mut self, project: &str) -> Option<&Placement> {
@@ -473,6 +490,7 @@ impl Dispatcher {
         WorkStatus {
             project: entry.project.clone(),
             root: entry.root.clone(),
+            rhei: entry.rhei.clone(),
             plan: entry.plan.clone(),
             missing: plan.is_none(),
             tickets,

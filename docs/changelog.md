@@ -30,6 +30,33 @@ ships, the previous "latest" section moves verbatim to
 
 ### Added
 
+- **Work**: what ephor watches, it can hand to an agent runtime
+  ([§FS-005-dispatch](../requirements.md#fs-005-dispatch-what-ephor-watches-it-can-hand-to-an-agent-runtime)).
+  An item plus a **recipe** becomes a ticket in a
+  [rhei](https://github.com/vjovanov/rhei) plan, written into the checkout the
+  item's branch resolves to. The ticket carries the **dossier** rather than a
+  link — state, branch, the gate's counts per repository and the forge's own
+  reasons, and the conversation quoted as messages — because all of it was
+  fetched during a refresh already, and a ticket that says "look at pull
+  request 42" has handed the whole job back. Four recipes ship and apply with
+  no configuration: `fix-gate`, `answer`, `review`, `implement`. Dispatch
+  writes files and nothing else: no comment, no push, no pull request.
+- **A moved item reopens its own work.** ephor fingerprints an item when it
+  dispatches — last activity, state, gate, how much conversation — and
+  `ephor work sync` appends a ticket to the same plan saying what changed,
+  ordered after the last one. What is asked for is chosen against the item as
+  it is now: a pull request whose gate went green and whose reviewer asked a
+  question is no longer a red gate, and reopening it as one would hand the work
+  a ticket about a problem that is not there.
+- `ephor work` — `list` (the ledger, with each ticket's state read back out of
+  its plan), `dispatch`, `sync`, `run`, and `forget`. Every one of them answers
+  `--dry-run`, and `dispatch` is the sweep: every item in every project that
+  matches a recipe and has no work yet, bounded by `--updated-within`.
+- **The work screen** (`w`): what has been asked about an item and what it
+  reached — each ticket's state and the verdict its review left — whether the
+  item has moved under it, and the recipes that apply now with the exact words
+  each would send. `1`-`9` opens one, `s` reopens, `R` hands the root to the
+  runtime, `e` reads the plan. Item rows carry the same as a badge.
 - Forge interface: one set of types reachable two ways — implement `Forge` in
   Rust, or write an executable named `ephor-forge-<name>` answering
   `capabilities` / `pull-requests` / `issues` / `failures` / `react` with JSON. The types

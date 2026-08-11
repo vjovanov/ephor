@@ -16,6 +16,7 @@ mod actions;
 mod gate;
 mod navigator;
 mod thread;
+mod work;
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
@@ -43,6 +44,7 @@ use actions::{ActionMenu, MenuOutcome};
 use gate::GateScreen;
 use navigator::NavigatorState;
 use thread::ThreadScreen;
+use work::WorkScreen;
 
 #[derive(Clone)]
 pub(crate) struct OrgInfo {
@@ -51,12 +53,16 @@ pub(crate) struct OrgInfo {
     pub root: Option<String>,
 }
 
+pub(crate) use crate::branches::BranchInfo;
+
+/// What an item's work is doing, condensed to what fits on its row
+/// (§FS-005-dispatch.4). Recomputed from the plans whenever anything could
+/// have changed them — never remembered across a change.
 #[derive(Clone)]
-pub(crate) struct BranchInfo {
-    pub branch: String,
-    pub ticket: Option<String>,
-    pub active: bool,
-    pub is_release: bool,
+pub(crate) struct WorkBadge {
+    pub text: String,
+    pub open: bool,
+    pub stale: bool,
 }
 
 /// Shared data both screens read. Mutations go through the shell so screens
@@ -93,6 +99,8 @@ pub(crate) struct Ctx {
     /// How long finished work stays under Recent (§FS-003-feed-categories.3).
     pub recent_days: u64,
     pub unread_only: bool,
+    /// Per item id, what has been handed to the runtime about it.
+    pub work: BTreeMap<String, WorkBadge>,
 }
 
 impl Ctx {
@@ -319,17 +327,7 @@ impl Ctx {
     }
 }
 
-/// Where an item's branch workspace stands, for gating actions.
-#[derive(Clone)]
-pub(crate) enum WorkspaceState {
-    /// The workspace exists (or the project root is the checkout).
-    Ready,
-    /// The project defines branch workspaces and this one is missing;
-    /// carries the directory a checkout must create.
-    Missing(PathBuf),
-    /// The item is not linked to any registry branch.
-    Unmatched,
-}
+pub(crate) use crate::branches::WorkspaceState;
 
 /// Commits `repo`'s HEAD is behind the main branch, preferring the
 /// last-fetched `origin/<main>`; None when not a git repo or no usable ref.
@@ -352,21 +350,7 @@ fn commits_behind(repo: &Path, main_branch: &str) -> Option<u64> {
     None
 }
 
-pub(crate) fn matches_branch(item: &Item, branch: &BranchInfo) -> bool {
-    if let Some(ticket) = &branch.ticket {
-        if item.id.contains(ticket.as_str()) || item.title.contains(ticket.as_str()) {
-            return true;
-        }
-    }
-    if branch.branch.is_empty() {
-        return false;
-    }
-    // Providers that know the item's source branch record it in raw.branch.
-    if item.raw.get("branch").and_then(Value::as_str) == Some(branch.branch.as_str()) {
-        return true;
-    }
-    item.title.contains(branch.branch.as_str())
-}
+pub(crate) use crate::branches::matches as matches_branch;
 
 /// What a screen asks the shell to do in response to a key.
 pub(crate) enum Action {
@@ -400,6 +384,24 @@ pub(crate) enum Action {
     },
     /// Summon the configured action menu for an item.
     OpenActionMenu(Item),
+    /// Show what is being done about an item, and what could be
+    /// (§FS-005-dispatch).
+    OpenWork(Item),
+    /// Hand the item to the runtime under one recipe.
+    DispatchWork {
+        item: Item,
+        recipe: String,
+    },
+    /// Reopen work whose item has moved under it (§FS-005-dispatch.5).
+    SyncWork(Item),
+    /// Leave the interface and let the runtime work one item's plan.
+    RunWork {
+        root: PathBuf,
+        rhei: String,
+        label: String,
+    },
+    /// Open a plan in the reader's editor.
+    ReadPlan(PathBuf),
     ToggleUnread,
     Refresh,
     SetMessage(String),
@@ -409,6 +411,7 @@ enum Screen {
     Navigator,
     Thread(ThreadScreen),
     Gate(GateScreen),
+    Work(WorkScreen),
 }
 
 struct App {
@@ -417,6 +420,9 @@ struct App {
     screen: Screen,
     /// Open action menu, drawn over the active screen.
     menu: Option<ActionMenu>,
+    /// The half of ephor that hands work over (§FS-005-dispatch). None when
+    /// the registry could not be read for it — the inbox still works.
+    dispatcher: Option<crate::work::Dispatcher>,
     message: String,
 }
 
@@ -603,10 +609,12 @@ impl App {
                     .collect(),
                 recent_days: config.defaults.recent_days,
                 unread_only: true,
+                work: BTreeMap::new(),
             },
             navigator: NavigatorState::new(),
             screen: Screen::Navigator,
             menu: None,
+            dispatcher: crate::work::Dispatcher::load(config).ok(),
             message: String::new(),
         };
         app.reload_feeds()?;
@@ -630,8 +638,37 @@ impl App {
             }
         }
         self.ctx.recompute_behind();
+        self.reload_work();
         self.navigator.rebuild(&self.ctx);
         Ok(())
+    }
+
+    /// Re-read every dispatched item's plan. The state of the work belongs to
+    /// the runtime, so it is read rather than remembered
+    /// (§FS-005-dispatch.4) — including after this interface itself has just
+    /// changed it.
+    fn reload_work(&mut self) {
+        let Some(dispatcher) = &self.dispatcher else {
+            return;
+        };
+        let mut work = BTreeMap::new();
+        for feed in &self.ctx.feeds {
+            for item in feed.items() {
+                if let Some(status) = dispatcher.status(item) {
+                    work.insert(
+                        item.id.clone(),
+                        WorkBadge {
+                            // A row has already spent its width on the item;
+                            // what is left is a phrase, not a paragraph.
+                            text: status.badge(40),
+                            open: status.open_tickets() > 0,
+                            stale: status.stale(),
+                        },
+                    );
+                }
+            }
+        }
+        self.ctx.work = work;
     }
 
     fn event_loop(
@@ -676,6 +713,7 @@ impl App {
                 Screen::Navigator => self.navigator.handle_key(&self.ctx, key.code),
                 Screen::Thread(thread) => thread.handle_key(key.code),
                 Screen::Gate(gate) => gate.handle_key(key.code),
+                Screen::Work(work) => work.handle_key(key.code),
             };
             if self.apply(action, terminal, config)? {
                 return Ok(ExitCode::SUCCESS);
@@ -769,6 +807,52 @@ impl App {
                     }
                 }
             }
+            Action::OpenWork(item) => self.open_work(item),
+            Action::DispatchWork { item, recipe } => {
+                self.dispatch_work(&item, &recipe);
+                self.open_work(item);
+            }
+            Action::SyncWork(item) => {
+                self.sync_work(&item);
+                self.open_work(item);
+            }
+            Action::RunWork { root, rhei, label } => {
+                self.handover(
+                    terminal,
+                    "▶",
+                    &format!("rhei run — {label}"),
+                    &root,
+                    || {
+                        std::process::Command::new("rhei")
+                            .arg("run")
+                            .arg(&root)
+                            .arg("--rhei")
+                            .arg(&rhei)
+                            .current_dir(&root)
+                            .status()
+                    },
+                )?;
+                // The runtime just advanced the plans this reads.
+                self.reload_work();
+                self.navigator.rebuild(&self.ctx);
+                if let Screen::Work(screen) = &self.screen {
+                    let item = screen.item.clone();
+                    self.open_work(item);
+                }
+            }
+            Action::ReadPlan(path) => {
+                let editor = std::env::var("EDITOR").unwrap_or_else(|_| "less".to_string());
+                let dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
+                self.handover(terminal, "📖", &editor, &dir, || {
+                    std::process::Command::new("sh")
+                        .arg("-c")
+                        .arg(format!("{editor} \"$1\"", editor = editor))
+                        .arg("sh")
+                        .arg(&path)
+                        .status()
+                })?;
+                self.reload_work();
+            }
             Action::Refresh => {
                 self.message = "Refreshing…".to_string();
                 terminal
@@ -778,6 +862,101 @@ impl App {
             }
         }
         Ok(false)
+    }
+
+    /// The work screen for an item, rebuilt from the plan each time it opens.
+    fn open_work(&mut self, item: Item) {
+        let Some(dispatcher) = &mut self.dispatcher else {
+            self.message =
+                "Work needs the registry, which could not be read at startup".to_string();
+            return;
+        };
+        let status = dispatcher.status(&item);
+        let offers = dispatcher
+            .offers(&item)
+            .into_iter()
+            .map(|recipe| work::Offer {
+                brief: dispatcher.brief(&item, &recipe),
+                recipe,
+            })
+            .collect();
+        self.screen = Screen::Work(WorkScreen::new(item, status, offers));
+    }
+
+    fn dispatch_work(&mut self, item: &Item, recipe_id: &str) {
+        let Some(dispatcher) = &mut self.dispatcher else {
+            return;
+        };
+        let Some(recipe) = dispatcher
+            .offers(item)
+            .into_iter()
+            .find(|recipe| recipe.id == recipe_id)
+        else {
+            self.message = format!("'{recipe_id}' does not apply to this item any more");
+            return;
+        };
+        // The screen below already shows the plan and its tickets, so the
+        // header says what was asked for rather than repeating a long path.
+        self.message = match dispatcher.dispatch(item, &recipe, false) {
+            Ok(crate::work::Outcome::Opened { ticket, .. })
+            | Ok(crate::work::Outcome::Reopened { ticket, .. }) => match dispatcher.save() {
+                Ok(()) => format!("{} {} — {ticket}", recipe.icon, recipe.description),
+                Err(err) => err.to_string(),
+            },
+            Ok(outcome) => outcome.describe(),
+            Err(err) => err.to_string(),
+        };
+        self.reload_work();
+        self.navigator.rebuild(&self.ctx);
+    }
+
+    fn sync_work(&mut self, item: &Item) {
+        let Some(dispatcher) = &mut self.dispatcher else {
+            return;
+        };
+        self.message = match dispatcher.sync(item, false) {
+            Ok(crate::work::Outcome::Reopened {
+                ticket, changes, ..
+            }) => match dispatcher.save() {
+                Ok(()) => format!("reopened as {ticket} — {}", changes.join("; ")),
+                Err(err) => err.to_string(),
+            },
+            Ok(outcome) => outcome.describe(),
+            Err(err) => err.to_string(),
+        };
+        self.reload_work();
+        self.navigator.rebuild(&self.ctx);
+    }
+
+    /// Leave the interface, run something the reader watches, and come back.
+    /// The runtime writes for minutes and asks questions; putting it behind a
+    /// spinner would hide the only thing worth seeing.
+    fn handover<F>(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        icon: &str,
+        description: &str,
+        cwd: &Path,
+        run: F,
+    ) -> Result<()>
+    where
+        F: FnOnce() -> std::io::Result<std::process::ExitStatus>,
+    {
+        ratatui::restore();
+        println!("\n{icon} {description}   ({})\n", cwd.display());
+        self.message = match run() {
+            Ok(status) if status.success() => format!("{description}: ok"),
+            Ok(status) => format!("{description}: {status}"),
+            Err(err) => format!("{description}: failed to run: {err}"),
+        };
+        println!("\n{}", self.message);
+        print!("Press Enter to return to ephor… ");
+        let _ = std::io::stdout().flush();
+        let _ = std::io::stdin().lock().read_line(&mut String::new());
+        *terminal = ratatui::init();
+        terminal
+            .clear()
+            .map_err(|err| EphorError::Command(format!("terminal clear failed: {err}")))
     }
 
     /// Run a menu entry attached to the real terminal: leave the TUI, run
@@ -981,6 +1160,7 @@ impl App {
             Screen::Navigator => self.navigator.title(&self.ctx),
             Screen::Thread(thread) => thread.title(),
             Screen::Gate(gate) => gate.title(),
+            Screen::Work(work) => work.title(),
         };
         frame.render_widget(
             Paragraph::new(format!("{title}   {}", self.message))
@@ -992,6 +1172,7 @@ impl App {
             Screen::Navigator => self.navigator.draw(&self.ctx, frame, body_area),
             Screen::Thread(thread) => thread.draw(frame, body_area),
             Screen::Gate(gate) => gate.draw(frame, body_area),
+            Screen::Work(work) => work.draw(frame, body_area),
         }
         if let Some(menu) = &self.menu {
             menu.draw(frame, body_area);
@@ -1004,6 +1185,7 @@ impl App {
                 Screen::Navigator => self.navigator.footer(),
                 Screen::Thread(thread) => thread.footer(),
                 Screen::Gate(gate) => gate.footer(),
+                Screen::Work(work) => work.footer(),
             }
         };
         frame.render_widget(
@@ -1046,6 +1228,7 @@ mod tests {
             checkouts: BTreeMap::new(),
             recent_days: 7,
             unread_only: true,
+            work: BTreeMap::new(),
         }
     }
 

@@ -250,6 +250,98 @@ returns after Enter. The item's context is exported to the script:
 | `EPHOR_REPO`, `EPHOR_NUMBER` | best-effort `owner/name` and PR number from the item |
 | `EPHOR_RAW` | the item's full raw JSON, for `jq` |
 
+## Work: handing an item to an agent runtime
+
+A watch that only watches hands you a list, and nearly every row on it has the
+same next move — read the failures and fix them, answer the question, read the
+change. ephor can hand that over
+([§FS-005-dispatch](requirements.md#fs-005-dispatch-what-ephor-watches-it-can-hand-to-an-agent-runtime)):
+an item plus a **recipe** becomes a ticket in a
+[rhei](https://github.com/vjovanov/rhei) plan, written into the checkout the
+item's branch resolves to. ephor writes files and nothing else — no comment, no
+push, no pull request — and then keeps the ledger.
+
+```bash
+ephor work                                  # what has been dispatched, and what it reached
+ephor work dispatch --dry-run               # what would be opened, and where
+ephor work dispatch [--project P] [--recipe R] [--item ID] [--kind pr]
+                    [--updated-within DAYS] [--again]
+ephor work sync [--dry-run]                 # reopen work whose item has moved
+ephor work run [--project P] [-- --parallel 2]   # rhei run, per work root
+ephor work forget [--item ID | --done | --missing]
+```
+
+In the TUI, `w` on any item opens its **work screen**: the tickets already
+opened and what they reached, whether the item has moved under them, and the
+recipes that apply now with the exact words each would send. `1`-`9` opens one,
+`s` reopens stale work, `R` hands the root to the runtime (which takes over the
+terminal, so you watch it work), `e` reads the plan. Rows carry a badge —
+`⚙ fix-gate · review`, `✓ answer · done — …`, `⟳ 2 new messages`.
+
+**The ticket carries the dossier**, not a link: state, branch and checkout, the
+gate's counts per repository and the forge's own reasons, and the conversation
+quoted as messages with their authors. All of it was fetched during a refresh
+already, so the work starts where you would have started.
+
+**A moved item reopens its own work.** ephor fingerprints the item when it
+dispatches — last activity, state, gate, how much conversation. When any of
+that changes, `ephor work sync` appends a ticket to the *same* plan saying what
+changed, ordered after the last one, and chosen against what the item is now: a
+pull request whose gate has gone green and whose reviewer asked a question is
+no longer a red gate. That is the loop — a plan per item, a ticket per round,
+until nothing applies to it any more.
+
+### Recipes
+
+Four ship, and apply with no configuration at all: `fix-gate` (a pull request
+of yours with failing jobs), `answer` (anything owing a reply), `review` (a
+pull request you are reviewing), `implement` (an issue of yours). Add your own,
+or replace a shipped one by reusing its id:
+
+```json
+{
+  "work": {
+    "root": "{workspace}/panta",
+    "recipes": [
+      { "id": "fix-gate", "icon": "🛠", "description": "fix the red gate",
+        "state": "fix", "needs_checkout": true,
+        "when": { "kinds": ["pr"], "roles": ["author"], "gate": "failing" },
+        "brief": "The gate on {title} is red. Run `just check` in {workspace} …" }
+    ]
+  },
+  "projects": {
+    "widget": {
+      "work": { "recipes": [ { "id": "bench", "description": "run the benchmarks", "brief": "…" } ] }
+    }
+  }
+}
+```
+
+A selector asks about `kinds`, `roles` (`author`/`reviewer`), `gate`
+(`failing` — jobs failed, `blocked` — the forge refuses, `red` — either,
+`green`, `any`), `needs_response`, and `sources`. Every field set must hold;
+finished work never matches. The brief takes `{title}`, `{url}`, `{repo}`,
+`{number}`, `{branch}`, `{ticket}`, `{state}`, `{gate}`, `{workspace}`,
+`{root}`, `{project}`, `{source}`, `{kind}`, `{id}`. A recipe may also pin the
+runtime's execution identity with `"target"` or `"model"`.
+
+### Where the work goes
+
+`work.root` (default `{workspace}/panta`) is a rhei project directory in the
+item's checkout. ephor creates it when it is missing — the manifest, a
+`.gitignore` that ignores the directory itself so your repository stays clean,
+and `assets/ephor-work.states.yaml` as `states.yaml`. **An existing
+`states.yaml` is never replaced**: edit it for a different agent, model, or
+timeout, or point `work.states` at one of your own. A recipe whose `state` the
+machine in force does not declare is refused by name rather than written.
+
+The shipped machine is two agent passes — `fix` does the work and writes a
+report, `review` reads that against the ticket and writes a verdict whose first
+line is `VERDICT: done | partial | blocked`. ephor reads that line back onto
+the row. Both passes are told to commit locally and touch nothing outward:
+closing the loop out to the forge is a sentence you add to a brief
+deliberately.
+
 ### Providers (`status.json`)
 
 | provider | source | needs response when |

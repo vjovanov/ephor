@@ -16,7 +16,7 @@ use crate::feed::gate::Gate;
 use crate::feed::model::{Item, ItemKind, ItemRole};
 use crate::feed::render::age;
 
-use super::{highlight_style, matches_branch, Action, BranchInfo, Ctx};
+use super::{highlight_style, matches_branch, Action, BranchInfo, Ctx, WorkBadge};
 
 #[derive(Clone, Copy, PartialEq)]
 enum Mode {
@@ -32,6 +32,9 @@ struct Row {
     /// PR items: whether the PR's branch workspace is on disk (None when
     /// unknowable — no branch recorded, or no branch workspaces).
     checked_out: Option<bool>,
+    /// What has been handed to the runtime about this item, if anything
+    /// (§FS-005-dispatch.4).
+    work: Option<WorkBadge>,
 }
 
 /// One line in a tree view.
@@ -108,9 +111,9 @@ impl NavigatorState {
 
     pub fn footer(&self) -> &'static str {
         match self.mode {
-            Mode::Stream => " j/k move  enter thread  c gate  o browser  x actions  m done  a all done  u unread  tab projects  r refresh  q quit",
+            Mode::Stream => " j/k move  enter thread  c gate  w work  o browser  x actions  m done  a all done  u unread  tab projects  r refresh  q quit",
             Mode::Projects => " j/k move  enter view project  tab stream  r refresh  q quit",
-            Mode::Detail => " j/k move  enter thread  c gate  o browser  x actions  m done  [/] project  esc back  u unread  r refresh  q quit",
+            Mode::Detail => " j/k move  enter thread  c gate  w work  o browser  x actions  m done  [/] project  esc back  u unread  r refresh  q quit",
         }
     }
 
@@ -175,6 +178,7 @@ impl NavigatorState {
                     item: item.clone(),
                     stale: feed.is_stale(&item.source),
                     checked_out: ctx.item_checked_out(item),
+                    work: ctx.work.get(&item.id).cloned(),
                 })
                 .collect();
             if rows.is_empty() {
@@ -322,6 +326,12 @@ impl NavigatorState {
             },
             KeyCode::Char('x') => match self.selected_item() {
                 Some(item) => Action::OpenActionMenu(item),
+                None => Action::None,
+            },
+            // What is being done about this, and what could be
+            // (§FS-005-dispatch).
+            KeyCode::Char('w') => match self.selected_item() {
+                Some(item) => Action::OpenWork(item),
                 None => Action::None,
             },
             // The counts on the row are a summary of a verdict; `c` is where
@@ -608,7 +618,7 @@ impl NavigatorState {
                     ListItem::new(Line::from(spans))
                 }
                 Entry::Item(row) => {
-                    let mut line = item_line(&row.item, row.stale, row.checked_out, seen, now);
+                    let mut line = item_line(row, seen, now);
                     line.spans.insert(0, Span::raw("        "));
                     ListItem::new(line)
                 }
@@ -627,13 +637,14 @@ impl NavigatorState {
     }
 }
 
-fn item_line(
-    item: &Item,
-    stale: bool,
-    checked_out: Option<bool>,
-    seen: &Seen,
-    now: chrono::DateTime<Utc>,
-) -> Line<'static> {
+fn item_line(row: &Row, seen: &Seen, now: chrono::DateTime<Utc>) -> Line<'static> {
+    let Row {
+        item,
+        stale,
+        checked_out,
+        work,
+    } = row;
+    let (stale, checked_out) = (*stale, *checked_out);
     let marker = if item.needs_response {
         Span::styled(
             "! ",
@@ -674,6 +685,18 @@ fn item_line(
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::ITALIC),
         ));
+    }
+    // What is being done about it, after what it is: the row's subject is the
+    // item, and the work is the answer to it (§FS-005-dispatch.4).
+    if let Some(work) = work {
+        let style = if work.stale {
+            Style::default().fg(Color::Yellow)
+        } else if work.open {
+            Style::default().fg(Color::Blue)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        spans.push(Span::styled(format!("  {}", work.text), style));
     }
     Line::from(spans)
 }

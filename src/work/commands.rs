@@ -131,7 +131,7 @@ fn list_work(config: &StatusConfig, args: &crate::cli::WorkListArgs) -> Result<E
         println!(
             "{:<width$}  {}  {}",
             entry.project,
-            status.badge(),
+            status.badge(64),
             style.dim(&title(&entry.title)),
         );
         println!(
@@ -201,8 +201,29 @@ fn dispatch_work(config: &StatusConfig, args: &crate::cli::WorkDispatchArgs) -> 
         let Some(recipe) = recipe else {
             continue;
         };
-        // Work already under way is left alone; `sync` is what reopens it.
-        if dispatcher.ledger.entries.contains_key(&item.id) && !args.again {
+        // A sweep leaves work already under way alone — `sync` is what reopens
+        // it. Naming a recipe is a different request: it asks for that work,
+        // and only the same recipe twice over is the accident worth stopping.
+        let already = dispatcher
+            .ledger
+            .entries
+            .get(&item.id)
+            .map(|entry| {
+                entry
+                    .dispatches
+                    .iter()
+                    .any(|dispatch| dispatch.recipe == recipe.id)
+            })
+            .unwrap_or(false);
+        let has_work = dispatcher.ledger.entries.contains_key(&item.id);
+        if !args.again && (already || (has_work && args.recipe.is_none())) {
+            if asked_for_one {
+                println!(
+                    "{} already has work — `--again` adds another ticket, `sync` reopens it \
+                     when the item has moved",
+                    item.id
+                );
+            }
             continue;
         }
         match dispatcher.dispatch(item, &recipe, args.dry_run) {
@@ -312,7 +333,11 @@ fn run_work(config: &StatusConfig, args: &crate::cli::WorkRunArgs) -> Result<Exi
             "rhei is not on PATH; ephor writes the tickets but the runtime runs them.".to_string(),
         ));
     }
-    let mut roots: Vec<std::path::PathBuf> = Vec::new();
+    // Grouped by root, because the tickets in one root are about one checkout
+    // and two agents in one working tree edit the same files — but named plan
+    // by plan, so a runtime project the reader keeps there for their own work
+    // is not swept up by ephor's.
+    let mut roots: Vec<(std::path::PathBuf, Vec<String>)> = Vec::new();
     for (id, entry) in &dispatcher.ledger.entries {
         if !args.project.is_empty() && !args.project.contains(&entry.project) {
             continue;
@@ -326,8 +351,9 @@ fn run_work(config: &StatusConfig, args: &crate::cli::WorkRunArgs) -> Result<Exi
         if status.missing || status.open_tickets() == 0 {
             continue;
         }
-        if !roots.contains(&entry.root) {
-            roots.push(entry.root.clone());
+        match roots.iter_mut().find(|(root, _)| root == &entry.root) {
+            Some((_, plans)) => plans.push(entry.rhei.clone()),
+            None => roots.push((entry.root.clone(), vec![entry.rhei.clone()])),
         }
     }
     if roots.is_empty() {
@@ -336,14 +362,14 @@ fn run_work(config: &StatusConfig, args: &crate::cli::WorkRunArgs) -> Result<Exi
     }
 
     let mut failed = 0usize;
-    for root in &roots {
-        println!("\n▶ rhei run {}", root.display());
-        let status = Command::new("rhei")
-            .arg("run")
-            .arg(root)
-            .args(&args.rhei_args)
-            .status();
-        match status {
+    for (root, plans) in &roots {
+        println!("\n▶ rhei run {} ({} plan(s))", root.display(), plans.len());
+        let mut command = Command::new("rhei");
+        command.arg("run").arg(root);
+        for plan in plans {
+            command.arg("--rhei").arg(plan);
+        }
+        match command.args(&args.rhei_args).status() {
             Ok(status) if status.success() => {}
             Ok(status) => {
                 failed += 1;

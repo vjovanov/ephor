@@ -201,6 +201,24 @@ fn a_red_gate_becomes_a_ticket_that_carries_what_ephor_knew() {
         .assert()
         .success()
         .stdout(predicate::str::contains("0 ticket(s) opened"));
+
+    // Asking for a different recipe on the same item is a different request,
+    // and lands as a second ticket in the same plan (§FS-005-dispatch.3).
+    ephor(tmp.path())
+        .args([
+            "work",
+            "dispatch",
+            "--item",
+            "github-prs:acme/widget#42",
+            "--recipe",
+            "answer",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1 ticket(s) opened"));
+    let plan = fs::read_to_string(panta.join("github-prs-acme-widget-42.rhei.md")).unwrap();
+    assert!(plan.contains("### Task answer-1:"), "{plan}");
+    assert!(plan.contains("**Prior:** Task fix-gate-1"), "{plan}");
 }
 
 #[test]
