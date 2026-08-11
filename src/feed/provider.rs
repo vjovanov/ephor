@@ -105,7 +105,7 @@ pub fn run_capture_stdin(
     timeout: Duration,
     allow_failure: bool,
 ) -> Result<String, ProviderError> {
-    let label = format!("{command:?}");
+    let label = command_label(&command);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     if stdin.is_some() {
         command.stdin(Stdio::piped());
@@ -172,12 +172,81 @@ pub fn run_capture_stdin(
     let stdout = stdout_thread.join().unwrap_or_default();
     let stderr = stderr_thread.join().unwrap_or_default();
     if !status.success() && !allow_failure {
-        let detail = stderr.lines().next().unwrap_or("").trim().to_string();
         return Err(ProviderError(format!(
-            "{label} failed ({status}): {detail}"
+            "{label} failed ({status}): {}",
+            diagnosis(&stderr)
         )));
     }
     Ok(stdout)
+}
+
+/// Words a line uses when it is reporting what went wrong rather than what is
+/// being attempted. Deliberately generic: ephor names no vendor CLI
+/// (§FS-001-forge-interface.5), and these are what tools in general print.
+const DIAGNOSIS: &[&str] = &[
+    "error",
+    "fatal",
+    "exception",
+    "failed",
+    "failure",
+    "panic",
+    "refused",
+    "denied",
+    "cannot",
+    "unable to",
+    "❌",
+];
+
+/// The one line of a failed command's stderr worth quoting
+/// (§FS-001-forge-interface.6).
+///
+/// Tools narrate their progress on the same stream they fail on, and the
+/// narration comes first — so quoting stderr's first line by position reports
+/// "Requesting RCA for pull request …" and drops the "No builds found" under
+/// it, which is the whole of what the reader needed. Scan for a line that
+/// reads as a diagnosis instead.
+///
+/// With no such line, the first non-empty one is still the best guess: a stack
+/// trace leads with its exception and the frames below it say less.
+pub fn diagnosis(stderr: &str) -> String {
+    let lines: Vec<String> = stderr
+        .lines()
+        .map(|line| strip_ansi(line).trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect();
+    lines
+        .iter()
+        .find(|line| {
+            let lower = line.to_ascii_lowercase();
+            DIAGNOSIS.iter().any(|word| lower.contains(word))
+        })
+        .or_else(|| lines.first())
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// Drop CSI escape sequences. A tool that colours its own error line would
+/// otherwise have the colour codes quoted back into ephor's message, where
+/// they are noise at best and a wrongly-coloured terminal at worst.
+fn strip_ansi(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\u{1b}' {
+            out.push(ch);
+            continue;
+        }
+        // `ESC [ <params> <final>`, where the final byte is `@`..`~`.
+        if chars.next() != Some('[') {
+            continue;
+        }
+        for ch in chars.by_ref() {
+            if ('@'..='~').contains(&ch) {
+                break;
+            }
+        }
+    }
+    out
 }
 
 pub fn run_json(
@@ -194,9 +263,21 @@ pub fn run_json_stdin(
     timeout: Duration,
     allow_failure: bool,
 ) -> Result<Value, ProviderError> {
+    let label = command_label(&command);
     let stdout = run_capture_stdin(command, stdin, timeout, allow_failure)?;
     serde_json::from_str(stdout.trim())
-        .map_err(|err| ProviderError(format!("invalid JSON output: {err}")))
+        .map_err(|err| ProviderError(format!("{label}: invalid JSON output: {err}")))
+}
+
+/// A command as a reader would say it — `ephor-forge-gdev failures`, not
+/// `"ephor-forge-gdev" "failures"`. Every message out of here already names
+/// the command, so a caller that names it again says it twice.
+fn command_label(command: &Command) -> String {
+    std::iter::once(command.get_program())
+        .chain(command.get_args())
+        .map(|part| part.to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 pub fn command_exists(name: &str) -> bool {
@@ -223,4 +304,72 @@ pub fn load_secret(ctx: &ProviderContext, name: &str) -> Result<Value, ProviderE
 
 pub fn secret_exists(ctx: &ProviderContext, name: &str) -> bool {
     ctx.secrets_dir.join(format!("{name}.json")).is_file()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The narration a tool writes before it fails is not the failure
+    /// (§FS-001-forge-interface.6).
+    #[test]
+    fn the_line_quoted_is_the_one_that_says_what_went_wrong() {
+        let narrated = "Requesting RCA for pull request [G/graal@PR#24898]...\n\
+                        Waiting for RCA result for pull request [G/graal@PR#24898]...\n\
+                        \n\
+                        \u{1b}[31m❌  error: RCA failed: No builds found for the pull request\u{1b}[39m\u{1b}[0m\n\
+                        \n\
+                        \u{1b}[38;5;215m❔  hints: Verify build numbers and retry.\u{1b}[39m\u{1b}[0m\n";
+        assert_eq!(
+            diagnosis(narrated),
+            "❌  error: RCA failed: No builds found for the pull request"
+        );
+
+        // A stack trace leads with its cause, and the frames under it say
+        // less — so the first line stays the right answer where it is one.
+        let trace = "java.net.UnknownHostException: bitbucket.example.com\n\
+                     \tat java.base/java.net.Socket.connect(Socket.java:633)\n";
+        assert!(diagnosis(trace).starts_with("java.net.UnknownHostException"));
+        assert!(crate::feed::reachability::is_unreachable(&diagnosis(trace)));
+
+        // Nothing that reads as a diagnosis: the first non-empty line, which
+        // is what this always used to report.
+        assert_eq!(
+            diagnosis("\n\n  usage: tool <cmd>\nsee --help\n"),
+            "usage: tool <cmd>"
+        );
+        assert_eq!(diagnosis(""), "");
+    }
+
+    /// A tool that fails quietly on stderr but narrates on it first used to
+    /// have its narration quoted all the way up into the reader's message.
+    #[test]
+    fn a_failed_command_is_named_once_and_quotes_its_diagnosis() {
+        let mut command = Command::new("sh");
+        command.arg("-c").arg(
+            "echo 'Fetching gate builds for widget/1...' >&2; \
+             echo 'error: no such pull request' >&2; exit 3",
+        );
+        let err = run_capture_stdin(command, None, Duration::from_secs(30), false)
+            .expect_err("exit 3 is a failure");
+        // Named as it would be typed, once — not `"sh" "-c" "…"`.
+        assert!(err.0.starts_with("sh -c "), "{}", err.0);
+        let quoted = err
+            .0
+            .rsplit_once("): ")
+            .expect("a detail follows the status")
+            .1;
+        assert_eq!(quoted, "error: no such pull request");
+    }
+
+    /// A non-zero exit is a failure; `allow_failure` is for the tools that
+    /// signal domain state through their exit code.
+    #[test]
+    fn a_tolerated_failure_still_returns_its_output() {
+        let mut command = Command::new("sh");
+        command.arg("-c").arg("echo out; exit 1");
+        let out = run_capture_stdin(command, None, Duration::from_secs(30), true)
+            .expect("allow_failure keeps the output");
+        assert_eq!(out.trim(), "out");
+    }
 }

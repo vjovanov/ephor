@@ -126,6 +126,13 @@ an empty or partial answer for a failure:
    previous answer when a provider fails is right — one flaky source must not
    blank the feed — but those items are marked stale wherever they appear, and
    the provider that failed is reported alongside them.
+6. **What is quoted is the diagnosis, not the narration.** An out-of-process
+   implementation writes its diagnostics to stderr, and the tools it wraps
+   narrate their progress there too — "Requesting …", "Waiting for …". ephor
+   reports one line of that stream, so taking the first line by position
+   reports the narration and drops the error underneath it: a message that
+   says only that something was attempted, and that no reader can act on.
+   The line reported is the one that reads as a diagnosis.
 
 ## FS-002-release: ephor releases from a tag, with a changelog entry per change
 

@@ -93,6 +93,12 @@ ships, the previous "latest" section moves verbatim to
 - `unavailable (missing tool or secret)` never said what was missing. An
   extension is resolved from the provider's *name*, so the executable it looked
   for appears nowhere the reader can check; the diagnostic now names it.
+- A failed command was quoted by the *first* line of its stderr, which is the
+  stream tools narrate their progress on: opening a red gate reported
+  `Requesting RCA for pull request …` and dropped the error four lines below
+  it. The line reported is now the one that reads as a diagnosis, stripped of
+  its colour codes, and the command is named once rather than three times
+  ([§FS-001-forge-interface.6](../requirements.md#6-a-source-that-did-not-answer-says-so-and-says-which-kind-of-not)).
 
 ### Changed
 

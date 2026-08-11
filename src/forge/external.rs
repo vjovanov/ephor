@@ -56,13 +56,16 @@ impl ExternalForge {
 
         let mut command = Command::new(&self.command);
         command.arg(subcommand);
+        // Unprefixed: every failure from the transport already opens with
+        // `ephor-forge-<name> <subcommand>`, and naming it again here put the
+        // command in the message three times before the reader reached the
+        // error itself.
         run_json_stdin(
             command,
             Some(serde_json::to_string(&payload).unwrap_or_default()),
             std::time::Duration::from_secs(request.timeout_seconds),
             false,
         )
-        .map_err(|err| ProviderError(format!("{} {subcommand}: {err}", self.command)))
     }
 
     fn decode<T: serde::de::DeserializeOwned>(
