@@ -22,6 +22,10 @@ pub struct StatusConfig {
     /// Item actions offered on every project (see [`ActionConfig`]).
     #[serde(default)]
     pub actions: Vec<ActionConfig>,
+    /// Which items deserve work and what the ticket asks for
+    /// (§FS-005-dispatch.1).
+    #[serde(default)]
+    pub work: crate::work::recipe::WorkConfig,
     #[serde(default)]
     pub projects: BTreeMap<String, ProjectFeedConfig>,
 }
@@ -114,6 +118,9 @@ pub struct ProjectFeedConfig {
     /// How to materialize a missing branch workspace (see [`CheckoutConfig`]).
     #[serde(default)]
     pub checkout: Option<CheckoutConfig>,
+    /// This project's own recipes and work root (§FS-005-dispatch.1).
+    #[serde(default)]
+    pub work: crate::work::recipe::ProjectWorkConfig,
 }
 
 #[cfg(test)]

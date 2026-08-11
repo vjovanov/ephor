@@ -1,0 +1,582 @@
+//! The plan file: one rhei per item, one ticket per dispatch
+//! (§FS-005-dispatch.3).
+//!
+//! ephor writes a plain-text plan in the runtime's language and reads the
+//! state back out of it. Nothing else is stored about how the work is going:
+//! the runtime owns that, the plan is where it writes it, and a second copy in
+//! ephor's ledger would be a watch reporting on itself
+//! (§FS-005-dispatch.4).
+
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use crate::error::{EphorError, Result};
+
+/// The state machine ephor installs into a work root that has none.
+pub const SHIPPED_STATES: &str = include_str!("../../assets/ephor-work.states.yaml");
+
+/// What surrounds the dossier, so a later sync can rewrite exactly that much
+/// and leave every `**State:**` line the runtime owns untouched.
+const DOSSIER_OPEN: &str = "<!-- ephor:dossier -->";
+const DOSSIER_CLOSE: &str = "<!-- /ephor:dossier -->";
+
+const TASKS_HEADING: &str = "## Tasks";
+
+/// A directory holding an item's plans: a rhei project, with the state machine
+/// its tickets run under.
+pub struct WorkRoot {
+    pub dir: PathBuf,
+    /// The machine's name, as its `states.yaml` declares it.
+    pub machine: String,
+    /// The states that machine declares, for refusing a recipe that names one
+    /// it does not have (§FS-005-dispatch.6), and for telling a ticket that is
+    /// still being worked from one that is over.
+    states: Vec<StateInfo>,
+}
+
+pub struct StateInfo {
+    pub name: String,
+    pub is_final: bool,
+}
+
+impl WorkRoot {
+    /// Prepare `dir` to hold tickets: create the project manifest when it is
+    /// not there, install `states_yaml` when the directory has no machine of
+    /// its own, and read back whichever machine is in force. An existing
+    /// machine is never replaced — a reader who edited it meant it.
+    pub fn ensure(dir: &Path, states_yaml: &str) -> Result<WorkRoot> {
+        create_dir(dir)?;
+        let manifest = dir.join("index.panta.md");
+        if !manifest.exists() {
+            let title = dir
+                .parent()
+                .and_then(Path::file_name)
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "work".to_string());
+            write(&manifest, &format!("# Panta: {title}\n"))?;
+        }
+        // A directory that ignores itself needs no entry in the repository's
+        // own .gitignore: work about a branch would otherwise show up as a
+        // change to that branch.
+        let ignore = dir.join(".gitignore");
+        if !ignore.exists() {
+            write(
+                &ignore,
+                "# ephor work — planning state, not repository content\n*\n",
+            )?;
+        }
+        let states = dir.join("states.yaml");
+        if !states.exists() {
+            write(&states, states_yaml)?;
+        }
+        Self::read_root(dir, &states)
+    }
+
+    /// The machine in force in a work root, without creating anything. None
+    /// when the directory holds no machine — a plan can still be read there,
+    /// it is only finality that cannot be judged.
+    pub fn open(dir: &Path) -> Result<Option<WorkRoot>> {
+        let states = dir.join("states.yaml");
+        if !states.is_file() {
+            return Ok(None);
+        }
+        Self::read_root(dir, &states).map(Some)
+    }
+
+    fn read_root(dir: &Path, states: &Path) -> Result<WorkRoot> {
+        let text = read(states)?;
+        Ok(WorkRoot {
+            dir: dir.to_path_buf(),
+            machine: machine_name(&text).ok_or_else(|| {
+                EphorError::Command(format!(
+                    "{} declares no state machine name; ephor cannot write tickets that name one.",
+                    states.display()
+                ))
+            })?,
+            states: state_infos(&text),
+        })
+    }
+
+    pub fn plan_path(&self, rhei: &str) -> PathBuf {
+        self.dir.join(format!("{rhei}.rhei.md"))
+    }
+
+    /// Whether the machine in force declares a state, so a recipe pointing at
+    /// one it does not have is refused rather than dispatched.
+    pub fn declares(&self, state: &str) -> bool {
+        self.states.iter().any(|info| info.name == state)
+    }
+
+    /// Whether a state is one the work does not leave.
+    pub fn is_final(&self, state: &str) -> bool {
+        self.states
+            .iter()
+            .find(|info| info.name == state)
+            .map(|info| info.is_final)
+            .unwrap_or(false)
+    }
+
+    pub fn state_names(&self) -> Vec<String> {
+        self.states.iter().map(|info| info.name.clone()).collect()
+    }
+}
+
+/// The `name:` of a states document — the shallowest one, so a state called
+/// `name` cannot be mistaken for it.
+fn machine_name(yaml: &str) -> Option<String> {
+    yaml.lines()
+        .find_map(|line| line.strip_prefix("name:"))
+        .map(|value| {
+            value
+                .trim()
+                .trim_matches(['"', '\''].as_slice())
+                .to_string()
+        })
+        .filter(|name| !name.is_empty())
+}
+
+/// The keys under `states:`, and which of them the work does not leave. A
+/// line-scan rather than a YAML parse: this only has to be right enough to
+/// refuse a recipe naming a state that is not there and to tell a ticket in
+/// flight from a finished one, and the runtime's own validation is the
+/// authority on everything else.
+fn state_infos(yaml: &str) -> Vec<StateInfo> {
+    let mut states: Vec<StateInfo> = Vec::new();
+    let mut inside = false;
+    for line in yaml.lines() {
+        if line.starts_with("states:") {
+            inside = true;
+            continue;
+        }
+        if !inside {
+            continue;
+        }
+        if !line.starts_with(' ') && !line.trim().is_empty() {
+            break;
+        }
+        let indent = line.len() - line.trim_start().len();
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        if indent == 2 && trimmed.ends_with(':') {
+            states.push(StateInfo {
+                name: trimmed.trim_end_matches(':').to_string(),
+                is_final: false,
+            });
+        } else if indent > 2 && trimmed.starts_with("final:") {
+            if let Some(last) = states.last_mut() {
+                last.is_final = trimmed
+                    .trim_start_matches("final:")
+                    .trim()
+                    .eq_ignore_ascii_case("true");
+            }
+        }
+    }
+    states
+}
+
+/// One ticket, as it is written into a plan.
+pub struct Ticket {
+    pub id: String,
+    pub title: String,
+    pub state: String,
+    /// The ticket this one follows, so a reopened item's work stays ordered
+    /// (§FS-005-dispatch.5).
+    pub prior: Option<String>,
+    pub target: Option<String>,
+    pub model: Option<String>,
+    pub body: String,
+}
+
+impl Ticket {
+    fn render(&self) -> String {
+        let mut out = format!("### Task {}: {}\n", self.id, one_line(&self.title));
+        out.push_str(&format!("**State:** {}\n", self.state));
+        if let Some(prior) = &self.prior {
+            out.push_str(&format!("**Prior:** Task {prior}\n"));
+        }
+        // Mutually exclusive in the runtime's language: a target carries a
+        // model already, and declaring both is a validation error there.
+        match (&self.target, &self.model) {
+            (Some(target), _) => out.push_str(&format!("**Target:** {target}\n")),
+            (None, Some(model)) => out.push_str(&format!("**Model:** {model}\n")),
+            (None, None) => {}
+        }
+        out.push('\n');
+        out.push_str(self.body.trim_end());
+        out.push('\n');
+        out
+    }
+}
+
+/// A ticket as the plan currently has it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanTicket {
+    pub id: String,
+    pub title: String,
+    pub state: Option<String>,
+}
+
+pub struct Plan {
+    pub path: PathBuf,
+    text: String,
+}
+
+impl Plan {
+    pub fn read(path: &Path) -> Result<Option<Plan>> {
+        if !path.is_file() {
+            return Ok(None);
+        }
+        Ok(Some(Plan {
+            path: path.to_path_buf(),
+            text: read(path)?,
+        }))
+    }
+
+    /// A fresh plan for one item: its title, the machine its tickets run
+    /// under, the dossier, and the first ticket.
+    pub fn create(path: &Path, machine: &str, title: &str, dossier: &str, ticket: &Ticket) -> Plan {
+        let text = format!(
+            "# Rhei: {}\n**States:** {machine}\n\n{DOSSIER_OPEN}\n{}\n{DOSSIER_CLOSE}\n\n\
+             {TASKS_HEADING}\n\n{}",
+            one_line(title),
+            dossier.trim_end(),
+            ticket.render()
+        );
+        Plan {
+            path: path.to_path_buf(),
+            text,
+        }
+    }
+
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// Every ticket in the plan, in the order it was written. Fenced blocks
+    /// are skipped: a dossier quotes conversations, and a conversation about a
+    /// plan contains headings that are not this plan's.
+    pub fn tickets(&self) -> Vec<PlanTicket> {
+        let mut tickets: Vec<PlanTicket> = Vec::new();
+        for line in unfenced(&self.text) {
+            if let Some(rest) = line.strip_prefix("### ") {
+                if let Some((id, title)) = ticket_heading(rest) {
+                    tickets.push(PlanTicket {
+                        id,
+                        title,
+                        state: None,
+                    });
+                }
+                continue;
+            }
+            if let Some(state) = line.trim().strip_prefix("**State:**") {
+                if let Some(last) = tickets.last_mut() {
+                    if last.state.is_none() {
+                        last.state = Some(state.trim().to_string());
+                    }
+                }
+            }
+        }
+        tickets
+    }
+
+    /// The next id for a recipe's tickets on this plan: `answer-1`, then
+    /// `answer-2`. Ids are per recipe so the file reads as what was asked for.
+    pub fn next_ticket_id(&self, recipe: &str) -> String {
+        let highest = self
+            .tickets()
+            .iter()
+            .filter_map(|ticket| {
+                ticket
+                    .id
+                    .strip_prefix(recipe)?
+                    .strip_prefix('-')?
+                    .parse::<u32>()
+                    .ok()
+            })
+            .max()
+            .unwrap_or(0);
+        format!("{recipe}-{}", highest + 1)
+    }
+
+    /// The last ticket in the plan, which a new one follows.
+    pub fn last_ticket(&self) -> Option<PlanTicket> {
+        self.tickets().into_iter().next_back()
+    }
+
+    pub fn append(&mut self, ticket: &Ticket) {
+        if !self.text.contains(TASKS_HEADING) {
+            self.text.push_str(&format!("\n{TASKS_HEADING}\n"));
+        }
+        if !self.text.ends_with('\n') {
+            self.text.push('\n');
+        }
+        self.text.push('\n');
+        self.text.push_str(&ticket.render());
+    }
+
+    /// Rewrite the dossier and nothing else. Tickets are appended, never
+    /// rewritten: their `**State:**` lines belong to the runtime, which may be
+    /// advancing one right now (§FS-005-dispatch.4).
+    pub fn set_dossier(&mut self, dossier: &str) -> bool {
+        let (Some(open), Some(close)) =
+            (self.text.find(DOSSIER_OPEN), self.text.find(DOSSIER_CLOSE))
+        else {
+            return false;
+        };
+        if close < open {
+            return false;
+        }
+        let replacement = format!("{DOSSIER_OPEN}\n{}\n", dossier.trim_end());
+        self.text.replace_range(open..close, &replacement);
+        true
+    }
+
+    pub fn save(&self) -> Result<()> {
+        write(&self.path, &self.text)
+    }
+}
+
+/// `Task fix-1: title` out of a heading, ignoring headings that are not
+/// tickets. The runtime's node kinds start with a capital and are followed by
+/// an identifier and a colon.
+fn ticket_heading(rest: &str) -> Option<(String, String)> {
+    let (kind, rest) = rest.split_once(' ')?;
+    if !kind
+        .chars()
+        .next()
+        .is_some_and(|first| first.is_ascii_uppercase())
+    {
+        return None;
+    }
+    let (id, title) = rest.split_once(':')?;
+    let id = id.trim();
+    if id.is_empty()
+        || !id
+            .chars()
+            .all(|ch| ch.is_alphanumeric() || ch == '-' || ch == '_')
+    {
+        return None;
+    }
+    Some((id.to_string(), title.trim().to_string()))
+}
+
+/// The lines of a document that are not inside a fenced block.
+fn unfenced(text: &str) -> impl Iterator<Item = &str> {
+    let mut fence: Option<String> = None;
+    text.lines().filter(move |line| {
+        let trimmed = line.trim_start();
+        let marker = trimmed
+            .chars()
+            .next()
+            .filter(|ch| *ch == '`' || *ch == '~')
+            .map(|ch| {
+                trimmed
+                    .chars()
+                    .take_while(|candidate| *candidate == ch)
+                    .collect::<String>()
+            })
+            .filter(|run| run.len() >= 3);
+        match (&fence, marker) {
+            (None, Some(open)) => {
+                fence = Some(open);
+                false
+            }
+            (Some(open), Some(close))
+                if close.len() >= open.len() && close.starts_with(&open[..1]) =>
+            {
+                fence = None;
+                false
+            }
+            (Some(_), _) => false,
+            (None, None) => true,
+        }
+    })
+}
+
+/// A rhei id for an item: its own id, reduced to what the runtime's grammar
+/// allows for a file stem, and never empty or leading with a digit.
+pub fn rhei_id(item_id: &str) -> String {
+    let mut out = String::with_capacity(item_id.len());
+    for ch in item_id.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+        } else if !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    let trimmed = out.trim_matches('-').to_string();
+    match trimmed.chars().next() {
+        Some(first) if first.is_ascii_alphabetic() => trimmed,
+        Some(_) => format!("item-{trimmed}"),
+        None => "item".to_string(),
+    }
+}
+
+fn one_line(text: &str) -> String {
+    let joined = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if joined.chars().count() <= 120 {
+        return joined;
+    }
+    joined.chars().take(117).collect::<String>() + "…"
+}
+
+fn create_dir(dir: &Path) -> Result<()> {
+    fs::create_dir_all(dir)
+        .map_err(|err| EphorError::Command(format!("Cannot create {}: {err}", dir.display())))
+}
+
+fn read(path: &Path) -> Result<String> {
+    fs::read_to_string(path)
+        .map_err(|err| EphorError::Command(format!("Cannot read {}: {err}", path.display())))
+}
+
+/// Write through a temporary file: the runtime may be reading a plan while
+/// this runs, and half a plan is a plan that does not parse.
+fn write(path: &Path, content: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        create_dir(parent)?;
+    }
+    let tmp = path.with_extension("ephor-tmp");
+    fs::write(&tmp, content)
+        .map_err(|err| EphorError::Command(format!("Cannot write {}: {err}", tmp.display())))?;
+    fs::rename(&tmp, path)
+        .map_err(|err| EphorError::Command(format!("Cannot rename {}: {err}", tmp.display())))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ticket(id: &str, state: &str, body: &str) -> Ticket {
+        Ticket {
+            id: id.to_string(),
+            title: "fix the red gate".to_string(),
+            state: state.to_string(),
+            prior: None,
+            target: None,
+            model: None,
+            body: body.to_string(),
+        }
+    }
+
+    #[test]
+    fn the_shipped_machine_declares_the_states_the_shipped_recipes_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = WorkRoot::ensure(tmp.path(), SHIPPED_STATES).unwrap();
+        assert_eq!(root.machine, "ephor-work");
+        assert!(root.declares("fix"), "{:?}", root.state_names());
+        assert!(root.declares("review"));
+        assert!(root.declares("done"));
+        assert!(!root.declares("nonexistent"));
+        // Finality is what tells work in flight from work that is over.
+        assert!(root.is_final("done"));
+        assert!(!root.is_final("fix"));
+        assert!(!root.is_final("nonexistent"));
+        // The project is set up, and ignores itself so the checkout stays clean.
+        assert!(tmp.path().join("index.panta.md").is_file());
+        assert!(fs::read_to_string(tmp.path().join(".gitignore"))
+            .unwrap()
+            .contains('*'));
+    }
+
+    #[test]
+    fn an_existing_machine_is_read_and_never_replaced() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mine = "name: mine\nversion: 2\nstates:\n  triage:\n    agent: x\n  shipped:\n    final: true\n";
+        fs::write(tmp.path().join("states.yaml"), mine).unwrap();
+        let root = WorkRoot::ensure(tmp.path(), SHIPPED_STATES).unwrap();
+        assert_eq!(root.machine, "mine");
+        assert!(root.declares("triage"));
+        assert!(!root.declares("fix"));
+        assert_eq!(
+            fs::read_to_string(tmp.path().join("states.yaml")).unwrap(),
+            mine
+        );
+    }
+
+    #[test]
+    fn a_plan_holds_the_dossier_and_its_tickets_in_order() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("widget-42.rhei.md");
+        let mut plan = Plan::create(
+            &path,
+            "ephor-work",
+            "acme/widget#42 — Retry\nwindow",
+            "## The item\n\n- **project** widget\n",
+            &ticket("fix-gate-1", "fix", "make it green"),
+        );
+        assert_eq!(plan.next_ticket_id("fix-gate"), "fix-gate-2");
+
+        plan.append(&Ticket {
+            prior: Some("fix-gate-1".to_string()),
+            target: Some("claude-code[yolo]:anthropic:sonnet".to_string()),
+            ..ticket("fix-gate-2", "fix", "it changed")
+        });
+        plan.save().unwrap();
+
+        let reread = Plan::read(&path).unwrap().unwrap();
+        let tickets = reread.tickets();
+        assert_eq!(tickets.len(), 2);
+        assert_eq!(tickets[0].id, "fix-gate-1");
+        assert_eq!(tickets[0].state.as_deref(), Some("fix"));
+        assert_eq!(reread.last_ticket().unwrap().id, "fix-gate-2");
+        assert!(reread.text().contains("**Prior:** Task fix-gate-1"));
+        assert!(reread.text().contains("**Target:** claude-code[yolo]"));
+        // The title survives as one line.
+        assert!(reread
+            .text()
+            .starts_with("# Rhei: acme/widget#42 — Retry window\n"));
+    }
+
+    #[test]
+    fn a_conversation_quoting_a_plan_is_not_read_as_one() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("plan.rhei.md");
+        let dossier =
+            "## The conversation\n\n````\n### Task ghost: not a ticket\n**State:** done\n````\n";
+        let plan = Plan::create(
+            &path,
+            "ephor-work",
+            "t",
+            dossier,
+            &ticket("fix-gate-1", "fix", "real work"),
+        );
+        let tickets = plan.tickets();
+        assert_eq!(tickets.len(), 1);
+        assert_eq!(tickets[0].id, "fix-gate-1");
+        assert_eq!(tickets[0].state.as_deref(), Some("fix"));
+    }
+
+    #[test]
+    fn refreshing_the_dossier_leaves_every_ticket_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("plan.rhei.md");
+        let mut plan = Plan::create(
+            &path,
+            "ephor-work",
+            "t",
+            "## The item\n\n- **state** open\n",
+            &ticket("fix-gate-1", "fix", "work"),
+        );
+        // The runtime has advanced the ticket since it was written.
+        plan.text = plan.text.replace("**State:** fix", "**State:** review");
+        assert!(plan.set_dossier("## The item\n\n- **state** merged\n"));
+        assert!(plan.text().contains("- **state** merged"));
+        assert!(!plan.text().contains("- **state** open"));
+        assert_eq!(plan.tickets()[0].state.as_deref(), Some("review"));
+        assert!(plan.text().contains(DOSSIER_CLOSE));
+    }
+
+    #[test]
+    fn an_items_id_becomes_a_file_the_runtime_will_accept() {
+        assert_eq!(
+            rhei_id("github-prs:acme/widget#42"),
+            "github-prs-acme-widget-42"
+        );
+        assert_eq!(rhei_id("forge:repo/123"), "forge-repo-123");
+        assert_eq!(rhei_id("42"), "item-42");
+        assert_eq!(rhei_id("///"), "item");
+    }
+}

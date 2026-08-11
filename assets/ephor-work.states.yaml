@@ -1,0 +1,95 @@
+# The state machine ephor's tickets run under (§FS-005-dispatch.3).
+#
+# Written into a work root that has none, and never overwritten: a reader who
+# edits it — a different agent, a longer timeout, a state of their own — keeps
+# their edit, and a recipe naming a state that is not here is refused rather
+# than dispatched into a machine that cannot run it.
+#
+#   fix ──► review ──► done
+#
+# Two agent passes and nothing else. The first does the work and writes down
+# what it did; the second reads that against the ticket and reaches a verdict.
+# `review` requires the report `fix` writes, so work that produced nothing
+# stops at the boundary instead of arriving at `done` with an empty result.
+
+name: ephor-work
+version: 1.0
+
+states:
+  fix:
+    description: Do what the ticket asks, in the checkout it names.
+    agent: claude-code
+    agent_mode: yolo
+    agent_timeout: 45m
+    instructions: |
+      The ticket below is one item from a watch over this project — a pull
+      request, an issue, or a conversation — written down with everything the
+      watch knew about it. You are in the checkout the work belongs to.
+
+      Do what the ticket asks and no more than that. Prefer the smallest change
+      that is actually right over the one that covers the most ground. Where
+      the ticket asks a question rather than for a change, the answer is the
+      work: write it and change nothing.
+
+      Read before you write. The dossier says what the item looked like when
+      the work was asked for, which is not necessarily what the repository
+      looks like now — check the branch, the log, and the failing job before
+      trusting a line of it.
+
+      Write to {output.report.path}:
+
+      - what you changed, file by file, and why it is the right change
+      - what you ran to check it, and what it said — the whole line, not your
+        summary of it
+      - what you could not do, and what a person would have to decide
+
+      Commit in this checkout, with a message that explains the change. Do not
+      push, and do not touch the forge — no comments, no reviews, no merges,
+      no new pull requests — unless the ticket asks for it in so many words.
+    outputs:
+      - name: report
+        path: "runtime/ephor/{task_id}.report.md"
+
+  review:
+    description: Read the work against the ticket and reach a verdict.
+    agent: claude-code
+    agent_mode: yolo
+    agent_timeout: 30m
+    instructions: |
+      A previous pass worked this ticket and wrote {input.report.path}. Read
+      that, then read the ticket below, then read what actually happened in
+      this checkout — `git log` and `git diff` against the branch point say
+      more than the report does.
+
+      Check the work against what was asked, not against what you would have
+      done. Where something is wrong and small, fix it and commit. Where it is
+      wrong and not small, leave it: an unfinished ticket that says so is worth
+      more than one quietly widened until it looks finished.
+
+      Write to {output.verdict.path}. Its first line is exactly one of:
+
+          VERDICT: done — the ticket is answered and the change is right
+          VERDICT: partial — some of it is answered; the rest is named below
+          VERDICT: blocked — a person has to decide or do something first
+
+      Then, in a few lines a reader can act on: what was done, what was not,
+      and the one thing you would ask a person if you could ask one.
+    inputs:
+      - name: report
+        path: "runtime/ephor/{task_id}.report.md"
+    outputs:
+      - name: verdict
+        path: "runtime/ephor/{task_id}.verdict.md"
+
+  done:
+    description: The ticket is finished; the verdict says how.
+    final: true
+
+transitions:
+  - from: fix
+    to: review
+    description: The work is written down; read it against the ticket.
+
+  - from: review
+    to: done
+    description: Reviewed, with a verdict.

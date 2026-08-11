@@ -277,3 +277,152 @@ Where ephor renders the failures itself rather than handing over a log,
 identical ones are reported once, with the number of jobs that hit them. A gate
 fans one error across every job that compiled the same file, and six copies of
 one compile error is a worse answer than one copy that says six.
+
+## FS-005-dispatch: what ephor watches, it can hand to an agent runtime
+
+A watch that only watches hands its reader a list. Nearly every row on that
+list has an obvious next move — the gate is red so the failures need reading
+and fixing, a reviewer asked a question so it needs answering, an issue was
+filed so it needs doing — and every one of those moves is the same shape: read
+a change in a checkout, do something small, say what was done. That is work an
+agent can be asked to do, and asking it is the boring half of the day.
+
+ephor does not do that work. It **dispatches** it: it turns an item into a
+ticket in an agent runtime, hands over what it already knows, and then keeps
+the ledger — which items have work under way, what that work reached, and
+whether the item has moved since. Watching and working are one loop, and ephor
+is the half that remembers.
+
+The runtime is [rhei](https://github.com/vjovanov/rhei), named here rather than
+hidden behind an interface. That is not the neutrality
+[§FS-001-forge-interface](#fs-001-forge-interface-ephor-reaches-every-forge-and-issue-tracker-through-one-provider-interface)
+asks for: a forge is a property of a person's employer and may not be named,
+where the runtime that executes their work is a property of how they choose to
+work. What ephor writes is a plan file in a documented plain-text language, so
+the coupling is a file format and not a process — the tickets stay readable,
+diffable, and hand-editable if the runtime is never run at all.
+
+### 1. A recipe decides which items deserve work, and what to ask for
+
+A **recipe** is a named piece of configuration with a selector and a brief: the
+selector says which items it applies to — kind, role, whether the gate is red,
+whether a response is owed, which source reported it — and the brief is what
+the ticket asks for, in the reader's own words.
+
+Recipes are how the same watch serves different projects: what to do about a
+red gate in one repository is not what to do about it in another, and neither
+is ephor's to decide. A recipe is therefore configuration first. ephor ships
+the few that are true everywhere — the red gate, the unanswered conversation,
+the review, the issue — for the same reason it ships quick actions
+([§FS-004-quick-actions](#fs-004-quick-actions-a-problem-ephor-recognizes-arrives-with-the-action-for-it)):
+a problem ephor already recognizes should not need to be described to it
+before anything can be done about it. Configuration adds recipes, and a
+configured recipe that reuses a shipped one's name replaces it.
+
+### 2. The ticket carries what ephor knows, not a link to it
+
+A ticket that says "look at pull request 42" has handed back the whole job. The
+watch already holds what the work needs: the title and state, the branch and
+the checkout it lives in, the gate's counts per repository and the forge's own
+reasons for refusing the merge, and the conversation as messages with their
+authors and times. All of it was fetched already, and it is on disk.
+
+So the ticket carries it — a **dossier** written into the plan, and the ask
+written under it. Two things follow. The work starts from what a person would
+have read first, instead of spending its opening move re-fetching what ephor
+had. And the dossier is a record: it says what the item looked like when the
+work was asked for, which is the only way to read the result of that work
+later.
+
+A dossier is bounded. A conversation of two hundred messages is not evidence,
+it is a transcript; what is quoted is bounded per thread and in total, and
+where anything was dropped the ticket says so and links to the whole.
+
+### 3. One rhei per item, one ticket per dispatch
+
+An item's work lives in one plan named after the item — so its whole history is
+one file, and dispatching a second recipe on the same item adds a ticket to it
+rather than starting a rival copy of the same work somewhere else.
+
+The plan is created in the project the item belongs to, in the checkout the
+item's branch resolves to — the same resolution actions already use
+([§FS-004-quick-actions.1](#1-a-quick-action-belongs-to-the-source-that-found-the-problem)).
+Work about a branch belongs in that branch's working tree: it is where the
+change is, where the tools run, and where the runtime will put the agent. Where
+the branch is not checked out, dispatch says so and offers the checkout,
+because writing a ticket about code that is not on the machine only moves the
+problem.
+
+### 4. The ledger is ephor's record, and never the truth about the work
+
+ephor keeps a ledger of what it dispatched: the item, the recipe, the plan, and
+what the item looked like at that moment. The ledger is what makes the second
+question answerable — has this already been handed over? — and it is written
+where ephor's other state lives, not in the reader's repositories.
+
+But the work's state belongs to the runtime and is read from the plan, never
+cached in the ledger. A ledger that remembers "running" when the plan says
+"done" is worse than no ledger: it is a watch reporting on itself instead of on
+the world, which is the one thing this tool must never do. A ledger entry whose
+plan has been deleted is reported as missing rather than repaired.
+
+### 5. An item that moved reopens its work
+
+Work asked about a pull request is answered against the pull request as it was.
+New comments arrive; the gate turns red again; the state changes. The ticket
+that was finished is now finished about something that no longer exists.
+
+So ephor **fingerprints** the item at dispatch — its last activity, its state,
+its gate, how much conversation it had — and a change to any of those makes the
+work **stale**. Stale work is reopened by appending a ticket to the same plan
+that says what changed since the last one and asks for the difference, ordered
+after it. Not by opening a second plan: the point of the record is that one
+item's work reads in one place, in order.
+
+What is asked for is chosen against the item as it now is, preferring what was
+asked last while that still applies. A change moves between categories as it
+goes: the pull request whose gate was red is, two hours later, one whose jobs
+pass and whose reviewer has asked a question. Reopening it under the recipe it
+was first dispatched with would hand the work a ticket about a problem that is
+no longer there. Where nothing applies any more — it merged, it closed — the
+work is not reopened at all, and the ledger goes on saying that the item moved
+past it.
+
+Reopening is a decision, not a reflex. It is offered where it applies and
+performed when asked for — by a person or by whatever runs the sync — and never
+as a side effect of merely looking at the feed.
+
+### 6. Dispatch is offered where it would work, and refuses where it would not
+
+The rules of [§FS-004-quick-actions.2](#2-offered-only-where-it-would-work)
+hold here and cost more when broken, because a ticket that cannot run is not a
+wasted keystroke but a piece of work that looks scheduled and never happens. A
+recipe is offered only when it matches the item, the item's project has a root,
+and the checkout can be resolved — and where the work edits the change rather
+than reading it, only when that change is actually on the machine. Where the
+runtime's setup in that checkout cannot run what ephor would write — a state
+machine already there that does not declare the state a recipe starts in —
+dispatch refuses and names both, rather than writing a ticket that will sit
+there unrunnable.
+
+Matching is on what a gate is doing, not on how red it looks. Jobs that failed
+are work for a checkout; a forge that refuses to merge an otherwise green
+change is usually waiting on a person, and dispatching an agent at it spends a
+pass to be told so.
+
+Finished work is never dispatched. An item under Recent
+([§FS-003-feed-categories.2](#2-recent)) is news, and asking an agent to fix a
+merged pull request is asking it to invent something to do.
+
+### 7. Handing over work is the reader's move, and stays inside the machine
+
+Dispatch writes files and nothing else. It opens no pull request, posts no
+comment, and pushes no branch — those are the runtime's to do, if a recipe asks
+for them, and a recipe that does asks in the ticket's own words where a reader
+can see it. What ships asks for none of them: the shipped recipes end at a
+local change, and closing the loop out to the forge is one line of
+configuration that a person turns on deliberately.
+
+Bulk dispatch — every matching item in a project, in one command — is the same
+guarantee at scale: it writes tickets, reports each one, and can be asked what
+it would do without doing it.

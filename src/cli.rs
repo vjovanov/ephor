@@ -52,9 +52,120 @@ pub enum Command {
     MarkRead(MarkReadArgs),
     /// Show what failed under a pull request's red gate.
     Failures(FailuresArgs),
+    /// Hand items to the agent runtime, and see what came of it.
+    Work(WorkArgs),
     /// Interactive inbox: navigate the feed, open items, mark them done.
     #[command(alias = "inbox")]
     Tui,
+}
+
+/// `ephor work` (§FS-005-dispatch). With no subcommand: what has been
+/// dispatched and what it reached.
+#[derive(Args, Debug)]
+pub struct WorkArgs {
+    #[command(subcommand)]
+    pub command: Option<WorkCommand>,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum WorkCommand {
+    /// What has been dispatched, and what the runtime has made of it.
+    List(WorkListArgs),
+    /// Open tickets for items that match a recipe and have no work yet.
+    Dispatch(WorkDispatchArgs),
+    /// Reopen work whose item has moved since it was dispatched.
+    Sync(WorkSyncArgs),
+    /// Run the runtime over every work root that still has an open ticket.
+    Run(WorkRunArgs),
+    /// Drop ledger entries; the plans they point at stay on disk.
+    Forget(WorkForgetArgs),
+}
+
+#[derive(Args, Debug, Default)]
+pub struct WorkListArgs {
+    /// Restrict to one project. May be passed multiple times.
+    #[arg(long)]
+    pub project: Vec<String>,
+
+    /// Only work that is still open or has gone stale.
+    #[arg(long)]
+    pub open: bool,
+
+    /// Emit raw JSON instead of a table.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct WorkDispatchArgs {
+    /// Restrict to one project. May be passed multiple times.
+    #[arg(long)]
+    pub project: Vec<String>,
+
+    /// Dispatch one item by its feed id.
+    #[arg(long)]
+    pub item: Option<String>,
+
+    /// Use this recipe instead of the first one that matches.
+    #[arg(long)]
+    pub recipe: Option<String>,
+
+    /// Restrict to one item kind (pr, ci, issue, message, status).
+    #[arg(long)]
+    pub kind: Option<String>,
+
+    /// Dispatch onto items that already have work, adding a ticket.
+    #[arg(long)]
+    pub again: bool,
+
+    /// Skip items with no activity in this many days.
+    #[arg(long, value_name = "DAYS")]
+    pub updated_within: Option<i64>,
+
+    /// Report what would be opened without writing anything.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct WorkSyncArgs {
+    /// Restrict to one project. May be passed multiple times.
+    #[arg(long)]
+    pub project: Vec<String>,
+
+    /// Report what would be reopened without writing anything.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct WorkRunArgs {
+    /// Restrict to one project. May be passed multiple times.
+    #[arg(long)]
+    pub project: Vec<String>,
+
+    /// Run only the work of one item.
+    #[arg(long)]
+    pub item: Option<String>,
+
+    /// Arguments passed through to the runtime, after `--`.
+    #[arg(last = true)]
+    pub rhei_args: Vec<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct WorkForgetArgs {
+    /// Forget one item's work.
+    #[arg(long)]
+    pub item: Option<String>,
+
+    /// Forget every entry whose tickets are all finished.
+    #[arg(long)]
+    pub done: bool,
+
+    /// Forget every entry whose plan is gone.
+    #[arg(long)]
+    pub missing: bool,
 }
 
 #[derive(Args, Debug)]

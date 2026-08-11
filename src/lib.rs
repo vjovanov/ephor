@@ -10,6 +10,7 @@
 //! both answer the same types and the same policy runs over both.
 
 pub mod agents;
+pub mod branches;
 pub mod cli;
 pub mod error;
 pub mod feed;
@@ -19,3 +20,4 @@ pub mod paths;
 pub mod registry;
 pub mod table;
 pub mod update;
+pub mod work;
