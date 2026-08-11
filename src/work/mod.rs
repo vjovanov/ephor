@@ -268,11 +268,11 @@ impl Dispatcher {
             checkout: &checkout,
             root: &placement.root,
         };
-        let dir = crate::paths::resolve_path(&dossier::render(&template, &subject.placeholders()));
+        let values = subject.placeholders();
         Ok(Site {
-            dir,
+            dir: crate::paths::resolve_path(&dossier::render(&template, &values)),
             dossier: subject.dossier(),
-            values: subject.placeholders(),
+            values,
             checkout: checkout.clone(),
         })
     }
@@ -313,16 +313,27 @@ impl Dispatcher {
             });
         }
 
-        let root = WorkRoot::ensure(&site.dir, &states)?;
-        if !root.declares(&recipe.state) {
-            return Err(EphorError::Command(format!(
+        // Where a machine is already in force, it answers before anything is
+        // written: a recipe naming a state it does not have is refused, and a
+        // refusal should leave nothing behind.
+        let undeclared = |root: &WorkRoot| {
+            EphorError::Command(format!(
                 "recipe '{}' starts in state '{}', which the machine '{}' in {} does not declare (it has: {}).",
                 recipe.id,
                 recipe.state,
                 root.machine,
                 root.dir.display(),
                 root.state_names().join(", ")
-            )));
+            ))
+        };
+        if let Some(existing) = WorkRoot::open(&site.dir)? {
+            if !existing.declares(&recipe.state) {
+                return Err(undeclared(&existing));
+            }
+        }
+        let root = WorkRoot::ensure(&site.dir, &states)?;
+        if !root.declares(&recipe.state) {
+            return Err(undeclared(&root));
         }
         let path = root.plan_path(&rhei);
         let brief = dossier::render(&recipe.brief, &site.values);
