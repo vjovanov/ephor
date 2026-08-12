@@ -266,6 +266,7 @@ ephor work                                  # what has been dispatched, and what
 ephor work dispatch --dry-run               # what would be opened, and where
 ephor work dispatch [--project P] [--recipe R] [--item ID] [--kind pr]
                     [--updated-within DAYS] [--again]
+ephor work ask --item ID "…"                # a ticket in your own words
 ephor work sync [--dry-run]                 # reopen work whose item has moved
 ephor work run [--project P] [--item ID] [-- --parallel 2]   # rhei run, per work root
 ephor work forget [--item ID | --done | --missing]
@@ -290,9 +291,28 @@ left deliberate.
 In the TUI, `w` on any item opens its **work screen**: the tickets already
 opened and what they reached, whether the item has moved under them, and the
 recipes that apply now with the exact words each would send. `1`-`9` opens one,
-`s` reopens stale work, `R` hands the root to the runtime (which takes over the
-terminal, so you watch it work), `e` reads the plan. Rows carry a badge —
-`⚙ fix-gate · review`, `✓ answer · done — …`, `⟳ 2 new messages`.
+`a` asks for something no recipe covers, `s` reopens stale work, `R` hands this
+item's plan to the runtime (which takes over the terminal, so you watch it
+work), `e` reads the plan. Rows carry a badge — `⚙ fix-gate · review`,
+`✓ answer · done — …`, `⟳ 2 new messages`.
+
+### By hand
+
+Recipes are for the work that repeats; most work does not
+([§FS-005-dispatch.8](requirements.md#8-what-ephor-offers-is-not-a-limit-on-what-can-be-asked)).
+So nothing has to be written down in advance:
+
+- **`a` on the work screen** — type one line and it becomes an ordinary ticket,
+  same dossier, same plan, same order, with your words as the brief. It is
+  never refused for not matching a selector: a merged pull request, an item no
+  recipe covers, a second ask on work already running — all fair.
+  `ephor work ask --item ID "bump the timeout to 30s and re-run the flaky test"`
+  is the same thing from a script; with no words it reads them from stdin, which
+  is how a longer ask composed in an editor gets in.
+- **`⌨ run a command here…`**, the last entry of every `x` menu — type a shell
+  command and it runs exactly as a configured action does: the item's checkout,
+  the item's `EPHOR_*` environment, the terminal handed over. The menu now opens
+  even when nothing is configured, because that is when you need it most.
 
 **The ticket carries the dossier**, not a link: state, branch and checkout, the
 gate's counts per repository and the forge's own reasons, and the conversation

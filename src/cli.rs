@@ -73,6 +73,8 @@ pub enum WorkCommand {
     List(WorkListArgs),
     /// Open tickets for items that match a recipe and have no work yet.
     Dispatch(WorkDispatchArgs),
+    /// Ask one item for something no recipe covers, in your own words.
+    Ask(WorkAskArgs),
     /// Reopen work whose item has moved since it was dispatched.
     Sync(WorkSyncArgs),
     /// Run the runtime over every work root that still has an open ticket.
@@ -126,6 +128,25 @@ pub struct WorkDispatchArgs {
     pub updated_within: Option<i64>,
 
     /// Report what would be opened without writing anything.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct WorkAskArgs {
+    /// The item to ask about, by its feed id.
+    #[arg(long)]
+    pub item: String,
+
+    /// What to ask for. Omitted, it is read from stdin — which is how a
+    /// longer ask composed in an editor gets in.
+    pub words: Vec<String>,
+
+    /// Start the ticket in this state instead of the machine's working one.
+    #[arg(long)]
+    pub state: Option<String>,
+
+    /// Report what would be written without writing it.
     #[arg(long)]
     pub dry_run: bool,
 }

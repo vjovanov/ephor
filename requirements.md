@@ -429,3 +429,32 @@ configuration that a person turns on deliberately.
 Bulk dispatch — every matching item in a project, in one command — is the same
 guarantee at scale: it writes tickets, reports each one, and can be asked what
 it would do without doing it.
+
+### 8. What ephor offers is not a limit on what can be asked
+
+Recipes are for the work that repeats. Most work does not: a reader looks at a
+change and knows the one thing they want done to it, and that thing has never
+come up before and will not come up again. A tool where every ask must first be
+written down as a rule, in a configuration file, in another window, has made
+the common case the expensive one — and the reader will do it by hand instead,
+which is what they were trying to stop doing.
+
+So an item can be asked for **anything, in the reader's own words, where they
+are standing**. What that produces is an ordinary ticket: the same dossier, the
+same plan, the same place in the order, the same runtime. Only the brief is
+different, in that nobody wrote it in advance.
+
+Two things follow from its being asked for rather than offered:
+
+1. **It is never refused for not matching.** Selectors say what ephor
+   *volunteers*; they say nothing about what a person may ask for. Finished
+   work, an item no recipe covers, a second ask on work already under way — each
+   is somebody's deliberate request, and ephor's job is to write it down
+   accurately rather than to have an opinion about it.
+2. **The same holds for a command.** The action menu
+   ([§FS-004-quick-actions](#fs-004-quick-actions-a-problem-ephor-recognizes-arrives-with-the-action-for-it))
+   is configuration plus what a source offers; a reader who wants to run
+   something once should not have to add it to a file first. A command typed
+   into the menu runs exactly as a configured one does — the same checkout, the
+   same `EPHOR_*` environment, the same handover of the terminal — because the
+   only difference between the two is whether anyone expects to want it again.

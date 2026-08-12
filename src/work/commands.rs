@@ -29,6 +29,7 @@ pub fn work(args: &WorkArgs) -> Result<ExitCode> {
     {
         WorkCommand::List(list) => list_work(&config, list),
         WorkCommand::Dispatch(dispatch) => dispatch_work(&config, dispatch),
+        WorkCommand::Ask(ask) => ask_work(&config, ask),
         WorkCommand::Sync(sync) => sync_work(&config, sync),
         WorkCommand::Run(run) => run_work(&config, run),
         WorkCommand::Forget(forget) => forget_work(&config, forget),
@@ -296,6 +297,44 @@ fn dispatch_work(config: &StatusConfig, args: &crate::cli::WorkDispatchArgs) -> 
     if asked_for_one && opened == 0 {
         return Ok(ExitCode::from(1));
     }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `ephor work ask` — one item, whatever the reader wants done to it
+/// (§FS-005-dispatch.8).
+fn ask_work(config: &StatusConfig, args: &crate::cli::WorkAskArgs) -> Result<ExitCode> {
+    let mut dispatcher = Dispatcher::load(config)?;
+    let item = selected_items(config, &[])?
+        .into_iter()
+        .find(|item| item.id == args.item)
+        .ok_or_else(|| {
+            EphorError::Command(format!(
+                "{} is not in any cached feed — run `ephor refresh` first.",
+                args.item
+            ))
+        })?;
+
+    // Typed as arguments, or piped in — which is how an ask composed in an
+    // editor arrives, and those are the ones worth writing at length.
+    let words = if args.words.is_empty() {
+        let mut piped = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut piped)
+            .map_err(|err| EphorError::Command(format!("Cannot read the ask: {err}")))?;
+        piped
+    } else {
+        args.words.join(" ")
+    };
+
+    let outcome = dispatcher.ask(&item, &words, args.state.as_deref(), args.dry_run)?;
+    if !args.dry_run {
+        dispatcher.save()?;
+    }
+    println!(
+        "{} {}\n  {}",
+        if args.dry_run { "would ask" } else { "asked" },
+        title(&item.title),
+        Style::detect().dim(&outcome.describe())
+    );
     Ok(ExitCode::SUCCESS)
 }
 

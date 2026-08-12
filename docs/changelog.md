@@ -48,8 +48,17 @@ ships, the previous "latest" section moves verbatim to
   it is now: a pull request whose gate went green and whose reviewer asked a
   question is no longer a red gate, and reopening it as one would hand the work
   a ticket about a problem that is not there.
+- **Asking by hand** (§FS-005-dispatch.8): `a` on the work screen types one
+  line and it becomes an ordinary ticket — same dossier, same plan, same
+  order — with the reader's words as the brief, and `ephor work ask --item ID`
+  does it from a script or from stdin. It is refused for nothing but being
+  unrunnable: selectors say what ephor volunteers, not what a person may ask
+  for, so a merged pull request or an item no recipe covers is fair. The action
+  menu gained the same at the command level — a last entry, `⌨ run a command
+  here…`, that runs what is typed exactly as a configured action does — and it
+  now opens even when nothing is configured, which is when it is most useful.
 - `ephor work` — `list` (the ledger, with each ticket's state read back out of
-  its plan), `dispatch`, `sync`, `run`, `forget`, and `states`. Every one that
+  its plan), `dispatch`, `ask`, `sync`, `run`, `forget`, and `states`. Every one that
   writes answers `--dry-run`, and `dispatch` is the sweep: every item in every
   project that matches a recipe and has no work yet, bounded by
   `--updated-within`. `run` names the plans ephor opened rather than the

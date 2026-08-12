@@ -64,6 +64,15 @@ impl Outcome {
                 ticket,
                 recipe,
             } => format!("{recipe} → {}#{ticket}", plan.display()),
+            // A ticket appended to a plan that exists is "reopened" whether or
+            // not the item moved — asking for something else is one way to
+            // reopen work. With nothing to say about the item, say nothing.
+            Outcome::Reopened {
+                plan,
+                ticket,
+                recipe,
+                changes,
+            } if changes.is_empty() => format!("{recipe} → {}#{ticket}", plan.display()),
             Outcome::Reopened {
                 plan,
                 ticket,
@@ -423,6 +432,39 @@ impl Dispatcher {
         Ok(outcome)
     }
 
+    /// Ask an item for something no recipe covers, in the reader's own words
+    /// (§FS-005-dispatch.8). An ordinary ticket in every other respect — the
+    /// same dossier, the same plan, the same order — and refused for nothing
+    /// but being unrunnable: what is asked for is asked for.
+    pub fn ask(
+        &mut self,
+        item: &Item,
+        words: &str,
+        state: Option<&str>,
+        dry_run: bool,
+    ) -> Result<Outcome> {
+        let words = words.trim();
+        if words.is_empty() {
+            return Err(EphorError::Command("Nothing was asked for.".to_string()));
+        }
+        let recipe = Recipe {
+            id: "ask".to_string(),
+            icon: "✎".to_string(),
+            // The first line names the ticket; the whole of it is the brief.
+            description: summarize(words),
+            state: state.unwrap_or(WORKING_STATE).to_string(),
+            when: Default::default(),
+            // Asked for on the spot, about whatever is on screen: a branch
+            // that is not here is a fact for the dossier to state, not a
+            // reason to refuse the reader.
+            needs_checkout: false,
+            brief: words.to_string(),
+            target: None,
+            model: None,
+        };
+        self.dispatch(item, &recipe, dry_run)
+    }
+
     /// Reopen an item's work when the item has moved under it
     /// (§FS-005-dispatch.5). Work whose item is unchanged is left alone.
     pub fn sync(&mut self, item: &Item, dry_run: bool) -> Result<Outcome> {
@@ -514,6 +556,24 @@ impl Dispatcher {
     pub fn save(&self) -> Result<()> {
         ledger::store(&self.ledger)
     }
+}
+
+/// The state a hand-written ask starts in when the reader names none: the
+/// shipped machine's working state, which is also the shipped recipes'.
+const WORKING_STATE: &str = "fix";
+
+/// A ticket title out of what was asked: its first line, cut at a word so it
+/// reads in a list beside the item's own title. The whole of what was asked is
+/// in the ticket body regardless; this is only the label.
+fn summarize(words: &str) -> String {
+    const LABEL: usize = 56;
+    let first = words.lines().next().unwrap_or("").trim();
+    if first.chars().count() <= LABEL {
+        return first.to_string();
+    }
+    let kept: String = first.chars().take(LABEL).collect();
+    let cut = kept.rfind(' ').unwrap_or(kept.len());
+    format!("{}…", kept[..cut].trim_end())
 }
 
 fn clamp(text: &str, limit: usize) -> String {

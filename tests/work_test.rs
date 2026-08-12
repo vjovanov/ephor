@@ -345,6 +345,75 @@ fn a_recipe_naming_a_state_the_machine_does_not_have_is_refused() {
         .stderr(predicate::str::contains("fix, review, done"));
 }
 
+/// What no recipe covers can still be asked for, in the reader's own words
+/// (§FS-005-dispatch.8) — and asking is refused for nothing but being
+/// unrunnable.
+#[test]
+fn an_item_can_be_asked_for_anything_including_what_no_recipe_matches() {
+    let tmp = tempfile::tempdir().unwrap();
+    fixture(tmp.path(), Value::Null);
+    ephor(tmp.path())
+        .args(["refresh", "demo"])
+        .assert()
+        .success();
+
+    // Merged just now, so it is under Recent: no recipe would volunteer on
+    // finished work, and the reader asks anyway.
+    with_pr(tmp.path(), |item| {
+        item["state"] = json!("merged");
+        item["updated_at"] = json!(chrono::Utc::now().to_rfc3339());
+    });
+    ephor(tmp.path())
+        .args([
+            "work",
+            "ask",
+            "--item",
+            "github-prs:acme/widget#42",
+            "open a follow-up issue for the retry-window edge case",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("asked"));
+
+    let plan = fs::read_to_string(
+        tmp.path()
+            .join("demo/panta/github-prs-acme-widget-42.rhei.md"),
+    )
+    .unwrap();
+    assert!(plan.contains("### Task ask-1:"), "{plan}");
+    assert!(plan.contains("open a follow-up issue"), "{plan}");
+    assert!(plan.contains("**State:** fix"), "{plan}");
+    // The dossier is the same one a recipe would have carried.
+    assert!(plan.contains("## The item"), "{plan}");
+
+    // Piped in, which is how a longer ask composed in an editor arrives; and
+    // a second ask follows the first.
+    ephor(tmp.path())
+        .args(["work", "ask", "--item", "github-prs:acme/widget#42"])
+        .write_stdin("rename the flag\n\nKeep the old spelling for one release.\n")
+        .assert()
+        .success();
+    let plan = fs::read_to_string(
+        tmp.path()
+            .join("demo/panta/github-prs-acme-widget-42.rhei.md"),
+    )
+    .unwrap();
+    assert!(plan.contains("### Task ask-2: rename the flag"), "{plan}");
+    assert!(plan.contains("**Prior:** Task ask-1"), "{plan}");
+    assert!(
+        plan.contains("Keep the old spelling for one release."),
+        "{plan}"
+    );
+
+    // Nothing asked for is not a ticket.
+    ephor(tmp.path())
+        .args(["work", "ask", "--item", "github-prs:acme/widget#42"])
+        .write_stdin("   \n")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Nothing was asked for"));
+}
+
 #[test]
 fn forgetting_an_entry_keeps_the_plan_it_points_at() {
     let tmp = tempfile::tempdir().unwrap();

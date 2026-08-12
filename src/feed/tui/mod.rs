@@ -15,6 +15,7 @@
 mod actions;
 mod gate;
 mod navigator;
+mod prompt;
 mod thread;
 mod work;
 
@@ -43,6 +44,7 @@ use crate::registry;
 use actions::{ActionMenu, MenuOutcome};
 use gate::GateScreen;
 use navigator::NavigatorState;
+use prompt::{Asking, Prompt, PromptOutcome};
 use thread::ThreadScreen;
 use work::WorkScreen;
 
@@ -402,6 +404,8 @@ pub(crate) enum Action {
     },
     /// Open a plan in the reader's editor.
     ReadPlan(PathBuf),
+    /// Ask this item for something no recipe covers (§FS-005-dispatch.8).
+    AskWork(Item),
     ToggleUnread,
     Refresh,
     SetMessage(String),
@@ -420,6 +424,8 @@ struct App {
     screen: Screen,
     /// Open action menu, drawn over the active screen.
     menu: Option<ActionMenu>,
+    /// A line the reader is typing, drawn over everything else.
+    prompt: Option<Prompt>,
     /// The half of ephor that hands work over (§FS-005-dispatch). None when
     /// the registry could not be read for it — the inbox still works.
     dispatcher: Option<crate::work::Dispatcher>,
@@ -614,6 +620,7 @@ impl App {
             navigator: NavigatorState::new(),
             screen: Screen::Navigator,
             menu: None,
+            prompt: None,
             dispatcher: crate::work::Dispatcher::load(config).ok(),
             message: String::new(),
         };
@@ -698,13 +705,39 @@ impl App {
                 return Ok(ExitCode::SUCCESS);
             }
 
+            // The prompt is over everything, including the menu that opened
+            // it: what is typed there is meant for it and nothing else.
+            if let Some(prompt) = &mut self.prompt {
+                match prompt.handle_key(key.code, key.modifiers) {
+                    PromptOutcome::Stay => {}
+                    PromptOutcome::Cancel => {
+                        self.prompt = None;
+                        self.message = "Nothing asked for".to_string();
+                    }
+                    PromptOutcome::Submit(line) => {
+                        let prompt = self.prompt.take().expect("prompt is open");
+                        self.submit(terminal, prompt.asking, &line)?;
+                    }
+                }
+                continue;
+            }
             if let Some(menu) = &mut self.menu {
                 match menu.handle_key(key.code) {
                     MenuOutcome::Stay => {}
                     MenuOutcome::Close => self.menu = None,
                     MenuOutcome::Run(entry) => {
                         let menu = self.menu.take().expect("menu is open");
-                        self.run_menu_entry(terminal, &menu, &entry)?;
+                        // The one entry that has no command yet: the reader
+                        // types it (§FS-005-dispatch.8).
+                        if entry.is_freehand {
+                            self.prompt = Some(Prompt::new(
+                                Asking::Command(Box::new(menu)),
+                                "run a command here",
+                                "runs in the item's checkout, with its EPHOR_* environment  ·  enter runs  ·  esc cancels",
+                            ));
+                        } else {
+                            self.run_menu_entry(terminal, &menu, &entry)?;
+                        }
                     }
                 }
                 continue;
@@ -775,35 +808,33 @@ impl App {
             }
             Action::OpenActionMenu(item) => {
                 let applicable = self.ctx.actions_for(&item);
-                if applicable.is_empty() {
-                    self.message = "No actions configured for this item ('actions' in status.json)"
-                        .to_string();
-                } else {
-                    match self.ctx.roots.get(&item.project) {
-                        Some(root) if root.is_dir() => {
-                            let (workspace, branch) = self.ctx.checkout_for(&item, root);
-                            let state = self.ctx.workspace_state(&item, root);
-                            let checkout = self.ctx.checkouts.get(&item.project).cloned();
-                            self.menu = Some(ActionMenu::new(
-                                item,
-                                root.clone(),
-                                workspace,
-                                branch,
-                                state,
-                                checkout,
-                                applicable,
-                            ));
-                        }
-                        Some(root) => {
-                            self.message = format!(
-                                "{} is not checked out ({} is missing)",
-                                item.project,
-                                root.display()
-                            );
-                        }
-                        None => {
-                            self.message = format!("{} has no root in the registry", item.project);
-                        }
+                // An empty menu is no longer empty: the last entry is always
+                // "run a command here…" (§FS-005-dispatch.8), and refusing
+                // to open would hide it exactly where nothing is configured.
+                match self.ctx.roots.get(&item.project) {
+                    Some(root) if root.is_dir() => {
+                        let (workspace, branch) = self.ctx.checkout_for(&item, root);
+                        let state = self.ctx.workspace_state(&item, root);
+                        let checkout = self.ctx.checkouts.get(&item.project).cloned();
+                        self.menu = Some(ActionMenu::new(
+                            item,
+                            root.clone(),
+                            workspace,
+                            branch,
+                            state,
+                            checkout,
+                            applicable,
+                        ));
+                    }
+                    Some(root) => {
+                        self.message = format!(
+                            "{} is not checked out ({} is missing)",
+                            item.project,
+                            root.display()
+                        );
+                    }
+                    None => {
+                        self.message = format!("{} has no root in the registry", item.project);
                     }
                 }
             }
@@ -840,6 +871,13 @@ impl App {
                     self.open_work(item);
                 }
             }
+            Action::AskWork(item) => {
+                self.prompt = Some(Prompt::new(
+                    Asking::Work(item),
+                    "ask for something",
+                    "becomes a ticket with the dossier  ·  enter opens it  ·  esc cancels",
+                ))
+            }
             Action::ReadPlan(path) => {
                 let editor = std::env::var("EDITOR").unwrap_or_else(|_| "less".to_string());
                 let dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
@@ -862,6 +900,51 @@ impl App {
             }
         }
         Ok(false)
+    }
+
+    /// What the reader typed, done: a ticket in their own words, or a command
+    /// run exactly as a configured one is (§FS-005-dispatch.8).
+    fn submit(&mut self, terminal: &mut DefaultTerminal, asking: Asking, line: &str) -> Result<()> {
+        match asking {
+            Asking::Work(item) => {
+                let Some(dispatcher) = &mut self.dispatcher else {
+                    self.message = "Work needs the registry, which could not be read".to_string();
+                    return Ok(());
+                };
+                // The screen below shows the plan; the header says what landed
+                // in it.
+                self.message = match dispatcher.ask(&item, line, None, false) {
+                    Ok(crate::work::Outcome::Opened { ticket, .. })
+                    | Ok(crate::work::Outcome::Reopened { ticket, .. }) => {
+                        match dispatcher.save() {
+                            Ok(()) => format!("✎ asked — {ticket}"),
+                            Err(err) => err.to_string(),
+                        }
+                    }
+                    Ok(outcome) => outcome.describe(),
+                    Err(err) => err.to_string(),
+                };
+                self.reload_work();
+                self.navigator.rebuild(&self.ctx);
+                self.open_work(item);
+            }
+            Asking::Command(menu) => {
+                let entry = actions::MenuEntry {
+                    action: ActionConfig {
+                        icon: "⌨".to_string(),
+                        description: line.to_string(),
+                        command: line.to_string(),
+                        kinds: Vec::new(),
+                        requires_checkout: false,
+                    },
+                    is_checkout: false,
+                    is_freehand: false,
+                    gate: actions::Gate::Ready,
+                };
+                self.run_menu_entry(terminal, &menu, &entry)?;
+            }
+        }
+        Ok(())
     }
 
     /// The work screen for an item, rebuilt from the plan each time it opens.
@@ -1177,8 +1260,13 @@ impl App {
         if let Some(menu) = &self.menu {
             menu.draw(frame, body_area);
         }
+        if let Some(prompt) = &self.prompt {
+            prompt.draw(frame, body_area);
+        }
 
-        let footer = if self.menu.is_some() {
+        let footer = if self.prompt.is_some() {
+            " type  ·  enter sends  ·  esc cancels  ·  ^w word back  ·  ^u clear"
+        } else if self.menu.is_some() {
             " j/k move  1-9 run  enter run  esc cancel"
         } else {
             match &self.screen {

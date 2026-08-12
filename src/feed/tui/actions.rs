@@ -117,6 +117,9 @@ pub(crate) struct MenuEntry {
     pub action: ActionConfig,
     /// The synthetic "check out branch workspace" row.
     pub is_checkout: bool,
+    /// The synthetic row with no command yet: the reader types one
+    /// (§FS-005-dispatch.8).
+    pub is_freehand: bool,
     pub gate: Gate,
 }
 
@@ -158,6 +161,7 @@ impl ActionMenu {
                     requires_checkout: false,
                 },
                 is_checkout: true,
+                is_freehand: false,
                 gate: Gate::NeedsCheckout,
             });
         }
@@ -181,9 +185,25 @@ impl ActionMenu {
             entries.push(MenuEntry {
                 action,
                 is_checkout: false,
+                is_freehand: false,
                 gate,
             });
         }
+        // Last, and always there: what the reader wants to run once
+        // (§FS-005-dispatch.8). It leads nothing and blocks nothing — a menu
+        // whose first key is "type something" would be a menu that gave up.
+        entries.push(MenuEntry {
+            action: ActionConfig {
+                icon: "⌨".to_string(),
+                description: "run a command here…".to_string(),
+                command: String::new(),
+                kinds: Vec::new(),
+                requires_checkout: false,
+            },
+            is_checkout: false,
+            is_freehand: true,
+            gate: Gate::Ready,
+        });
         ActionMenu {
             item,
             root,
