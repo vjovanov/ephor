@@ -31,39 +31,43 @@ if [ ! -d "${CHECKOUT:-}" ] || [ -z "${CHECKOUT##*\{*}" ]; then
 fi
 cd "$CHECKOUT" || { echo "no checkout at $CHECKOUT" > "$REPORT"; exit 1; }
 
-branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-want=${BRANCH:-}
+# Every repository under the checkout, not just the one at its root: a
+# multi-repo workspace holds several, and the fix for a pull request lands in
+# whichever one owns the code. Pushing the root alone pushes nothing.
+repos=()
+for candidate in . */; do
+  [ -e "$candidate/.git" ] || continue
+  repos+=("${candidate%/}")
+done
+if [ ${#repos[@]} -eq 0 ]; then
+  echo "no git repository in $CHECKOUT" >> "$REPORT"
+  exit 1
+fi
 
 {
-  echo "# landing on $branch in $CHECKOUT"
+  echo "# landing from $CHECKOUT"
+  echo
+  echo "Repositories: ${repos[*]}"
   echo
 } > "$REPORT"
-
-# The ticket names a branch; being on a different one means somebody moved the
-# checkout under the work, and pushing then pushes the wrong thing.
-if [ -n "$want" ] && [ -z "${want##*\{*}" ]; then want=""; fi
-if [ -n "$want" ] && [ "$branch" != "$want" ]; then
-  {
-    echo "NEEDS-HUMAN: the checkout is on '$branch' but the ticket is about '$want'."
-    echo
-    echo "Nothing was pushed. Put the checkout back on the ticket's branch, or"
-    echo "close this ticket if the work moved."
-  } >> "$REPORT"
-  exit 2
-fi
 
 # Nothing is committed here. Each fix commits its own work — that is the
 # contract of the state that made the change — so a dirty tree at this point is
 # something nobody claimed, and `git add -A` before a push would sweep up
 # whatever else was lying in the checkout. Stop and show it instead.
-dirty=$(git status --porcelain)
+dirty=""
+for repo in "${repos[@]}"; do
+  changes=$(git -C "$repo" status --porcelain)
+  [ -n "$changes" ] && dirty="$dirty
+--- $repo
+$changes"
+done
 if [ -n "$dirty" ]; then
   {
     echo "NEEDS-HUMAN: the checkout has changes that no ticket committed."
     echo
     echo "Nothing was pushed. Commit them yourself, or discard them, then move"
     echo "this ticket on:"
-    echo
     echo '```'
     echo "$dirty"
     echo '```'
@@ -71,24 +75,42 @@ if [ -n "$dirty" ]; then
   exit 2
 fi
 
-ahead=$(git rev-list --count "@{upstream}..HEAD" 2>/dev/null || echo "unknown")
-if [ "$ahead" = "0" ]; then
-  echo "Nothing to push: the branch matches its upstream." >> "$REPORT"
-  exit 0
-fi
+pushed=0
+for repo in "${repos[@]}"; do
+  branch=$(git -C "$repo" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+  ahead=$(git -C "$repo" rev-list --count "@{upstream}..HEAD" 2>/dev/null || echo "none")
 
-echo "## push ($ahead commit(s) ahead)" >> "$REPORT"
-echo '```' >> "$REPORT"
-if ! git push >> "$REPORT" 2>&1; then
+  # The ticket names a branch. A repository sitting on a different one is not
+  # this work — the branch a poly-repo workspace tracks is the same in each.
+  if [ -n "${BRANCH:-}" ] && [ -z "${BRANCH##*\{*}" ]; then BRANCH=""; fi
+  if [ -n "${BRANCH:-}" ] && [ "$branch" != "$BRANCH" ]; then
+    echo "- $repo: on '$branch', not the ticket's '$BRANCH' — left alone" >> "$REPORT"
+    continue
+  fi
+  if [ "$ahead" = "none" ]; then
+    echo "- $repo: no upstream for '$branch' — left alone" >> "$REPORT"
+    continue
+  fi
+  if [ "$ahead" = "0" ]; then
+    echo "- $repo: already up to date with its upstream" >> "$REPORT"
+    continue
+  fi
+
+  echo >> "$REPORT"
+  echo "## $repo — push $ahead commit(s) on $branch" >> "$REPORT"
   echo '```' >> "$REPORT"
-  {
-    echo
-    echo "NEEDS-HUMAN: the push was refused — see the output above."
-    echo "Nothing else was attempted."
-  } >> "$REPORT"
-  exit 2
-fi
-echo '```' >> "$REPORT"
+  if ! git -C "$repo" push >> "$REPORT" 2>&1; then
+    echo '```' >> "$REPORT"
+    {
+      echo
+      echo "NEEDS-HUMAN: pushing $repo was refused — see the output above."
+      echo "Repositories pushed before it: $pushed. Nothing was forced."
+    } >> "$REPORT"
+    exit 2
+  fi
+  echo '```' >> "$REPORT"
+  pushed=$((pushed + 1))
+done
 
 # RESTART — where a forge can re-run failed jobs on the same commit, do it
 # here. Pushing already makes the gate run on the new commit, so this is only
@@ -102,5 +124,10 @@ if [ -n "${RESTART:-}" ]; then
 fi
 
 echo >> "$REPORT"
-echo "Pushed. The gate runs again on the new head; the next state waits for it." >> "$REPORT"
+if [ "$pushed" -eq 0 ]; then
+  echo "Nothing needed pushing." >> "$REPORT"
+else
+  echo "Pushed $pushed repositor$([ $pushed -eq 1 ] && echo y || echo ies)." >> "$REPORT"
+  echo "The gate runs again on the new heads; the next state waits for it." >> "$REPORT"
+fi
 exit 0
