@@ -430,7 +430,29 @@ Bulk dispatch — every matching item in a project, in one command — is the sa
 guarantee at scale: it writes tickets, reports each one, and can be asked what
 it would do without doing it.
 
-### 8. What ephor offers is not a limit on what can be asked
+### 8. The ticket carries the item as data, not only as prose
+
+The dossier is written for a reader — a person or an agent — and a program
+cannot read it. Yet the useful thing to put in front of an agent working a
+failing gate is usually what a *script* can fetch: the log, the failing job,
+the forge's analysis. A state machine can run that script before the agent, but
+only if the script is told which item it is about, and prose is not an input.
+
+So every ticket also carries the item's identifiers as **structured metadata**,
+under the same names its context takes in a shell action
+([§FS-004-quick-actions.1](#1-a-quick-action-belongs-to-the-source-that-found-the-problem)):
+project and source, kind and item id, repository and number, branch and ticket,
+url and state, and the checkout the work belongs to. One vocabulary, whether
+the thing reading it is a shell command in a menu or a program in a state
+machine.
+
+Two consequences. A ticket that is appended to a plan **adds** its metadata
+rather than replacing what is there, because the runtime keeps its own
+bookkeeping in the same place and a ticket writing over it would break the
+plan. And what is written is identifiers only — the prose stays in the dossier,
+which is where a reader is looking.
+
+### 9. What ephor offers is not a limit on what can be asked
 
 Recipes are for the work that repeats. Most work does not: a reader looks at a
 change and knows the one thing they want done to it, and that thing has never

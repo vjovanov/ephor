@@ -350,6 +350,71 @@ impl Plan {
         self.text.push_str(&ticket.render());
     }
 
+    /// Record one ticket's item as structured metadata, where a program in the
+    /// state machine can be handed it (§FS-005-dispatch.8).
+    ///
+    /// Merged, never rewritten: the runtime keeps its own per-task bookkeeping
+    /// in this same block, and a ticket that replaced it would break every
+    /// counted loop in the plan.
+    pub fn set_metadata(&mut self, ticket: &str, values: &[(&str, String)]) {
+        let entry = std::iter::once(format!("    {ticket}:\n"))
+            .chain(
+                values
+                    .iter()
+                    .filter(|(_, value)| !value.is_empty())
+                    .map(|(key, value)| format!("      {key}: {}\n", yaml_string(value))),
+            )
+            .collect::<String>();
+
+        let Some((open, close)) = self.frontmatter() else {
+            // No block yet: one goes below the heading and its declaration,
+            // which is where the runtime's language puts it.
+            let body = format!("---\nmetadata:\n  tasks:\n{entry}---\n");
+            let at = self.header_end();
+            self.text.insert_str(at, &format!("\n{body}"));
+            return;
+        };
+        let block = &self.text[open..close];
+        let insert_at = |needle: &str| block.find(needle).map(|at| open + at + needle.len());
+        match insert_at("\n  tasks:\n").or_else(|| insert_at("metadata:\n")) {
+            // Under an existing `tasks:`, or as the first thing under
+            // `metadata:` — YAML does not care about the order of keys.
+            Some(at) if block.contains("\n  tasks:\n") => self.text.insert_str(at, &entry),
+            Some(at) => self.text.insert_str(at, &format!("  tasks:\n{entry}")),
+            None => self
+                .text
+                .insert_str(open, &format!("metadata:\n  tasks:\n{entry}")),
+        }
+    }
+
+    /// The frontmatter body, as `(start, end)` byte offsets between its
+    /// fences. None when the plan has none.
+    fn frontmatter(&self) -> Option<(usize, usize)> {
+        let header_end = self.header_end();
+        let rest = &self.text[header_end..];
+        let open = rest.find("\n---\n")? + header_end + "\n---\n".len();
+        // Only a block that opens before any content is this plan's
+        // frontmatter; a horizontal rule further down is prose.
+        if self.text[header_end..open].trim().len() > "---".len() {
+            return None;
+        }
+        let close = self.text[open..].find("\n---\n")? + open + 1;
+        Some((open, close))
+    }
+
+    /// Just past the title and its `**States:**` declaration.
+    fn header_end(&self) -> usize {
+        let mut end = 0;
+        for line in self.text.lines() {
+            if line.starts_with("# ") || line.starts_with("**States:**") {
+                end += line.len() + 1;
+                continue;
+            }
+            break;
+        }
+        end
+    }
+
     /// Rewrite the dossier and nothing else. Tickets are appended, never
     /// rewritten: their `**State:**` lines belong to the runtime, which may be
     /// advancing one right now (§FS-005-dispatch.4).
@@ -446,6 +511,14 @@ pub fn rhei_id(item_id: &str) -> String {
         Some(_) => format!("item-{trimmed}"),
         None => "item".to_string(),
     }
+}
+
+/// A value as a YAML scalar. Always quoted: a branch called `you/ABC-42` is a
+/// string, a number like `24898` is a string too — a script comparing it
+/// against what a forge printed should not have to care that YAML would have
+/// made one of them an integer.
+fn yaml_string(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', r"\\").replace('"', "\\\""))
 }
 
 fn one_line(text: &str) -> String {
@@ -597,6 +670,64 @@ mod tests {
         assert!(reread
             .text()
             .starts_with("# Rhei: acme/widget#42 — Retry window\n"));
+    }
+
+    /// A program in the state machine is handed the item as `{meta.*}`, and
+    /// the runtime keeps its own bookkeeping in the same block
+    /// (§FS-005-dispatch.8).
+    #[test]
+    fn metadata_is_merged_into_the_frontmatter_the_runtime_shares() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("plan.rhei.md");
+        let mut plan = Plan::create(
+            &path,
+            "ephor-work",
+            "acme/widget#42",
+            "## The item\n",
+            &ticket("fix-gate-1", "collect", "work"),
+        );
+        plan.set_metadata(
+            "fix-gate-1",
+            &[
+                ("repo", "acme/widget".to_string()),
+                ("number", "42".to_string()),
+                ("branch", r#"you/"odd"\name"#.to_string()),
+                ("empty", String::new()),
+            ],
+        );
+        let text = plan.text().to_string();
+        // Below the heading and its declaration, which is where the runtime's
+        // language puts frontmatter.
+        assert!(
+            text.starts_with("# Rhei: acme/widget#42\n**States:** ephor-work\n\n---\nmetadata:\n  tasks:\n    fix-gate-1:\n"),
+            "{text}"
+        );
+        assert!(text.contains(r#"      number: "42""#), "{text}");
+        assert!(
+            text.contains(r#"      branch: "you/\"odd\"\\name""#),
+            "{text}"
+        );
+        // Nothing is said about a field the item does not have.
+        assert!(!text.contains("empty:"), "{text}");
+        // The dossier and the ticket still follow it.
+        assert!(text.contains("\n---\n\n<!-- ephor:dossier -->"), "{text}");
+        assert_eq!(plan.tickets().len(), 1);
+
+        // The runtime has since written its own counter into the block; a
+        // second ticket joins it rather than replacing it.
+        plan.text = plan.text.replace(
+            "  tasks:\n",
+            "  tasks:\n    fix-gate-1:\n      stateVisits:\n        collect: 1\n",
+        );
+        plan.set_metadata("answer-1", &[("repo", "acme/widget".to_string())]);
+        let text = plan.text().to_string();
+        assert!(text.contains("stateVisits:"), "{text}");
+        assert!(
+            text.contains("    answer-1:\n      repo: \"acme/widget\""),
+            "{text}"
+        );
+        assert_eq!(text.matches("metadata:").count(), 1, "{text}");
+        assert_eq!(text.matches("  tasks:").count(), 1, "{text}");
     }
 
     #[test]

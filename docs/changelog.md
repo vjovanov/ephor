@@ -54,7 +54,21 @@ ships, the previous "latest" section moves verbatim to
   it is now: a pull request whose gate went green and whose reviewer asked a
   question is no longer a red gate, and reopening it as one would hand the work
   a ticket about a problem that is not there.
-- **Asking by hand** (§FS-005-dispatch.8): `a` on the work screen types one
+- **A ticket carries the item as data** (§FS-005-dispatch.8), not only as
+  prose: every ticket's identifiers — project and source, kind and id, repo and
+  number, branch and ticket, url and state, and the checkout — are written into
+  the plan's frontmatter under the same names a shell action gets in its
+  environment. A state machine hands them to a program as `{meta.*}`, which is
+  what lets a **script run in front of the agent**: ask the forge what actually
+  failed, write it as an artifact, and let the agent state declare that
+  artifact as an input. The metadata is merged rather than rewritten, because
+  the runtime keeps its own per-task bookkeeping in the same block.
+  `config/ci-failures.example.sh` and
+  `config/ephor-work-ci.example.states.yaml` are a working pair, including the
+  exit codes that pick the next state — `75` when the gate is still running,
+  so a ticket waits on a poll instead of spending an agent on a half-finished
+  gate.
+- **Asking by hand** (§FS-005-dispatch.9): `a` on the work screen types one
   line and it becomes an ordinary ticket — same dossier, same plan, same
   order — with the reader's words as the brief, and `ephor work ask --item ID`
   does it from a script or from stdin. It is refused for nothing but being

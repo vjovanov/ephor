@@ -303,7 +303,7 @@ work), `e` reads the plan. Rows carry a badge — `⚙ fix-gate · review`,
 ### By hand
 
 Recipes are for the work that repeats; most work does not
-([§FS-005-dispatch.8](requirements.md#8-what-ephor-offers-is-not-a-limit-on-what-can-be-asked)).
+([§FS-005-dispatch.9](requirements.md#9-what-ephor-offers-is-not-a-limit-on-what-can-be-asked)).
 So nothing has to be written down in advance:
 
 - **`a` on the work screen** — type one line and it becomes an ordinary ticket,
@@ -385,7 +385,18 @@ deliberately (`ephor work states > panta/states.yaml`) or for editing.
 The shipped machine is two agent passes — `fix` does the work and writes a
 report, `review` reads that against the ticket and writes a verdict whose first
 line is `VERDICT: done | partial | blocked`. ephor reads that line back onto
-the row. Both passes are told to commit locally and touch nothing outward:
+the row.
+
+**Scripts, before the agent.** Every ticket also carries the item as structured
+metadata, so a state machine can hand a program `{meta.repo}`, `{meta.number}`,
+`{meta.workspace}` and the rest, name its output with `{output.<name>.path}`,
+and let the next state read that file as an `input` — a script asks the forge
+what actually failed, and the agent starts from the answer. Its exit code picks
+the next state, including `75` for "the gate is still running", which parks the
+ticket on a poll instead of spending an agent on a half-finished gate.
+`config/ci-failures.example.sh` and `config/ephor-work-ci.example.states.yaml`
+are a working pair; the manual walks through them
+([§8.5](docs/manual.md#85-a-script-in-front-of-the-agent)). Both passes are told to commit locally and touch nothing outward:
 closing the loop out to the forge is a sentence you add to a brief
 deliberately.
 

@@ -474,7 +474,7 @@ declare the `reactions` capability is display-only.
 own reasons for refusing, verbatim: `j`/`k` scroll, `x` actions, `o` open,
 `Esc` back.
 
-**Work screen** (`w`) — §8.6.
+**Work screen** (`w`) — §8.7.
 
 ---
 
@@ -556,7 +556,7 @@ The last entry of every menu is **`⌨ run a command here…`**. Type a shell
 command and it runs exactly as a configured one does — same checkout, same
 environment, same handover of the terminal. The menu opens even when nothing is
 configured, because that is when this entry matters most
-([§FS-005-dispatch.8](../requirements.md#8-what-ephor-offers-is-not-a-limit-on-what-can-be-asked)).
+([§FS-005-dispatch.9](../requirements.md#9-what-ephor-offers-is-not-a-limit-on-what-can-be-asked)).
 
 ---
 
@@ -724,7 +724,102 @@ fix ──► review ──► done
 `review` requires the report `fix` writes, so work that produced nothing stops
 at the boundary instead of arriving at `done` with an empty result.
 
-### 8.5 A moved item reopens its own work
+### 8.5 A script in front of the agent
+
+The most useful thing to put in front of an agent working a failing gate is
+usually what a *script* can fetch — the log, the failing job, the forge's
+analysis. A state machine can run one before the agent: rhei calls it a
+**program state**, and it needs no agent at all.
+
+For that, the script has to be told which item it is about, and prose is not an
+input. So every ticket also carries the item as structured metadata
+([§FS-005-dispatch.8](../requirements.md#8-the-ticket-carries-the-item-as-data-not-only-as-prose)),
+under the same names a shell action gets in its environment:
+
+```markdown
+# Rhei: #24407 Fix condition metadata checks
+**States:** ephor-work
+
+---
+metadata:
+  tasks:
+    fix-gate-1:
+      project: "widget"
+      source: "forge"
+      kind: "pr"
+      id: "forge:widget/24407"
+      url: "https://forge.example/widget/pull/24407"
+      state: "open"
+      repo: "widget"
+      number: "24407"
+      branch: "you/ABC-42-retry"
+      workspace: "/home/you/c/widget/you/ABC-42-retry"
+      root: "/home/you/c/widget"
+      title: "…"
+---
+```
+
+A state reads those as `{meta.<key>}`, names its output with
+`{output.<name>.path}`, and the next state declares the same file as an
+`input` — which is how a script hands its answer to an agent:
+
+```yaml
+  collect:
+    program:
+      command: "~/.config/ephor/ci-failures.sh"
+      env:
+        PROJECT: "{meta.project}"
+        SOURCE: "{meta.source}"
+        ITEM: "{meta.id}"
+        REPO: "{meta.repo}"
+        NUMBER: "{meta.number}"
+        CHECKOUT: "{meta.workspace}"
+        REPORT: "{output.failures.path}"
+    poll: { interval: 10m, max_attempts: 36 }
+    outputs:
+      - name: failures
+        path: "runtime/ephor/{task_id}.failures.md"
+
+  fix:
+    agent: claude-code
+    inputs:
+      - name: failures
+        path: "runtime/ephor/{task_id}.failures.md"
+    instructions: |
+      What failed is in {input.failures.path} — read that first.
+```
+
+**The exit code picks the next state**, which is what makes a script a decision
+and not just a fetch:
+
+| Exit | `config/ci-failures.example.sh` means | Goes to |
+|---|---|---|
+| `0` | the failures are in the report | `fix` |
+| `3` | the gate is green; nothing to fix | `gate-green` (final) |
+| `75` | the gate is still running | `collect` again, after `poll.interval` |
+| other | the forge could not say; the report says why | `fix` anyway |
+
+Order the transitions so the specific codes lead — the first match wins — and
+give the polling state a `poll:` block: `rhei run` then releases its slot
+between attempts, so a gate that takes three hours does not hold a worker.
+
+Two things to know about programs, both learned the hard way:
+
+- A program's working directory is the **plan directory**, not the checkout,
+  and `RHEI_CHECKOUT_ROOT` is not exported to it. Pass the checkout explicitly
+  as `{meta.workspace}` rather than assuming a layout.
+- Artifact paths resolve relative to the plan directory too, so a script that
+  writes to `$REPORT` as given lands exactly where the next state's `input`
+  expects it.
+
+`config/ci-failures.example.sh` and
+`config/ephor-work-ci.example.states.yaml` are a working pair: the script
+refreshes the project, reads the gate out of `ephor feed --json`, asks
+`ephor failures` when something failed, and exits with one of the codes above.
+Copy both, point `work.states` at the machine and `program.command` at the
+script, and give the recipe `"state": "collect"` so tickets start there.
+
+### 8.6 A moved item reopens its own work
 
 ephor fingerprints an item when it dispatches — last activity, state, gate, how
 much conversation. When any of that changes, the work is **stale**, and
@@ -746,7 +841,7 @@ and whose reviewer asked a question is no longer a red gate. Where nothing
 applies any more — it merged, it closed — the work is not reopened, and the
 ledger goes on saying the item moved past it.
 
-### 8.6 The work screen
+### 8.7 The work screen
 
 `w` on any item:
 
@@ -786,7 +881,7 @@ item — dispatching is cheap to press and expensive to run.
 `R` leaves the interface entirely: the runtime's own dashboard takes the
 terminal while it works, and coming back re-reads the plans.
 
-### 8.7 By hand
+### 8.8 By hand
 
 Recipes are for the work that repeats; most work does not. `a` on the work
 screen takes one line and makes an ordinary ticket of it — same dossier, same
@@ -811,7 +906,7 @@ ephor work ask --item github-prs:acme/widget#42 < ask.md      # composed in an e
 ephor work ask --item ID --state review "…"                   # start elsewhere in the machine
 ```
 
-### 8.8 Commands
+### 8.9 Commands
 
 ```bash
 ephor work                                  # = work list
@@ -840,7 +935,7 @@ ephor work states
 - **`forget`** drops ledger entries only. The plans stay on disk: they are the
   record of what was done.
 
-### 8.9 The ledger
+### 8.10 The ledger
 
 `~/.local/state/ephor/work.json`, keyed by item id — the same key unread
 tracking uses:

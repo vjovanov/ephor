@@ -115,7 +115,7 @@ impl WorkScreen {
                 Some(plan) => Action::ReadPlan(plan),
                 None => Action::SetMessage("No plan yet".to_string()),
             },
-            // Anything the recipes do not cover (§FS-005-dispatch.8).
+            // Anything the recipes do not cover (§FS-005-dispatch.9).
             KeyCode::Char('a') => Action::AskWork(self.item.clone()),
             KeyCode::Char('o') => Action::OpenUrl(self.item.url.clone()),
             _ => Action::None,

@@ -59,6 +59,31 @@ impl Subject<'_> {
         ])
     }
 
+    /// The item as data rather than as prose, for the programs in a state
+    /// machine (§FS-005-dispatch.8). The same names a shell action gets in its
+    /// environment, so one vocabulary covers both.
+    pub fn metadata(&self) -> Vec<(&'static str, String)> {
+        let values = self.placeholders();
+        [
+            "project",
+            "source",
+            "kind",
+            "id",
+            "url",
+            "state",
+            "repo",
+            "number",
+            "branch",
+            "ticket",
+            "workspace",
+            "root",
+            "title",
+        ]
+        .iter()
+        .filter_map(|key| values.get(key).map(|value| (*key, value.clone())))
+        .collect()
+    }
+
     /// The whole dossier, as the markdown that opens the plan.
     pub fn dossier(&self) -> String {
         let mut out = String::from("## The item\n\n");

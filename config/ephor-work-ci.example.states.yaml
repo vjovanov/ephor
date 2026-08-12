@@ -1,0 +1,143 @@
+# A work state machine with a script in front of the agent
+# (§FS-005-dispatch.8) — the shipped machine plus one program state.
+#
+#   collect ──0──► fix ──► review ──► done
+#      │ └──75──► collect        (the gate is still running; wait)
+#      │ └───3──► gate-green     (nothing failed; nothing to fix)
+#      └─nonzero─► fix           (the forge could not say; the report says so)
+#
+# `collect` is a **program** state: no agent runs, a script does, and its exit
+# code picks the next state. ephor writes the item into the plan as metadata,
+# so `{meta.*}` hands the script which item it is about, and
+# `{output.failures.path}` names the file the agent then reads as an input.
+#
+# Install it as `states.yaml` in a work root, or point `work.states` at it, and
+# give the fix-gate recipe `"state": "collect"` so tickets start here.
+#
+# Programs run in the **plan directory**, not the checkout — pass the checkout
+# explicitly ({meta.workspace}) rather than assuming a layout.
+
+name: ephor-work
+version: 1.0
+
+states:
+  collect:
+    description: Ask the forge what actually failed, before spending an agent on it.
+    program:
+      command: "~/.config/ephor/ci-failures.sh"
+      env:
+        PROJECT: "{meta.project}"
+        SOURCE: "{meta.source}"
+        ITEM: "{meta.id}"
+        REPO: "{meta.repo}"
+        NUMBER: "{meta.number}"
+        BRANCH: "{meta.branch}"
+        CHECKOUT: "{meta.workspace}"
+        REPORT: "{output.failures.path}"
+    program_timeout: 15m
+    # A gate that has not finished is not a gate that failed. The slot is
+    # released between attempts, so other work advances while this waits.
+    poll:
+      interval: 10m
+      max_attempts: 36
+    outputs:
+      - name: failures
+        path: "runtime/ephor/{task_id}.failures.md"
+
+  fix:
+    description: Fix what the script collected, in the checkout the ticket names.
+    agent: claude-code
+    agent_mode: yolo
+    agent_timeout: 45m
+    instructions: |
+      What failed is in {input.failures.path} — read that first. It was
+      collected from the forge minutes ago, so it is more current than the
+      dossier below.
+
+      Fix the cause of it. A job that failed for a reason unrelated to this
+      change — a flake, an infrastructure error, a broken upstream — is not
+      something to fix here: say so in the report and stop.
+
+      Write to {output.report.path}: what you changed and why, what you ran and
+      what it said, and what you could not do. Commit in this checkout. Do not
+      push, and do not touch the forge, unless the ticket asks for it in so
+      many words.
+    inputs:
+      - name: failures
+        path: "runtime/ephor/{task_id}.failures.md"
+    outputs:
+      - name: report
+        path: "runtime/ephor/{task_id}.report.md"
+
+  review:
+    description: Read the work against the ticket and reach a verdict.
+    agent: claude-code
+    agent_mode: yolo
+    agent_timeout: 30m
+    instructions: |
+      A previous pass wrote {input.report.path} against the failures in
+      {input.failures.path}. Read both, then read what actually happened in
+      this checkout — `git log` and `git diff` say more than the report does.
+
+      Fix what is wrong and small; leave what is wrong and large, and say so.
+
+      Write to {output.verdict.path}, whose first line is exactly one of:
+
+          VERDICT: done — the ticket is answered and the change is right
+          VERDICT: partial — some of it is answered; the rest is named below
+          VERDICT: blocked — a person has to decide or do something first
+    inputs:
+      - name: report
+        path: "runtime/ephor/{task_id}.report.md"
+      - name: failures
+        path: "runtime/ephor/{task_id}.failures.md"
+    outputs:
+      - name: verdict
+        path: "runtime/ephor/{task_id}.verdict.md"
+
+  gate-green:
+    description: Nothing failed; whatever holds this up is not a checkout's to fix.
+    final: true
+
+  gave-up:
+    description: The gate never reached a verdict inside the poll budget.
+    final: true
+
+  done:
+    description: The ticket is finished; the verdict says how.
+    final: true
+
+transitions:
+  # Ordered: the first matching exit code wins, so the specific ones lead.
+  - from: collect
+    to: collect
+    exit_code: 75
+    description: Still running — wait out poll.interval and ask again.
+
+  - from: collect
+    to: gate-green
+    exit_code: 3
+    description: Nothing failed.
+
+  - from: collect
+    to: fix
+    exit_code: 0
+    description: The failures are collected.
+
+  - from: collect
+    to: fix
+    exit_code: nonzero
+    description: The forge could not say; the report says so, and the work looks itself.
+
+  - from: collect
+    to: gave-up
+    condition: pollAttempts >= pollMaxAttempts
+    description: Exhausted the poll budget without a verdict.
+
+  - from: fix
+    to: review
+    description: The work is written down; read it against the ticket.
+
+  - from: review
+    to: done
+    description: Reviewed, with a verdict.

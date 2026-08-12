@@ -281,6 +281,7 @@ impl Dispatcher {
         Ok(Site {
             dir: crate::paths::resolve_path(&dossier::render(&template, &values)),
             dossier: subject.dossier(),
+            metadata: subject.metadata(),
             values,
             checkout: checkout.clone(),
         })
@@ -365,7 +366,10 @@ impl Dispatcher {
                     model: recipe.model.clone(),
                     body: brief,
                 };
-                Plan::create(&path, &root.machine, &item.title, &site.dossier, &ticket).save()?;
+                let mut plan =
+                    Plan::create(&path, &root.machine, &item.title, &site.dossier, &ticket);
+                plan.set_metadata(&ticket_id, &site.metadata);
+                plan.save()?;
                 (
                     Outcome::Opened {
                         plan: path.clone(),
@@ -397,6 +401,7 @@ impl Dispatcher {
                     model: recipe.model.clone(),
                     body,
                 });
+                existing.set_metadata(&ticket_id, &site.metadata);
                 existing.save()?;
                 (
                     Outcome::Reopened {
@@ -433,7 +438,7 @@ impl Dispatcher {
     }
 
     /// Ask an item for something no recipe covers, in the reader's own words
-    /// (§FS-005-dispatch.8). An ordinary ticket in every other respect — the
+    /// (§FS-005-dispatch.9). An ordinary ticket in every other respect — the
     /// same dossier, the same plan, the same order — and refused for nothing
     /// but being unrunnable: what is asked for is asked for.
     pub fn ask(
@@ -587,6 +592,9 @@ fn clamp(text: &str, limit: usize) -> String {
 struct Site {
     dir: PathBuf,
     dossier: String,
+    /// The item as data, for the state machine's programs
+    /// (§FS-005-dispatch.8).
+    metadata: Vec<(&'static str, String)>,
     values: BTreeMap<&'static str, String>,
     #[allow(dead_code)] // kept for callers that report where work landed
     checkout: crate::branches::Checkout,
