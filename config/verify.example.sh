@@ -14,6 +14,11 @@ set -uo pipefail
 
 mkdir -p "$(dirname "$REPORT")"
 
+# Artifact paths are relative to the plan directory, which is where a program
+# starts — so pin it absolute before any `cd`, or every write after the cd
+# lands nowhere.
+case "$REPORT" in /*) ;; *) REPORT="$PWD/$REPORT" ;; esac
+
 # A person was asked something: that outranks running anything.
 if [ -n "${FIX_REPORT:-}" ] && [ -s "$FIX_REPORT" ] &&
    question=$(grep -m1 -E '^[[:space:]]*NEEDS-HUMAN:' "$FIX_REPORT"); then

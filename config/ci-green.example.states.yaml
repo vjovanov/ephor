@@ -11,6 +11,11 @@
 #                  ▲                        └nonzero──┘ (unsound, while budget)
 #                  └────────────────────────┘          └─nonzero─► fix (retry)
 #
+#   ...and the join `plan-join` opened waits for all of them:
+#
+#   land ──0──► collect        commit, push, let the gate run again — the next
+#                              round starts where the first one did
+#
 # The plan is the super-task: its title is the pull request, and every ticket
 # in it is one failure on that pull request. Tickets are peers rather than
 # children on purpose — a parent may not be terminal while a child is not
@@ -68,7 +73,7 @@ states:
       whether it was fixed. For each cause you find now:
 
       - **Already has an open ticket** (a `**State:**` that is not `done`,
-        `gave-up` or `gate-green`) — open nothing. It is being worked.
+        `cancelled` or `gate-green`) — open nothing. It is being worked.
       - **Matches a ticket that finished** — the failure has come back. Open a
         ticket whose `**Prior:**` names that earlier one and whose body says
         what was tried before and why it did not hold. The analysis starts from
@@ -92,6 +97,17 @@ states:
       Where nothing in the report is a real failure — every job died of
       infrastructure, or the same flake as last time — open no tickets and say
       so in your own output. An empty triage is a complete answer.
+
+  plan-join:
+    description: Open the ticket that waits for every cause, and lands the result.
+    # A program, not the agent that opened the causes: the `**Prior:**` list
+    # has to be complete and spelled correctly.
+    program:
+      command: "~/.config/ephor/plan-join.py"
+      env:
+        STATE: land
+        PREFIX: "cause-"
+    program_timeout: 2m
 
   triaged:
     description: The failures are classified; each cause has its own ticket.
@@ -312,6 +328,22 @@ states:
     # somebody answers it and moves it on by hand.
     gating: true
 
+  land:
+    description: Every cause is fixed — commit, push, and let the gate run again.
+    # Ready only when every ticket in its `**Prior:**` reached a successful
+    # terminal state. This is the one state that touches the world.
+    program:
+      command: "~/.config/ephor/land.sh"
+      env:
+        CHECKOUT: "{meta.workspace}"
+        BRANCH: "{meta.branch}"
+        REPORT: "{output.landing.path}"
+    program_timeout: 30m
+    visits: 3
+    outputs:
+      - name: landing
+        path: "runtime/ephor/{task_id}.landing.md"
+
   gate-green:
     description: Nothing failed; whatever holds this up is not a checkout's to fix.
     final: true
@@ -320,8 +352,11 @@ states:
     description: The cause is fixed and the project's own check agrees.
     final: true
 
-  gave-up:
-    description: Out of budget, and a person should look.
+  # Named `cancelled` deliberately: a prerequisite in any other final state
+  # satisfies a `**Prior:**`, and only this name does not. It is what stops the
+  # join below from landing work while a cause is unresolved.
+  cancelled:
+    description: Out of budget, and a person should look. Blocks the join.
     final: true
 
 transitions:
@@ -343,13 +378,26 @@ transitions:
     exit_code: nonzero
     description: The forge could not say; triage what is known anyway.
   - from: collect
-    to: gave-up
+    to: cancelled
     condition: pollAttempts >= pollMaxAttempts
     description: The gate never reached a verdict.
 
   - from: triage
+    to: plan-join
+    description: Every cause has its ticket; now open the one that waits for them.
+
+  - from: plan-join
     to: triaged
-    description: Every cause has its ticket.
+    exit_code: 0
+    description: The join is open and waiting.
+  - from: plan-join
+    to: triaged
+    exit_code: 3
+    description: Nothing was opened — there was nothing to wait for.
+  - from: plan-join
+    to: needs-human
+    exit_code: nonzero
+    description: The join could not be written; the plan needs a person.
 
   - from: analyze
     to: analyzed
@@ -390,7 +438,7 @@ transitions:
     condition: visitCount < visits
     description: Unsound — propose again, answering the objection.
   - from: judged
-    to: gave-up
+    to: cancelled
     exit_code: nonzero
     description: Three proposals rejected; a person should look.
 
@@ -412,9 +460,26 @@ transitions:
     condition: visitCount < visits
     description: The check still fails — go back with its output.
   - from: verify
-    to: gave-up
+    to: cancelled
     exit_code: nonzero
     description: The check would not pass; a person should look.
+
+  # The gate runs again on what was pushed, so the round starts over: collect
+  # waits it out and either finds it green or opens the next causes. Bounded by
+  # `visits` on land — three rounds of pushing is enough without a person.
+  - from: land
+    to: collect
+    exit_code: 0
+    condition: visitCount < visits
+    description: Pushed — wait for the gate the push started.
+  - from: land
+    to: needs-human
+    exit_code: 2
+    description: Landing asked a person something.
+  - from: land
+    to: cancelled
+    exit_code: nonzero
+    description: The push failed, or the rounds ran out.
 
   # Out of the gate, by hand only. A person writes the answer into the ticket
   # body — the decision stays in the plan, next to the question that prompted
@@ -432,5 +497,5 @@ transitions:
     to: fix
     description: Answered, and the proposal stands.
   - from: needs-human
-    to: gave-up
+    to: cancelled
     description: Not worth doing; close it.

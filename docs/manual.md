@@ -818,6 +818,25 @@ Two things to know about programs, both learned the hard way:
   writes to `$REPORT` as given lands exactly where the next state's `input`
   expects it.
 
+**Waiting for every subtask, then landing.** A super-task cannot wait for its
+subtasks in the runtime's language: `**Prior:**` points from a task to its
+prerequisites, so the edge runs the wrong way, and a task in a terminal state
+may not hold non-terminal descendants. The join is a **peer** whose
+`**Prior:**` names every subtask — it becomes ready exactly when all of them
+have finished — and the plan itself is the super-task.
+
+What "finished" means turns on one rule worth knowing: a prerequisite in **any**
+final state satisfies its edge *except* one whose state is named `cancelled`.
+So a machine that spells its give-up state `gave-up` will let the join fire
+over work that was abandoned; spelling it `cancelled` is what makes "wait for
+all of them" mean *all of them succeeded*. The runtime then says so plainly —
+`Task land-1 waiting on Task cause-2 (cancelled)`.
+
+Write the join with a program rather than an agent: the `**Prior:**` list has
+to be complete and spelled right, which is not a thing to improvise.
+`config/plan-join.example.py` does it, and copies the item's metadata onto the
+ticket it writes, since `{meta.*}` belongs to the ticket ephor dispatched.
+
 **A question only a person can answer.** An agent that meets a product
 decision, or a trade-off it cannot weigh, should stop rather than guess. Give
 it a state the runtime will not leave on its own —
