@@ -60,13 +60,14 @@ for check in "just check" "make check" "npm test" "cargo test --locked" "./check
   exit 1
 done
 
-# No check found is not a pass: say so, and let the machine decide what that
-# is worth rather than reporting a green nobody earned.
+# No check found is not a pass, and it is not a failure of the fix either —
+# it is a question for a person: what is this project's check? Exit 2 parks
+# the ticket on that question rather than spending a retry to learn nothing.
 {
-  echo "# no check to run"
+  echo "NEEDS-HUMAN: what is this project's check command?"
   echo
-  echo "Nothing in $CHECKOUT looked like this project's check. Name the real"
-  echo "one in ~/.config/ephor/verify.sh — until then, whether the fix holds"
-  echo "is only the agent's word."
+  echo "Nothing in $CHECKOUT looked like one, so whether the fix holds is only"
+  echo "the agent's word. Name the real command in ~/.config/ephor/verify.sh"
+  echo "and move this ticket back to fix, or answer here and close it."
 } > "$REPORT"
-exit 1
+exit 2
