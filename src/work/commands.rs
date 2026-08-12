@@ -301,7 +301,7 @@ fn dispatch_work(config: &StatusConfig, args: &crate::cli::WorkDispatchArgs) -> 
 }
 
 /// `ephor work ask` — one item, whatever the reader wants done to it
-/// (§FS-005-dispatch.9).
+/// (§FS-005-dispatch.10).
 fn ask_work(config: &StatusConfig, args: &crate::cli::WorkAskArgs) -> Result<ExitCode> {
     let mut dispatcher = Dispatcher::load(config)?;
     let item = selected_items(config, &[])?

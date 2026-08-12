@@ -99,6 +99,9 @@ pub struct TicketStatus {
     pub title: String,
     pub state: Option<String>,
     pub finished: bool,
+    /// The runtime has stopped on this ticket and a person has to answer it
+    /// (§FS-005-dispatch.10).
+    pub waiting: bool,
     /// What the review left behind, where the work reached one.
     pub verdict: Option<String>,
 }
@@ -128,12 +131,30 @@ impl WorkStatus {
         self.tickets.iter().filter(|t| !t.finished).count()
     }
 
+    /// Work that has stopped and is waiting on a person. The one thing in here
+    /// that is nobody else's to move (§FS-005-dispatch.10).
+    pub fn waiting(&self) -> Option<&TicketStatus> {
+        self.tickets.iter().find(|ticket| ticket.waiting)
+    }
+
     /// One line for a row that has room for one: what the work is doing, or
     /// what it decided, and whether the item has moved under it. `verdict` is
     /// how much of the verdict's own sentence fits where this is going.
     pub fn badge(&self, verdict_width: usize) -> String {
         if self.missing {
             return "⚠ plan missing".to_string();
+        }
+        // A question for a person leads: everything else in the badge is the
+        // runtime telling you what it is doing, and this is it telling you it
+        // has stopped.
+        if let Some(waiting) = self.waiting() {
+            // A ticket the machine opened for itself has no recipe — its
+            // "recipe" falls back to its own id, and saying that twice is
+            // noise where the point is the question.
+            return match waiting.recipe == waiting.id {
+                true => format!("⚠ waiting on you · {}", waiting.id),
+                false => format!("⚠ {} · waiting on you · {}", waiting.recipe, waiting.id),
+            };
         }
         let mut badge = match self.tickets.iter().rev().find(|ticket| !ticket.finished) {
             Some(open) => format!(
@@ -438,7 +459,7 @@ impl Dispatcher {
     }
 
     /// Ask an item for something no recipe covers, in the reader's own words
-    /// (§FS-005-dispatch.9). An ordinary ticket in every other respect — the
+    /// (§FS-005-dispatch.10). An ordinary ticket in every other respect — the
     /// same dossier, the same plan, the same order — and refused for nothing
     /// but being unrunnable: what is asked for is asked for.
     pub fn ask(
@@ -534,6 +555,15 @@ impl Dispatcher {
                                     .map(|root| root.is_final(state))
                                     // With no machine to ask, a ticket is
                                     // finished when the work left a verdict.
+                                    .unwrap_or(false)
+                            })
+                            .unwrap_or(false),
+                        waiting: ticket
+                            .state
+                            .as_deref()
+                            .map(|state| {
+                                root.as_ref()
+                                    .map(|root| root.is_gating(state))
                                     .unwrap_or(false)
                             })
                             .unwrap_or(false),

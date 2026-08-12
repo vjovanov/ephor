@@ -1,0 +1,436 @@
+# "Make CI green": one plan per pull request, one ticket per distinct failure.
+#
+#   collect ──0──► triage ──► triaged            a script asks what failed;
+#      │ └─75─► collect  (still running)         a cheap model classifies it and
+#      │ └──3─► gate-green                       opens one ticket per cause
+#      └nonzero► triage
+#
+#   ...each ticket triage opens then walks the same road:
+#
+#   analyze ──► propose ──► critique ──► judged ──0──► fix ──► verify ──0──► done
+#                  ▲                        └nonzero──┘ (unsound, while budget)
+#                  └────────────────────────┘          └─nonzero─► fix (retry)
+#
+# The plan is the super-task: its title is the pull request, and every ticket
+# in it is one failure on that pull request. Tickets are peers rather than
+# children on purpose — a parent may not be terminal while a child is not
+# (§FS-rhei-plan-language.3.9), and `**Prior:**` cannot point from a child up
+# to its parent, so a nested shape would leave the parent unable to finish.
+# `**Prior:**` gives the ordering a tree would have given.
+#
+# Rounds come from ephor, not from here: when the gate changes, `ephor work
+# sync` appends a new `collect` ticket to this same plan, and triage sees every
+# earlier ticket — what failed before, what was decided, what was fixed — in
+# the file it is reading. A machine that re-checked itself would loop without a
+# bound and without anyone watching.
+
+name: ci-green
+version: 1.0
+
+states:
+  # ── what failed ──────────────────────────────────────────────────────────
+  collect:
+    description: Ask the forge what actually failed, before spending a model on it.
+    program:
+      command: "~/.config/ephor/ci-failures.sh"
+      env:
+        PROJECT: "{meta.project}"
+        SOURCE: "{meta.source}"
+        ITEM: "{meta.id}"
+        REPO: "{meta.repo}"
+        NUMBER: "{meta.number}"
+        CHECKOUT: "{meta.workspace}"
+        REPORT: "{output.failures.path}"
+    program_timeout: 15m
+    poll:
+      interval: 10m
+      max_attempts: 36
+    outputs:
+      - name: failures
+        path: "runtime/ephor/{task_id}.failures.md"
+
+  # ── which failures are these ─────────────────────────────────────────────
+  triage:
+    description: Classify the failures and open one ticket per distinct cause.
+    # The cheapest model in the machine: this reads a log and writes headings.
+    target: "claude-code[yolo]:anthropic:claude-haiku-4-5-20251001"
+    agent_timeout: 20m
+    inputs:
+      - name: failures
+        path: "runtime/ephor/{task_id}.failures.md"
+    instructions: |
+      {input.failures.path} lists what the gate reported. Group it by *cause*,
+      not by job: one compile error fans out across every job that built the
+      file, and those are one ticket, not thirty.
+
+      Read the plan at {plan_path} first. It is this pull request's whole
+      history: every failure seen before, what was decided about it, and
+      whether it was fixed. For each cause you find now:
+
+      - **Already has an open ticket** (a `**State:**` that is not `done`,
+        `gave-up` or `gate-green`) — open nothing. It is being worked.
+      - **Matches a ticket that finished** — the failure has come back. Open a
+        ticket whose `**Prior:**` names that earlier one and whose body says
+        what was tried before and why it did not hold. The analysis starts from
+        there rather than from nothing.
+      - **New** — open a ticket for it.
+
+      Append each as a top-level ticket at the end of the plan file, exactly:
+
+          ### Task <id>: <one line naming the cause>
+          **State:** analyze
+          **Prior:** Task {task_id_local}
+
+          <what failed, in the forge's own words: the job, the error, the
+          evidence you are going by — and, for a returning failure, what was
+          tried before>
+
+      Ids are `cause-<n>`, continuing from the highest already in the file.
+      Change nothing else: never edit a `**State:**` line that is already
+      there, and never touch the dossier.
+
+      Where nothing in the report is a real failure — every job died of
+      infrastructure, or the same flake as last time — open no tickets and say
+      so in your own output. An empty triage is a complete answer.
+
+  triaged:
+    description: The failures are classified; each cause has its own ticket.
+    final: true
+
+  # ── one cause, end to end ────────────────────────────────────────────────
+  analyze:
+    description: Find the cause, with evidence, before anyone proposes a fix.
+    target: "claude-code[yolo]:anthropic:claude-sonnet-5"
+    agent_timeout: 45m
+    instructions: |
+      Work out what is actually broken. Reproduce it locally if the failure
+      admits it; where it does not, say what evidence you have instead.
+
+      Do not fix anything here, and do not propose a fix. The one question is
+      what is true: which change caused it, which code path, and how you know.
+      A wrong answer here costs the two passes after it.
+
+      Write to {output.analysis.path}: the cause, the evidence for it, the
+      files involved, and — plainly — how sure you are. If the failure is not
+      this change's fault (a flake, an infrastructure error, a broken
+      dependency), say that and stop: it is not a fix.
+
+      **If something is genuinely unclear — a product decision, a trade-off
+      that is not yours, a failure whose intent you cannot read — do not
+      guess.** Write, as the first line of your artifact:
+
+          NEEDS-HUMAN: <the one question, asked so it can be answered in a
+                        sentence>
+
+      followed by what you know, what you tried, and the options as you see
+      them. The ticket then waits for a person, in the plan, and nothing
+      further is spent on a guess.
+
+    outputs:
+      - name: analysis
+        path: "runtime/ephor/{task_id}.analysis.md"
+
+  analyzed:
+    description: Read the analysis; a question for a person stops here.
+    program:
+      command: "~/.config/ephor/route.sh"
+      env:
+        ARTIFACT: "{input.analysis.path}"
+    program_timeout: 1m
+    inputs:
+      - name: analysis
+        path: "runtime/ephor/{task_id}.analysis.md"
+
+  propose:
+    description: Propose the fix, and say what it could break.
+    target: "claude-code[yolo]:anthropic:claude-sonnet-5"
+    agent_timeout: 45m
+    visits: 3
+    inputs:
+      - name: analysis
+        path: "runtime/ephor/{task_id}.analysis.md"
+      # There is no critique on the first pass, and the state must still be
+      # enterable: optional declares it without requiring it.
+      - name: critique
+        optional: true
+        path: "runtime/ephor/{task_id}.critique.md"
+    instructions: |
+      The cause is in {input.analysis.path}. Propose the fix — do not write it.
+
+      Write to {output.proposal.path}:
+
+      - the change, precisely enough to argue about: files, functions, what
+        becomes true that was not
+      - **the blast radius**: who else calls this, what else depends on the
+        behaviour you are changing, which tests cover it and which do not.
+        Go and look — `grep` the callers, read them.
+      - what you considered and rejected, and why
+      - how the fix will be verified: the command, and what it should say
+
+      {if input.critique.exists}
+      A previous proposal was rejected. The objection is in
+      {input.critique.path}. Answer it or replace the proposal; do not repeat
+      it unchanged.
+      {endif}
+
+      **If something is genuinely unclear — a product decision, a trade-off
+      that is not yours, a failure whose intent you cannot read — do not
+      guess.** Write, as the first line of your artifact:
+
+          NEEDS-HUMAN: <the one question, asked so it can be answered in a
+                        sentence>
+
+      followed by what you know, what you tried, and the options as you see
+      them. The ticket then waits for a person, in the plan, and nothing
+      further is spent on a guess.
+
+    outputs:
+      - name: proposal
+        path: "runtime/ephor/{task_id}.proposal.md"
+
+  critique:
+    description: Argue against the proposal, on behalf of everything it could break.
+    # The most capable model in the machine, on the one question that is
+    # expensive to get wrong: does this break something else.
+    target: "claude-code[yolo]:anthropic:claude-opus-5"
+    agent_timeout: 45m
+    inputs:
+      - name: analysis
+        path: "runtime/ephor/{task_id}.analysis.md"
+      - name: proposal
+        path: "runtime/ephor/{task_id}.proposal.md"
+    instructions: |
+      Read {input.analysis.path} and {input.proposal.path}, then try to break
+      the proposal. You are not reviewing style: you are the person who owns
+      the code this will land on.
+
+      Check the blast radius yourself rather than believing it. Find the caller
+      the proposal missed. Ask what happens on the paths it does not mention —
+      the other platform, the other configuration, the empty case, the
+      concurrent one. Ask whether it fixes the cause or the symptom.
+
+      Write to {output.critique.path}. Its first line is exactly one of:
+
+          VERDICT: sound — this fixes the cause without breaking anything I can find
+          VERDICT: unsound — <the one sentence that says why>
+
+      Then the objections, worst first, each with the file and line that makes
+      it real. An objection nobody can check is not an objection.
+
+      Be willing to say sound. A loop that never approves anything costs the
+      same as one that approves everything, and delivers less.
+
+      **If something is genuinely unclear — a product decision, a trade-off
+      that is not yours, a failure whose intent you cannot read — do not
+      guess.** Write, as the first line of your artifact:
+
+          NEEDS-HUMAN: <the one question, asked so it can be answered in a
+                        sentence>
+
+      followed by what you know, what you tried, and the options as you see
+      them. The ticket then waits for a person, in the plan, and nothing
+      further is spent on a guess.
+
+    outputs:
+      - name: critique
+        path: "runtime/ephor/{task_id}.critique.md"
+
+  judged:
+    description: The verdict decides — a program reads it, so the decision is not a mood.
+    program:
+      command: "~/.config/ephor/route.sh"
+      env:
+        ARTIFACT: "{input.critique.path}"
+    program_timeout: 1m
+    visits: 3
+    inputs:
+      - name: critique
+        path: "runtime/ephor/{task_id}.critique.md"
+
+  fix:
+    description: Implement the proposal that survived, and nothing else.
+    target: "claude-code[yolo]:anthropic:claude-sonnet-5"
+    agent_timeout: 60m
+    inputs:
+      - name: proposal
+        path: "runtime/ephor/{task_id}.proposal.md"
+      - name: critique
+        path: "runtime/ephor/{task_id}.critique.md"
+    instructions: |
+      Implement {input.proposal.path} as it was approved in
+      {input.critique.path} — including whatever the critique asked for. Not
+      more: a fix that also tidies three other things is a fix nobody can
+      review.
+
+      Verify it the way the proposal said it would be verified, and put the
+      command and its real output in your report. Commit in this checkout with
+      a message that explains the cause and the fix.
+
+      Do not push, and do not touch the forge, unless the ticket asks for it in
+      so many words.
+
+      Write to {output.report.path}: what you changed, what you ran, what it
+      said, and anything you could not do.
+
+      **If something is genuinely unclear — a product decision, a trade-off
+      that is not yours, a failure whose intent you cannot read — do not
+      guess.** Write, as the first line of your artifact:
+
+          NEEDS-HUMAN: <the one question, asked so it can be answered in a
+                        sentence>
+
+      followed by what you know, what you tried, and the options as you see
+      them. The ticket then waits for a person, in the plan, and nothing
+      further is spent on a guess.
+
+    outputs:
+      - name: report
+        path: "runtime/ephor/{task_id}.report.md"
+
+  verify:
+    description: Run the project's own check, so "fixed" is not the agent's opinion.
+    program:
+      command: "~/.config/ephor/verify.sh"
+      env:
+        CHECKOUT: "{meta.workspace}"
+        FIX_REPORT: "{input.report.path}"
+        REPORT: "{output.verification.path}"
+    program_timeout: 2h
+    visits: 2
+    inputs:
+      - name: report
+        path: "runtime/ephor/{task_id}.report.md"
+    outputs:
+      - name: verification
+        path: "runtime/ephor/{task_id}.verification.md"
+
+  # ── ends ─────────────────────────────────────────────────────────────────
+  needs-human:
+    description: A question only a person can answer; the ticket waits here.
+    # Gating: `rhei run` will not transition out of this state, whatever else
+    # it is running. Other tickets in the plan carry on; this one stops until
+    # somebody answers it and moves it on by hand.
+    gating: true
+
+  gate-green:
+    description: Nothing failed; whatever holds this up is not a checkout's to fix.
+    final: true
+
+  done:
+    description: The cause is fixed and the project's own check agrees.
+    final: true
+
+  gave-up:
+    description: Out of budget, and a person should look.
+    final: true
+
+transitions:
+  # The first matching exit code wins, so the specific ones lead.
+  - from: collect
+    to: collect
+    exit_code: 75
+    description: The gate is still running — wait out poll.interval and ask again.
+  - from: collect
+    to: gate-green
+    exit_code: 3
+    description: Nothing failed.
+  - from: collect
+    to: triage
+    exit_code: 0
+    description: The failures are collected; classify them.
+  - from: collect
+    to: triage
+    exit_code: nonzero
+    description: The forge could not say; triage what is known anyway.
+  - from: collect
+    to: gave-up
+    condition: pollAttempts >= pollMaxAttempts
+    description: The gate never reached a verdict.
+
+  - from: triage
+    to: triaged
+    description: Every cause has its ticket.
+
+  - from: analyze
+    to: analyzed
+    description: Read what the analysis concluded.
+
+  - from: analyzed
+    to: needs-human
+    exit_code: 2
+    description: The analysis asked a person something.
+  - from: analyzed
+    to: propose
+    exit_code: 0
+    description: The cause is known; propose a fix for it.
+  - from: analyzed
+    to: propose
+    exit_code: nonzero
+    description: Nothing to object to at this stage.
+
+  - from: propose
+    to: critique
+    description: Argue against it before writing it.
+
+  - from: critique
+    to: judged
+    description: Read the verdict deterministically.
+
+  - from: judged
+    to: needs-human
+    exit_code: 2
+    description: The critique asked a person something.
+  - from: judged
+    to: fix
+    exit_code: 0
+    description: Sound — implement it.
+  - from: judged
+    to: propose
+    exit_code: nonzero
+    condition: visitCount < visits
+    description: Unsound — propose again, answering the objection.
+  - from: judged
+    to: gave-up
+    exit_code: nonzero
+    description: Three proposals rejected; a person should look.
+
+  - from: fix
+    to: verify
+    description: Let the project's own check say whether it holds.
+
+  - from: verify
+    to: needs-human
+    exit_code: 2
+    description: The fix asked a person something.
+  - from: verify
+    to: done
+    exit_code: 0
+    description: The check passes.
+  - from: verify
+    to: fix
+    exit_code: nonzero
+    condition: visitCount < visits
+    description: The check still fails — go back with its output.
+  - from: verify
+    to: gave-up
+    exit_code: nonzero
+    description: The check would not pass; a person should look.
+
+  # Out of the gate, by hand only. A person writes the answer into the ticket
+  # body — the decision stays in the plan, next to the question that prompted
+  # it — and then names where the work resumes:
+  #
+  #     rhei transition <ticket> --from needs-human --to propose
+  #
+  - from: needs-human
+    to: analyze
+    description: The answer changes what the failure even is.
+  - from: needs-human
+    to: propose
+    description: Answered — propose again, knowing it.
+  - from: needs-human
+    to: fix
+    description: Answered, and the proposal stands.
+  - from: needs-human
+    to: gave-up
+    description: Not worth doing; close it.

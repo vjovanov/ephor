@@ -115,7 +115,7 @@ impl WorkScreen {
                 Some(plan) => Action::ReadPlan(plan),
                 None => Action::SetMessage("No plan yet".to_string()),
             },
-            // Anything the recipes do not cover (§FS-005-dispatch.9).
+            // Anything the recipes do not cover (§FS-005-dispatch.10).
             KeyCode::Char('a') => Action::AskWork(self.item.clone()),
             KeyCode::Char('o') => Action::OpenUrl(self.item.url.clone()),
             _ => Action::None,
@@ -162,7 +162,12 @@ impl WorkScreen {
                     heading,
                 )));
                 for ticket in &status.tickets {
-                    let (marker, style) = if ticket.finished {
+                    let (marker, style) = if ticket.waiting {
+                        (
+                            "⚠",
+                            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                        )
+                    } else if ticket.finished {
                         ("✓", Style::default().fg(Color::Green))
                     } else {
                         ("⚙", Style::default().fg(Color::Yellow))
@@ -186,6 +191,28 @@ impl WorkScreen {
                 if status.tickets.is_empty() {
                     lines.push(Line::from(Span::styled(
                         "    the plan holds no tickets".to_string(),
+                        dim,
+                    )));
+                }
+                if let Some(waiting) = status.waiting() {
+                    lines.push(Line::from(""));
+                    lines.push(Line::from(Span::styled(
+                        format!(
+                            "  ⚠ {} is waiting on you — the question is in the plan",
+                            waiting.id
+                        ),
+                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                    )));
+                    lines.push(Line::from(Span::styled(
+                        "    answer it in the ticket (e), then move it on:".to_string(),
+                        dim,
+                    )));
+                    lines.push(Line::from(Span::styled(
+                        format!(
+                            "    rhei transition {} --from {} --to <state>",
+                            waiting.id,
+                            waiting.state.as_deref().unwrap_or("?")
+                        ),
                         dim,
                     )));
                 }
@@ -306,6 +333,7 @@ mod tests {
                 title: "fix the red gate".to_string(),
                 state: Some("done".to_string()),
                 finished: true,
+                waiting: false,
                 verdict: Some("done — the change is right".to_string()),
             }],
             changes: if stale {

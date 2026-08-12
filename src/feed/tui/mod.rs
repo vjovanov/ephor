@@ -404,7 +404,7 @@ pub(crate) enum Action {
     },
     /// Open a plan in the reader's editor.
     ReadPlan(PathBuf),
-    /// Ask this item for something no recipe covers (§FS-005-dispatch.9).
+    /// Ask this item for something no recipe covers (§FS-005-dispatch.10).
     AskWork(Item),
     ToggleUnread,
     Refresh,
@@ -728,7 +728,7 @@ impl App {
                     MenuOutcome::Run(entry) => {
                         let menu = self.menu.take().expect("menu is open");
                         // The one entry that has no command yet: the reader
-                        // types it (§FS-005-dispatch.9).
+                        // types it (§FS-005-dispatch.10).
                         if entry.is_freehand {
                             self.prompt = Some(Prompt::new(
                                 Asking::Command(Box::new(menu)),
@@ -809,7 +809,7 @@ impl App {
             Action::OpenActionMenu(item) => {
                 let applicable = self.ctx.actions_for(&item);
                 // An empty menu is no longer empty: the last entry is always
-                // "run a command here…" (§FS-005-dispatch.9), and refusing
+                // "run a command here…" (§FS-005-dispatch.10), and refusing
                 // to open would hide it exactly where nothing is configured.
                 match self.ctx.roots.get(&item.project) {
                     Some(root) if root.is_dir() => {
@@ -903,7 +903,7 @@ impl App {
     }
 
     /// What the reader typed, done: a ticket in their own words, or a command
-    /// run exactly as a configured one is (§FS-005-dispatch.9).
+    /// run exactly as a configured one is (§FS-005-dispatch.10).
     fn submit(&mut self, terminal: &mut DefaultTerminal, asking: Asking, line: &str) -> Result<()> {
         match asking {
             Asking::Work(item) => {

@@ -556,7 +556,7 @@ The last entry of every menu is **`⌨ run a command here…`**. Type a shell
 command and it runs exactly as a configured one does — same checkout, same
 environment, same handover of the terminal. The menu opens even when nothing is
 configured, because that is when this entry matters most
-([§FS-005-dispatch.9](../requirements.md#9-what-ephor-offers-is-not-a-limit-on-what-can-be-asked)).
+([§FS-005-dispatch.10](../requirements.md#10-what-ephor-offers-is-not-a-limit-on-what-can-be-asked)).
 
 ---
 
@@ -811,6 +811,33 @@ Two things to know about programs, both learned the hard way:
 - Artifact paths resolve relative to the plan directory too, so a script that
   writes to `$REPORT` as given lands exactly where the next state's `input`
   expects it.
+
+**A question only a person can answer.** An agent that meets a product
+decision, or a trade-off it cannot weigh, should stop rather than guess. Give
+it a state the runtime will not leave on its own —
+
+```yaml
+  needs-human:
+    description: A question only a person can answer; the ticket waits here.
+    gating: true
+```
+
+— and let it route itself there: the agent writes `NEEDS-HUMAN: <question>` as
+the first line of its artifact, and the program that reads that artifact exits
+`2` for it. `rhei run` then finishes everything else in the plan and stops at
+this ticket ([§FS-005-dispatch.9](../requirements.md#9-work-that-stops-for-a-person-says-so-where-the-person-is-looking)).
+
+ephor reads `gating` out of the machine, so the item's row says
+`⚠ fix-gate · waiting on you · cause-2` ahead of anything else, and the work
+screen prints the question and the command that resumes it. Answer **in the
+plan** — `e` opens it in your editor — then:
+
+```bash
+rhei transition <ticket> --from needs-human --to propose
+```
+
+The question and its answer stay next to each other in the file that is the
+record of this item's work, where the next round can read them.
 
 `config/ci-failures.example.sh` and
 `config/ephor-work-ci.example.states.yaml` are a working pair: the script

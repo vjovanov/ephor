@@ -303,7 +303,7 @@ work), `e` reads the plan. Rows carry a badge — `⚙ fix-gate · review`,
 ### By hand
 
 Recipes are for the work that repeats; most work does not
-([§FS-005-dispatch.9](requirements.md#9-what-ephor-offers-is-not-a-limit-on-what-can-be-asked)).
+([§FS-005-dispatch.10](requirements.md#10-what-ephor-offers-is-not-a-limit-on-what-can-be-asked)).
 So nothing has to be written down in advance:
 
 - **`a` on the work screen** — type one line and it becomes an ordinary ticket,

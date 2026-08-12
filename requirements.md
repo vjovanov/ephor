@@ -452,7 +452,27 @@ bookkeeping in the same place and a ticket writing over it would break the
 plan. And what is written is identifiers only — the prose stays in the dossier,
 which is where a reader is looking.
 
-### 9. What ephor offers is not a limit on what can be asked
+### 9. Work that stops for a person says so where the person is looking
+
+Work handed to a runtime is autonomous until it meets a question that is not
+its to answer: a product decision, a trade-off between two things it cannot
+weigh, an instruction it cannot read. The honest move then is to stop and ask —
+and a machine that can only finish or fail will instead guess, because guessing
+is the only move it has.
+
+A runtime that can park work pending a person is therefore something ephor
+reads, not something it invents: where the state a ticket sits in is one the
+runtime will not leave on its own, that ticket is **waiting on the reader**, and
+it is shown that way — ahead of anything else its work is doing, since it is
+the one part of it nobody else will move.
+
+The question and its answer stay in the plan. A ticket that asked something
+carries the question in the artifact it wrote, and the answer belongs beside it
+rather than in a chat window, a comment, or somebody's memory: the plan is the
+record of what was decided about this item, and a decision taken anywhere else
+is one the next round cannot read.
+
+### 10. What ephor offers is not a limit on what can be asked
 
 Recipes are for the work that repeats. Most work does not: a reader looks at a
 change and knows the one thing they want done to it, and that thing has never

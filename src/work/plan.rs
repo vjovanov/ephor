@@ -37,6 +37,9 @@ pub struct WorkRoot {
 pub struct StateInfo {
     pub name: String,
     pub is_final: bool,
+    /// The runtime will not leave this state on its own: it is where work
+    /// waits for a person (§FS-005-dispatch.10).
+    pub is_gating: bool,
 }
 
 impl WorkRoot {
@@ -127,10 +130,20 @@ impl WorkRoot {
 
     /// Whether a state is one the work does not leave.
     pub fn is_final(&self, state: &str) -> bool {
+        self.flag(state, |info| info.is_final)
+    }
+
+    /// Whether a state is one the runtime will not leave on its own — work
+    /// parked there is waiting for a person (§FS-005-dispatch.10).
+    pub fn is_gating(&self, state: &str) -> bool {
+        self.flag(state, |info| info.is_gating)
+    }
+
+    fn flag(&self, state: &str, of: impl Fn(&StateInfo) -> bool) -> bool {
         self.states
             .iter()
             .find(|info| info.name == state)
-            .map(|info| info.is_final)
+            .map(of)
             .unwrap_or(false)
     }
 
@@ -197,13 +210,21 @@ fn state_infos(yaml: &str) -> Vec<StateInfo> {
             states.push(StateInfo {
                 name: trimmed.trim_end_matches(':').to_string(),
                 is_final: false,
+                is_gating: false,
             });
-        } else if indent > 2 && trimmed.starts_with("final:") {
+        } else if indent > 2 {
+            let flag = |prefix: &str| {
+                trimmed
+                    .strip_prefix(prefix)
+                    .map(|value| value.trim().eq_ignore_ascii_case("true"))
+            };
             if let Some(last) = states.last_mut() {
-                last.is_final = trimmed
-                    .trim_start_matches("final:")
-                    .trim()
-                    .eq_ignore_ascii_case("true");
+                if let Some(value) = flag("final:") {
+                    last.is_final = value;
+                }
+                if let Some(value) = flag("gating:") {
+                    last.is_gating = value;
+                }
             }
         }
     }
@@ -581,6 +602,26 @@ mod tests {
         assert!(root.is_final("done"));
         assert!(!root.is_final("fix"));
         assert!(!root.is_final("nonexistent"));
+
+        // A machine with a state the runtime will not leave on its own: work
+        // parked there is waiting for a person (§FS-005-dispatch.10).
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(
+            tmp.path().join("states.yaml"),
+            concat!(
+                "name: m\n",
+                "states:\n",
+                "  fix:\n    agent: x\n",
+                "  needs-human:\n    gating: true\n",
+                "  done:\n    final: true\n",
+            ),
+        )
+        .unwrap();
+        let root = WorkRoot::ensure(tmp.path(), SHIPPED_STATES).unwrap();
+        assert!(root.is_gating("needs-human"));
+        assert!(!root.is_gating("fix"));
+        assert!(!root.is_final("needs-human"));
+        assert!(root.is_final("done"));
         // The project is set up, and ignores itself so the checkout stays clean.
         assert!(tmp.path().join("index.panta.md").is_file());
         assert!(fs::read_to_string(tmp.path().join(".gitignore"))

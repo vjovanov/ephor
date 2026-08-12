@@ -1,5 +1,5 @@
 //! A single line of the reader's own words, typed where they are standing
-//! (§FS-005-dispatch.9).
+//! (§FS-005-dispatch.10).
 //!
 //! One line, deliberately. What is typed here is a sentence — an ask, or a
 //! command — and anything longer belongs in the plan, which `e` opens in an

@@ -118,7 +118,7 @@ pub(crate) struct MenuEntry {
     /// The synthetic "check out branch workspace" row.
     pub is_checkout: bool,
     /// The synthetic row with no command yet: the reader types one
-    /// (§FS-005-dispatch.9).
+    /// (§FS-005-dispatch.10).
     pub is_freehand: bool,
     pub gate: Gate,
 }
@@ -190,7 +190,7 @@ impl ActionMenu {
             });
         }
         // Last, and always there: what the reader wants to run once
-        // (§FS-005-dispatch.9). It leads nothing and blocks nothing — a menu
+        // (§FS-005-dispatch.10). It leads nothing and blocks nothing — a menu
         // whose first key is "type something" would be a menu that gave up.
         entries.push(MenuEntry {
             action: ActionConfig {

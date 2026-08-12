@@ -68,7 +68,20 @@ ships, the previous "latest" section moves verbatim to
   exit codes that pick the next state — `75` when the gate is still running,
   so a ticket waits on a poll instead of spending an agent on a half-finished
   gate.
-- **Asking by hand** (§FS-005-dispatch.9): `a` on the work screen types one
+- **Work can stop for a person, and say so where you are looking**
+  (§FS-005-dispatch.9). Where a ticket sits in a state the runtime will not
+  leave on its own — a gating state — ephor reads that out of the machine and
+  leads the item's badge with `⚠ waiting on you`, ahead of anything else the
+  work is doing, since it is the one part nobody else will move. The work
+  screen prints the ticket and the `rhei transition` that resumes it. The
+  question and its answer stay in the plan: an agent writes `NEEDS-HUMAN:` as
+  the first line of its artifact, a program routes on it, and the person
+  answers beside the question rather than in a chat window the next round
+  cannot read. `config/ci-green.example.states.yaml` is a worked machine that
+  uses it — collect, triage on a cheap model, then analyze → propose →
+  critique → fix → verify per failure, with the escalation available at every
+  step.
+- **Asking by hand** (§FS-005-dispatch.10): `a` on the work screen types one
   line and it becomes an ordinary ticket — same dossier, same plan, same
   order — with the reader's words as the brief, and `ephor work ask --item ID`
   does it from a script or from stdin. It is refused for nothing but being
