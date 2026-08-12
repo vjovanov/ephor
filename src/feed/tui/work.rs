@@ -106,6 +106,7 @@ impl WorkScreen {
             KeyCode::Char('R') => match &self.status {
                 Some(status) => Action::RunWork {
                     root: status.root.clone(),
+                    checkout: status.checkout.clone(),
                     rhei: status.rhei.clone(),
                     label: self.item.title.clone(),
                 },
@@ -325,6 +326,7 @@ mod tests {
             project: "demo".to_string(),
             root: PathBuf::from("/w/demo/panta"),
             rhei: "forge-demo-17".to_string(),
+            checkout: PathBuf::from("/w/demo"),
             plan: PathBuf::from("/w/demo/panta/forge-demo-17.rhei.md"),
             missing: false,
             tickets: vec![TicketStatus {

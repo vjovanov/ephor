@@ -43,6 +43,13 @@ pub struct Entry {
     pub url: Option<String>,
     /// The rhei project directory the plan lives in.
     pub root: PathBuf,
+    /// The checkout the work is about — where the runtime is run from, so a
+    /// multi-repo workspace resolves to the directory holding its
+    /// repositories rather than to whatever a git lookup finds
+    /// (§FS-005-dispatch.3). Empty on entries written before this was
+    /// recorded; the work root's parent stands in.
+    #[serde(default)]
+    pub checkout: PathBuf,
     /// The plan's id there, which is also its file stem.
     pub rhei: String,
     pub plan: PathBuf,
@@ -173,6 +180,20 @@ fn message_count(item: &Item) -> usize {
 }
 
 impl Entry {
+    /// Where the runtime runs. The recorded checkout, or — for an entry from
+    /// before it was recorded — the directory the work root sits in, which is
+    /// what the default `{workspace}/panta` root makes it.
+    pub fn checkout(&self) -> PathBuf {
+        if self.checkout.as_os_str().is_empty() {
+            return self
+                .root
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| self.root.clone());
+        }
+        self.checkout.clone()
+    }
+
     pub fn last(&self) -> Option<&Dispatch> {
         self.dispatches.last()
     }

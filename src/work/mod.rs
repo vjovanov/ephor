@@ -114,6 +114,8 @@ pub struct WorkStatus {
     pub root: PathBuf,
     /// The plan's id inside the root, for naming it to the runtime.
     pub rhei: String,
+    /// The checkout the runtime is run from.
+    pub checkout: PathBuf,
     pub plan: PathBuf,
     /// The plan the ledger points at is gone — reported, never repaired.
     pub missing: bool,
@@ -441,6 +443,7 @@ impl Dispatcher {
             title: item.title.clone(),
             url: item.url.clone(),
             root: root.dir.clone(),
+            checkout: site.checkout.workspace.clone(),
             rhei: rhei.clone(),
             plan: path.clone(),
             dispatches: Vec::new(),
@@ -448,6 +451,7 @@ impl Dispatcher {
         entry.title = item.title.clone();
         entry.url = item.url.clone();
         entry.root = root.dir.clone();
+        entry.checkout = site.checkout.workspace.clone();
         entry.plan = path;
         entry.dispatches.push(Dispatch {
             ticket: ticket_id,
@@ -579,6 +583,7 @@ impl Dispatcher {
             project: entry.project.clone(),
             root: entry.root.clone(),
             rhei: entry.rhei.clone(),
+            checkout: entry.checkout(),
             plan: entry.plan.clone(),
             missing: plan.is_none(),
             tickets,

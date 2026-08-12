@@ -399,6 +399,8 @@ pub(crate) enum Action {
     /// Leave the interface and let the runtime work one item's plan.
     RunWork {
         root: PathBuf,
+        /// Where to run it from — the checkout the work is about.
+        checkout: PathBuf,
         rhei: String,
         label: String,
     },
@@ -847,19 +849,28 @@ impl App {
                 self.sync_work(&item);
                 self.open_work(item);
             }
-            Action::RunWork { root, rhei, label } => {
+            Action::RunWork {
+                root,
+                checkout,
+                rhei,
+                label,
+            } => {
                 self.handover(
                     terminal,
                     "▶",
                     &format!("rhei run — {label}"),
-                    &root,
+                    &checkout,
                     || {
                         std::process::Command::new("rhei")
                             .arg("run")
                             .arg(&root)
                             .arg("--rhei")
                             .arg(&rhei)
-                            .current_dir(&root)
+                            // The checkout, not the plan directory: it is
+                            // where the work is, and where the runtime falls
+                            // back to when a workspace has no one repository
+                            // to be found by looking.
+                            .current_dir(&checkout)
                             .status()
                     },
                 )?;

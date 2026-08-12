@@ -414,6 +414,36 @@ fn an_item_can_be_asked_for_anything_including_what_no_recipe_matches() {
         .stderr(predicate::str::contains("Nothing was asked for"));
 }
 
+/// A multi-repo workspace has no one repository to be found by looking, so
+/// where the runtime runs is recorded rather than guessed
+/// (§FS-005-dispatch.3).
+#[test]
+fn the_ledger_records_the_checkout_the_runtime_runs_from() {
+    let tmp = tempfile::tempdir().unwrap();
+    fixture(tmp.path(), Value::Null);
+    ephor(tmp.path())
+        .args(["refresh", "demo"])
+        .assert()
+        .success();
+    ephor(tmp.path())
+        .args(["work", "dispatch"])
+        .assert()
+        .success();
+
+    let ledger: Value = serde_json::from_str(
+        &fs::read_to_string(tmp.path().join("state/ephor/work.json")).unwrap(),
+    )
+    .unwrap();
+    let entry = &ledger["entries"]["github-prs:acme/widget#42"];
+    let checkout = tmp.path().join("demo");
+    assert_eq!(entry["checkout"], json!(checkout.to_string_lossy()));
+    // The work root is inside it, not the other way round.
+    assert_eq!(
+        entry["root"],
+        json!(checkout.join("panta").to_string_lossy())
+    );
+}
+
 #[test]
 fn forgetting_an_entry_keeps_the_plan_it_points_at() {
     let tmp = tempfile::tempdir().unwrap();

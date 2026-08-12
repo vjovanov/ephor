@@ -402,7 +402,8 @@ fn run_work(config: &StatusConfig, args: &crate::cli::WorkRunArgs) -> Result<Exi
     // and two agents in one working tree edit the same files — but named plan
     // by plan, so a runtime project the reader keeps there for their own work
     // is not swept up by ephor's.
-    let mut roots: Vec<(std::path::PathBuf, Vec<String>)> = Vec::new();
+    // (work root, checkout to run from, the plans ephor opened there)
+    let mut roots: Vec<(std::path::PathBuf, std::path::PathBuf, Vec<String>)> = Vec::new();
     for (id, entry) in &dispatcher.ledger.entries {
         if !args.project.is_empty() && !args.project.contains(&entry.project) {
             continue;
@@ -416,9 +417,13 @@ fn run_work(config: &StatusConfig, args: &crate::cli::WorkRunArgs) -> Result<Exi
         if status.missing || status.open_tickets() == 0 {
             continue;
         }
-        match roots.iter_mut().find(|(root, _)| root == &entry.root) {
-            Some((_, plans)) => plans.push(entry.rhei.clone()),
-            None => roots.push((entry.root.clone(), vec![entry.rhei.clone()])),
+        match roots.iter_mut().find(|(root, _, _)| root == &entry.root) {
+            Some((_, _, plans)) => plans.push(entry.rhei.clone()),
+            None => roots.push((
+                entry.root.clone(),
+                entry.checkout(),
+                vec![entry.rhei.clone()],
+            )),
         }
     }
     if roots.is_empty() {
@@ -427,10 +432,14 @@ fn run_work(config: &StatusConfig, args: &crate::cli::WorkRunArgs) -> Result<Exi
     }
 
     let mut failed = 0usize;
-    for (root, plans) in &roots {
+    for (root, checkout, plans) in &roots {
         println!("\n▶ rhei run {} ({} plan(s))", root.display(), plans.len());
         let mut command = Command::new("rhei");
-        command.arg("run").arg(root);
+        // From the checkout, not from wherever this was typed: where the
+        // runtime puts the agent falls back to its own working directory, and
+        // a multi-repo workspace has no single repository to be found by
+        // looking (§FS-005-dispatch.3).
+        command.current_dir(checkout).arg("run").arg(root);
         for plan in plans {
             command.arg("--rhei").arg(plan);
         }

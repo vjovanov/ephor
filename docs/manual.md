@@ -808,6 +808,12 @@ Two things to know about programs, both learned the hard way:
 - A program's working directory is the **plan directory**, not the checkout,
   and `RHEI_CHECKOUT_ROOT` is not exported to it. Pass the checkout explicitly
   as `{meta.workspace}` rather than assuming a layout.
+- The *agent's* working directory is the checkout, which the runtime finds as
+  the git repository enclosing the plan — so for a **multi-repo workspace**,
+  whose root holds several repositories and may not be one itself, ephor runs
+  the runtime **from the checkout it recorded** rather than leaving it to that
+  lookup. The root of a multi-repo project is the directory its repositories
+  sit in, and that is where the work runs.
 - Artifact paths resolve relative to the plan directory too, so a script that
   writes to `$REPORT` as given lands exactly where the next state's `input`
   expects it.
