@@ -1087,6 +1087,26 @@ as `states.yaml` or point `work.states` at it. Recipes then name its states in
 their `state` field; one naming a state the machine does not declare is refused
 by name rather than written.
 
+### 10.4 An agent of your own
+
+Which agent and model each state runs on is the machine's business, not
+ephor's: a state names one with `target: "<agent>[<mode>]:<provider>:<model>"`.
+The runtime knows a handful of agents already; anything else — or any agent
+that needs fixed flags — is a few lines in `~/.config/rhei/settings.json`:
+
+```json
+{ "agents": { "pi": {
+    "command": ["/home/you/.local/bin/pi", "--provider", "openai-codex"],
+    "prompt_flag": "-p", "model_flag": "--model", "skill_flag": "--skill",
+    "modes": { "high": ["--thinking", "high"] } } } }
+```
+
+Two things to check before trusting one: the runtime spawns processes
+directly, so a shell alias or function is not enough — give it the executable's
+path. And **the agent must be able to write**: a state's output artifact is how
+work advances, so an agent whose sandbox denies file writes leaves every ticket
+stalled on *"required outputs are missing"* no matter how well it reasons.
+
 ---
 
 ## 11. Reference
