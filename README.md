@@ -6,6 +6,8 @@ project/workspace registry (extracted from the `automation` repo's Python
 review, gate state, messages awaiting a response, Jira tickets, and custom
 project status.
 
+**[docs/manual.md](docs/manual.md) is the manual**; this page is the tour.
+
 *ἔφορος* — overseer, from *epi* (over) + the root of *horaō* (to see). In
 Sparta a board of five ephors watched over the kings: they did none of the
 governing themselves, but they observed, and they could summon and suspend.
@@ -23,9 +25,11 @@ action menu for when watching is not enough.
 - `config/templates/` — AGENTS.md templates referenced by the registry
 - `assets/workspaces.schema.json` — registry JSON Schema (embedded in the binary)
 - `ai/skills/` — canonical agent skills (`track-project`); `ai/link-global-skills.sh` links them into `~/.claude/skills` etc.
-- `systemd/` — user units for periodic feed refresh
-- `docs/registry.md` — what the registry's concepts mean; `requirements.md`,
-  `docs/roadmap.md`, and `docs/changelog.md` are the grund tree
+- `systemd/` — user units for periodic feed refresh and work sync
+- `docs/manual.md` — **the manual**: every command, key, and configuration
+  field, end to end; `docs/registry.md` explains what the registry's concepts
+  mean, and `requirements.md`, `docs/roadmap.md` and `docs/changelog.md` are
+  the grund tree
 
 ## Install
 

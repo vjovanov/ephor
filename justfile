@@ -35,6 +35,10 @@ grund:
 lint:
     cargo clippy --all-targets -- -D warnings
 
+# Render docs/manual.md as a standalone page (needs pandoc; not part of the gate)
+manual-page out="target/manual.html":
+    python3 scripts/manual-page.py {{out}}
+
 # Full gate, matching CI: format + build + tests + grund
 check: format-check build test test-python grund
 
