@@ -190,7 +190,28 @@ pub fn refresh_project(
         }
     });
 
-    let results = results.into_inner().unwrap();
+    let mut results = results.into_inner().unwrap();
+
+    // Checkout sources read the forest itself, where there is one on disk
+    // (§AR-008-pipeline.1). A local ticket store is a project-native thing
+    // that exists without ephor, so finding one is a capability rather than
+    // an obligation (§FS-006-project-interface.7).
+    if let Some(placement) = crate::branches::Placement::load(registry_doc, project_id) {
+        let manifest = placement.manifest();
+        let stores = crate::seams::tickets::find(&placement.root, manifest.as_ref());
+        for store in stores {
+            let items = crate::seams::tickets::read(&store, project_id);
+            if items.is_empty() {
+                continue;
+            }
+            results
+                .entry(store.kind.name().to_string())
+                .or_insert((true, None, Vec::new()))
+                .2
+                .extend(items);
+        }
+    }
+
     let now = Utc::now();
     let mut feed = ProjectFeed {
         project: project_id.to_string(),

@@ -182,7 +182,10 @@ impl CapabilitySet {
                     ),
                 );
             }
-            if !TICKET_STORES.iter().any(|name| root.join(name).is_dir()) {
+            // A manifest may keep its store somewhere else entirely
+            // (§FS-006-project-interface.7).
+            let declared = !crate::seams::tickets::find(root, bindings.manifest).is_empty();
+            if !declared && !TICKET_STORES.iter().any(|name| root.join(name).is_dir()) {
                 fails(
                     Rung::Ticketed,
                     format!(

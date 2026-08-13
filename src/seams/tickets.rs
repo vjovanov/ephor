@@ -1,0 +1,256 @@
+//! Local ticket stores, read where they live (§FS-006-project-interface.7).
+//!
+//! A project may keep tickets in its checkout — a plan directory, a git-backed
+//! issue store — and a store ephor recognizes is read through the store's own
+//! files, as matters with their discussions (§FS-007-matters), into the same
+//! feed under the same rules as anything a forge reported.
+//!
+//! Recognition is by probed convention or manifest declaration; attribution is
+//! the checkout's own project; and the stores are project-native things that
+//! exist without ephor — a store's presence is a capability rung, never an
+//! obligation.
+
+use std::path::{Path, PathBuf};
+
+use crate::feed::model::{Item, ItemKind};
+use crate::manifest::Manifest;
+
+/// A store ephor has a reader for. The kind is the store's own name, which is
+/// also what a manifest declares (§FS-006-project-interface.7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    /// A plan directory: markdown plans whose task headings are the tickets.
+    Plans,
+    /// A git-backed issue store.
+    Beads,
+}
+
+impl Kind {
+    /// What a manifest calls it, and the scheme its matters' keys carry.
+    pub fn name(self) -> &'static str {
+        match self {
+            Kind::Plans => "rhei",
+            Kind::Beads => "beads",
+        }
+    }
+
+    /// The directory probed at the forest root — a name the project carries
+    /// for its own sake (§REQ-001-boundary.2).
+    pub fn probed(self) -> &'static str {
+        match self {
+            Kind::Plans => "panta",
+            Kind::Beads => ".beads",
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<Kind> {
+        match name {
+            "rhei" | "panta" | "plans" => Some(Kind::Plans),
+            "beads" => Some(Kind::Beads),
+            _ => None,
+        }
+    }
+
+    pub fn all() -> [Kind; 2] {
+        [Kind::Plans, Kind::Beads]
+    }
+}
+
+/// A store found in a checkout.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Store {
+    pub kind: Kind,
+    pub path: PathBuf,
+}
+
+/// Every ticket store this checkout holds: what the manifest declares, then
+/// what the well-known names find. Declared and probed are not alternatives
+/// here the way a verb's binding is — a project may keep two stores, and both
+/// are read.
+pub fn find(root: &Path, manifest: Option<&Manifest>) -> Vec<Store> {
+    let mut found: Vec<Store> = Vec::new();
+    let mut push = |kind: Kind, path: PathBuf| {
+        if path.is_dir() && !found.iter().any(|store| store.path == path) {
+            found.push(Store { kind, path });
+        }
+    };
+    if let Some(manifest) = manifest {
+        for declared in &manifest.tickets {
+            if let Some(kind) = Kind::parse(&declared.kind) {
+                push(kind, root.join(&declared.path));
+            }
+        }
+    }
+    for kind in Kind::all() {
+        push(kind, root.join(kind.probed()));
+    }
+    found
+}
+
+/// Read one store's tickets as items of the project the checkout belongs to
+/// (§FS-006-project-interface.7). Attribution is the checkout's project: a
+/// store in a checkout is about that checkout, and nothing has to guess.
+pub fn read(store: &Store, project: &str) -> Vec<Item> {
+    match store.kind {
+        Kind::Plans => plans(store, project),
+        // The beads reader is the second one; a store ephor recognizes but
+        // cannot read yet reports nothing rather than pretending.
+        Kind::Beads => Vec::new(),
+    }
+}
+
+/// The plan reader. Every plan in the directory is one matter per open ticket,
+/// keyed by the store's own id — `rhei:<plan>.<ticket>` — because the store
+/// named it and ephor does not get to rename it (§FS-007-matters.1).
+fn plans(store: &Store, project: &str) -> Vec<Item> {
+    let Ok(entries) = std::fs::read_dir(&store.path) else {
+        return Vec::new();
+    };
+    let mut paths: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(".rhei.md") || name.ends_with(".panta.md"))
+        })
+        .collect();
+    paths.sort();
+
+    let mut items = Vec::new();
+    for path in paths {
+        let Ok(Some(plan)) = crate::work::plan::Plan::read(&path) else {
+            continue;
+        };
+        let stem = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| name.split('.').next().unwrap_or(name).to_string())
+            .unwrap_or_default();
+        let updated_at = modified(&path);
+        for ticket in plan.tickets() {
+            // A ticket that is finished is not news; the store keeps it, and
+            // the feed's own recency rules would hide it anyway.
+            let state = ticket.state.clone().unwrap_or_default();
+            items.push(Item {
+                id: format!("{}:{stem}.{}", store.kind.name(), ticket.id),
+                project: project.to_string(),
+                source: store.kind.name().to_string(),
+                kind: ItemKind::Issue,
+                role: None,
+                title: ticket.title.clone(),
+                url: None,
+                state: (!state.is_empty()).then_some(state),
+                // A local ticket waits on whoever keeps the store; nothing
+                // about it says anyone is waiting on an answer.
+                needs_response: false,
+                updated_at,
+                raw: serde_json::json!({ "plan": path.to_string_lossy() }),
+            });
+        }
+    }
+    items
+}
+
+/// When the store last changed, which is the closest thing a file-backed
+/// ticket has to a last-activity time.
+fn modified(path: &Path) -> chrono::DateTime<chrono::Utc> {
+    std::fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .map(chrono::DateTime::<chrono::Utc>::from)
+        .unwrap_or_else(|_| chrono::Utc::now())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn plan_dir(root: &Path, name: &str, body: &str) -> PathBuf {
+        let dir = root.join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("work.rhei.md"), body).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_well_known_directory_is_a_store_and_absence_is_a_complete_answer() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(find(tmp.path(), None).is_empty());
+
+        plan_dir(tmp.path(), "panta", "# Plan\n");
+        let found = find(tmp.path(), None);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].kind, Kind::Plans);
+    }
+
+    #[test]
+    fn a_declared_store_is_read_where_the_project_keeps_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        plan_dir(tmp.path(), "docs/plans", "# Plan\n");
+        let manifest = crate::manifest::parse(
+            r#"{"tickets": [{"kind": "rhei", "path": "docs/plans"}]}"#,
+            "ephor.json",
+        )
+        .unwrap();
+        let found = find(tmp.path(), Some(&manifest));
+        assert_eq!(found.len(), 1);
+        assert!(found[0].path.ends_with("docs/plans"));
+    }
+
+    /// A project may keep two stores, and both are read — declaring one does
+    /// not hide the other.
+    #[test]
+    fn a_declared_store_and_a_probed_one_are_both_stores() {
+        let tmp = tempfile::tempdir().unwrap();
+        plan_dir(tmp.path(), "panta", "# Plan\n");
+        plan_dir(tmp.path(), "elsewhere", "# Plan\n");
+        let manifest = crate::manifest::parse(
+            r#"{"tickets": [{"kind": "rhei", "path": "elsewhere"}]}"#,
+            "ephor.json",
+        )
+        .unwrap();
+        let found = find(tmp.path(), Some(&manifest));
+        assert_eq!(found.len(), 2);
+        // Declared first: the project said it, so it leads.
+        assert!(found[0].path.ends_with("elsewhere"));
+    }
+
+    /// The store named its tickets; ephor does not get to rename them
+    /// (§FS-007-matters.1).
+    #[test]
+    fn a_plans_store_reads_its_tickets_under_the_stores_own_ids() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = plan_dir(
+            tmp.path(),
+            "panta",
+            "# Rhei: work\n\n\
+             ## Tasks\n\n\
+             ### Task 1: Widen the retry window\n**State:** pending\n\n\
+             Do the thing.\n\n\
+             ### Task 2: And the other\n**State:** completed\n\n\
+             Done it.\n",
+        );
+        let store = Store {
+            kind: Kind::Plans,
+            path: dir,
+        };
+        let items = read(&store, "widget");
+        assert_eq!(items.len(), 2, "{items:#?}");
+        assert_eq!(items[0].id, "rhei:work.1");
+        assert_eq!(items[0].title, "Widen the retry window");
+        assert_eq!(items[0].state.as_deref(), Some("pending"));
+        assert_eq!(items[1].state.as_deref(), Some("completed"));
+        // Attribution is the checkout's project: nothing has to guess.
+        assert!(items.iter().all(|item| item.project == "widget"));
+        assert!(items.iter().all(|item| item.source == "rhei"));
+    }
+
+    #[test]
+    fn a_store_ephor_cannot_read_yet_reports_nothing_rather_than_pretending() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".beads")).unwrap();
+        let found = find(tmp.path(), None);
+        assert_eq!(found[0].kind, Kind::Beads);
+        assert!(read(&found[0], "widget").is_empty());
+    }
+}
