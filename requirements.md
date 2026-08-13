@@ -16,14 +16,32 @@ An implementation answers some or all of the following; it declares which, and
 ephor degrades to what is answered rather than failing.
 
 - **Pull requests by role** — the ones the user authored, and the ones they are
-  engaged in as a reviewer. Each carries a stable id, title, url, state, head
-  branch, and last-updated time.
+  on as a reviewer. Each carries a stable id, title, url, state, head branch,
+  last-updated time, and the reasons it is theirs. A reason is one of: they
+  opened it, they are engaged in a thread on it, they are cited in it, a review
+  was asked of them, or it is assigned to them. Being *asked* and being
+  *engaged* are not the same thing, and the quiet one is the one that matters:
+  a review request nobody has answered leaves no trace in the conversation, so
+  an implementation that reports only the pull requests the user has already
+  spoken in reports the ones they have handled and drops the ones they have
+  not. Where a forge can be searched as a whole, an implementation reports the
+  user's pull requests wherever they live rather than only in a configured set
+  of repositories, on the same terms as issues below. State is reported
+  whatever it is, closed and merged included: a question asked of the user does
+  not stop being asked when the branch lands.
 - **Conversation** — a PR's threads as ordered messages (author, text, time),
   each with its reactions, and enough identity for a reaction to be posted back
-  to it.
+  to it. A message the forge tracks as a task carries that too: its state, and
+  enough identity to transition it.
 - **Reactions** — post a reaction on a message, where the implementation
   supports writing; read-only implementations say so and their messages are
   display-only.
+- **Tasks** — resolve a task the forge tracks on a message. Forges spell it
+  differently — a checklist item, a blocker comment, a review task — but they
+  agree on the shape: a message that is done or not done, and a person who
+  says which. An implementation that can only read task state declares no
+  tasks capability; its tasks still render with their state, since knowing a
+  box is unticked is most of the value even where ephor cannot tick it.
 - **Gate status** — the job counts (passed, failed, running) for a pull
   request, per repository the gate covers, since one change may gate across
   several repositories at once; and, where the forge reaches a verdict of its
@@ -45,6 +63,25 @@ ephor degrades to what is answered rather than failing.
   else's project is theirs to follow just as much as one on their own. State is
   reported whatever it is, closed included — an issue's closing is often the
   activity worth seeing.
+- **Notices** — what the forge itself says is directed at the user: one entry
+  per thing it decided to tell them, carrying the reason it gives, the subject
+  it concerns, when it arrived, and whether the forge considers it read. This
+  is the completeness capability, and the only one whose job is to be
+  exhaustive rather than exact. Every other capability answers a question ephor
+  composed, and so can only return what ephor knew to ask about: the
+  repositories it was configured with, the roles it thought to search, the
+  kinds of thing it models. A forge that keeps a notification list of its own —
+  GitHub's notifications, GitLab's todos — has already made that judgement
+  across everything it hosts, including the kinds ephor has no capability for
+  at all. Without it, [§6](#6-a-source-that-did-not-answer-says-so-and-says-which-kind-of-not)
+  is a promise ephor cannot keep: an empty feed would mean "nothing is waiting
+  in what I was told to look at", which is a different and much weaker claim
+  than the one an empty feed makes.
+
+  A notice about something another capability already reported is the same work
+  seen twice, not two pieces of work; reconciling them is policy's job, under
+  [§3](#3-policy-lives-above-the-interface-never-in-an-implementation) and
+  [§FS-003-feed-categories.5](#5-one-subject-is-one-row-however-many-sources-reported-it).
 
 ### 2. Two transports, one interface
 
@@ -68,10 +105,12 @@ and building a binary that registers it — not a dynamically loaded object.
 
 An implementation answers questions about a forge. It does not decide what the
 answers mean. Whether a citation was answered, whether an item needs a
-response, how threads and gate counts roll up, how items match registry
-branches, and what counts as unread are ephor's, applied identically to every
-implementation — so the feed stays coherent across forges, and an
-implementation stays small enough to be a shell script.
+response, which reported reason puts the user on which side of a pull request,
+which of two reports of the same subject the reader sees, how threads and gate
+counts roll up, how items match registry branches, and what counts as unread
+are ephor's, applied identically to every implementation — so the feed stays
+coherent across forges, and an implementation stays small enough to be a shell
+script.
 
 ### 4. Site-specific implementations ship separately
 
@@ -191,7 +230,7 @@ role on it:
 | CI | gate and build results |
 | My Issues | issues the user opened |
 | Participating | issues the user is in but did not open |
-| Messages | conversations that are not attached to a pull request or issue |
+| Messages | anything addressed to the user that is not a pull request or an issue |
 | Recent | finished items — see [§2](#2-recent) |
 
 Exactly one, so that the size of a category is the size of that pile of work
@@ -217,6 +256,48 @@ How long finished work stays interesting is a property of a person, not of
 ephor: the window is `defaults.recent_days` in the feed configuration, in
 days, defaulting to 7. Zero drops an item from the feed the moment it is
 finished, which is the behavior for someone who never looks back.
+
+### 4. A conversation is answered in whatever form the forge recorded it
+
+A thread awaits the user while the answer it is waiting for is missing, and an
+answer takes more than one form. Having the last word is one. A reaction on the
+last message is another — often it is the honest answer, and demanding prose
+where a forge offers a button would leave the thread pending forever.
+
+A task the forge tracks is a third, and it outranks the other two: a thread
+holding an unresolved task awaits the user however the conversation ended, and
+a thread whose last word is a resolved task is answered even though a robot
+spoke it. Task state is the forge's own record of whether the thing was done,
+which is exactly the question, and reading who spoke last instead leaves every
+bot checklist counted as work forever — the reader's own inbox tells them the
+box is unticked long after they ticked it.
+
+### 5. One subject is one row, however many sources reported it
+
+Sources overlap on purpose. A source that searches by role and a source that
+reads the forge's own notice list
+([§FS-001-forge-interface.1](#1-capabilities)) are asking different questions
+that land on the same pull request, and the overlap is the point: it is how
+ephor can be exhaustive without being told in advance where to look. What the
+reader must never see is the consequence — the same pull request twice, in two
+rows, counted twice in the size of the pile that [§1](#1-the-categories) exists
+to make readable.
+
+So a subject reported by several sources is one item. Which report survives is
+decided by how much it says, not by which source was configured first: the one
+carrying the conversation, the gate, and the role outranks the one carrying a
+title and a reason, because the reader can act on the first and can only click
+through on the second. What the losing report knew and the winner did not — a
+reason the forge gave for telling the user about it — is carried over rather
+than discarded, since that reason is often the only thing that explains why the
+row is there at all.
+
+Merging is by subject identity as the forge states it, never by title text: two
+pull requests may share a title, and a subject whose identity cannot be
+established is left alone rather than guessed at. A duplicate shown is a small
+insult to the reader; a distinct piece of work silently swallowed is the
+failure [§FS-001-forge-interface.6](#6-a-source-that-did-not-answer-says-so-and-says-which-kind-of-not)
+is about.
 
 ## FS-004-quick-actions: a problem ephor recognizes arrives with the action for it
 
@@ -250,6 +331,15 @@ known, and the tool it runs is installed. A menu that lists an action which
 cannot work is worse than one that lists nothing, because the reader believes
 it and spends a keystroke and a screen of errors finding out.
 
+A key a screen advertises is under the same rule, and it is measured against
+what the key would act on rather than against the screen. Message keys are
+offered on the message the reader has selected: the key to react appears where
+the forge would accept a reaction, the key to tick a task where there is an
+unresolved task to tick. A footer that offers the same keys everywhere teaches
+the reader a key that does nothing on most of what they select, and the answer
+they get for pressing it — a refusal in one line at the bottom of a full
+screen — is the one place they were not looking.
+
 ### 3. Quick actions come first, and configuration adds to them
 
 They are listed above the configured actions, so that the obvious thing is
@@ -277,6 +367,96 @@ Where ephor renders the failures itself rather than handing over a log,
 identical ones are reported once, with the number of jobs that hit them. A gate
 fans one error across every job that compiled the same file, and six copies of
 one compile error is a worse answer than one copy that says six.
+
+### 5. A task is ticked where it is read
+
+A task renders as what it is — a box, ticked or not — beside the message that
+carries it, and the reader ticks it from there. The whole of that interaction
+is reading the sentence and agreeing with it, so sending the reader to a
+browser to click the same box is the trip this section exists to save.
+
+Ticking goes back through the source that reported the task, like every other
+write ([§1](#1-a-quick-action-belongs-to-the-source-that-found-the-problem)) —
+ephor knows a task has a state and a way to transition it, and nothing about
+how that forge spells either. A forge that reports task state without offering
+to write it renders its boxes and offers no key, which is
+[§2](#2-offered-only-where-it-would-work) and not a degraded mode.
+
+A ticked box is an answer ([§FS-003-feed-categories.4](#4-a-conversation-is-answered-in-whatever-form-the-forge-recorded-it)),
+so the thread stops awaiting the reader as soon as the forge accepts the
+transition, without waiting for the next refresh to say so.
+
+### 6. A branch that trails its main branch is offered the rebase
+
+ephor already measures how far every checked-out branch has fallen behind its
+project's main branch, and says so on the branch row — `3 behind`. Then it
+leaves the reader to go elsewhere and do something about it. Knowing what is
+wrong and not offering the move is the whole of what this section exists to
+stop, and here ephor is not even relying on a forge to tell it: the fact is on
+disk, in the reader's own checkout.
+
+So a pull request whose branch workspace is on disk and trails its main branch
+is offered the rebase, and no other item is
+([§2](#2-offered-only-where-it-would-work)): an item linked to no branch has
+nowhere to rebase, a branch that trails by nothing has nothing to replay, and a
+workspace that is not there is a checkout question
+([§7](#7-a-workspace-that-is-not-there-is-offered-the-checkout)) rather than a
+rebase one.
+
+It is git and nothing else. Fetch, replay the branch on the base, say what
+moved — no forge, no vendor CLI, and no knowledge of what the project is built
+with. A poly-repo workspace is several repositories sharing one branch name, so
+every repository under the checkout is rebased and the answer is given per
+repository, one already current being reported as current rather than silently
+skipped.
+
+Two things it will not do. It does not stash: a rebase that quietly pockets
+uncommitted work and replays it is a good trick right up until it conflicts,
+and the reader is then holding a conflict in a change they had not finished
+writing — a repository with uncommitted work is reported and left alone. And it
+does not decide. A rebase that stops in a conflict has arrived at a question
+about the code, which is
+[§FS-005-dispatch.12](#12-work-an-algorithm-can-finish-does-not-start-with-a-model).
+
+### 7. A workspace that is not there is offered the checkout
+
+A branch ephor watches, on a project whose checkouts are one per branch, is
+either on disk or it is not — and ephor is the thing that knows which, because
+it computes the directory from the project's own template and looks. Where it
+is not there, everything else stops: every action that needs a checkout is
+refused, and no work can be dispatched at all, since a ticket about a change
+has to run in the change.
+
+Sending the reader to a configuration file for the command that fixes that is
+the same mistake as sending them for the failing log. It is one operation, the
+same on every project ephor watches, and ephor is already holding every input
+it takes: which repositories the project has, where each goes under the
+checkout, which branch, and what that branch is grown from. So **a missing
+workspace is offered the checkout, and ephor supplies the command**. A project
+that wants its own — a bare mirror, a filesystem snapshot, a `gh pr checkout` —
+configures one and that wins ([§3](#3-quick-actions-come-first-and-configuration-adds-to-them)),
+but nothing has to be configured for the offer to exist.
+
+What it does is git and nothing else, and it has the rebase's shape. A
+poly-repo workspace is several repositories sharing one branch name, so each
+gets a working tree under the new directory: the branch itself where the forge
+has it, and a new branch of that name grown from the main branch where it does
+not — which is what a change touching one repository of a tree looks like on
+disk. The answer is per repository, and one that was already there is reported
+as already there rather than silently skipped.
+
+Two things it will not do. It will not move a branch another working tree is
+holding — git refuses that, and it is right to; the repository is reported and
+left alone rather than worked around. And it will not decide where to put the
+workspace: the directory is the project's template applied to the branch, the
+same one every other part of ephor resolves, because a checkout that landed
+somewhere else would be a checkout nothing else could find.
+
+Like the rebase, it is one implementation for both callers
+([§FS-005-dispatch.12](#12-work-an-algorithm-can-finish-does-not-start-with-a-model)):
+the key the reader presses and the command a state machine runs are the same
+operation, since two of them would eventually disagree about what a checked-out
+workspace is.
 
 ## FS-005-dispatch: what ephor watches, it can hand to an agent runtime
 
@@ -313,7 +493,8 @@ Recipes are how the same watch serves different projects: what to do about a
 red gate in one repository is not what to do about it in another, and neither
 is ephor's to decide. A recipe is therefore configuration first. ephor ships
 the few that are true everywhere — the red gate, the unanswered conversation,
-the review, the issue — for the same reason it ships quick actions
+the review, the issue, the branch that has fallen behind — for the same reason
+it ships quick actions
 ([§FS-004-quick-actions](#fs-004-quick-actions-a-problem-ephor-recognizes-arrives-with-the-action-for-it)):
 a problem ephor already recognizes should not need to be described to it
 before anything can be done about it. Configuration adds recipes, and a
@@ -500,3 +681,70 @@ Two things follow from its being asked for rather than offered:
    into the menu runs exactly as a configured one does — the same checkout, the
    same `EPHOR_*` environment, the same handover of the terminal — because the
    only difference between the two is whether anyone expects to want it again.
+
+### 11. A failure that is not the change's fault is restarted, not fixed
+
+Not every red gate is a broken change. A runner dies, a mirror is unreachable,
+a dependency ships a bad artifact, the same flake lands on the same job for the
+third day running — and what the item needs then is not a fix but another run.
+A loop that cannot tell the two apart pays for the difference twice: it spends
+a model on diagnosing something that was never wrong, and then it lands a
+commit whose only purpose was to make the gate start again.
+
+So **restarting is a move the loop has**, and it is a different move from
+fixing. Four things follow from its being different.
+
+It is **decided by a program, not by prose**. Recognizing infrastructure is a
+judgement, and a judgement nobody acts on is the same as no judgement at all:
+what the model concluded has to reach a transition. So the verdict is a marker
+on a line of its own, the way a question for a person is
+([§FS-005-dispatch.9](#9-work-that-stops-for-a-person-says-so-where-the-person-is-looking)),
+and a program reads that line and picks the state. An agent that is asked to
+notice something, and given nowhere to put the answer, has been asked for
+nothing.
+
+It **opens a ticket of its own**. A restart is work done to the item, and the
+plan is the record of that work — what was hit, when, and whether the round
+after it came back green. A restart that happened as a side effect of some
+other state would leave the next round unable to see that this failure has been
+retried already, which is the one fact that separates a flake from a gate that
+is simply broken.
+
+It **restarts the gate and every gate downstream of it**. A gate that spans
+several repositories fails downward: the repository whose job died takes the
+rest of the tree with it, and the gates below never ran at all. Re-running only
+what failed leaves every one of them exactly as red, so what is restarted is
+the failing gate and everything under it that is not green. Nothing is
+committed — the change was never the problem.
+
+And it is **bounded**. An unhealthy runner pool answers a restart with the same
+failure, and a loop that restarts every round is one that never stops and never
+says why. Past a small number of restarts on one item the work stops for a
+person, because at that point the infrastructure is the thing that is wrong and
+no amount of retrying is going to be the fix.
+
+### 12. Work an algorithm can finish does not start with a model
+
+Not everything the watch turns up is a judgment call. Replaying a branch onto
+its main branch is a fetch and a rebase: it either applies or it stops at a
+conflict, and it does the same thing every time. Handing that to a model is
+paying a pass to have two commands typed, slower and less predictably than the
+commands would have run themselves — and the pass that matters is the one after
+it, on the part no algorithm can do.
+
+So the deterministic move runs first, and the work starts where it stopped.
+Where it finished, nothing is dispatched at all: a clean rebase is a done
+thing, not a ticket. Where it stopped, that is the ticket, and what is handed
+over is the situation rather than the request to reproduce it — the repository
+is left where the algorithm left it, mid-rebase with the conflict in the
+working tree, because that is the state resolving it needs, and the ticket says
+which repository, which files, and which two sides
+([§2](#2-the-ticket-carries-what-ephor-knows-not-a-link-to-it)).
+
+The rebase is the first of these, not the shape of the only one. Any recipe
+whose opening move is deterministic makes that move before it costs a model,
+and dispatches what is left over — which is also why the move has to be
+runnable on its own ([§FS-004-quick-actions.6](#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase)):
+the same rebase the reader presses a key for is the one a state machine runs,
+and two implementations of it would eventually disagree about what a clean
+rebase is.

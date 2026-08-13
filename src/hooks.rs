@@ -4,7 +4,7 @@
 //! `"print-debug-context"` or an object:
 //!
 //! ```json
-//! { "command": ["${USER_CODE}/g/mx/mx/mx", "update"], "cwd": "{workspace_root}", "pass_debug": false }
+//! { "command": ["${USER_CODE}/tools/update-workspace", "update"], "cwd": "{workspace_root}", "pass_debug": false }
 //! ```
 //!
 //! Command arguments and `cwd` are expanded with the workspace template

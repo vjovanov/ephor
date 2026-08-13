@@ -14,7 +14,7 @@ set -euo pipefail
 args="$*"
 case "$args" in
   *"search prs"*"--author"*)
-    printf '[{"number": 42, "title": "Fix condition errors", "url": "https://github.com/acme/widget/pull/42", "updatedAt": "2026-08-01T10:00:00Z", "isDraft": false}]'
+    printf '[{"number": 42, "title": "Fix condition errors", "url": "https://github.com/acme/widget/pull/42", "updatedAt": "2026-08-01T10:00:00Z", "state": "open", "repository": {"nameWithOwner": "acme/widget"}}]'
     ;;
   *"search prs"*"--commenter"*|*"search prs"*"--mentions"*)
     printf '[]'
@@ -441,7 +441,7 @@ case "$args" in
     printf '[]'
     ;;
   *"search prs"*"--commenter"*|*"search prs"*"--mentions"*)
-    printf '[{"number": 77, "title": "Add layered workflow", "url": "https://github.com/acme/widget/pull/77", "updatedAt": "2026-08-02T10:00:00Z", "isDraft": false}]'
+    printf '[{"number": 77, "title": "Add layered workflow", "url": "https://github.com/acme/widget/pull/77", "updatedAt": "2026-08-02T10:00:00Z", "state": "open", "repository": {"nameWithOwner": "acme/widget"}}]'
     ;;
   *"api user"*)
     printf 'tester'
@@ -557,6 +557,133 @@ fn answered_citation_stops_needing_a_response() {
     let item = &cache["providers"]["github-prs"]["items"][0];
     assert_eq!(item["needs_response"], false);
     assert_eq!(item["raw"]["threads"][0]["messages"][1]["author"], "tester");
+}
+
+/// A fake `gh` for the completeness net: the role searches find one pull
+/// request the user merely commented on, while GitHub's notification list
+/// knows two things they never could — that a *team* was named on that same
+/// pull request, and that a review was asked of the user in a repository
+/// nobody configured.
+const FAKE_GH_NOTICES: &str = r#"#!/usr/bin/env bash
+set -euo pipefail
+args="$*"
+case "$args" in
+  *"api notifications"*)
+    printf '[{"id": "9001", "unread": true, "reason": "team_mention", "updated_at": "2026-08-02T12:00:00Z", "repository": {"full_name": "acme/widget"}, "subject": {"title": "Add layered workflow", "type": "PullRequest", "url": "https://api.github.com/repos/acme/widget/pulls/77"}}, {"id": "9002", "unread": true, "reason": "review_requested", "updated_at": "2026-08-02T13:00:00Z", "repository": {"full_name": "other/lib"}, "subject": {"title": "Bump the timeout", "type": "PullRequest", "url": "https://api.github.com/repos/other/lib/pulls/5"}}, {"id": "9003", "unread": true, "reason": "security_alert", "updated_at": "2026-08-02T14:00:00Z", "repository": {"full_name": "acme/widget"}, "subject": {"title": "CVE-2026-1 in serde_yaml", "type": "RepositoryVulnerabilityAlert", "url": null}}, {"id": "9004", "unread": true, "reason": "subscribed", "updated_at": "2026-08-02T15:00:00Z", "repository": {"full_name": "acme/widget"}, "subject": {"title": "v2.1.0", "type": "Release", "url": "https://api.github.com/repos/acme/widget/releases/tag/v2.1.0"}}]'
+    ;;
+  *"search prs"*"--commenter"*)
+    printf '[{"number": 77, "title": "Add layered workflow", "url": "https://github.com/acme/widget/pull/77", "updatedAt": "2026-08-02T10:00:00Z", "state": "open", "repository": {"nameWithOwner": "acme/widget"}}]'
+    ;;
+  *"api user"*)
+    printf 'tester'
+    ;;
+  *"api graphql"*)
+    printf '{"data":{"repository":{"pullRequest":{"comments":{"nodes":[{"author":{"login":"reviewer"},"body":"looks close","createdAt":"2026-08-02T09:00:00Z","reactions":{"nodes":[]}}]}}}}}'
+    ;;
+  *)
+    printf '[]'
+    ;;
+esac
+"#;
+
+/// §FS-001-forge-interface.1 and §FS-003-feed-categories.5 together: the notice
+/// list is what makes the feed exhaustive, and merging is what stops that
+/// costing the reader a duplicate for every pull request they already had.
+#[test]
+fn the_notice_list_catches_what_the_role_searches_cannot() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_feed_fixture(tmp.path());
+    let fake_bin = tmp.path().join("fakebin");
+    fs::create_dir_all(&fake_bin).unwrap();
+    make_executable(&fake_bin.join("gh"), FAKE_GH_NOTICES);
+    let path = format!(
+        "{}:{}",
+        fake_bin.to_string_lossy(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    fs::write(
+        tmp.path().join("status.json"),
+        serde_json::to_string_pretty(&json!({
+            "defaults": { "ttl_seconds": 600, "provider_timeout_seconds": 10, "github_user": "tester" },
+            "projects": {
+                "demo": {
+                    "providers": [
+                        { "provider": "github-prs", "repos": ["acme/widget"], "reviews": true },
+                        { "provider": "github-notifications" }
+                    ]
+                }
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let mut refresh = ephor_cmd();
+    refresh.env("PATH", &path);
+    for (key, value) in feed_env(tmp.path()) {
+        refresh.env(key, value);
+    }
+    refresh.args(["refresh", "demo"]).assert().success();
+
+    let mut feed = ephor_cmd();
+    feed.env("PATH", &path);
+    for (key, value) in feed_env(tmp.path()) {
+        feed.env(key, value);
+    }
+    let out = feed.args(["feed", "--json"]).assert().success();
+    let items: Vec<serde_json::Value> =
+        serde_json::from_slice(&out.get_output().stdout).expect("feed --json");
+
+    let by_id = |id: &str| {
+        items
+            .iter()
+            .find(|item| item["id"] == id)
+            .unwrap_or_else(|| panic!("{id} is missing from {items:#?}"))
+    };
+
+    // Both sources found #77, and the reader sees one row for it.
+    assert_eq!(
+        items
+            .iter()
+            .filter(|item| item["id"].as_str().is_some_and(|id| id.ends_with("#77")))
+            .count(),
+        1
+    );
+    let shared = by_id("github-prs:acme/widget#77");
+    // The fuller report is the row it kept …
+    assert!(shared["raw"]["threads"].is_array());
+    // … carrying the reason only the notice list knew, and with it the fact
+    // that somebody is waiting — which the conversation alone never said.
+    assert_eq!(
+        shared["raw"]["reasons"],
+        json!(["in-thread", "team_mention"])
+    );
+    assert_eq!(shared["needs_response"], true);
+
+    // A review asked for in a repository nobody configured is still work.
+    let elsewhere = by_id("github-notifications:other/lib#5");
+    assert_eq!(elsewhere["kind"], "pr");
+    assert_eq!(elsewhere["role"], "reviewer");
+    assert_eq!(elsewhere["needs_response"], true);
+    assert_eq!(elsewhere["url"], "https://github.com/other/lib/pull/5");
+
+    // An advisory is a kind ephor has no capability for at all — no search it
+    // could run would ever return one — so it arrives as a message
+    // (§FS-003-feed-categories.1) and still asks for an answer.
+    let advisory = by_id("github-notifications:9003");
+    assert_eq!(advisory["kind"], "message");
+    assert_eq!(advisory["state"], "security_alert");
+    assert_eq!(advisory["needs_response"], true);
+    // With no number to place it by, it falls back to its repository rather
+    // than to a row that cannot be opened.
+    assert_eq!(advisory["url"], "https://github.com/acme/widget");
+
+    // Being kept informed is not being asked: `subscribed` is outside the
+    // default `reasons`, so the release notification never becomes a row.
+    assert!(!items
+        .iter()
+        .any(|item| item["id"] == "github-notifications:9004"));
 }
 
 #[test]

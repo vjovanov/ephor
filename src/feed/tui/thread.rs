@@ -1,10 +1,15 @@
 //! The thread screen: full-text visualization of one item's conversation.
 //!
 //! Messages render as cards — a colored author gutter, wrapped body text,
-//! and a reactions line (👍 2 (alice, bob)). j/k select whole messages, not
-//! lines; the viewport follows the selection. `+` opens a reaction picker
-//! for messages whose provider supports posting (a `react` descriptor in
-//! the thread data).
+//! and a reactions line (👍 2 (alice, bob)). A message the forge tracks as a
+//! task wears its box, ☐ or ☑ (§FS-004-quick-actions.5). j/k select whole
+//! messages, not lines; the viewport follows the selection.
+//!
+//! The write keys are offered per selected message rather than per screen
+//! (§FS-004-quick-actions.2): `+` opens the reaction picker where the message
+//! carries a `react` descriptor, `t` ticks where it carries an unresolved
+//! `task`. A source that reports neither shows neither key, and the footer is
+//! built from the selection for exactly that reason.
 
 use std::ops::Range;
 
@@ -20,6 +25,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use crate::feed::model::Item;
 use crate::feed::react::{self, ReactTarget, PALETTE};
 use crate::feed::render::age;
+use crate::feed::task::{self, Task};
 
 use super::Action;
 
@@ -36,6 +42,7 @@ struct Msg {
     text: String,
     reactions: Vec<Reaction>,
     react: Option<ReactTarget>,
+    task: Option<Task>,
 }
 
 pub(crate) struct ThreadScreen {
@@ -75,7 +82,7 @@ impl ThreadScreen {
                 .into_iter()
                 .flatten()
             {
-                messages.push(parse_msg(thread_index, message));
+                messages.push(parse_msg(thread_index, message, &item.source));
             }
         }
         if messages.is_empty() {
@@ -100,12 +107,25 @@ impl ThreadScreen {
         format!(" ephor — thread — {title}")
     }
 
-    pub fn footer(&self) -> &'static str {
+    /// Built from the selected message, not from the screen
+    /// (§FS-004-quick-actions.2): a key is advertised where it would do
+    /// something. A reader on a forge that posts neither reactions nor task
+    /// transitions is never taught `+`, and so never spends a keystroke
+    /// finding out from a one-line refusal at the bottom of the screen.
+    pub fn footer(&self) -> String {
         if self.picker.is_some() {
-            " ←/→ choose  1-8 pick  enter react  esc cancel"
-        } else {
-            " j/k message  f/b page  + react  x actions  o open  m done  esc back"
+            return " ←/→ choose  1-8 pick  enter react  esc cancel".to_string();
         }
+        let selected = &self.messages[self.selected];
+        let mut keys = String::from(" j/k message  f/b page");
+        if selected.react.is_some() {
+            keys.push_str("  + react");
+        }
+        if selected.task.as_ref().is_some_and(|task| !task.resolved) {
+            keys.push_str("  t tick");
+        }
+        keys.push_str("  x actions  o open  m done  esc back");
+        keys
     }
 
     pub fn handle_key(&mut self, code: KeyCode) -> Action {
@@ -166,7 +186,39 @@ impl ThreadScreen {
                     )
                 }
             }
+            KeyCode::Char('t') => self.tick(),
             _ => Action::None,
+        }
+    }
+
+    /// Tick the selected task (§FS-004-quick-actions.5). Both refusals name
+    /// what the message is rather than what the key is: a reader who pressed
+    /// `t` on an ordinary comment and a reader who pressed it on a box already
+    /// ticked have different questions.
+    fn tick(&mut self) -> Action {
+        match &self.messages[self.selected].task {
+            Some(task) if task.resolved => {
+                Action::SetMessage("This task is already ticked".to_string())
+            }
+            Some(task) => Action::ResolveTask {
+                task: task.clone(),
+                project: self.item.project.clone(),
+                message: self.selected,
+            },
+            None => Action::SetMessage("This message is not a task".to_string()),
+        }
+    }
+
+    /// Record a ticked task without waiting for the next refresh
+    /// (§FS-004-quick-actions.5), the way a posted reaction is recorded.
+    pub fn tick_local(&mut self, message: usize) {
+        if let Some(task) = self
+            .messages
+            .get_mut(message)
+            .and_then(|msg| msg.task.as_mut())
+        {
+            task.resolved = true;
+            self.wrap_width = 0;
         }
     }
 
@@ -207,6 +259,7 @@ impl ThreadScreen {
             target,
             content,
             emoji,
+            project: self.item.project.clone(),
             message: self.selected,
         }
     }
@@ -394,10 +447,35 @@ impl ThreadScreen {
             }
             self.lines.push(Line::from(header));
 
-            for text_line in msg.text.lines() {
-                for wrapped in wrap_line(text_line, wrap_width) {
-                    self.lines
-                        .push(Line::from(vec![gutter(), Span::raw(wrapped)]));
+            // A task wears its box on the first body line, and its wrapped
+            // continuation lines are indented under it, so the sentence the
+            // box refers to reads as one block (§FS-004-quick-actions.5).
+            let box_style = msg.task.as_ref().map(|task| {
+                Style::default().fg(if task.resolved {
+                    Color::Green
+                } else {
+                    Color::Yellow
+                })
+            });
+            let body_width = match msg.task {
+                Some(_) => wrap_width.saturating_sub(2).max(8),
+                None => wrap_width,
+            };
+            let mut body: Vec<&str> = msg.text.lines().collect();
+            if body.is_empty() && msg.task.is_some() {
+                body.push("");
+            }
+            let mut first = true;
+            for text_line in body {
+                for wrapped in wrap_line(text_line, body_width) {
+                    let mut spans = vec![gutter()];
+                    if let (Some(task), Some(style)) = (&msg.task, box_style) {
+                        let glyph = if first { task.box_glyph() } else { " " };
+                        spans.push(Span::styled(format!("{glyph} "), style));
+                    }
+                    spans.push(Span::raw(wrapped));
+                    self.lines.push(Line::from(spans));
+                    first = false;
                 }
             }
 
@@ -423,7 +501,7 @@ impl ThreadScreen {
     }
 }
 
-fn parse_msg(thread: usize, value: &Value) -> Msg {
+fn parse_msg(thread: usize, value: &Value, source: &str) -> Msg {
     let reactions = value
         .get("reactions")
         .and_then(Value::as_array)
@@ -464,7 +542,8 @@ fn parse_msg(thread: usize, value: &Value) -> Msg {
             .unwrap_or("")
             .to_string(),
         reactions,
-        react: react::parse_target(value),
+        react: react::parse_target(value, source),
+        task: task::parse(value, source),
     }
 }
 
@@ -752,5 +831,115 @@ mod tests {
             _ => panic!("expected a status message"),
         }
         assert_eq!(screen.picker, None);
+    }
+
+    /// One bot thread as a forge that tracks tasks reports it.
+    fn checklist() -> Value {
+        json!([{ "messages": [
+            { "author": "Bot", "text": "Please check this PR for the following:" },
+            { "author": "Bot", "text": "Considered items in above checklist",
+              "task": { "state": "open", "comment": 1432050 } },
+        ] }])
+    }
+
+    #[test]
+    fn a_task_renders_its_box() {
+        let (_, text) = rendered(checklist(), 80);
+        assert!(
+            text.contains(&"▍ ☐ Considered items in above checklist".to_string()),
+            "{text:?}"
+        );
+        // The prompt above it is an ordinary message and wears nothing.
+        assert!(
+            text.contains(&"▍ Please check this PR for the following:".to_string()),
+            "{text:?}"
+        );
+    }
+
+    /// Wrapped task text lines up under its box rather than under the gutter,
+    /// so the box reads as belonging to the whole sentence.
+    #[test]
+    fn a_wrapped_task_indents_under_its_box() {
+        let (_, text) = rendered(
+            json!([{ "messages": [{
+                "author": "Bot",
+                "text": "I acknowledge that performance impact is known and causes no regression",
+                "task": { "state": "open" },
+            }] }]),
+            40,
+        );
+        // [0] is the author header; the body follows it.
+        assert!(text[1].starts_with("▍ ☐ I acknowledge"), "{text:?}");
+        assert!(text[2].starts_with("▍   impact"), "{text:?}");
+    }
+
+    /// §FS-004-quick-actions.2: the footer is what the selected message can
+    /// actually do. A forge that posts no reactions never advertises `+`.
+    #[test]
+    fn the_footer_offers_only_what_the_selection_supports() {
+        let (mut screen, _) = rendered(checklist(), 80);
+        assert!(!screen.footer().contains("+ react"), "{}", screen.footer());
+        assert!(!screen.footer().contains("t tick"), "{}", screen.footer());
+
+        screen.handle_key(KeyCode::Char('j'));
+        assert!(screen.footer().contains("t tick"), "{}", screen.footer());
+        assert!(!screen.footer().contains("+ react"), "{}", screen.footer());
+
+        let (screen, _) = rendered(
+            json!([{ "messages": [{ "author": "a", "text": "hi",
+                                    "react": { "provider": "github", "subject_id": "MDEy" } }] }]),
+            80,
+        );
+        assert!(screen.footer().contains("+ react"), "{}", screen.footer());
+        assert!(!screen.footer().contains("t tick"), "{}", screen.footer());
+    }
+
+    #[test]
+    fn ticking_asks_the_source_that_reported_the_task() {
+        let (mut screen, _) = rendered(checklist(), 80);
+        screen.handle_key(KeyCode::Char('j'));
+        match screen.handle_key(KeyCode::Char('t')) {
+            Action::ResolveTask {
+                task,
+                project,
+                message,
+            } => {
+                assert_eq!(task.source, "github-prs");
+                assert_eq!(task.target, json!({ "state": "open", "comment": 1432050 }));
+                assert_eq!((project.as_str(), message), ("widget", 1));
+            }
+            _ => panic!("expected a ResolveTask action"),
+        }
+    }
+
+    /// Ticking shows immediately, the way a posted reaction does
+    /// (§FS-004-quick-actions.5) — the reader should not have to refresh to
+    /// see the box they just ticked.
+    #[test]
+    fn a_ticked_box_fills_in_without_a_refresh() {
+        let (mut screen, _) = rendered(checklist(), 80);
+        screen.tick_local(1);
+        screen.rebuild_lines(80);
+        let text = plain_text(&screen.lines);
+        assert!(
+            text.contains(&"▍ ☑ Considered items in above checklist".to_string()),
+            "{text:?}"
+        );
+        // Ticked once, the key stops being offered.
+        screen.handle_key(KeyCode::Char('j'));
+        assert!(!screen.footer().contains("t tick"), "{}", screen.footer());
+        match screen.handle_key(KeyCode::Char('t')) {
+            Action::SetMessage(message) => assert!(message.contains("already"), "{message}"),
+            _ => panic!("expected a status message"),
+        }
+    }
+
+    #[test]
+    fn ticking_a_message_that_is_not_a_task_says_so() {
+        let (mut screen, _) = rendered(checklist(), 80);
+        match screen.handle_key(KeyCode::Char('t')) {
+            Action::SetMessage(message) => assert!(message.contains("not a task"), "{message}"),
+            _ => panic!("expected a status message"),
+        }
     }
 }

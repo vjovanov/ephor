@@ -52,8 +52,18 @@ fn is_false(value: &bool) -> bool {
 }
 
 impl ProjectFeed {
-    pub fn items(&self) -> impl Iterator<Item = &Item> {
-        self.providers.values().flat_map(|slot| slot.items.iter())
+    /// The project's items as the reader sees them: every source's report,
+    /// with a subject that several sources found merged into one row
+    /// (§FS-003-feed-categories.5). `providers` is ordered by name, so the
+    /// merge is the same on every read.
+    pub fn items(&self) -> impl Iterator<Item = Item> {
+        crate::forge::policy::merge_reports(
+            self.providers
+                .values()
+                .flat_map(|slot| slot.items.iter().cloned())
+                .collect(),
+        )
+        .into_iter()
     }
 
     pub fn is_stale(&self, item_source: &str) -> bool {

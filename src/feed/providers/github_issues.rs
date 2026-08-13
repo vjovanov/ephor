@@ -230,6 +230,9 @@ fn message(node: &Value, login: &str, host: Option<&str>) -> Message {
             .and_then(Value::as_str)
             .map(|id| react::github_target_json(host, id))
             .unwrap_or(Value::Null),
+        // GitHub tracks no task on an issue comment; a checklist there is
+        // prose in the body, not something the forge holds a state for.
+        task: Value::Null,
     }
 }
 

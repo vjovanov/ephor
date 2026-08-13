@@ -96,6 +96,78 @@ pub(crate) fn item_env(
     ]
 }
 
+/// The rebase ephor offers on a pull request whose checkout trails its main
+/// branch (§FS-004-quick-actions.6). It runs `ephor rebase`, so the key and
+/// the state machine's program state are the same operation
+/// (§FS-005-dispatch.12), and it says how far behind the branch is because
+/// that is the fact the reader is being asked to act on.
+pub(crate) fn rebase_action(main_branch: &str, behind: u64) -> ActionConfig {
+    let exe = std::env::current_exe()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| "ephor".to_string());
+    ActionConfig {
+        icon: "⤴".to_string(),
+        description: format!("rebase onto {main_branch} ({behind} behind)"),
+        // `--dispatch` is what makes a conflict work rather than a dead end:
+        // where git stops, the ticket opens on the spot.
+        command: format!(
+            "{} rebase --project \"$EPHOR_PROJECT\" --checkout \"$EPHOR_WORKSPACE\" \
+             --item \"$EPHOR_ITEM_ID\" --dispatch",
+            crate::feed::providers::shell_quote(&exe)
+        ),
+        kinds: vec!["pr".to_string()],
+        requires_checkout: true,
+    }
+}
+
+/// The checkout ephor offers on an item whose branch workspace is not on disk
+/// (§FS-004-quick-actions.7). It runs `ephor checkout`, so the key and the
+/// state machine's program state are the same operation (§FS-005-dispatch.12),
+/// and it names the directory it is about to make because that is the thing
+/// the reader is agreeing to.
+pub(crate) fn checkout_action(target: &Path) -> ActionConfig {
+    let exe = std::env::current_exe()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| "ephor".to_string());
+    ActionConfig {
+        icon: "⇣".to_string(),
+        description: format!("check out {}", target.display()),
+        command: format!(
+            "{} checkout --project \"$EPHOR_PROJECT\" --item \"$EPHOR_ITEM_ID\"",
+            crate::feed::providers::shell_quote(&exe)
+        ),
+        kinds: Vec::new(),
+        requires_checkout: false,
+    }
+}
+
+/// The command that makes a missing branch workspace, and the directory it has
+/// to end up creating: the project's own where it configured one, otherwise
+/// ephor's (§FS-004-quick-actions.7). None where the workspace is not missing,
+/// which is every project that keeps one checkout at its root.
+///
+/// One function so the row in the menu and the step that runs before an action
+/// cannot come from two different commands.
+pub(crate) fn checkout_step(
+    state: &WorkspaceState,
+    checkout: &Option<CheckoutConfig>,
+) -> Option<(ActionConfig, PathBuf)> {
+    let WorkspaceState::Missing(target) = state else {
+        return None;
+    };
+    let action = match checkout {
+        Some(checkout) => ActionConfig {
+            icon: checkout.icon.clone(),
+            description: checkout.description.clone(),
+            command: checkout.command.clone(),
+            kinds: Vec::new(),
+            requires_checkout: false,
+        },
+        None => checkout_action(target),
+    };
+    Some((action, target.clone()))
+}
+
 pub(crate) enum MenuOutcome {
     Stay,
     Close,
@@ -149,17 +221,13 @@ impl ActionMenu {
         actions: Vec<ActionConfig>,
     ) -> Self {
         let mut entries = Vec::new();
-        // A missing workspace with a configured checkout is directly
-        // runnable as its own entry.
-        if let (WorkspaceState::Missing(_), Some(checkout)) = (&state, &checkout) {
+        // A missing workspace is directly runnable as its own entry. The
+        // project's own command where it configured one, and ephor's otherwise
+        // — the offer does not wait on anybody writing it down
+        // (§FS-004-quick-actions.7).
+        if let Some((action, _)) = checkout_step(&state, &checkout) {
             entries.push(MenuEntry {
-                action: ActionConfig {
-                    icon: checkout.icon.clone(),
-                    description: checkout.description.clone(),
-                    command: checkout.command.clone(),
-                    kinds: Vec::new(),
-                    requires_checkout: false,
-                },
+                action,
                 is_checkout: true,
                 is_freehand: false,
                 gate: Gate::NeedsCheckout,
@@ -171,11 +239,9 @@ impl ActionMenu {
             } else {
                 match &state {
                     WorkspaceState::Ready => Gate::Ready,
-                    WorkspaceState::Missing(_) if checkout.is_some() => Gate::NeedsCheckout,
-                    WorkspaceState::Missing(_) => Gate::Blocked(
-                        "Branch is not checked out and no 'checkout' command is configured"
-                            .to_string(),
-                    ),
+                    // There is always a checkout to run first now, configured
+                    // or ephor's own (§FS-004-quick-actions.7).
+                    WorkspaceState::Missing(_) => Gate::NeedsCheckout,
                     WorkspaceState::Unmatched => Gate::Blocked(
                         "Action needs a branch workspace, but the item's branch is unknown"
                             .to_string(),
@@ -216,12 +282,10 @@ impl ActionMenu {
         }
     }
 
-    /// The workspace directory a checkout must create.
-    pub fn checkout_target(&self) -> Option<PathBuf> {
-        match &self.state {
-            WorkspaceState::Missing(target) => Some(target.clone()),
-            _ => None,
-        }
+    /// The checkout to run before an action that needs the workspace, and the
+    /// directory it has to create (§FS-004-quick-actions.7).
+    pub fn checkout_step(&self) -> Option<(ActionConfig, PathBuf)> {
+        checkout_step(&self.state, &self.checkout)
     }
 
     pub fn handle_key(&mut self, code: KeyCode) -> MenuOutcome {
@@ -454,7 +518,10 @@ mod tests {
     }
 
     fn checkout_config() -> CheckoutConfig {
-        serde_json::from_value(json!({ "command": "gco \"$EPHOR_BRANCH\"" })).unwrap()
+        serde_json::from_value(json!({
+            "command": "git worktree add \"$EPHOR_WORKSPACE\" \"$EPHOR_BRANCH\""
+        }))
+        .unwrap()
     }
 
     #[test]
@@ -492,7 +559,7 @@ mod tests {
             Some(checkout_config()),
             vec![requires_checkout("open ide"), action("browser", &[])],
         );
-        assert_eq!(menu.checkout_target(), Some(target));
+        assert_eq!(menu.checkout_step().map(|(_, target)| target), Some(target));
 
         // Row 1 is the synthetic checkout entry.
         match menu.handle_key(KeyCode::Char('1')) {
@@ -516,18 +583,38 @@ mod tests {
         }
     }
 
+    /// Nothing configured, and the checkout is still offered: it is one
+    /// operation on every project, and ephor holds every input it takes
+    /// (§FS-004-quick-actions.7).
     #[test]
-    fn gated_action_blocks_without_checkout_command() {
+    fn a_missing_workspace_is_offered_ephors_own_checkout() {
+        let target = PathBuf::from("/tmp/ws/branch");
         let mut menu = menu(
-            WorkspaceState::Missing(PathBuf::from("/tmp/ws/branch")),
+            WorkspaceState::Missing(target.clone()),
             None,
             vec![requires_checkout("open ide")],
         );
         match menu.handle_key(KeyCode::Char('1')) {
-            MenuOutcome::Run(entry) => assert!(matches!(entry.gate, Gate::Blocked(_))),
+            MenuOutcome::Run(entry) => {
+                assert!(entry.is_checkout);
+                assert!(entry.action.description.contains("/tmp/ws/branch"));
+                assert!(entry.action.command.contains("checkout --project"));
+            }
             _ => panic!("expected Run"),
         }
+        // And the action that needs the workspace checks out first rather than
+        // being refused for a command nobody wrote.
+        match menu.handle_key(KeyCode::Char('2')) {
+            MenuOutcome::Run(entry) => assert!(matches!(entry.gate, Gate::NeedsCheckout)),
+            _ => panic!("expected Run"),
+        }
+        assert_eq!(menu.checkout_step().map(|(_, path)| path), Some(target));
+    }
 
+    /// An item matched to no branch has no workspace to make, so the refusal
+    /// stands (§FS-004-quick-actions.2).
+    #[test]
+    fn gated_action_blocks_where_there_is_no_branch_to_check_out() {
         let mut menu = menu_unmatched(vec![requires_checkout("open ide")]);
         match menu.handle_key(KeyCode::Char('1')) {
             MenuOutcome::Run(entry) => assert!(matches!(entry.gate, Gate::Blocked(_))),

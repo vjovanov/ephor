@@ -184,9 +184,9 @@ mod tests {
             None => json!({}),
         };
         Item {
-            id: "gdev:graal/23562".to_string(),
-            project: "graal".to_string(),
-            source: "gdev".to_string(),
+            id: "forge:widget/23562".to_string(),
+            project: "widget".to_string(),
+            source: "forge".to_string(),
             kind: ItemKind::Pr,
             role: None,
             title: "Add error messages".to_string(),
@@ -202,13 +202,13 @@ mod tests {
         Gate {
             repos: vec![
                 RepoGate {
-                    repo: "graal".to_string(),
+                    repo: "app".to_string(),
                     passed: 40,
                     failed: 6,
                     running: 0,
                 },
                 RepoGate {
-                    repo: "graal-enterprise".to_string(),
+                    repo: "plugins".to_string(),
                     passed: 118,
                     failed: 0,
                     running: 0,
@@ -217,7 +217,7 @@ mod tests {
             blocked: true,
             blockers: vec![
                 "Requires approvals".to_string(),
-                "The gate graal-enterprise has 122 jobs not yet run.".to_string(),
+                "The gate plugins has 122 jobs not yet run.".to_string(),
             ],
         }
     }
@@ -249,8 +249,8 @@ mod tests {
             text.lines()
                 .any(|line| line.contains(repo) && line.contains(counts))
         };
-        assert!(row("graal", "✓40 ✗6"), "{text}");
-        assert!(row("graal-enterprise", "✓118"), "{text}");
+        assert!(row("app", "✓40 ✗6"), "{text}");
+        assert!(row("plugins", "✓118"), "{text}");
         assert!(text.contains(BLOCKED), "{text}");
         // Verbatim, including the count the row itself cannot show.
         assert!(text.contains("122 jobs not yet run"), "{text}");
@@ -261,7 +261,7 @@ mod tests {
     fn a_green_gate_offers_no_failures_line() {
         let gate = Gate {
             repos: vec![RepoGate {
-                repo: "graal".to_string(),
+                repo: "app".to_string(),
                 passed: 35,
                 failed: 0,
                 running: 0,

@@ -130,7 +130,9 @@ fn check_exit(
     // Work that aged out of Recent no longer awaits anyone.
     let pending = feeds.iter().any(|feed| {
         feed.items().any(|item| {
-            item.needs_response && cache::is_unread(seen, item) && item.is_visible(now, recent_days)
+            item.needs_response
+                && cache::is_unread(seen, &item)
+                && item.is_visible(now, recent_days)
         })
     });
     if pending {
@@ -224,7 +226,7 @@ pub fn feed(args: &FeedArgs) -> Result<ExitCode> {
                     continue;
                 }
             }
-            if args.unread && !cache::is_unread(&seen, item) {
+            if args.unread && !cache::is_unread(&seen, &item) {
                 continue;
             }
             if !item.is_visible(now, recent_days) {
@@ -232,8 +234,8 @@ pub fn feed(args: &FeedArgs) -> Result<ExitCode> {
             }
             lines.push((
                 item.updated_at,
-                render::render_item_line(item, feed, &seen, &style, true, now),
-                serde_json::to_value(item).unwrap(),
+                render::render_item_line(&item, feed, &seen, &style, true, now),
+                serde_json::to_value(&item).unwrap(),
             ));
         }
     }
@@ -322,14 +324,14 @@ pub fn failures(args: &FailuresArgs) -> Result<ExitCode> {
     }
 
     let style = Style::detect();
-    let gate = crate::feed::gate::Gate::of(item);
+    let gate = crate::feed::gate::Gate::of(&item);
     println!("{}\n", style.bold(&item.title));
     if let Some(gate) = &gate {
         render::render_gate_blockers(gate, &style);
     }
 
     let found = provider
-        .failures(&ctx, item)
+        .failures(&ctx, &item)
         .map_err(|err| EphorError::Command(err.to_string()))?;
     render::render_failures(found, gate.as_ref(), &style);
     Ok(ExitCode::SUCCESS)

@@ -5,15 +5,17 @@
 //! A message that supports posting carries a `react` descriptor in its
 //! thread JSON, e.g. `{"provider": "github", "host": null, "subject_id":
 //! "<node id>"}`. A forge that does not declare the `reactions`
-//! capability omits it; its reactions are display-only.
+//! capability omits it; its reactions are display-only — which is also what
+//! tells the reader's screen not to offer the key (§FS-004-quick-actions.2).
 
 use std::time::Duration;
 
 use serde_json::{json, Value};
 
 use crate::error::{EphorError, Result};
+use crate::feed::config::Defaults;
 use crate::feed::provider::run_json;
-use crate::feed::providers::gh_command;
+use crate::feed::providers::{forge_call, gh_command};
 
 /// The palette offered by the TUI picker: (emoji, GitHub content name).
 /// These are exactly GitHub's eight reaction contents; other providers map
@@ -77,25 +79,44 @@ pub enum ReactTarget {
         host: Option<String>,
         subject_id: String,
     },
+    /// Any source reached through the forge interface: the descriptor is that
+    /// implementation's own and goes back to it verbatim
+    /// (§FS-001-forge-interface.1). Without this arm the `react` subcommand
+    /// every out-of-process forge may answer would be unreachable.
+    Forge { source: String, target: Value },
 }
 
 /// Parse a thread message's `react` descriptor, if it has a usable one.
-pub fn parse_target(message: &Value) -> Option<ReactTarget> {
-    let react = message.get("react")?;
-    match react.get("provider").and_then(Value::as_str)? {
-        "github" => Some(ReactTarget::Github {
+/// `source` is the item's source, which is who to hand a descriptor ephor does
+/// not recognize back to.
+pub fn parse_target(message: &Value, source: &str) -> Option<ReactTarget> {
+    let react = message.get("react").filter(|react| !react.is_null())?;
+    match react.get("provider").and_then(Value::as_str) {
+        Some("github") => Some(ReactTarget::Github {
             host: react.get("host").and_then(Value::as_str).map(String::from),
             subject_id: react.get("subject_id").and_then(Value::as_str)?.to_string(),
         }),
-        _ => None,
+        _ => Some(ReactTarget::Forge {
+            source: source.to_string(),
+            target: react.clone(),
+        }),
     }
 }
 
 const ADD_REACTION: &str = "mutation($subject:ID!,$content:ReactionContent!){\
 addReaction(input:{subjectId:$subject,content:$content}){reaction{content}}}";
 
-/// Post a reaction. `content` is the palette content name (e.g. THUMBS_UP).
-pub fn post(target: &ReactTarget, content: &str) -> Result<()> {
+/// Post a reaction. `content` is the palette content name (e.g. THUMBS_UP),
+/// `emoji` the same reaction as the interface spells it — a forge is asked in
+/// the vocabulary of §FS-001-forge-interface, not in GitHub's.
+pub fn post(
+    target: &ReactTarget,
+    content: &str,
+    emoji: &str,
+    blocks: &[Value],
+    project: &str,
+    defaults: &Defaults,
+) -> Result<()> {
     match target {
         ReactTarget::Github { host, subject_id } => {
             let mut command = gh_command(host.as_deref());
@@ -106,6 +127,13 @@ pub fn post(target: &ReactTarget, content: &str) -> Result<()> {
             run_json(command, Duration::from_secs(15), false)
                 .map_err(|err| EphorError::Command(format!("reaction failed: {err}")))?;
             Ok(())
+        }
+        ReactTarget::Forge { source, target } => {
+            let (forge, request) = forge_call(blocks, source, project, defaults)
+                .map_err(|err| EphorError::Command(err.to_string()))?;
+            forge
+                .react(&request, target, emoji)
+                .map_err(|err| EphorError::Command(err.to_string()))
         }
     }
 }
@@ -145,15 +173,37 @@ mod tests {
             "react": { "provider": "github", "host": "github.example.com", "subject_id": "MDEy" },
         });
         assert_eq!(
-            parse_target(&message),
+            parse_target(&message, "github-prs"),
             Some(ReactTarget::Github {
                 host: Some("github.example.com".to_string()),
                 subject_id: "MDEy".to_string(),
             })
         );
-        assert_eq!(parse_target(&json!({ "author": "a" })), None);
+        assert_eq!(parse_target(&json!({ "author": "a" }), "github-prs"), None);
+        assert_eq!(parse_target(&json!({ "react": null }), "forge"), None);
+    }
+
+    /// A descriptor ephor does not recognize belongs to the forge that wrote
+    /// it and goes back there verbatim — the arm that makes the `react`
+    /// subcommand of an out-of-process implementation reachable at all.
+    #[test]
+    fn an_unrecognized_descriptor_goes_back_to_its_forge() {
+        let message = json!({ "react": { "kind": "comment", "id": "c-7" } });
         assert_eq!(
-            parse_target(&json!({ "react": { "provider": "gitlab" } })),
+            parse_target(&message, "forge"),
+            Some(ReactTarget::Forge {
+                source: "forge".to_string(),
+                target: json!({ "kind": "comment", "id": "c-7" }),
+            })
+        );
+    }
+
+    /// A message with no descriptor offers no key at all
+    /// (§FS-004-quick-actions.2) — the case every read-only forge is in.
+    #[test]
+    fn no_descriptor_is_no_target() {
+        assert_eq!(
+            parse_target(&json!({ "author": "Build Bot", "text": "…" }), "forge"),
             None
         );
     }

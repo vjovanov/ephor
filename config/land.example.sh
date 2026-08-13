@@ -11,9 +11,18 @@
 #         refused push                               person
 #     1   the checkout is not there                → a person should look
 #
-# Restarting individual failed jobs without a new commit is a forge feature and
-# has no CLI here; pushing is what makes the gate run, so pushing is the
-# restart. If your forge can retry a job, add it under RESTART below.
+# Pushing is what makes the gate run on a *new* commit. Re-running a gate that
+# failed for reasons that were never the change's is a different move, with a
+# ticket and a state of its own — see `config/restart-gate.example.sh`
+# (§FS-005-dispatch.11) — so it does not belong here. The RESTART hook below
+# stays for the odd forge that wants a nudge after a push lands.
+#
+# FORCE_WITH_LEASE=1 lands a branch that was replayed rather than added to
+# (§FS-004-quick-actions.6): a rebase rewrites the commits the remote already
+# has, so the push cannot fast-forward. It is `--force-with-lease` and never
+# `--force` — the lease is what refuses when somebody else pushed in the
+# meantime, which is the whole difference between replacing your own commits
+# and replacing theirs. Only the state that follows a rebase sets it.
 set -uo pipefail
 
 : "${REPORT:?the state machine must pass {output.<name>.path}}"
@@ -75,6 +84,17 @@ if [ -n "$dirty" ]; then
   exit 2
 fi
 
+# A replayed branch is not an addition to what the remote has, so its push has
+# to say so. The lease is what keeps this from being a `--force`.
+push_args=()
+lease=""
+if [ "${FORCE_WITH_LEASE:-0}" = "1" ]; then
+  push_args=(--force-with-lease)
+  lease=" (--force-with-lease)"
+  echo "Pushing with --force-with-lease: this branch was replayed." >> "$REPORT"
+  echo >> "$REPORT"
+fi
+
 pushed=0
 for repo in "${repos[@]}"; do
   branch=$(git -C "$repo" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
@@ -97,14 +117,20 @@ for repo in "${repos[@]}"; do
   fi
 
   echo >> "$REPORT"
-  echo "## $repo — push $ahead commit(s) on $branch" >> "$REPORT"
+  echo "## $repo — push $ahead commit(s) on $branch$lease" >> "$REPORT"
   echo '```' >> "$REPORT"
-  if ! git -C "$repo" push >> "$REPORT" 2>&1; then
+  if ! git -C "$repo" push "${push_args[@]}" >> "$REPORT" 2>&1; then
     echo '```' >> "$REPORT"
     {
       echo
       echo "NEEDS-HUMAN: pushing $repo was refused — see the output above."
-      echo "Repositories pushed before it: $pushed. Nothing was forced."
+      echo "Repositories pushed before it: $pushed."
+      if [ -n "$lease" ]; then
+        echo "The lease refused it: the remote branch moved since this checkout"
+        echo "last fetched it, so forcing now would replace somebody else's work."
+      else
+        echo "Nothing was forced."
+      fi
     } >> "$REPORT"
     exit 2
   fi

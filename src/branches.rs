@@ -52,6 +52,23 @@ pub fn expand_workspace(template: Option<&str>, root: &Path, branch: &str) -> Op
     ))
 }
 
+/// The branch-tracked repository paths of a project's type. A repository the
+/// type says to skip is not tracking the branch, so it is not one of them.
+fn repo_paths(registry_doc: &Value, project: &Value) -> Vec<String> {
+    let Some(type_id) = registry::str_field(project, "type") else {
+        return Vec::new();
+    };
+    let Ok(project_type) = registry::get_project_type(registry_doc, type_id) else {
+        return Vec::new();
+    };
+    registry::array_field(project_type, "repos")
+        .iter()
+        .filter(|repo| repo.get("update_mode").and_then(Value::as_str) != Some("skip"))
+        .filter_map(|repo| registry::str_field(repo, "path"))
+        .map(String::from)
+        .collect()
+}
+
 /// Where an item's branch workspace stands, for gating work on it.
 #[derive(Clone, Debug)]
 pub enum WorkspaceState {
@@ -72,6 +89,13 @@ pub struct Placement {
     pub root: PathBuf,
     pub template: Option<String>,
     pub branches: Vec<BranchInfo>,
+    /// What branches here are measured against, and replayed onto
+    /// (§FS-004-quick-actions.6).
+    pub main_branch: Option<String>,
+    /// The project type's own repository paths under a checkout. Empty where
+    /// the registry does not say, which leaves the repositories to be found on
+    /// disk instead.
+    pub repo_paths: Vec<String>,
 }
 
 /// Where one item's work belongs.
@@ -127,7 +151,41 @@ impl Placement {
             root,
             template,
             branches,
+            main_branch: registry::str_field(entry, "main_branch").map(String::from),
+            repo_paths: repo_paths(registry_doc, entry),
         })
+    }
+
+    /// Every repository of this project's checkout, as the registry describes
+    /// it — the project type's paths where there are any, otherwise whatever
+    /// is on disk (§FS-004-quick-actions.6).
+    pub fn repos(&self, checkout: &Path) -> Vec<PathBuf> {
+        crate::git::repos(checkout, &self.repo_paths)
+    }
+
+    /// The directory this project's workspace for `branch` belongs at, whether
+    /// or not it is there yet.
+    pub fn workspace_for(&self, branch: &str) -> Option<PathBuf> {
+        expand_workspace(self.template.as_deref(), &self.root, branch)
+    }
+
+    /// An existing checkout to make a new workspace from
+    /// (§FS-004-quick-actions.7). A working tree is added *from* a repository,
+    /// so there has to be one already on disk: the main branch's workspace by
+    /// preference — it is the one a new branch is grown from — then any other
+    /// branch's, then the root for a project that keeps its repositories there.
+    pub fn source_checkout(&self) -> Option<PathBuf> {
+        let mut candidates = Vec::new();
+        if let Some(main) = self.main_branch.as_deref() {
+            candidates.extend(self.workspace_for(main));
+        }
+        for branch in &self.branches {
+            candidates.extend(self.workspace_for(&branch.branch));
+        }
+        candidates.push(self.root.clone());
+        candidates
+            .into_iter()
+            .find(|path| !self.repos(path).is_empty())
     }
 
     pub fn matched(&self, item: &Item) -> Option<&BranchInfo> {
@@ -205,6 +263,8 @@ mod tests {
                 active: true,
                 is_release: false,
             }],
+            main_branch: Some("main".to_string()),
+            repo_paths: Vec::new(),
         }
     }
 

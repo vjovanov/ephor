@@ -42,8 +42,17 @@ pub struct Capabilities {
     pub failures: bool,
     /// Answers [`Forge::issues`].
     pub issues: bool,
+    /// Answers [`Forge::notices`] — the forge's own list of what it decided to
+    /// tell the user (§FS-001-forge-interface.1). The completeness capability:
+    /// every other one returns what ephor knew to ask for, this one returns
+    /// what the forge knew to say.
+    pub notices: bool,
     /// Answers [`Forge::react`]; without it, messages are display-only.
     pub reactions: bool,
+    /// Answers [`Forge::resolve_task`]; without it, the tasks a forge reports
+    /// still render with their state, since an unticked box is worth seeing
+    /// even where ephor cannot tick it (§FS-001-forge-interface.1).
+    pub tasks: bool,
 }
 
 /// Which side of a pull request or issue the user is on. Defaults to author:
@@ -66,9 +75,49 @@ impl From<Role> for ItemRole {
     }
 }
 
+/// Why a pull request is the user's (§FS-001-forge-interface.1). An
+/// implementation reports every reason it found; which side of the review that
+/// puts the user on, and whether any of them means an answer is owed, is
+/// policy's (§FS-001-forge-interface.3).
+///
+/// The distinction that matters is between having *acted* — opened it, spoken
+/// in it — and having been *asked*: a review request and an assignment leave no
+/// trace in the conversation, so an implementation that reports only the first
+/// kind reports the pull requests the user has already dealt with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Reason {
+    /// The user opened it.
+    Authored,
+    /// The user has spoken in it.
+    InThread,
+    /// The user is named in it.
+    Mentioned,
+    /// A review was asked of the user and they have not given it.
+    ReviewRequested,
+    /// It is assigned to the user.
+    Assigned,
+}
+
+impl Reason {
+    /// How the reason reads on a row, and what an item's state is composed
+    /// from where the user is not the author.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Reason::Authored => "authored",
+            Reason::InThread => "in-thread",
+            Reason::Mentioned => "mentioned",
+            Reason::ReviewRequested => "review-requested",
+            Reason::Assigned => "assigned",
+        }
+    }
+}
+
 /// One message in a conversation. `react` carries whatever identity the
 /// implementation needs to post a reaction back to this message; ephor treats
-/// it as opaque and hands it back verbatim.
+/// it as opaque and hands it back verbatim. `task` is the same bargain for a
+/// message the forge tracks as a task, plus the one field ephor does read out
+/// of it — `state` (§FS-001-forge-interface.1).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Message {
     pub author: String,
@@ -80,11 +129,34 @@ pub struct Message {
     pub reactions: Vec<Reaction>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub react: Value,
+    #[serde(default, skip_serializing_if = "Value::is_null")]
+    pub task: Value,
     /// Written by the user. Only the implementation knows how its forge
     /// identifies people — a login here, an email there — so it makes the call
     /// and policy stays identity-agnostic (§FS-001-forge-interface.3).
     #[serde(default)]
     pub mine: bool,
+}
+
+/// A task is done or it is not, whatever the forge calls the states it uses
+/// (§FS-001-forge-interface.1): anything but `resolved` is work left, so a
+/// spelling ephor has not seen reads as unfinished rather than as finished.
+pub fn task_resolved(task: &Value) -> bool {
+    task.get("state")
+        .and_then(Value::as_str)
+        .is_some_and(|state| state.eq_ignore_ascii_case("resolved"))
+}
+
+impl Message {
+    /// A task still to be done — what makes a thread await the reader
+    /// (§FS-003-feed-categories.4) and what the tick key acts on.
+    pub fn open_task(&self) -> bool {
+        !self.task.is_null() && !task_resolved(&self.task)
+    }
+
+    pub fn resolved_task(&self) -> bool {
+        !self.task.is_null() && task_resolved(&self.task)
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -124,9 +196,18 @@ pub struct PullRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
     pub updated_at: DateTime<Utc>,
+    /// Which side of the review the user is on. An implementation that reports
+    /// `reasons` need not set this — policy derives it — and one that reports
+    /// neither is reporting the user's own work, as the default says.
+    #[serde(default)]
     pub role: Role,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state: Option<ReviewState>,
+    /// Every reason this pull request is the user's. Empty from an
+    /// implementation that has no notion of them, which is why `role` and
+    /// `cited` remain the fallback rather than being replaced by it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reasons: Vec<Reason>,
     /// The user is named in this pull request and owes an answer unless the
     /// conversation shows they gave one. Deciding that is policy's job.
     #[serde(default)]
@@ -155,6 +236,57 @@ pub struct Issue {
     pub role: Role,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub messages: Vec<Message>,
+}
+
+/// What kind of thing a notice is about. `Other` is not a failure to
+/// recognise it — a forge notifies about releases, security advisories, and
+/// invitations too, and those are worth telling the reader about precisely
+/// because ephor has no capability that would ever have asked for them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SubjectKind {
+    PullRequest,
+    Issue,
+    #[default]
+    Other,
+}
+
+/// One thing the forge decided to tell the user about
+/// (§FS-001-forge-interface.1).
+///
+/// `reason` is the forge's own word for why, lowercased and free-form: it is
+/// shown to the reader and matched against a small set of known values by
+/// policy, never exhaustively matched, so a forge may give a reason ephor has
+/// never seen and the notice still arrives.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Notice {
+    /// Stable within the forge, and stable across refreshes: it becomes the
+    /// item id, which is the unread-tracking key.
+    pub id: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// The forge's word for why it is telling the user — `mention`,
+    /// `team_mention`, `review_requested`, `assign`, `ci_activity`, …
+    #[serde(default)]
+    pub reason: String,
+    #[serde(default)]
+    pub subject: SubjectKind,
+    /// The repository the subject lives in, where the forge has that notion.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
+    /// The subject's number within its repository — what makes this notice the
+    /// same work as a pull request or issue another capability reported
+    /// (§FS-003-feed-categories.5). Absent where the subject has no number, and
+    /// then the notice stands on its own rather than being guessed at.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub number: Option<String>,
+    pub updated_at: DateTime<Utc>,
+    /// The forge considers the user to have read it. Its own record, kept
+    /// apart from ephor's unread tracking, which answers a different question:
+    /// whether the reader has seen the row.
+    #[serde(default)]
+    pub read: bool,
 }
 
 /// Everything an implementation is told about the request. Out of process this
@@ -219,6 +351,15 @@ pub trait Forge: Send + Sync {
         Ok(Vec::new())
     }
 
+    /// Everything the forge says is directed at the user, whatever it is about
+    /// (§FS-001-forge-interface.1). Answered exhaustively or not at all: a
+    /// truncated notice list is the one answer this capability must never give,
+    /// since its whole value is that the reader can believe it
+    /// (§FS-001-forge-interface.6).
+    fn notices(&self, _request: &Request) -> Result<Vec<Notice>, ProviderError> {
+        Ok(Vec::new())
+    }
+
     /// What failed under one pull request's red gate. Asked only when a reader
     /// asks, so it may be as slow as the forge needs it to be, and it may
     /// return nothing — a gate blocked on an approval has no failed job to
@@ -244,6 +385,17 @@ pub trait Forge: Send + Sync {
     ) -> Result<(), ProviderError> {
         Err(ProviderError(format!(
             "{} does not support posting reactions",
+            self.name()
+        )))
+    }
+
+    /// Tick a task, given a message's `task` value verbatim
+    /// (§FS-004-quick-actions.5). The descriptor is the implementation's own,
+    /// so it carries whatever that forge needs to name the task — ephor read
+    /// only `state` out of it and hands the rest back untouched.
+    fn resolve_task(&self, _request: &Request, _target: &Value) -> Result<(), ProviderError> {
+        Err(ProviderError(format!(
+            "{} does not support ticking tasks",
             self.name()
         )))
     }

@@ -23,7 +23,7 @@ me=$(printf '%s' "$request" | jq -r '.config.user')
 
 case "${1:?subcommand}" in
   capabilities)
-    printf '{"pull_requests":true,"conversation":true,"gate":true,"issues":true}'
+    printf '{"pull_requests":true,"conversation":true,"gate":true,"issues":true,"tasks":true}'
     ;;
   pull-requests)
     jq -n --arg me "$me" '[
@@ -51,8 +51,43 @@ case "${1:?subcommand}" in
         threads: [ { messages: [
           { author: "Other Dev", text: "what do you think?", when: "2026-07-29T11:00:00Z", mine: false }
         ] } ]
+      },
+      {
+        id: "app/303", repo: "app", number: "303",
+        title: "Bump the parser",
+        url: "https://forge.example/pr/303",
+        updated_at: "2026-07-28T12:00:00Z",
+        role: "author", state: "open", cited: false,
+        threads: [
+          { messages: [
+            { author: "Robot", text: "Read the performance policy.", mine: false },
+            { author: "Robot", text: "I acknowledge the performance impact.", mine: false,
+              task: { state: "open", comment: "c-1" } } ] },
+          { messages: [
+            { author: "Robot", text: "Security review needed?", mine: false },
+            { author: "Robot", text: "Security requirements satisfied.", mine: false,
+              task: { state: "resolved", comment: "c-2" } } ] }
+        ]
+      },
+      {
+        id: "app/404", repo: "app", number: "404",
+        title: "Every box ticked",
+        url: "https://forge.example/pr/404",
+        updated_at: "2026-07-27T12:00:00Z",
+        role: "author", state: "open", cited: false,
+        threads: [ { messages: [
+          { author: "Robot", text: "Read the performance policy.", mine: false },
+          { author: "Robot", text: "I acknowledge the performance impact.", mine: false,
+            task: { state: "resolved", comment: "c-3" } } ] } ]
       }
     ]'
+    ;;
+  resolve-task)
+    log="$(printf '%s' "$request" | jq -r '.config.resolved_log // ""')"
+    if [ -n "$log" ]; then
+      printf '%s' "$request" | jq -c '.target' > "$log"
+    fi
+    printf '{}'
     ;;
   issues)
     jq -n --argjson tickets "$(printf '%s' "$request" | jq '.tickets')" '[
@@ -166,8 +201,8 @@ fn a_bash_extension_is_a_complete_forge_implementation() {
         .unwrap_or_default();
     assert_eq!(
         items.len(),
-        3,
-        "two pull requests and one issue: {items:#?}"
+        5,
+        "four pull requests and one issue: {items:#?}"
     );
 
     let authored = items
@@ -196,6 +231,33 @@ fn a_bash_extension_is_a_complete_forge_implementation() {
         .unwrap();
     assert_eq!(reviewing["role"], "reviewer");
     assert_eq!(reviewing["needs_response"], true);
+
+    // Bot checklists: two threads nobody of the user's ever spoke in, so the
+    // last word can never be theirs. One box is open and one is ticked, and
+    // the open one is the whole reason this awaits an answer
+    // (§FS-003-feed-categories.4). The descriptors survive verbatim into the
+    // item, which is what the thread screen draws and ticks from.
+    let checklists = items
+        .iter()
+        .find(|i| i["id"] == "demoforge:app/303")
+        .unwrap();
+    assert_eq!(checklists["needs_response"], true);
+    assert_eq!(
+        checklists["raw"]["threads"][0]["messages"][1]["task"],
+        json!({ "state": "open", "comment": "c-1" })
+    );
+    assert_eq!(
+        checklists["raw"]["threads"][1]["messages"][1]["task"],
+        json!({ "state": "resolved", "comment": "c-2" })
+    );
+
+    // And with every box ticked it is done, though a robot had the last word
+    // in every thread and the user never wrote a line.
+    let ticked = items
+        .iter()
+        .find(|i| i["id"] == "demoforge:app/404")
+        .unwrap();
+    assert_eq!(ticked["needs_response"], false, "{ticked:#?}");
 
     // The registry's active branch ticket reached the extension and came back
     // as an issue, with the same message shape as a conversation.
@@ -537,4 +599,82 @@ fn a_failing_capabilities_probe_reports_its_own_error() {
         "the probe's real error must survive: {error}"
     );
     assert_eq!(slot["unreachable"], true, "{slot:#?}");
+}
+
+/// §FS-004-quick-actions.5: a ticked box goes back out over the same
+/// transport, and the descriptor the implementation wrote for itself arrives
+/// verbatim. ephor read `state` out of it and understood nothing else — which
+/// is what lets a forge name its tasks however its API does.
+#[test]
+fn ticking_a_task_reaches_the_extension_verbatim() {
+    use ephor::forge::external::ExternalForge;
+    use ephor::forge::{Forge, Request};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let extension = tmp.path().join("ephor-forge-demoforge");
+    make_executable(&extension, FAKE_FORGE);
+    let log = tmp.path().join("resolved.json");
+
+    let forge = ExternalForge::new("demoforge", Some(extension.to_string_lossy().into_owned()));
+    assert!(
+        forge.capabilities().unwrap().tasks,
+        "an extension declares that it can tick"
+    );
+
+    let target = json!({ "state": "open", "repo": "app", "pull_request": "303", "comment": "c-1" });
+    forge
+        .resolve_task(
+            &Request {
+                config: json!({ "user": "dev", "resolved_log": log.to_string_lossy() }),
+                project: "demo".to_string(),
+                tickets: Vec::new(),
+                user: Some("dev".to_string()),
+                timeout_seconds: 10,
+            },
+            &target,
+        )
+        .unwrap();
+
+    let sent: Value = serde_json::from_str(&fs::read_to_string(&log).unwrap()).unwrap();
+    assert_eq!(sent, target);
+}
+
+/// An implementation that reads task state without writing it declares no
+/// tasks capability, and the refusal names the forge rather than failing
+/// somewhere further in (§FS-001-forge-interface.1).
+#[test]
+fn an_extension_that_cannot_tick_says_so() {
+    use ephor::forge::external::ExternalForge;
+    use ephor::forge::{Forge, Request};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let extension = tmp.path().join("ephor-forge-readonly");
+    make_executable(
+        &extension,
+        "#!/usr/bin/env bash\n\
+         set -euo pipefail\n\
+         cat >/dev/null\n\
+         case \"$1\" in\n\
+           capabilities) printf '{\"pull_requests\":true,\"conversation\":true}' ;;\n\
+           *) echo \"unknown subcommand: $1\" >&2; exit 2 ;;\n\
+         esac\n",
+    );
+
+    let forge = ExternalForge::new("readonly", Some(extension.to_string_lossy().into_owned()));
+    assert!(!forge.capabilities().unwrap().tasks);
+
+    let error = forge
+        .resolve_task(
+            &Request {
+                config: json!({}),
+                project: "demo".to_string(),
+                tickets: Vec::new(),
+                user: None,
+                timeout_seconds: 10,
+            },
+            &json!({ "state": "open" }),
+        )
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("readonly"), "{error}");
 }

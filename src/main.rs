@@ -1,4 +1,4 @@
-use ephor::{agents, cli, error, feed, paths, registry, table, update, work};
+use ephor::{agents, checkout, cli, error, feed, paths, rebase, registry, table, update, work};
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -31,6 +31,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Command::Refresh(args) => return feed::commands::refresh(args),
         Command::MarkRead(args) => return feed::commands::mark_read(args, cli.all),
         Command::Failures(args) => return feed::commands::failures(args),
+        Command::Rebase(args) => return rebase::rebase(args),
+        Command::Checkout(args) => return checkout::checkout(args),
         Command::Work(args) => return work::commands::work(args),
         Command::Tui => return feed::tui::run(),
         _ => {}
@@ -111,6 +113,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
         | Command::Refresh(_)
         | Command::MarkRead(_)
         | Command::Failures(_)
+        | Command::Rebase(_)
+        | Command::Checkout(_)
         | Command::Work(_)
         | Command::Tui => {
             unreachable!("handled above")

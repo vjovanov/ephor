@@ -7,6 +7,7 @@ mod email;
 pub mod forge;
 mod github_ci;
 mod github_issues;
+mod github_notifications;
 mod github_prs;
 mod github_threads;
 mod slack;
@@ -18,6 +19,7 @@ use serde_json::Value;
 use crate::feed::config::ActionConfig;
 use crate::feed::model::Item;
 use crate::feed::provider::{Provider, ProviderError};
+use crate::forge::Forge;
 
 pub fn build_provider(config: &Value) -> Result<Box<dyn Provider>, ProviderError> {
     let name = config
@@ -28,6 +30,9 @@ pub fn build_provider(config: &Value) -> Result<Box<dyn Provider>, ProviderError
         "github-prs" => Ok(Box::new(github_prs::GithubPrs::from_config(config)?)),
         "github-ci" => Ok(Box::new(github_ci::GithubCi::from_config(config)?)),
         "github-issues" => Ok(Box::new(github_issues::GithubIssues::from_config(config)?)),
+        "github-notifications" => Ok(Box::new(
+            github_notifications::GithubNotifications::from_config(config)?,
+        )),
         "github-threads" => Ok(Box::new(github_threads::GithubThreads::from_config(
             config,
         )?)),
@@ -40,6 +45,64 @@ pub fn build_provider(config: &Value) -> Result<Box<dyn Provider>, ProviderError
         // on PATH, or an explicit "command".
         _ => Ok(Box::new(forge::ForgeProvider::external(config)?)),
     }
+}
+
+/// Whether a provider name is one ephor implements itself. The complement of
+/// this is the forge case in `build_provider`, kept in one place because a
+/// write has to make the same distinction and two copies of the list would
+/// drift into a source that fetches one way and writes another.
+fn built_in(name: &str) -> bool {
+    matches!(
+        name,
+        "github-prs"
+            | "github-ci"
+            | "github-issues"
+            | "github-notifications"
+            | "github-threads"
+            | "custom-status"
+            | "slack"
+            | "discord"
+            | "email"
+    )
+}
+
+/// The forge behind a source and the request to call it with, for the writes
+/// that go back to it — a reaction, a ticked task. Fails where the source is
+/// one of ephor's own providers: those reach their host directly, and a caller
+/// that lands here with one has a descriptor it should have handled itself.
+///
+/// The block's own timeout is honored the way a fetch honors it, since a forge
+/// that needs a minute to be reached at all needs it for a write too.
+pub fn forge_call(
+    blocks: &[Value],
+    source: &str,
+    project: &str,
+    defaults: &crate::feed::config::Defaults,
+) -> Result<(Box<dyn Forge>, crate::forge::Request), ProviderError> {
+    if built_in(source) {
+        return Err(ProviderError(format!(
+            "'{source}' is not reached through the forge interface"
+        )));
+    }
+    let block = blocks
+        .iter()
+        .find(|block| block.get("provider").and_then(Value::as_str) == Some(source))
+        .ok_or_else(|| {
+            ProviderError(format!(
+                "'{project}' has no source named '{source}' anymore"
+            ))
+        })?;
+    let timeout = crate::feed::refresh::provider_timeout(block)
+        .map(|timeout| timeout.as_secs())
+        .unwrap_or(defaults.provider_timeout_seconds);
+    let request = crate::forge::Request {
+        config: block.clone(),
+        project: project.to_string(),
+        tickets: Vec::new(),
+        user: defaults.github_user.clone(),
+        timeout_seconds: timeout,
+    };
+    Ok((forge::ForgeProvider::external(block)?.into_forge(), request))
 }
 
 /// The quick actions a project's sources offer on one item

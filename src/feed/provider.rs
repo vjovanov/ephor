@@ -269,8 +269,8 @@ pub fn run_json_stdin(
         .map_err(|err| ProviderError(format!("{label}: invalid JSON output: {err}")))
 }
 
-/// A command as a reader would say it — `ephor-forge-gdev failures`, not
-/// `"ephor-forge-gdev" "failures"`. Every message out of here already names
+/// A command as a reader would say it — `ephor-forge-acme failures`, not
+/// `"ephor-forge-acme" "failures"`. Every message out of here already names
 /// the command, so a caller that names it again says it twice.
 fn command_label(command: &Command) -> String {
     std::iter::once(command.get_program())
@@ -314,8 +314,8 @@ mod tests {
     /// (§FS-001-forge-interface.6).
     #[test]
     fn the_line_quoted_is_the_one_that_says_what_went_wrong() {
-        let narrated = "Requesting RCA for pull request [G/graal@PR#24898]...\n\
-                        Waiting for RCA result for pull request [G/graal@PR#24898]...\n\
+        let narrated = "Requesting RCA for pull request [ACME/widget@PR#24898]...\n\
+                        Waiting for RCA result for pull request [ACME/widget@PR#24898]...\n\
                         \n\
                         \u{1b}[31m❌  error: RCA failed: No builds found for the pull request\u{1b}[39m\u{1b}[0m\n\
                         \n\

@@ -122,10 +122,36 @@ pub struct Selector {
     /// Provider names, for a recipe that only makes sense on one source.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sources: Vec<String>,
+    /// The item's branch trails its main branch (`true`), or is level with it
+    /// (`false`) — measured in the checkout, not asked of a forge
+    /// (§FS-004-quick-actions.6). An item whose checkout cannot be measured —
+    /// no branch, nothing on disk — matches neither, because a recipe that
+    /// asks about the checkout and gets no answer is being offered blind.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub behind: Option<bool>,
+}
+
+/// What a selector asks about that the item does not carry: facts measured in
+/// the reader's own checkout.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Facts {
+    /// Commits the item's branch trails its main branch; None where it could
+    /// not be measured.
+    pub behind: Option<u64>,
 }
 
 impl Selector {
-    fn matches(&self, item: &Item) -> bool {
+    fn matches(&self, item: &Item, facts: &Facts) -> bool {
+        if let Some(want) = self.behind {
+            match facts.behind {
+                Some(behind) => {
+                    if (behind > 0) != want {
+                        return false;
+                    }
+                }
+                None => return false,
+            }
+        }
         if !self.kinds.is_empty() && !self.kinds.iter().any(|kind| kind_matches(item.kind, kind)) {
             return false;
         }
@@ -177,8 +203,8 @@ impl Recipe {
     /// Whether this recipe applies to the item. Finished work never does
     /// (§FS-005-dispatch.6): asking an agent to fix a merged pull request is
     /// asking it to invent something to do.
-    pub fn matches(&self, item: &Item) -> bool {
-        !item.is_finished() && self.when.matches(item)
+    pub fn matches(&self, item: &Item, facts: &Facts) -> bool {
+        !item.is_finished() && self.when.matches(item, facts)
     }
 }
 
@@ -289,6 +315,36 @@ pub fn shipped() -> Vec<Recipe> {
              Where the issue is under-specified in a way that changes what the code\n\
              should do, do not guess: write the question in the report and stop.",
         ),
+        recipe(
+            "rebase",
+            "⤴",
+            "rebase onto the main branch",
+            // Replaying a branch happens where the branch is.
+            true,
+            Selector {
+                kinds: vec!["pr".to_string()],
+                roles: vec!["author".to_string()],
+                // Only where the branch has actually fallen behind: a recipe
+                // offered on a change that is already current is a ticket to
+                // do nothing (§FS-004-quick-actions.6). It is last of the
+                // shipped recipes because a red gate or an owed answer is the
+                // more urgent thing about the same pull request.
+                behind: Some(true),
+                ..Selector::default()
+            },
+            "{title} is on {branch}, which has fallen behind its main branch.\n\n\
+             Run `ephor rebase --checkout {workspace}` first — it fetches and replays every\n\
+             repository in the checkout, and it is not a judgment call\n\
+             (§FS-005-dispatch.12). Where a conflict is already standing in the working\n\
+             tree, that is what this ticket is about and the report above says which files.\n\n\
+             Resolve each conflict as the change itself would have been written against\n\
+             the new base — take neither side on principle, work out what the two commits\n\
+             were each trying to do, and where that is not decidable from the code, stop\n\
+             and say so rather than guessing. `git add` what you resolved and\n\
+             `git rebase --continue` until the replay finishes.\n\n\
+             Then check the result: build or test what the conflicting files belong to, so\n\
+             that \"it rebased\" is not the same claim as \"it still works\". Do not push.",
+        ),
     ]
 }
 
@@ -309,10 +365,10 @@ pub fn resolve(global: &[Recipe], project: &[Recipe]) -> Vec<Recipe> {
 }
 
 /// The recipes that apply to one item, in offer order.
-pub fn applicable(recipes: &[Recipe], item: &Item) -> Vec<Recipe> {
+pub fn applicable(recipes: &[Recipe], item: &Item, facts: &Facts) -> Vec<Recipe> {
     recipes
         .iter()
-        .filter(|recipe| recipe.matches(item))
+        .filter(|recipe| recipe.matches(item, facts))
         .cloned()
         .collect()
 }
@@ -354,8 +410,14 @@ mod tests {
         item
     }
 
+    /// Which recipes apply, with the checkout unmeasured — the answer for
+    /// every item whose branch is not on this machine.
     fn ids(recipes: &[Recipe], item: &Item) -> Vec<String> {
-        applicable(recipes, item)
+        ids_with(recipes, item, Facts::default())
+    }
+
+    fn ids_with(recipes: &[Recipe], item: &Item, facts: Facts) -> Vec<String> {
+        applicable(recipes, item, &facts)
             .into_iter()
             .map(|recipe| recipe.id)
             .collect()
@@ -394,15 +456,21 @@ mod tests {
         let refused = with_gate(item(ItemKind::Pr, None), 0, true);
         let clean = with_gate(item(ItemKind::Pr, None), 0, false);
 
-        assert!(selector("failing").matches(&failing));
-        assert!(!selector("failing").matches(&refused));
-        assert!(selector("blocked").matches(&refused));
-        assert!(!selector("blocked").matches(&failing));
-        assert!(selector("red").matches(&failing) && selector("red").matches(&refused));
-        assert!(selector("green").matches(&clean) && !selector("green").matches(&refused));
-        assert!(selector("any").matches(&clean));
+        assert!(selector("failing").matches(&failing, &Facts::default()));
+        assert!(!selector("failing").matches(&refused, &Facts::default()));
+        assert!(selector("blocked").matches(&refused, &Facts::default()));
+        assert!(!selector("blocked").matches(&failing, &Facts::default()));
+        assert!(
+            selector("red").matches(&failing, &Facts::default())
+                && selector("red").matches(&refused, &Facts::default())
+        );
+        assert!(
+            selector("green").matches(&clean, &Facts::default())
+                && !selector("green").matches(&refused, &Facts::default())
+        );
+        assert!(selector("any").matches(&clean, &Facts::default()));
         // No gate at all answers no gate question.
-        assert!(!selector("any").matches(&item(ItemKind::Pr, None)));
+        assert!(!selector("any").matches(&item(ItemKind::Pr, None), &Facts::default()));
     }
 
     #[test]
@@ -428,6 +496,52 @@ mod tests {
         let mut status = item(ItemKind::Status, None);
         status.needs_response = true;
         assert!(ids(&recipes, &status).is_empty());
+    }
+
+    /// The rebase is offered on what has actually fallen behind, and nothing
+    /// else (§FS-004-quick-actions.6).
+    #[test]
+    fn the_rebase_recipe_is_offered_only_where_the_branch_trails_main() {
+        let recipes = shipped();
+        let rebase = "rebase".to_string();
+        let mine = item(ItemKind::Pr, Some(ItemRole::Author));
+
+        // Nothing measured — no branch, or nothing on disk — is not an
+        // invitation to guess.
+        assert!(!ids(&recipes, &mine).contains(&rebase));
+        // Level with main: replaying it would be a ticket to do nothing.
+        assert!(!ids_with(&recipes, &mine, Facts { behind: Some(0) }).contains(&rebase));
+        assert!(ids_with(&recipes, &mine, Facts { behind: Some(3) }).contains(&rebase));
+
+        // Someone else's change is not mine to replay.
+        let theirs = item(ItemKind::Pr, Some(ItemRole::Reviewer));
+        assert!(!ids_with(&recipes, &theirs, Facts { behind: Some(3) }).contains(&rebase));
+
+        // A red gate on the same pull request is the more urgent thing about
+        // it, and a sweep takes the first match.
+        let failing = with_gate(item(ItemKind::Pr, Some(ItemRole::Author)), 2, false);
+        assert_eq!(
+            ids_with(&recipes, &failing, Facts { behind: Some(3) }).first(),
+            Some(&"fix-gate".to_string())
+        );
+
+        // Merged, and behind by a mile: there is nothing to replay onto.
+        let mut merged = item(ItemKind::Pr, Some(ItemRole::Author));
+        merged.state = Some("merged".to_string());
+        assert!(ids_with(&recipes, &merged, Facts { behind: Some(9) }).is_empty());
+    }
+
+    #[test]
+    fn a_selector_can_ask_for_a_branch_that_is_level_with_main() {
+        let level = Selector {
+            behind: Some(false),
+            ..Selector::default()
+        };
+        let pr = item(ItemKind::Pr, None);
+        assert!(level.matches(&pr, &Facts { behind: Some(0) }));
+        assert!(!level.matches(&pr, &Facts { behind: Some(2) }));
+        // Unmeasurable answers neither question.
+        assert!(!level.matches(&pr, &Facts::default()));
     }
 
     #[test]

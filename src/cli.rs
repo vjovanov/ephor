@@ -52,6 +52,10 @@ pub enum Command {
     MarkRead(MarkReadArgs),
     /// Show what failed under a pull request's red gate.
     Failures(FailuresArgs),
+    /// Replay a checkout's branch onto its main branch.
+    Rebase(RebaseArgs),
+    /// Make the branch workspace that is not checked out yet.
+    Checkout(CheckoutArgs),
     /// Hand items to the agent runtime, and see what came of it.
     Work(WorkArgs),
     /// Interactive inbox: navigate the feed, open items, mark them done.
@@ -297,6 +301,84 @@ pub struct FailuresArgs {
     /// Pull request number.
     #[arg(long)]
     pub number: String,
+}
+
+/// `ephor rebase` (§FS-004-quick-actions.6): fetch, and replay every
+/// repository under a checkout onto its main branch.
+///
+/// It exits `0` where every repository is on the base — replayed or already
+/// there — `3` where one stopped in a conflict, and `1` where it could not
+/// run at all. A state machine reads those to decide who works next
+/// (§FS-005-dispatch.12).
+///
+/// Every argument can arrive as the environment variable named beside it
+/// instead, which is how a program state passes it `{meta.*}`.
+#[derive(Args, Debug)]
+pub struct RebaseArgs {
+    /// The checkout to rebase (`CHECKOUT`). Defaults to the working
+    /// directory, which is where an action already runs.
+    #[arg(long)]
+    pub checkout: Option<String>,
+
+    /// Project the checkout belongs to (`PROJECT`); its registry entry says
+    /// which branch to replay onto and which repositories track it.
+    #[arg(long)]
+    pub project: Option<String>,
+
+    /// Replay onto this branch instead of the project's main branch (`ONTO`).
+    #[arg(long)]
+    pub onto: Option<String>,
+
+    /// The feed item this is about (`ITEM`), so a conflict can be handed over
+    /// as work.
+    #[arg(long)]
+    pub item: Option<String>,
+
+    /// Where a conflict stops the rebase, open a ticket about it
+    /// (§FS-005-dispatch.12). Needs `--item`.
+    #[arg(long)]
+    pub dispatch: bool,
+
+    /// Also write the outcome as markdown here (`REPORT`), for a state to
+    /// hand on to the one that resolves it.
+    #[arg(long)]
+    pub report: Option<String>,
+}
+
+/// `ephor checkout` (§FS-004-quick-actions.7): make the branch workspace that
+/// is not there, one working tree per repository of the project.
+///
+/// It exits `0` where every repository has a working tree, and `1` where any
+/// of them was refused — a branch another working tree is holding is the
+/// common one.
+///
+/// Every argument can arrive as the environment variable named beside it
+/// instead, which is how a program state passes it `{meta.*}`.
+#[derive(Args, Debug)]
+pub struct CheckoutArgs {
+    /// Project the branch belongs to (`PROJECT`); its registry entry says
+    /// where the workspace goes, which repositories it holds, and what a new
+    /// branch is grown from.
+    #[arg(long)]
+    pub project: Option<String>,
+
+    /// The branch to check out (`BRANCH`).
+    #[arg(long)]
+    pub branch: Option<String>,
+
+    /// The feed item this is about (`ITEM`); its project and branch are used
+    /// where they are not given.
+    #[arg(long)]
+    pub item: Option<String>,
+
+    /// Grow a branch the repository does not have from this instead of the
+    /// project's main branch (`FROM`).
+    #[arg(long)]
+    pub from: Option<String>,
+
+    /// Also write the outcome as markdown here (`REPORT`).
+    #[arg(long)]
+    pub report: Option<String>,
 }
 
 #[derive(Args, Debug)]

@@ -50,7 +50,11 @@
                   "running": 0
                 }
               ]
-            }
+            },
+            "reasons": [
+              "authored"
+            ],
+            "repo": "acme/widget"
           },
           "role": "author",
           "source": "github-prs",

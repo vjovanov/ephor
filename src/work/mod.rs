@@ -190,6 +190,8 @@ pub struct Dispatcher {
     global: WorkConfig,
     projects: BTreeMap<String, ProjectWorkConfig>,
     placements: BTreeMap<String, Option<Placement>>,
+    /// Commits behind main per (project, branch), measured on demand.
+    behind: BTreeMap<(String, String), Option<u64>>,
     pub ledger: Ledger,
 }
 
@@ -204,6 +206,7 @@ impl Dispatcher {
                 .map(|(id, project)| (id.clone(), project.work.clone()))
                 .collect(),
             placements: BTreeMap::new(),
+            behind: BTreeMap::new(),
             ledger: ledger::load()?,
         })
     }
@@ -220,8 +223,46 @@ impl Dispatcher {
     }
 
     /// The recipes that apply to one item.
-    pub fn offers(&self, item: &Item) -> Vec<Recipe> {
-        recipe::applicable(&self.recipes(&item.project), item)
+    pub fn offers(&mut self, item: &Item) -> Vec<Recipe> {
+        let facts = self.facts(item);
+        recipe::applicable(&self.recipes(&item.project), item, &facts)
+    }
+
+    /// What a selector needs to know about the checkout
+    /// (§FS-004-quick-actions.6). Measured once per branch and remembered for
+    /// the sweep: a dispatch over a whole feed asks about the same handful of
+    /// branches over and over, and each answer is several git calls.
+    pub fn facts(&mut self, item: &Item) -> recipe::Facts {
+        let Some(placement) = self.placement(&item.project).cloned() else {
+            return recipe::Facts::default();
+        };
+        let Some(main_branch) = placement.main_branch.clone() else {
+            return recipe::Facts::default();
+        };
+        let checkout = placement.checkout(item);
+        let Some(branch) = checkout.branch.clone() else {
+            return recipe::Facts::default();
+        };
+        // A branch nobody has checked out cannot be measured, and guessing
+        // would offer work about a tree that is not on the machine.
+        if !matches!(checkout.state, WorkspaceState::Ready) {
+            return recipe::Facts::default();
+        }
+        let key = (item.project.clone(), branch);
+        if let Some(behind) = self.behind.get(&key) {
+            return recipe::Facts { behind: *behind };
+        }
+        let repos = placement.repos(&checkout.workspace);
+        // Summed across the workspace's repositories, like the inbox's own
+        // count: one repository trailing is the workspace trailing.
+        let behind = repos
+            .iter()
+            .filter_map(|repo| crate::git::commits_behind(repo, &main_branch))
+            .fold(None, |total: Option<u64>, count| {
+                Some(total.unwrap_or(0) + count)
+            });
+        self.behind.insert(key, behind);
+        recipe::Facts { behind }
     }
 
     /// What a recipe would actually ask for about this item — the brief with
@@ -288,10 +329,12 @@ impl Dispatcher {
             // the project's own checkout and fetches what it needs.
             if recipe.needs_checkout {
                 return Err(EphorError::Command(format!(
-                    "{}: branch {} is not checked out ({} is missing) — check it out first.",
+                    "{}: branch {} is not checked out ({} is missing). Make it with:\n  \
+                     ephor checkout --item {}",
                     item.project,
                     checkout.branch.as_deref().unwrap_or("?"),
-                    target.display()
+                    target.display(),
+                    item.id
                 )));
             }
         }

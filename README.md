@@ -42,9 +42,9 @@ cp config/workspaces.example.json ~/.config/ephor/workspaces.json
 cp config/status.example.json     ~/.config/ephor/status.json
 ```
 
-The automation repo's `environment.d` exports `EPHOR_HOME=~/f/ephor` and
-`PROJECTS_BIN=~/.cargo/bin/ephor`; `gco`/`gbr`/`gupd` reach ephor through
-`PROJECTS_BIN`.
+Scripts that wrap ephor — your own checkout and update commands — reach it
+through `PROJECTS_BIN`, and `EPHOR_HOME` says where its configuration lives;
+both are ordinary environment variables, set wherever you set the rest.
 
 `cargo install ephor` is not available yet: nothing is published while the tree
 still carries site-specific configuration — see
@@ -174,8 +174,10 @@ Providers store the threads in the item's `raw.threads` during refresh, so
 reading is instant and works offline.
 
 Keys: `j`/`k` select the previous/next message (the view follows), `f`/`b`
-page, `g`/`G` first/last, `+` react to the selected message, `Enter`/`o`
-opens the item in the browser, `m` marks it done, `Esc`/`q` goes back.
+page, `g`/`G` first/last, `+` react to the selected message, `t` tick the
+selected task, `Enter`/`o` opens the item in the browser, `m` marks it
+done, `Esc`/`q` goes back. `+` and `t` are offered on what is selected, so
+the footer only shows a key where it would do something.
 
 **Reactions**: `+` opens a picker with GitHub's palette (👍 👎 😄 🎉 😕 ❤️
 🚀 👀) — `←`/`→` or `1`-`8` choose, `Enter` posts via the provider
@@ -183,6 +185,13 @@ opens the item in the browser, `m` marks it done, `Esc`/`q` goes back.
 declare the `reactions` capability is display-only). Reacting is often
 enough to answer a mention — the item stops needing a response on the next
 refresh.
+
+**Tasks**: where a forge tracks tasks — a checklist item, a blocker
+comment, a review task — the message carrying one renders with its box, ☐
+or ☑, and `t` ticks it in place. A box also answers its thread: an open one
+keeps the conversation awaiting you however it ended, and a ticked one
+settles it even where every message belongs to a robot, which is what stops
+a bot checklist from sitting in the inbox forever.
 
 ### Item actions
 
@@ -198,6 +207,16 @@ gate is red — the check list as GitHub reports it, then `gh run view
 would work: the gate is failing, the item still names its pull request,
 and `gh` is installed.
 
+ephor offers one of its own, from what is on disk rather than from a source:
+`⤴ rebase onto <main> (N behind)` on a pull request whose branch workspace has
+fallen behind the project's main branch
+([§FS-004-quick-actions.6](requirements.md#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase)).
+It runs `ephor rebase` there — fetch and replay every repository in the
+checkout, nothing stashed, nothing pushed — and where the replay stops in a
+conflict it opens the ticket about it, because that part is a question about
+the code and the rest never was
+([§FS-005-dispatch.12](requirements.md#12-work-an-algorithm-can-finish-does-not-start-with-a-model)).
+
 **Configured actions** follow, from `status.json`: top-level `actions`
 apply to every project, `projects.<id>.actions` are appended for that
 project, and an optional `kinds` list restricts an action to `pr` / `ci` /
@@ -212,11 +231,11 @@ project, and an optional `kinds` list restricts an action to `pr` / `ci` /
   ],
   "projects": {
     "widget": {
-      "checkout": { "description": "gco branch workspace",
-                    "command": "GCO_NO_IDE=1 gco \"$EPHOR_BRANCH\"" },
+      "checkout": { "description": "create the branch workspace",
+                    "command": "git worktree add \"$EPHOR_WORKSPACE\" \"$EPHOR_BRANCH\"" },
       "actions": [
-        { "icon": "💡", "description": "open ee/vm-enterprise in IntelliJ IDEA",
-          "command": "nohup idea \"$EPHOR_WORKSPACE/ee/vm-enterprise\" >/dev/null 2>&1 &",
+        { "icon": "💡", "description": "open the app in the editor",
+          "command": "nohup $EDITOR \"$EPHOR_WORKSPACE/app\" >/dev/null 2>&1 &",
           "requires_checkout": true }
       ]
     }
@@ -333,10 +352,11 @@ until nothing applies to it any more.
 
 ### Recipes
 
-Four ship, and apply with no configuration at all: `fix-gate` (a pull request
+Five ship, and apply with no configuration at all: `fix-gate` (a pull request
 of yours with failing jobs), `answer` (anything owing a reply), `review` (a
-pull request you are reviewing), `implement` (an issue of yours). Add your own,
-or replace a shipped one by reusing its id:
+pull request you are reviewing), `implement` (an issue of yours), `rebase` (a
+pull request of yours whose branch trails main). Add your own, or replace a
+shipped one by reusing its id:
 
 ```json
 {
@@ -407,9 +427,11 @@ deliberately.
 | `github-prs` | `gh search prs`: authored, plus with `reviews: true` PRs you are engaged with (`--commenter` / `--mentions`); gate from `gh pr checks` | authored: changes requested; reviewing: an unanswered citation |
 
 **Answered detection**: a citation or thread stops needing a response once
-you answered it — either with a message afterwards or with a reaction on
-the message. Applies to github-prs mentions, github-threads (unresolved
-threads), and to any forge extension's threads and citations.
+you answered it — with a message afterwards, with a reaction on the
+message, or by ticking the task it was waiting on. Task state outranks the
+last word in both directions. Applies to github-prs mentions,
+github-threads (unresolved threads), and to any forge extension's threads
+and citations.
 | `github-ci` | `gh pr list` + `gh pr checks` per open PR | a check is failing |
 | `github-threads` | GraphQL unresolved review threads | last comment is not yours |
 | `custom-status` | any shell command in the workspace (`format: text|json`) | the JSON sets `needs_response` |

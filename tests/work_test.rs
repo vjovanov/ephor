@@ -18,7 +18,7 @@ set -euo pipefail
 args="$*"
 case "$args" in
   *"search prs"*"--author"*)
-    printf '[{"number": 42, "title": "Retry window", "url": "https://github.com/acme/widget/pull/42", "updatedAt": "2026-08-01T10:00:00Z", "isDraft": false}]'
+    printf '[{"number": 42, "title": "Retry window", "url": "https://github.com/acme/widget/pull/42", "updatedAt": "2026-08-01T10:00:00Z", "state": "open", "repository": {"nameWithOwner": "acme/widget"}}]'
     ;;
   *"pr view"*reviewDecision*)
     printf '{"reviewDecision": "CHANGES_REQUESTED", "headRefName": "you/ABC-42-work"}'

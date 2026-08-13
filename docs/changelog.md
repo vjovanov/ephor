@@ -30,6 +30,60 @@ ships, the previous "latest" section moves verbatim to
 
 ### Added
 
+- **Being asked is now a reason a pull request is yours**
+  ([§FS-001-forge-interface.1](../requirements.md#1-capabilities)). `github-prs`
+  searched `--author`, `--commenter`, and `--mentions` — all three of which
+  find pull requests you have *already spoken in*. A review requested of you and
+  a pull request assigned to you leave nothing behind in the conversation, so
+  they looked exactly like work that was none of your business. Both are now
+  searched (`--review-requested`, `--assignee`), every reason a pull request is
+  yours rides on the item as `raw.reasons`, and a review asked for and not yet
+  given needs a response on its own — no thread rule can find that one.
+- **`github-notifications`: the source whose job is to be exhaustive**
+  ([§FS-001-forge-interface.1](../requirements.md#1-capabilities), manual §5.2).
+  Every other source asks a question you composed, and a question never asked
+  looks on screen exactly like one answered "nothing". This one asks nothing —
+  it reads GitHub's own notification list and reports what is on it: team
+  mentions (`@acme/reviewers` names you, and no search qualifier returns that),
+  discussions, releases, advisories, invitations, and pull requests in
+  repositories you never configured. One paginated call per refresh. It is the
+  difference between an empty feed meaning "nothing is waiting" and meaning
+  "nothing is waiting in what I was told to look at". `reasons` keeps it
+  readable — the default is the set that means somebody is waiting on you by
+  name, and `assign` is off because on a busy repository assignment is a bulk
+  mechanism and what is genuinely assigned already arrives through `github-prs`
+  and `github-issues` with its conversation attached.
+- **The forge interface gains a `notices` capability**, in both transports: an
+  out-of-process forge answers `notices` alongside `pull-requests` and `issues`.
+  GitLab's todos map onto it almost one for one.
+- **One subject is one row, however many sources reported it**
+  ([§FS-003-feed-categories.5](../requirements.md#5-one-subject-is-one-row-however-many-sources-reported-it)).
+  Sources are meant to overlap now, so the overlap is merged rather than shown:
+  the report carrying the conversation, the gate, and the role wins the row, and
+  what only the thinner one knew — the reason GitHub gave for telling you —
+  comes with it. Identity is the subject the forge stated, never the title.
+- **The rebase ephor already knew you needed**
+  ([§FS-004-quick-actions.6](../requirements.md#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase)).
+  The inbox has always said `3 behind` on a branch row and then left you to go
+  elsewhere about it. Now a pull request whose branch workspace is on disk and
+  trails its `main_branch` is offered **`⤴ rebase onto <main> (N behind)`** in
+  its action menu, and `ephor rebase` is the command behind it: fetch and
+  replay every repository in the checkout, an answer per repository, no forge
+  and no vendor CLI anywhere in it. Uncommitted work is reported and left
+  alone rather than stashed.
+- **A conflict becomes work, and nothing else does**
+  ([§FS-005-dispatch.12](../requirements.md#12-work-an-algorithm-can-finish-does-not-start-with-a-model)).
+  Replaying a branch is a fetch and a rebase; paying a model to type those is
+  paying for something a script does the same way every time. So `ephor
+  rebase` runs first and exits `3` where it stopped, leaving the repository
+  mid-rebase — the state resolving it needs — and `--dispatch` opens the
+  ticket about that conflict on the spot, carrying which files and which two
+  sides. A clean replay opens no ticket at all. The shipped `rebase` recipe
+  and a new `behind` recipe selector go with it, and
+  `config/ci-green.example.states.yaml` wires `rebase → resolve-conflicts →
+  verify-rebase → land-rebase`, where landing forces `--force-with-lease`
+  because a replayed branch cannot fast-forward.
+
 - **[docs/manual.md](manual.md)**: the whole surface in one document — install
   and resolution order, the vocabulary, both configuration files field by
   field, every provider's options, the categories, every key of every screen,
@@ -44,9 +98,9 @@ ships, the previous "latest" section moves verbatim to
   link — state, branch, the gate's counts per repository and the forge's own
   reasons, and the conversation quoted as messages — because all of it was
   fetched during a refresh already, and a ticket that says "look at pull
-  request 42" has handed the whole job back. Four recipes ship and apply with
-  no configuration: `fix-gate`, `answer`, `review`, `implement`. Dispatch
-  writes files and nothing else: no comment, no push, no pull request.
+  request 42" has handed the whole job back. Five recipes ship and apply with
+  no configuration: `fix-gate`, `answer`, `review`, `implement`, `rebase`.
+  Dispatch writes files and nothing else: no comment, no push, no pull request.
 - **A moved item reopens its own work.** ephor fingerprints an item when it
   dispatches — last activity, state, gate, how much conversation — and
   `ephor work sync` appends a ticket to the same plan saying what changed,
@@ -84,6 +138,46 @@ ships, the previous "latest" section moves verbatim to
   *not* satisfy a prerequisite, so nothing is pushed while a cause is
   unresolved; and `land` commits nothing, because every fix commits its own
   work and `git add -A` before a push sweeps up whatever else was in the tree.
+- **A workspace that is not there is offered the checkout**
+  (§FS-004-quick-actions.7). ephor knew the branch was not on disk — it
+  computes the directory from the project's own template and looks — and then
+  refused every action that needed it with "no 'checkout' command is
+  configured", which is knowing what is wrong and sending the reader to a
+  configuration file about it. There is now `ephor checkout`, and the menu
+  offers it unasked: the registry already holds every input it takes, so the
+  project's `branch_root_template` says where the workspace goes, its type says
+  which repositories it holds, and its `main_branch` says what a new branch
+  grows from. It is git and nothing else, and it has the rebase's shape — a
+  working tree per repository, since a poly-repo workspace is several
+  repositories sharing one branch name: the branch itself where that repository
+  has it, and a new branch of the same name off the base where it does not,
+  which is what a change touching one repository of a tree looks like on disk.
+  A repository whose branch another working tree is holding is reported and
+  left alone rather than worked around, one already there is reported as
+  already there, and the same command runs whether the reader presses the key
+  or a state machine calls it (§FS-005-dispatch.12). A project that wants its
+  own checkout command still configures one and it still wins; the difference
+  is only whether anybody expects to want their own.
+- **A failure that was never the change's fault is restarted, not fixed**
+  (§FS-005-dispatch.11). The loop could recognize a dead runner or a flake in
+  two places and act on it in neither: triage was told to open no ticket, which
+  ended the plan with the gate still red and nothing to make it run again, and
+  an analysis that concluded "not ours" carried no marker `route.sh` knew, so
+  it exited `0` and the ticket walked into propose → critique → fix and spent
+  two passes fixing something that was never broken. There is now a
+  `restart-gate` state and a `NOT-OURS:` marker that reaches it. It is a
+  program, not an agent: it is handed the list of jobs as a declared input —
+  `<repo> <job-key>` per line, exactly, or `<repo> -` for a whole gate — and it
+  restarts those plus every gate the forge still reports red underneath them,
+  which is what a gate spanning several repositories needs, since it fails
+  downward and the gates below never start. Nothing is committed; the change
+  was not the problem. A job that went green while the ticket waited is left
+  alone rather than re-redding a passing gate, the restart gets a ticket of its
+  own so the next round can see the failure was already retried, and the budget
+  is counted out of the plan — past two restarts on one item the work stops for
+  a person, because at that point the infrastructure is what is wrong.
+  `config/restart-gate.example.sh` is the worked script; `GATE_RESTART` is
+  where a forge's own re-run command goes, since there is no neutral one.
 - **Work can stop for a person, and say so where you are looking**
   (§FS-005-dispatch.9). Where a ticket sits in a state the runtime will not
   leave on its own — a gating state — ephor reads that out of the machine and
@@ -162,6 +256,21 @@ ships, the previous "latest" section moves verbatim to
   default), then leaves the feed. An issue closed without a reply is visible
   precisely because closing it was the answer.
 
+- **Tasks**: a forge that tracks tasks — a checklist item, a blocker comment, a
+  review task — reports each one's state on the message carrying it, and ephor
+  draws it as the box it is. `t` on the thread screen ticks the selected task
+  through the source that reported it, and the box fills in without waiting for
+  a refresh ([§FS-004-quick-actions.5](../requirements.md#5-a-task-is-ticked-where-it-is-read)).
+  New capability `tasks`, new subcommand `ephor-forge-<name> resolve-task`.
+- **A ticked box answers its thread.** Task state outranks who spoke last, in
+  both directions: an open task keeps its conversation awaiting you however it
+  ended, and a resolved one settles it even where every message belongs to a
+  robot ([§FS-003-feed-categories.4](../requirements.md#4-a-conversation-is-answered-in-whatever-form-the-forge-recorded-it)).
+  Bot checklists could not be cleared before this — nobody but the bot ever
+  writes in those threads, so the last word was never the reader's and never
+  would be, and a pull request whose boxes were all ticked weeks ago still read
+  as work.
+
 ### Removed
 
 - The `bitbucket-prs` and `jira` providers, which called a vendor CLI from
@@ -189,9 +298,40 @@ ships, the previous "latest" section moves verbatim to
   it. The line reported is now the one that reads as a diagnosis, stripped of
   its colour codes, and the command is named once rather than three times
   ([§FS-001-forge-interface.6](../requirements.md#6-a-source-that-did-not-answer-says-so-and-says-which-kind-of-not)).
+- The thread screen advertised `+ react` on every message, including those no
+  forge would take a reaction for; pressing it answered with one line at the
+  bottom of a full screen of conversation, which is the one place a reader is
+  not looking. Message keys are now offered per selected message
+  ([§FS-004-quick-actions.2](../requirements.md#2-offered-only-where-it-would-work)).
+- Posting a reaction only ever reached GitHub. `Forge::react` and the
+  `ephor-forge-<name> react` subcommand were implemented and documented but had
+  no caller, so an out-of-process forge that answered them could not be reached:
+  a descriptor ephor did not recognize was dropped rather than handed back to
+  the implementation that wrote it. Reactions now route through the source that
+  reported the message.
 
 ### Changed
 
+- **`github-prs` no longer needs a repository list, and no longer hides
+  finished work.** `repos` is now optional: empty searches the whole forge, as
+  `github-issues` already did, bounded by `updated_within_days` (30) instead —
+  a pull request in a repository nobody configured is yours just as much as one
+  on your own. Closed and merged pull requests come back too and land under
+  Recent; a question asked of you does not stop being asked when the branch
+  lands. Nothing further is fetched about a finished one, so the extra coverage
+  costs no extra API calls. `reviews` now defaults to **on**.
+- **`github-prs` reads the whole conversation before deciding you answered.**
+  Answered-detection looked at the conversation tab only, so a reply left on a
+  line of the diff never counted and the citation stayed pending forever.
+  Review threads are now fetched in the same call and count as answers. A
+  mention is also matched as a whole handle rather than as a substring:
+  `@vjovanovic` is no longer a mention of `@vjovanov`, and a team named in the
+  conversation now cites everyone on it.
+- **Deciding what a pull request means moved out of `github-prs` and into
+  policy**, where every forge gets the same treatment
+  ([§FS-001-forge-interface.3](../requirements.md#3-policy-lives-above-the-interface-never-in-an-implementation)).
+  The provider reports roles, reasons, conversation, and gate; `role`, the
+  displayed state, and `needs_response` are composed above it.
 - **A gate now carries the forge's verdict, not only its counts.** A pull
   request whose every job passed can still be refused — on an approval, on a
   downstream repository, on jobs the gate never started — and a row showing

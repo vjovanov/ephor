@@ -138,7 +138,7 @@ mod tests {
                     "demo": {
                         "providers": [{ "provider": "custom-status", "command": "true" }],
                         "actions": [{ "icon": "🧪", "description": "gate", "command": "just gate", "requires_checkout": true }],
-                        "checkout": { "command": "gco \"$EPHOR_BRANCH\"" }
+                        "checkout": { "command": "git worktree add \"$EPHOR_WORKSPACE\" \"$EPHOR_BRANCH\"" }
                     }
                 }
             }"#,

@@ -11,6 +11,15 @@
 #                  ▲                        └nonzero──┘ (unsound, while budget)
 #                  └────────────────────────┘          └─nonzero─► fix (retry)
 #
+#   ...except a failure that was never this change's, which is not fixed but
+#   re-run (§FS-005-dispatch.11) — triage opens its ticket straight into
+#   `restart-gate`, and analyze or critique can send one there on discovering
+#   the same thing:
+#
+#   restart-gate ──0──► restarted     a program hits the failing gate and every
+#                └─2──► needs-human   gate under it that is not green. Nothing
+#                                     is committed; the change was not at fault
+#
 #   ...and the join `plan-join` opened waits for all of them:
 #
 #   land ──0──► collect        commit, push, let the gate run again — the next
@@ -73,7 +82,8 @@ states:
       whether it was fixed. For each cause you find now:
 
       - **Already has an open ticket** (a `**State:**` that is not `done`,
-        `cancelled` or `gate-green`) — open nothing. It is being worked.
+        `cancelled`, `restarted` or `gate-green`) — open nothing. It is being
+        worked.
       - **Matches a ticket that finished** — the failure has come back. Open a
         ticket whose `**Prior:**` names that earlier one and whose body says
         what was tried before and why it did not hold. The analysis starts from
@@ -94,9 +104,41 @@ states:
       Change nothing else: never edit a `**State:**` line that is already
       there, and never touch the dossier.
 
-      Where nothing in the report is a real failure — every job died of
-      infrastructure, or the same flake as last time — open no tickets and say
-      so in your own output. An empty triage is a complete answer.
+      **A failure that is not this change's fault is not a cause to fix.** A
+      runner died, a mirror was unreachable, a dependency shipped something
+      broken, the same flake landed again — there is nothing to diagnose and
+      nothing to commit, and those jobs simply need running again. Open its
+      ticket in `restart-gate` instead:
+
+          ### Task <id>: restart the jobs — <what died, and how you know>
+          **State:** restart-gate
+          **Prior:** Task {task_id_local}
+
+          <the jobs, what they said, and the evidence that this is the gate's
+          problem and not the change's>
+
+      **And write the list of what to restart** to
+      `runtime/ephor/<id>.jobs.md`, where `<id>` is the id you just gave that
+      ticket. A program reads it and restarts exactly what it says, so the
+      format is exact: one job per line, two fields separated by a space, and
+      nothing else.
+
+          <repo> <job-key>      that one job, in that repository's gate
+          <repo> -              that repository's whole gate
+
+      Blank lines and lines starting with `#` are ignored; a line that is
+      anything else stops the restart and asks a person. Take the repository
+      and the job key verbatim from the report — a key you improved on is a job
+      that does not exist. Where the report names a repository but no key you
+      can trust, write the `-` form and let the whole gate go again.
+
+      Open **one** such ticket per round however many jobs died that way: they
+      go in one list. It is a ticket rather than a note so that the round after
+      this one can see the failure was already retried — which is the only
+      thing separating a flake from a gate that is broken.
+
+      Where the report lists no failing job at all, open no tickets and say so
+      in your own output. An empty triage is a complete answer.
 
   plan-join:
     description: Open the ticket that waits for every cause, and lands the result.
@@ -127,9 +169,27 @@ states:
       A wrong answer here costs the two passes after it.
 
       Write to {output.analysis.path}: the cause, the evidence for it, the
-      files involved, and — plainly — how sure you are. If the failure is not
-      this change's fault (a flake, an infrastructure error, a broken
-      dependency), say that and stop: it is not a fix.
+      files involved, and — plainly — how sure you are.
+
+      **If the failure is not this change's fault** — a flake, an
+      infrastructure error, a broken dependency — there is nothing here to fix.
+      Write, as the first line of your artifact:
+
+          NOT-OURS: <what died, and how you know it is not this change>
+
+      followed by the evidence, and write what to restart to
+      `runtime/ephor/{task_id_local}.jobs.md` — one job per line, two fields, a
+      space between them, nothing else:
+
+          <repo> <job-key>      that one job, in that repository's gate
+          <repo> -              that repository's whole gate
+
+      A program restarts exactly what that file says, so take the repository
+      and the key verbatim from what the forge reported. Without the file the
+      restart stops and asks a person, which is the right outcome — restarting
+      a gate on a guess is worse than not restarting it. The ticket then goes
+      and re-runs those jobs rather than spending two more passes proposing a
+      fix for something that was never broken.
 
       **If something is genuinely unclear — a product decision, a trade-off
       that is not yours, a failure whose intent you cannot read — do not
@@ -236,6 +296,12 @@ states:
       Be willing to say sound. A loop that never approves anything costs the
       same as one that approves everything, and delivers less.
 
+      If the analysis had it wrong and the failure was never this change's,
+      say so with `NOT-OURS:` as the first line instead of a verdict — a
+      proposal cannot be sound or unsound about a gate that broke itself — and
+      write what to restart to `runtime/ephor/{task_id_local}.jobs.md`, one
+      `<repo> <job-key>` per line (`-` as the key for a whole gate).
+
       **If something is genuinely unclear — a product decision, a trade-off
       that is not yours, a failure whose intent you cannot read — do not
       guess.** Write, as the first line of your artifact:
@@ -319,6 +385,154 @@ states:
     outputs:
       - name: verification
         path: "runtime/ephor/{task_id}.verification.md"
+
+  # ── a failure that was never this change's ───────────────────────────────
+  restart-gate:
+    description: Re-run the jobs that failed, and every gate left red under them.
+    # A program, and deliberately not an agent: it is handed the list and it
+    # runs it. The one judgement involved — "this is not the change's fault" —
+    # was made and marked upstream, and which jobs it applies to came with it
+    # (§FS-005-dispatch.11).
+    program:
+      command: "~/.config/ephor/restart-gate.sh"
+      env:
+        PROJECT: "{meta.project}"
+        SOURCE: "{meta.source}"
+        ITEM: "{meta.id}"
+        REPO: "{meta.repo}"
+        NUMBER: "{meta.number}"
+        JOBS: "{input.jobs.path}"
+        REPORT: "{output.restart.path}"
+        # Re-running a job is a forge feature with no neutral CLI, so the
+        # command is yours. It runs once per red repository, with
+        # EPHOR_GATE_{PROJECT,REPO,NUMBER,ITEM} in its environment. Unset, the
+        # ticket parks for a person rather than pretending it restarted
+        # anything. The shape, for a Bitbucket gate driven through a
+        # vendor CLI of your own:
+        #
+        #   GATE_RESTART: 'acme-cli gate review --platform bitbucket
+        #                    --project ACME --repo "$EPHOR_GATE_REPO"
+        #                    --pr "$EPHOR_GATE_NUMBER"'
+        GATE_RESTART: ""
+        # Counted across rounds out of the plan, not with `visits`: every round
+        # opens a new ticket, and a per-state counter resets with it.
+        MAX_RESTARTS: "2"
+    inputs:
+      # Named for the ticket's *local* id, because whoever decided this was not
+      # the change's fault authored the ticket and therefore knows that id —
+      # `{task_id}` carries a qualification prefix applied at load time, which
+      # nothing may author (§AR-rhei-panta.3).
+      #
+      # Optional so that a ticket arriving without a list is refused by the
+      # program, which can say which line was wrong and what the format is,
+      # rather than by a transition check that can only decline to move.
+      - name: jobs
+        optional: true
+        path: "runtime/ephor/{task_id_local}.jobs.md"
+    program_timeout: 10m
+    outputs:
+      - name: restart
+        path: "runtime/ephor/{task_id}.restart.md"
+
+  restarted:
+    description: The gate was re-run; whether it holds is the next round's question.
+    # A successful terminal state, so it satisfies the join and `land` runs —
+    # finding nothing to push, which is correct: there was nothing to fix.
+    final: true
+
+  # ── a branch that has fallen behind ──────────────────────────────────────
+  # The deterministic move first, and a model only where it stopped
+  # (§FS-005-dispatch.12). Give the `rebase` recipe `"state": "rebase"` in
+  # status.json so its tickets start here rather than in `fix`.
+  rebase:
+    description: Replay every repository in the checkout onto its main branch.
+    program:
+      # ephor's own, so the reader's key and this state are one operation. It
+      # takes each argument from a flag or from the name set here
+      # (§FS-004-quick-actions.6).
+      command: ["ephor", "rebase"]
+      env:
+        PROJECT: "{meta.project}"
+        CHECKOUT: "{meta.workspace}"
+        ITEM: "{meta.id}"
+        REPORT: "{output.rebase.path}"
+    program_timeout: 30m
+    outputs:
+      - name: rebase
+        path: "runtime/ephor/{task_id}.rebase.md"
+
+  resolve-conflicts:
+    description: The replay stopped where two changes disagree; that is the work.
+    agent: claude-code
+    agent_mode: yolo
+    agent_timeout: 45m
+    inputs:
+      - name: rebase
+        path: "runtime/ephor/{task_id}.rebase.md"
+    instructions: |
+      A rebase stopped in a conflict. {input.rebase.path} says which repository
+      and which files, and the repository is still standing in it — the working
+      tree has the conflict markers, and `git status` will say what git thinks.
+
+      Resolve each conflict as this change would have been written against the
+      new base. Read both sides first: what the branch's commit was trying to
+      do, and what the commit it now sits on top of did. Taking one side on
+      principle — "ours", "theirs", whichever is shorter — is how a rebase
+      silently reverts somebody's work.
+
+      `git add` each file you resolve, then `git rebase --continue`, until the
+      replay finishes or stops at the next conflict. Repeat until it is done.
+
+      Where a conflict cannot be resolved from the code — the two changes want
+      different behaviour and only a person can pick — leave the rebase where
+      it is and write, as the first line of {output.report.path}:
+
+          NEEDS-HUMAN: <the question, in a sentence>
+
+      Otherwise write to {output.report.path}: which files conflicted, how each
+      was resolved and why that is what the change meant, and what you ran to
+      check it. Commit nothing else and do not push — the state after this one
+      lands it.
+    outputs:
+      - name: report
+        path: "runtime/ephor/{task_id}.report.md"
+
+  verify-rebase:
+    description: A replayed branch still has to build; "it rebased" is not "it works".
+    program:
+      command: "~/.config/ephor/verify.sh"
+      env:
+        CHECKOUT: "{meta.workspace}"
+        FIX_REPORT: "{input.report.path}"
+        REPORT: "{output.verification.path}"
+    program_timeout: 2h
+    visits: 2
+    inputs:
+      - name: report
+        path: "runtime/ephor/{task_id}.report.md"
+    outputs:
+      - name: verification
+        path: "runtime/ephor/{task_id}.verification.md"
+
+  land-rebase:
+    description: Push the replayed branch, and let the gate run on the new heads.
+    # Its own landing state, because a replayed branch is the one case where
+    # the push cannot fast-forward: `land` proper never forces anything.
+    program:
+      command: "~/.config/ephor/land.sh"
+      env:
+        CHECKOUT: "{meta.workspace}"
+        BRANCH: "{meta.branch}"
+        REPORT: "{output.landing.path}"
+        FORCE_WITH_LEASE: "1"
+    program_timeout: 30m
+    outputs:
+      - name: landing
+        path: "runtime/ephor/{task_id}.landing.md"
+
+  rebased:
+    description: The branch is on top of its main branch, and pushed.
+    final: true
 
   # ── ends ─────────────────────────────────────────────────────────────────
   needs-human:
@@ -408,6 +622,10 @@ transitions:
     exit_code: 2
     description: The analysis asked a person something.
   - from: analyzed
+    to: restart-gate
+    exit_code: 3
+    description: Not this change's failure — re-run the gate instead of fixing it.
+  - from: analyzed
     to: propose
     exit_code: 0
     description: The cause is known; propose a fix for it.
@@ -429,6 +647,10 @@ transitions:
     exit_code: 2
     description: The critique asked a person something.
   - from: judged
+    to: restart-gate
+    exit_code: 3
+    description: The analysis had it wrong — the gate broke itself; re-run it.
+  - from: judged
     to: fix
     exit_code: 0
     description: Sound — implement it.
@@ -441,6 +663,73 @@ transitions:
     to: cancelled
     exit_code: nonzero
     description: Three proposals rejected; a person should look.
+
+  # ── the gate's own fault ─────────────────────────────────────────────────
+  - from: restart-gate
+    to: needs-human
+    exit_code: 2
+    description: No restart command, the budget is spent, or the forge refused.
+  - from: restart-gate
+    to: restarted
+    exit_code: 3
+    description: Nothing was red any more; the gate moved on by itself.
+  - from: restart-gate
+    to: restarted
+    exit_code: 0
+    description: Re-run — the round after this one finds out whether it held.
+  - from: restart-gate
+    to: cancelled
+    exit_code: nonzero
+    description: The gate could not be read at all; a person should look.
+
+  # ── a branch that has fallen behind ──────────────────────────────────────
+  - from: rebase
+    to: resolve-conflicts
+    exit_code: 3
+    description: The replay stopped in a conflict — the one part worth a model.
+  - from: rebase
+    to: land-rebase
+    exit_code: 0
+    description: Replayed cleanly, or already current; push it.
+  - from: rebase
+    to: needs-human
+    exit_code: nonzero
+    description: Uncommitted work, or git refused; nothing to replay onto.
+
+  - from: resolve-conflicts
+    to: verify-rebase
+    description: Resolved — now find out whether it still builds.
+
+  - from: verify-rebase
+    to: needs-human
+    exit_code: 2
+    description: The resolution asked a person something.
+  - from: verify-rebase
+    to: land-rebase
+    exit_code: 0
+    description: The check passes on the new base; push it.
+  - from: verify-rebase
+    to: resolve-conflicts
+    exit_code: nonzero
+    condition: visitCount < visits
+    description: The replay broke something — go back with the check's output.
+  - from: verify-rebase
+    to: cancelled
+    exit_code: nonzero
+    description: The check would not pass on the new base; a person should look.
+
+  - from: land-rebase
+    to: rebased
+    exit_code: 0
+    description: Pushed; the gate runs again on the new heads.
+  - from: land-rebase
+    to: needs-human
+    exit_code: 2
+    description: The remote moved under the lease, or the tree was dirty.
+  - from: land-rebase
+    to: cancelled
+    exit_code: nonzero
+    description: The push could not be made at all.
 
   - from: fix
     to: verify
@@ -496,6 +785,9 @@ transitions:
   - from: needs-human
     to: fix
     description: Answered, and the proposal stands.
+  - from: needs-human
+    to: restart-gate
+    description: The infrastructure was fixed — try the gate once more.
   - from: needs-human
     to: cancelled
     description: Not worth doing; close it.

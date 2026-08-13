@@ -52,6 +52,13 @@ impl ForgeProvider {
         ))
     }
 
+    /// The forge itself, for the calls that are not fetches — the writes a
+    /// reader makes on one message (§FS-004-quick-actions.5). Item building
+    /// stays here; those go straight to the implementation.
+    pub fn into_forge(self) -> Box<dyn Forge> {
+        self.forge
+    }
+
     /// The failures action on one item: offered on a gate that is red, on an
     /// item that still names its pull request, and only where the forge can
     /// actually say what failed (§FS-004-quick-actions.2). The capability
@@ -151,6 +158,11 @@ impl Provider for ForgeProvider {
         if capabilities.issues {
             for issue in self.forge.issues(&request)? {
                 items.push(policy::issue_item(self.name, &ctx.project_id, &issue));
+            }
+        }
+        if capabilities.notices {
+            for notice in self.forge.notices(&request)? {
+                items.push(policy::notice_item(self.name, &ctx.project_id, &notice));
             }
         }
         Ok(items)

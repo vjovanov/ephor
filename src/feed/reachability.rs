@@ -68,7 +68,7 @@ mod tests {
     #[test]
     fn recognises_what_the_tools_actually_print() {
         for message in [
-            "gdev-cli bitbucket list-prs failed: java.net.UnknownHostException: ol-bitbucket.example.com",
+            "acme-cli bitbucket list-prs failed: java.net.UnknownHostException: bitbucket.example.com",
             "dial tcp 140.82.121.6:443: connect: connection refused",
             "fatal: unable to access 'https://example.com/': Could not resolve host: example.com",
             "Get \"https://api.example.com\": net/http: TLS handshake timeout",
@@ -84,9 +84,9 @@ mod tests {
     #[test]
     fn does_not_claim_unreachable_for_failures_the_reader_must_fix() {
         for message in [
-            "`ephor-forge-gdev` is not on PATH",
+            "`ephor-forge-acme` is not on PATH",
             "gh: authentication required, run `gh auth login`",
-            "ephor-forge-gdev pull-requests: timed out after 180s",
+            "ephor-forge-acme pull-requests: timed out after 180s",
             "output does not match the forge interface: missing field `id`",
             "HTTP 404: Not Found",
             "HTTP 403: rate limit exceeded",

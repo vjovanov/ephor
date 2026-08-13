@@ -9,8 +9,10 @@
 //!     ephor-forge-<name> capabilities   <<< '{"config":…,"project":…}'
 //!     ephor-forge-<name> pull-requests  <<< '{"config":…,"tickets":[…],…}'
 //!     ephor-forge-<name> issues         <<< '{"config":…,"tickets":[…],…}'
+//!     ephor-forge-<name> notices        <<< '{"config":…,"tickets":[…],…}'
 //!     ephor-forge-<name> failures       <<< '{"config":…,"repo":…,"number":…}'
 //!     ephor-forge-<name> react          <<< '{"config":…,"target":…,"emoji":…}'
+//!     ephor-forge-<name> resolve-task   <<< '{"config":…,"target":…}'
 //! ```
 //!
 //! The [`Request`] goes in on stdin, the answer comes back as JSON on stdout,
@@ -24,7 +26,7 @@ use std::process::Command;
 
 use serde_json::{json, Value};
 
-use super::{Capabilities, Forge, Issue, PullRequest, Request};
+use super::{Capabilities, Forge, Issue, Notice, PullRequest, Request};
 use crate::feed::gate::Failure;
 use crate::feed::provider::{command_exists, run_json_stdin, ProviderError};
 
@@ -126,6 +128,11 @@ impl Forge for ExternalForge {
         self.decode("issues", value)
     }
 
+    fn notices(&self, request: &Request) -> Result<Vec<Notice>, ProviderError> {
+        let value = self.call("notices", request, json!({}))?;
+        self.decode("notices", value)
+    }
+
     fn failures(
         &self,
         request: &Request,
@@ -146,6 +153,11 @@ impl Forge for ExternalForge {
             request,
             json!({ "target": target, "emoji": emoji }),
         )?;
+        Ok(())
+    }
+
+    fn resolve_task(&self, request: &Request, target: &Value) -> Result<(), ProviderError> {
+        self.call("resolve-task", request, json!({ "target": target }))?;
         Ok(())
     }
 }

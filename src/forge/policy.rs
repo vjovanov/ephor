@@ -7,18 +7,58 @@
 
 use serde_json::{json, Value};
 
-use super::{Issue, Message, PullRequest, Thread};
-use crate::feed::model::{Item, ItemKind};
+use super::{Issue, Message, Notice, PullRequest, Reason, Role, SubjectKind, Thread};
+use crate::feed::model::{Item, ItemKind, ItemRole};
 
 /// Review states that mean the author has work to do. Matched as substrings
 /// because forges spell them differently (`CHANGES_REQUESTED`, `NEEDS_WORK`).
 const AUTHOR_MUST_ACT: [&str; 3] = ["changes_requested", "needs_work", "rejected"];
 
+/// Reasons for a notice that mean somebody is waiting, as opposed to being
+/// kept informed (§FS-001-forge-interface.1). Matched as substrings against the
+/// canonical form, so `team_mention` is a mention and a forge that spells one
+/// of these with its own prefix still lands correctly.
+const NOTICE_AWAITS: [&str; 5] = [
+    "mention",
+    "review-requested",
+    "assign",
+    "ci_activity",
+    "security_alert",
+];
+
+/// One vocabulary for one fact. Each forge has its own word for being asked to
+/// review — GitHub's `review_requested`, GitLab's todo of the same name — and
+/// ephor has a third in [`Reason`]. A row that carries two spellings of one
+/// fact reads as two facts, and a merged row carries exactly that, so the word
+/// is settled here rather than at the source (§FS-001-forge-interface.3). A
+/// reason ephor has no word for is passed through as the forge said it: it is
+/// still worth showing, and inventing a translation would be worse than
+/// quoting.
+fn canonical_reason(reason: &str) -> String {
+    match reason {
+        "author" | "authored" => Reason::Authored.label().to_string(),
+        "mention" | "mentioned" | "directly_addressed" => Reason::Mentioned.label().to_string(),
+        "review_requested" | "review-requested" => Reason::ReviewRequested.label().to_string(),
+        "assign" | "assigned" => Reason::Assigned.label().to_string(),
+        other => other.to_string(),
+    }
+}
+
 /// A conversation awaits the user when its last message is someone else's and
 /// the user has not reacted to it. Reacting counts as answering — often it is
 /// the honest answer.
+///
+/// A task the forge tracks outranks both, in either direction
+/// (§FS-003-feed-categories.4): an unresolved one is work left however the
+/// conversation ended, and a resolved one is an answer even though a robot had
+/// the last word. Without this a bot checklist is pending forever — its last
+/// message is never the reader's and never will be.
 fn thread_pending(thread: &Thread) -> bool {
+    if thread.messages.iter().any(Message::open_task) {
+        return true;
+    }
     match thread.messages.last() {
+        Some(last) if last.resolved_task() => false,
         Some(last) => !last.mine && !last.reactions.iter().any(|reaction| reaction.mine),
         None => false,
     }
@@ -36,12 +76,74 @@ fn citation_answered(threads: &[Thread]) -> bool {
     recorded && !threads.iter().any(thread_pending)
 }
 
+/// Which side of the review the user is on. Reported reasons decide it where
+/// there are any — opening it outranks everything else that can also be true
+/// of the same pull request — and `role` is the fallback for an implementation
+/// with no notion of reasons (§FS-001-forge-interface.3).
+fn role_of(pr: &PullRequest) -> Role {
+    if pr.reasons.is_empty() {
+        return pr.role;
+    }
+    if pr.reasons.contains(&Reason::Authored) {
+        Role::Author
+    } else {
+        Role::Reviewer
+    }
+}
+
+/// The user is named in it, however the implementation said so.
+fn cited(pr: &PullRequest) -> bool {
+    pr.cited || pr.reasons.contains(&Reason::Mentioned)
+}
+
+/// The reason a row leads with, most demanding first: what was asked of the
+/// reader outranks what they happen to be near. The author's own pull request
+/// leads with its review state instead, which is the thing they are waiting on.
+fn leading_reason(pr: &PullRequest) -> Option<Reason> {
+    if role_of(pr) == Role::Author {
+        return None;
+    }
+    [
+        Reason::ReviewRequested,
+        Reason::Mentioned,
+        Reason::Assigned,
+        Reason::InThread,
+    ]
+    .into_iter()
+    .find(|reason| pr.reasons.contains(reason))
+}
+
+/// The state a row shows: what the forge reported, and — where the user is not
+/// the author — why the pull request is theirs, which is the question a
+/// reviewing row has to answer first. Composed here rather than in an
+/// implementation, so every forge spells it the same way
+/// (§FS-001-forge-interface.3). An implementation that already said it in its
+/// own state is not made to say it twice.
+fn compose_state(pr: &PullRequest) -> Option<String> {
+    let lead = leading_reason(pr);
+    match (pr.state.as_deref(), lead) {
+        (Some(state), Some(reason)) if !state.contains(reason.label()) => {
+            Some(format!("{state}:{}", reason.label()))
+        }
+        (Some(state), _) => Some(state.to_string()),
+        (None, Some(reason)) => Some(reason.label().to_string()),
+        (None, None) => None,
+    }
+}
+
 /// Whether an item needs the user's response, by role.
 fn needs_response(pr: &PullRequest) -> bool {
+    // A review asked for and not yet given is the plainest case of somebody
+    // waiting, and the one no conversation rule can find: being asked leaves
+    // no message behind, so a pull request nobody has spoken in looks exactly
+    // like one with nothing to do (§FS-001-forge-interface.1).
+    if pr.reasons.contains(&Reason::ReviewRequested) {
+        return true;
+    }
     let state = pr.state.as_deref().unwrap_or("").to_lowercase();
     let author_must_act = AUTHOR_MUST_ACT.iter().any(|needle| state.contains(needle));
     let pending = pr.threads.iter().any(thread_pending);
-    if pr.cited {
+    if cited(pr) {
         return !citation_answered(&pr.threads);
     }
     author_must_act || pending
@@ -64,6 +166,9 @@ fn message_json(message: &Message) -> Value {
     }
     if !message.react.is_null() {
         value["react"] = message.react.clone();
+    }
+    if !message.task.is_null() {
+        value["task"] = message.task.clone();
     }
     value
 }
@@ -97,18 +202,92 @@ pub fn pull_request_item(forge: &str, project: &str, pr: &PullRequest) -> Item {
             raw.insert("gate".to_string(), gate.to_value());
         }
     }
+    // Every reason, not just the one the state leads with: the row shows one,
+    // and a reader asking why a pull request is in their feed at all deserves
+    // the whole answer (§FS-001-forge-interface.1).
+    if !pr.reasons.is_empty() {
+        let mut reasons: Vec<Reason> = pr.reasons.clone();
+        reasons.sort_unstable();
+        reasons.dedup();
+        raw.insert(
+            "reasons".to_string(),
+            json!(reasons
+                .iter()
+                .map(|reason| reason.label())
+                .collect::<Vec<_>>()),
+        );
+    }
 
     let mut item = Item {
         id: format!("{forge}:{}", pr.id),
         project: project.to_string(),
         source: forge.to_string(),
         kind: ItemKind::Pr,
-        role: Some(pr.role.into()),
+        role: Some(role_of(pr).into()),
         title: pr.title.clone(),
         url: pr.url.clone(),
-        state: pr.state.clone(),
+        state: compose_state(pr),
         needs_response: needs_response(pr),
         updated_at: pr.updated_at,
+        raw: Value::Object(raw),
+    };
+    settle(&mut item);
+    item
+}
+
+/// One notice as a feed item (§FS-001-forge-interface.1).
+///
+/// A notice takes the kind its subject implies rather than a kind of its own,
+/// so a pull request ephor heard about only because the forge mentioned it
+/// lands under Reviewing with the rest of them — and merges with the fuller
+/// report when another source also found it
+/// (§FS-003-feed-categories.5). What has no subject ephor models is a message:
+/// a release, an advisory, an invitation is still something addressed to the
+/// reader (§FS-003-feed-categories.1).
+pub fn notice_item(forge: &str, project: &str, notice: &Notice) -> Item {
+    let reason = canonical_reason(&notice.reason.to_lowercase());
+    let kind = match notice.subject {
+        SubjectKind::PullRequest => ItemKind::Pr,
+        SubjectKind::Issue => ItemKind::Issue,
+        SubjectKind::Other => ItemKind::Message,
+    };
+    // Having opened it is the one reason that puts the reader on the authoring
+    // side; everything else is somebody else's work they have been drawn into.
+    let role = match kind {
+        ItemKind::Message => None,
+        _ if reason == Reason::Authored.label() => Some(ItemRole::Author),
+        _ => Some(ItemRole::Reviewer),
+    };
+
+    let mut raw = serde_json::Map::new();
+    if let Some(repo) = &notice.repo {
+        raw.insert("repo".to_string(), json!(repo));
+    }
+    raw.insert("reasons".to_string(), json!([reason]));
+    // A notice is the thinnest report there is: nothing but a title and a
+    // reason. Saying so is what lets a fuller report of the same subject win
+    // the merge without the rule having to know which sources exist.
+    raw.insert("notice".to_string(), json!(true));
+
+    // Subject identity where the forge gave one, so the merge has something
+    // exact to match on, and the notice's own id where it did not
+    // (§FS-003-feed-categories.5).
+    let key = match (&notice.repo, &notice.number) {
+        (Some(repo), Some(number)) => format!("{repo}#{number}"),
+        _ => notice.id.clone(),
+    };
+
+    let mut item = Item {
+        id: format!("{forge}:{key}"),
+        project: project.to_string(),
+        source: forge.to_string(),
+        kind,
+        role,
+        title: notice.title.clone(),
+        url: notice.url.clone(),
+        state: (!reason.is_empty()).then(|| reason.clone()),
+        needs_response: !notice.read && NOTICE_AWAITS.iter().any(|needle| reason.contains(needle)),
+        updated_at: notice.updated_at,
         raw: Value::Object(raw),
     };
     settle(&mut item);
@@ -121,6 +300,112 @@ fn settle(item: &mut Item) {
     if item.is_finished() {
         item.needs_response = false;
     }
+}
+
+/// How much a report says, for choosing between two of the same subject
+/// (§FS-003-feed-categories.5). Not a measure of which source is better —
+/// sources are not ranked — but of which row the reader can act on without
+/// leaving ephor.
+fn detail_rank(item: &Item) -> u8 {
+    let has = |key: &str| {
+        item.raw
+            .get(key)
+            .is_some_and(|value| !value.is_null() && value != &json!([]))
+    };
+    u8::from(has("threads"))
+        + u8::from(has("gate"))
+        + u8::from(has("branch"))
+        + u8::from(item.role.is_some())
+        + u8::from(item.state.is_some())
+}
+
+/// What makes two reports the same work: the subject the forge named, never
+/// the title (§FS-003-feed-categories.5). A report whose subject cannot be
+/// identified is its own subject, so it is left alone rather than guessed into
+/// somebody else's row.
+fn subject_key(item: &Item) -> String {
+    match (item.repo(), item.number()) {
+        (Some(repo), Some(number)) => format!("{:?}\u{0}{repo}#{number}", item.kind),
+        _ => format!("id\u{0}{}", item.id),
+    }
+}
+
+/// The reasons a report carries, as the forge worded them.
+fn reasons_of(item: &Item) -> Vec<String> {
+    item.raw
+        .get("reasons")
+        .and_then(Value::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// One subject, one row (§FS-003-feed-categories.5). Sources overlap on
+/// purpose — that overlap is how the feed is exhaustive without being told
+/// where to look — so the reader is shown the fullest report of each subject,
+/// carrying over what the others knew and it did not.
+///
+/// Order is preserved from the input, and the input is in provider-name order,
+/// so the same feed always merges the same way.
+pub fn merge_reports(reports: Vec<Item>) -> Vec<Item> {
+    let mut order: Vec<String> = Vec::new();
+    let mut merged: std::collections::HashMap<String, Item> = std::collections::HashMap::new();
+
+    for report in reports {
+        let key = subject_key(&report);
+        let Some(kept) = merged.get_mut(&key) else {
+            order.push(key.clone());
+            merged.insert(key, report);
+            continue;
+        };
+
+        // Everything either report knew about being wanted survives the
+        // merge. The notice that says "your team was named" is often the only
+        // one of the two that knows it, and it is the thinner report — so
+        // deciding by the winner alone would drop exactly the fact the merge
+        // exists to keep.
+        let awaited = kept.needs_response || report.needs_response;
+        let updated_at = kept.updated_at.max(report.updated_at);
+        let replaces = detail_rank(&report) > detail_rank(kept);
+        // The surviving row's own reasons lead; what only the other one knew
+        // follows.
+        let (winner, loser) = if replaces {
+            (&report, &*kept)
+        } else {
+            (&*kept, &report)
+        };
+        let mut reasons = reasons_of(winner);
+        for reason in reasons_of(loser) {
+            if !reasons.contains(&reason) {
+                reasons.push(reason);
+            }
+        }
+        if replaces {
+            *kept = report;
+        }
+        kept.needs_response = awaited;
+        kept.updated_at = updated_at;
+        if !reasons.is_empty() {
+            if kept.raw.is_null() {
+                kept.raw = json!({});
+            }
+            if let Some(raw) = kept.raw.as_object_mut() {
+                raw.insert("reasons".to_string(), json!(reasons));
+                // Merged with a fuller report, this is no longer only a notice.
+                raw.remove("notice");
+            }
+        }
+        settle(kept);
+    }
+
+    order
+        .into_iter()
+        .filter_map(|key| merged.remove(&key))
+        .collect()
 }
 
 /// One issue as a feed item. An issue awaits the user when its last comment is
@@ -171,7 +456,17 @@ mod tests {
             when: None,
             reactions: Vec::new(),
             react: Value::Null,
+            task: Value::Null,
             mine,
+        }
+    }
+
+    /// A task message as a forge reports one: nobody's own, and carrying the
+    /// state that decides whether it is still work.
+    fn task(state: &str) -> Message {
+        Message {
+            task: json!({ "state": state, "comment": 7 }),
+            ..message("Bot", false)
         }
     }
 
@@ -186,9 +481,17 @@ mod tests {
             updated_at: Utc::now(),
             role,
             state: Some(state.to_string()),
+            reasons: Vec::new(),
             cited,
             threads,
             gate: None,
+        }
+    }
+
+    fn reported(reasons: Vec<Reason>, state: &str) -> PullRequest {
+        PullRequest {
+            reasons,
+            ..pr(Vec::new(), false, state, Role::Author)
         }
     }
 
@@ -248,6 +551,285 @@ mod tests {
             "open",
             Role::Reviewer
         )));
+    }
+
+    /// The bot-checklist shape: a prompt and a task under it, neither of them
+    /// ever the reader's. Ticked, the thread is done — read by last word
+    /// alone it would await an answer that can never arrive
+    /// (§FS-003-feed-categories.4).
+    #[test]
+    fn a_ticked_task_answers_a_thread_nobody_of_mine_spoke_in() {
+        let ticked = Thread {
+            messages: vec![message("Bot", false), task("resolved")],
+        };
+        assert!(!needs_response(&pr(
+            vec![ticked],
+            false,
+            "open",
+            Role::Author
+        )));
+
+        let unticked = Thread {
+            messages: vec![message("Bot", false), task("open")],
+        };
+        assert!(needs_response(&pr(
+            vec![unticked],
+            false,
+            "open",
+            Role::Author
+        )));
+    }
+
+    /// State outranks the last word in the other direction too: replying is
+    /// not ticking, and a box left open is work the reader still owes.
+    #[test]
+    fn an_open_task_awaits_me_even_when_i_had_the_last_word() {
+        let answered_but_unticked = Thread {
+            messages: vec![task("open"), message("me", true)],
+        };
+        assert!(needs_response(&pr(
+            vec![answered_but_unticked],
+            false,
+            "open",
+            Role::Author
+        )));
+    }
+
+    /// A state no forge of ephor's acquaintance uses is unfinished work, not
+    /// silently finished work.
+    #[test]
+    fn an_unknown_task_state_is_not_ticked() {
+        let odd = Thread {
+            messages: vec![task("pending-review")],
+        };
+        assert!(needs_response(&pr(vec![odd], false, "open", Role::Author)));
+    }
+
+    /// The descriptor survives into the item the thread screen reads, or the
+    /// box could not be drawn or ticked (§FS-004-quick-actions.5).
+    #[test]
+    fn a_task_descriptor_reaches_the_item() {
+        let item = pull_request_item(
+            "forge",
+            "widget",
+            &pr(
+                vec![Thread {
+                    messages: vec![task("open")],
+                }],
+                false,
+                "open",
+                Role::Author,
+            ),
+        );
+        assert_eq!(
+            item.raw.pointer("/threads/0/messages/0/task"),
+            Some(&json!({ "state": "open", "comment": 7 }))
+        );
+    }
+
+    /// The gap this whole capability exists for (§FS-001-forge-interface.1):
+    /// being asked for a review leaves nothing behind in the conversation, so
+    /// every rule that reads the conversation says there is nothing to do.
+    #[test]
+    fn a_review_asked_for_awaits_an_answer_in_a_pull_request_nobody_has_spoken_in() {
+        let asked = reported(vec![Reason::ReviewRequested], "open");
+        assert!(asked.threads.is_empty());
+        assert!(needs_response(&asked));
+
+        // Merely being near it is not being asked.
+        assert!(!needs_response(&reported(vec![Reason::InThread], "open")));
+        assert!(!needs_response(&reported(vec![Reason::Assigned], "open")));
+    }
+
+    /// Opening it outranks everything else that may also be true, and the
+    /// reason the reader is on somebody else's pull request leads the state.
+    #[test]
+    fn reasons_decide_the_role_and_lead_the_state() {
+        let mine = reported(vec![Reason::Authored, Reason::Assigned], "open");
+        assert_eq!(role_of(&mine), Role::Author);
+        // An author's state is their review decision, not why it is theirs.
+        assert_eq!(compose_state(&mine).as_deref(), Some("open"));
+
+        let asked = reported(vec![Reason::InThread, Reason::ReviewRequested], "open");
+        assert_eq!(role_of(&asked), Role::Reviewer);
+        assert_eq!(
+            compose_state(&asked).as_deref(),
+            Some("open:review-requested")
+        );
+
+        // An implementation that composed the reason into its own state is
+        // not made to say it twice.
+        let already = reported(vec![Reason::Mentioned], "open:mentioned");
+        assert_eq!(compose_state(&already).as_deref(), Some("open:mentioned"));
+
+        // Reporting no reasons at all leaves `role` and `state` as they were,
+        // which is what an implementation with no notion of them relies on.
+        let plain = pr(Vec::new(), false, "open", Role::Reviewer);
+        assert_eq!(role_of(&plain), Role::Reviewer);
+        assert_eq!(compose_state(&plain).as_deref(), Some("open"));
+
+        // Every reason reaches the item, not only the one that leads.
+        let item = pull_request_item("forge", "widget", &asked);
+        assert_eq!(
+            item.raw["reasons"],
+            json!(["in-thread", "review-requested"])
+        );
+        assert_eq!(item.role, Some(ItemRole::Reviewer));
+    }
+
+    /// §FS-003-feed-categories.5: the fuller report is the row, and what the
+    /// thinner one knew — here, that a team was named, which no search would
+    /// ever have found — survives the merge.
+    #[test]
+    fn one_subject_reported_twice_is_one_row_that_keeps_both_reasons() {
+        let mut full = pull_request_item(
+            "github-prs",
+            "widget",
+            &PullRequest {
+                reasons: vec![Reason::InThread],
+                threads: vec![Thread {
+                    messages: vec![message("them", false), message("me", true)],
+                }],
+                ..pr(Vec::new(), false, "open", Role::Reviewer)
+            },
+        );
+        full.id = "github-prs:acme/widget#42".to_string();
+        full.raw["repo"] = json!("acme/widget");
+
+        let notice = notice_item(
+            "github-notifications",
+            "widget",
+            &Notice {
+                id: "thread-9".to_string(),
+                title: "Widen the retry window".to_string(),
+                url: None,
+                reason: "team_mention".to_string(),
+                subject: SubjectKind::PullRequest,
+                repo: Some("acme/widget".to_string()),
+                number: Some("42".to_string()),
+                updated_at: Utc::now(),
+                read: false,
+            },
+        );
+        assert!(notice.needs_response);
+
+        let merged = merge_reports(vec![full, notice]);
+        assert_eq!(merged.len(), 1);
+        let row = &merged[0];
+        // The report the reader can act on wins the row …
+        assert_eq!(row.source, "github-prs");
+        assert!(row.raw.get("threads").is_some());
+        assert!(row.raw.get("notice").is_none());
+        // … and the reason only the thin one knew comes with it, along with
+        // the fact that somebody is waiting.
+        assert_eq!(row.raw["reasons"], json!(["in-thread", "team_mention"]));
+        assert!(row.needs_response);
+    }
+
+    /// Two subjects that merely look alike stay two rows: identity is what the
+    /// forge stated, never the title (§FS-003-feed-categories.5).
+    #[test]
+    fn reports_of_different_subjects_are_never_merged() {
+        let one = notice(SubjectKind::PullRequest, Some("42"), "mention");
+        let two = notice(SubjectKind::PullRequest, Some("43"), "mention");
+        // Same repository, same title, different number.
+        assert_eq!(merge_reports(vec![one, two]).len(), 2);
+
+        // A subject with no number of its own cannot be matched against
+        // anything, so it stands alone rather than being guessed at.
+        let anonymous = notice(SubjectKind::Other, None, "subscribed");
+        let other = notice(SubjectKind::Other, None, "subscribed");
+        assert_eq!(merge_reports(vec![anonymous, other]).len(), 1);
+    }
+
+    /// A notice takes the kind of the thing it is about, so it lands in the
+    /// category that thing belongs to (§FS-003-feed-categories.1) — and what
+    /// ephor models no capability for is still a message to the reader.
+    #[test]
+    fn a_notice_takes_the_kind_of_its_subject() {
+        let pull = notice(SubjectKind::PullRequest, Some("42"), "review_requested");
+        assert_eq!(pull.kind, ItemKind::Pr);
+        assert_eq!(pull.role, Some(ItemRole::Reviewer));
+        assert_eq!(pull.id, "github-notifications:acme/widget#42");
+        assert!(pull.needs_response);
+
+        let release = notice(SubjectKind::Other, None, "subscribed");
+        assert_eq!(release.kind, ItemKind::Message);
+        assert_eq!(release.role, None);
+        // Being kept informed is not being asked.
+        assert!(!release.needs_response);
+
+        // GitHub's `team_mention` is a mention; a reason ephor has never seen
+        // still arrives, it simply does not flag.
+        assert!(notice(SubjectKind::Issue, Some("7"), "team_mention").needs_response);
+        assert!(!notice(SubjectKind::Issue, Some("7"), "state_change").needs_response);
+
+        // The forge's own record of having read it settles the question, so
+        // clearing a notification elsewhere clears the flag here.
+        let read = notice_item(
+            "github-notifications",
+            "widget",
+            &Notice {
+                read: true,
+                ..raw_notice(SubjectKind::PullRequest, Some("42"), "mention")
+            },
+        );
+        assert!(!read.needs_response);
+    }
+
+    /// One fact, one word for it. Without this the row a merge produced showed
+    /// `review-requested` and `review_requested` side by side and read as two
+    /// separate things having been asked of the reader.
+    #[test]
+    fn one_fact_is_said_in_one_vocabulary() {
+        assert_eq!(canonical_reason("review_requested"), "review-requested");
+        assert_eq!(canonical_reason("assign"), "assigned");
+        assert_eq!(canonical_reason("mention"), "mentioned");
+        assert_eq!(canonical_reason("author"), "authored");
+        // GitLab words its todo for the same fact differently again.
+        assert_eq!(canonical_reason("directly_addressed"), "mentioned");
+        // A reason ephor has no word for is quoted, not translated.
+        assert_eq!(canonical_reason("team_mention"), "team_mention");
+        assert_eq!(canonical_reason("security_alert"), "security_alert");
+
+        let searched = pull_request_item(
+            "github-prs",
+            "widget",
+            &PullRequest {
+                reasons: vec![Reason::ReviewRequested],
+                ..pr(Vec::new(), false, "open", Role::Reviewer)
+            },
+        );
+        let told = notice(SubjectKind::PullRequest, Some("1"), "review_requested");
+        let mut same = searched;
+        same.id = "github-prs:acme/widget#1".to_string();
+        same.raw["repo"] = json!("acme/widget");
+
+        let merged = merge_reports(vec![same, told]);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].raw["reasons"], json!(["review-requested"]));
+    }
+
+    fn raw_notice(subject: SubjectKind, number: Option<&str>, reason: &str) -> Notice {
+        Notice {
+            id: format!("thread-{reason}"),
+            title: "Widen the retry window".to_string(),
+            url: None,
+            reason: reason.to_string(),
+            subject,
+            repo: Some("acme/widget".to_string()),
+            number: number.map(String::from),
+            updated_at: Utc::now(),
+            read: false,
+        }
+    }
+
+    fn notice(subject: SubjectKind, number: Option<&str>, reason: &str) -> Item {
+        notice_item(
+            "github-notifications",
+            "widget",
+            &raw_notice(subject, number, reason),
+        )
     }
 
     #[test]

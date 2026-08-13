@@ -285,6 +285,8 @@ ephor status [PROJECT] [--refresh|--cached] [--max-age SECS] [--json] [--check]
 ephor feed [--project P ...] [--unread] [--kind pr|ci|issue|message|status] [--json]
 ephor mark-read PROJECT | --all | --id ITEM_ID [--kind K]
 ephor failures --project P --source S --repo R --number N
+ephor rebase [--checkout DIR] [--project P] [--onto BRANCH] [--item ID] [--dispatch] [--report PATH]
+ephor checkout [--project P] [--branch B] [--item ID] [--from BRANCH] [--report PATH]
 ```
 
 - **`refresh`** is the only command that fetches by default. It is what the
@@ -299,6 +301,15 @@ ephor failures --project P --source S --repo R --number N
   A full `--all` sweep also prunes entries for items that no longer exist.
 - **`failures`** prints what went wrong under one red gate; it is what the
   quick action on a red gate runs.
+- **`rebase`** replays a checkout onto its main branch, and is what the quick
+  action on a branch that has fallen behind runs
+  ([§8.11](#811-rebasing-a-branch-that-has-fallen-behind)). Its exit codes are
+  its own — `3` is a conflict, not a failure.
+- **`checkout`** makes the branch workspace that is not there yet, one working
+  tree per repository, and is what the quick action on a missing checkout runs
+  ([§7.1](#71-quick-actions)). It needs nothing but the registry: the project
+  says where the workspace goes, which repositories it holds, and what a new
+  branch grows from.
 
 ### 4.2 Exit codes
 
@@ -336,9 +347,10 @@ A provider block always has `provider`; the rest is its own.
 
 | Provider | Source | Needs a response when |
 |---|---|---|
-| `github-prs` | `gh search prs` — authored, plus with `reviews` the ones you are engaged in | authored: changes requested; reviewing: an unanswered citation |
+| `github-prs` | `gh search prs` by every role: authored, and with `reviews` the ones you are in a thread on, cited in, asked to review, or assigned | authored: changes requested; reviewing: a review asked of you, or an unanswered citation |
 | `github-ci` | `gh pr list` + `gh pr checks` per open PR | a check is failing |
 | `github-issues` | `gh search issues` by role, plus comments | a comment awaits your reply |
+| `github-notifications` | `GET /notifications` — everything GitHub says is directed at you (§5.2) | GitHub's reason is a mention, a review request, an assignment, a broken gate, or an advisory |
 | `github-threads` | GraphQL unresolved review threads | the last comment is not yours |
 | `custom-status` | any shell command in the workspace | the JSON says so |
 | `<anything else>` | an external forge executable (§10.1) | ephor's policy, over what it answered |
@@ -348,9 +360,11 @@ A provider block always has `provider`; the rest is its own.
 
 ```jsonc
 { "provider": "github-prs",
-  "repos": ["acme/widget"],     // required
-  "reviews": false,             // include PRs you review, not only your own
+  "repos": ["acme/widget"],     // empty searches the whole forge, not a list
+  "reviews": true,              // include PRs you did not open, by every role
   "gates": true,                // record each PR's gate (one extra call per PR)
+  "updated_within_days": 30,    // 0 removes the bound
+  "limit": 30,                  // per search, per role
   "host": "github.example.com" } // GitHub Enterprise; sets GH_HOST
 
 { "provider": "github-ci", "repos": ["acme/widget"], "host": null }
@@ -361,6 +375,15 @@ A provider block always has `provider`; the rest is its own.
   "updated_within_days": 30,    // 0 removes the bound
   "limit": 50,                  // per search, per role
   "comments": true,             // fetch comments (one call per issue that has any)
+  "host": null }
+
+{ "provider": "github-notifications",
+  "repos": [],                  // empty keeps every repository — see §5.2
+  "read": false,                // include notices GitHub considers read
+  "reasons": ["mention", "team_mention",   // empty keeps every reason
+              "review_requested", "security_alert"],
+  "updated_within_days": 30,    // 0 removes the bound
+  "limit": 500,                 // a runaway guard; reaching it fails the source
   "host": null }
 
 { "provider": "github-threads", "repos": ["acme/widget"], "host": null }
@@ -380,10 +403,76 @@ them — and each becomes an item:
 ```
 
 **Answered detection.** A citation or a thread stops needing a response once
-you answered it — with a message afterwards, or with a reaction on the message.
-This is ephor's policy, applied identically over every provider
+you answered it — with a message afterwards, with a reaction on the message, or
+by ticking the task it was waiting on. This is ephor's policy, applied
+identically over every provider
 ([§FS-001-forge-interface.3](../requirements.md#3-policy-lives-above-the-interface-never-in-an-implementation)),
-which is why reacting from the inbox is often enough to clear an item.
+which is why reacting or ticking from the inbox is often enough to clear an
+item. Task state outranks the last word in both directions: an open box awaits
+you however the conversation ended, and a ticked one settles it even where
+every message in the thread belongs to a robot.
+
+### 5.2 The completeness net
+
+`github-prs`, `github-ci`, `github-issues`, and `github-threads` all ask
+questions you composed: *these* repositories, *these* roles. Each of those can
+be wrong in a way nothing tells you about, because a question never asked and a
+question answered "nothing" look identical on screen — an empty feed.
+
+`github-notifications` asks nothing. It reads GitHub's own notification list —
+the same one the bell icon shows — and reports whatever is on it. That is the
+only way some things reach the feed at all:
+
+- **a team mention.** `@acme/reviewers` names you, and no search qualifier will
+  ever return it: `mentions:@me` finds what named *you*.
+- **anything ephor has no capability for** — a discussion, a release, a
+  security advisory, a repository invitation.
+- **a repository you never configured.** The one worth catching is the one
+  nobody thought to list.
+
+It is meant to overlap the others, and overlapping costs you nothing: a pull
+request two sources both found is one row, keeping the fuller report and
+carrying over the reason only the notice knew
+([§FS-003-feed-categories.5](../requirements.md#5-one-subject-is-one-row-however-many-sources-reported-it)).
+So a pull request you were already tracking does not turn into two rows when
+GitHub also mentions it — it turns into the same row, now saying that your team
+was named on it.
+
+Two ways to configure it. Leave `repos` empty on **one** project and that
+project becomes the catch-all, holding everything no other project claimed;
+this is the setup that makes an empty feed mean something. Or name `repos` per
+project and each project's notices land in its own feed, at the cost of the
+guarantee — a notice from a repository no project lists is then in no feed.
+
+Reading a notification on github.com clears its flag here too: `read` notices
+are skipped by default, and one that arrives already read never asks for a
+response.
+
+**`reasons` is what keeps it readable.** GitHub notifies about far more than it
+asks of you. The default keeps the reasons that mean somebody is waiting on
+*you in particular* — `mention`, `team_mention`, `review_requested`,
+`security_alert` — and drops `subscribed`, `comment`, `author`, `state_change`,
+`ci_activity`, and `assign`.
+
+`assign` is the one worth explaining, because it is a real request and it is
+still off. On a busy repository assignment is a bulk mechanism: one that assigns
+every incoming contribution to its maintainers produces hundreds of unread
+assignment notifications, and a net that catches all of those is a list nobody
+reads — which is the same as no net. What is genuinely assigned to you already
+arrives through `github-prs` and `github-issues` under its own role, with its
+conversation and its gate attached. Add it back with
+`"reasons": ["mention", "team_mention", "review_requested", "assign"]`, or set
+`"reasons": []` to keep everything.
+
+The vocabulary is ephor's once it lands: GitHub's `review_requested` and
+`github-prs`'s own `review-requested` are one fact and appear once on a merged
+row.
+
+**Cost.** One paginated API call per refresh, whatever the size of your feed —
+it is the cheapest source ephor has. If more notices than `limit` match, the
+source **fails** rather than showing you an unknown fraction of them
+([§FS-001-forge-interface.6](../requirements.md#6-a-source-that-did-not-answer-says-so-and-says-which-kind-of-not)):
+its whole value is that you can believe it.
 
 ---
 
@@ -465,10 +554,25 @@ its author, age, text and reactions:
 | `f` `b` | page |
 | `g` `G` | first / last |
 | `+` | react (`←`/`→` or `1`-`8` choose, `Enter` posts) |
+| `t` | tick the selected task |
 | `x` | actions · `o` open · `m` done · `Esc` back |
 
-The palette is GitHub's eight: 👍 👎 😄 🎉 😕 ❤️ 🚀 👀. A forge that does not
+`+` and `t` are offered on the selected message rather than on the screen, so
+the footer changes as you move: a message its forge will not take a reaction
+for never advertises `+`, and `t` appears only on a task still open. The
+palette is GitHub's eight: 👍 👎 😄 🎉 😕 ❤️ 🚀 👀. A forge that does not
 declare the `reactions` capability is display-only.
+
+**Tasks.** Where a forge tracks tasks — a checklist item, a blocker comment, a
+review task — the message carrying one renders with its box, ☐ or ☑, and `t`
+ticks it in place. That is the whole of a bot checklist: read the sentence,
+agree with it, move on, without a browser.
+
+A box also answers the thread. An unresolved task keeps its conversation
+awaiting you however it ended, and a resolved one settles it even though a
+robot had the last word — which is what keeps a pull request whose boxes are
+all ticked from sitting in the inbox forever
+([§FS-003-feed-categories.4](../requirements.md#4-a-conversation-is-answered-in-whatever-form-the-forge-recorded-it)).
 
 **Gate screen** (`c`) — the per-repository counts spelled out and the forge's
 own reasons for refusing, verbatim: `j`/`k` scroll, `x` actions, `o` open,
@@ -488,10 +592,38 @@ Entries ephor has without being told, on an item where it already knows what
 the problem is ([§FS-004-quick-actions](../requirements.md#fs-004-quick-actions-a-problem-ephor-recognizes-arrives-with-the-action-for-it)).
 They lead the menu, and configuration adds to them rather than replacing them.
 
-Today: **`✗ see the CI failures`** on a pull request whose gate is red — the
-check list as the forge reports it, then every failed job's log, paged. It is
-offered only where it would work: the gate is failing, the item still names its
-pull request, and the tool that reaches it is installed.
+Today, three:
+
+**`✗ see the CI failures`** on a pull request whose gate is red — the check
+list as the forge reports it, then every failed job's log, paged. It is offered
+only where it would work: the gate is failing, the item still names its pull
+request, and the tool that reaches it is installed.
+
+**`⤴ rebase onto <main> (N behind)`** on a pull request whose branch workspace
+is on disk and has fallen behind the project's `main_branch`
+([§FS-004-quick-actions.6](../requirements.md#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase)).
+It runs `ephor rebase` in that checkout — fetch, replay, and an answer per
+repository, every repository in a poly-repo workspace. Where the replay stops
+in a conflict, it opens the ticket about it instead of leaving you with a
+half-finished rebase and no record of it ([§8.11](#811-rebasing-a-branch-that-has-fallen-behind)).
+
+**`⇣ check out <dir>`** on an item whose branch workspace is *not* on disk, for
+a project that keeps one checkout per branch
+([§FS-004-quick-actions.7](../requirements.md#7-a-workspace-that-is-not-there-is-offered-the-checkout)).
+It runs `ephor checkout`, which needs nothing configured — the project's
+`branch_root_template` says where the workspace goes, its type says which
+repositories it holds, and its `main_branch` says what a new branch grows from.
+Each repository gets its own working tree: the branch itself where that
+repository has it, and a new branch of the same name off the main branch where
+it does not, which is what a change touching one repository of a tree looks
+like on disk. A repository whose branch another working tree is already holding
+is reported and left alone — git refuses that, and it is right to.
+
+It is also the step that runs *before* any other action on a missing workspace.
+Pick `⧉ open the diff` on a branch you have never checked out and ephor checks
+it out first, then runs what you picked in it. Configure a `checkout` command
+for the project and yours runs instead ([§7.2](#72-configured-actions)); the
+difference is only whether anyone expects to want their own.
 
 ### 7.2 Configured actions
 
@@ -639,7 +771,7 @@ so the top of the plan is always current. Tickets are only ever appended: their
 
 ### 8.3 Recipes
 
-Four ship and apply with no configuration at all:
+Five ship and apply with no configuration at all:
 
 | Recipe | Applies to | Needs the branch on disk |
 |---|---|---|
@@ -647,6 +779,7 @@ Four ship and apply with no configuration at all:
 | `answer` 💬 | anything owing a reply — pr, issue, message | no |
 | `review` 👓 | a pull request you are reviewing | no |
 | `implement` 🧩 | an issue you opened | no |
+| `rebase` ⤴ | a pull request of yours whose branch **trails main** | yes |
 
 Add your own, or replace a shipped one by reusing its id:
 
@@ -684,10 +817,17 @@ Finished work never matches.
 | `gate` | `failing` (jobs failed) · `blocked` (the forge refuses) · `red` (either) · `green` · `any` |
 | `needs_response` | `true` / `false` |
 | `sources` | provider names |
+| `behind` | `true` — the branch trails the project's `main_branch` · `false` — level with it |
 
 `failing` and `blocked` are separate because they ask for different work: jobs
 that failed are something a checkout can fix, while a forge refusing an
 otherwise green change is usually waiting on a person.
+
+`behind` is measured in your own checkout, not asked of a forge: the branch
+workspace's repositories are counted against `origin/<main_branch>` as they
+were last fetched. An item ephor cannot measure — no branch, or nothing on
+disk — matches neither `true` nor `false`, so a recipe that asks is never
+offered blind.
 
 **The brief** takes `{title}`, `{url}`, `{repo}`, `{number}`, `{branch}`,
 `{ticket}`, `{state}`, `{gate}`, `{workspace}`, `{root}`, `{project}`,
@@ -864,12 +1004,71 @@ rhei transition <ticket> --from needs-human --to propose
 The question and its answer stay next to each other in the file that is the
 record of this item's work, where the next round can read them.
 
+**A failure that was never the change's fault.** A runner dies, a mirror is
+unreachable, the same flake lands again — and what the item needs is not a fix
+but another run
+([§FS-005-dispatch.11](../requirements.md#11-a-failure-that-is-not-the-changes-fault-is-restarted-not-fixed)).
+A loop that cannot make that move pays for it twice: a model diagnoses
+something that was never wrong, and a commit gets landed whose only purpose was
+to make the gate start again.
+
+So restarting is its own state, its own ticket, and its own marker. Whichever
+state notices — triage while classifying, or `analyze` and `critique` through a
+`NOT-OURS:` first line that `route.example.sh` exits `3` for — **opens a ticket
+in `restart-gate` and leaves the list of what to restart beside it**. The list
+is a declared input, so the state is handed what to do rather than working it
+out:
+
+```yaml
+  restart-gate:
+    program:
+      command: "~/.config/ephor/restart-gate.sh"
+      env:
+        JOBS: "{input.jobs.path}"
+        GATE_RESTART: 'acme-cli gate review --platform bitbucket
+                         --project ACME --repo "$EPHOR_GATE_REPO"
+                         --pr "$EPHOR_GATE_NUMBER"'
+        MAX_RESTARTS: "2"
+    inputs:
+      - name: jobs
+        optional: true
+        path: "runtime/ephor/{task_id_local}.jobs.md"
+```
+
+Four things are worth knowing about that shape:
+
+- **The path is `{task_id_local}`, not `{task_id}`.** Whoever decided the
+  failure was not the change's fault also authored the ticket, so it knows the
+  local id — the qualification prefix is applied at load time and may not be
+  authored.
+- **The format is exact**, because a program that guesses at a job name
+  restarts the wrong thing. One job per line, two fields: `<repo> <job-key>`,
+  or `<repo> -` for that repository's whole gate. Anything else stops the
+  restart and names the line.
+- **The list is `optional`** so that a ticket arriving without one is refused
+  by the program, which can say what is missing, rather than by an input check
+  that can only decline to move.
+- **It restarts downstream too.** A gate spanning several repositories fails
+  downward, so after the named jobs every repository the forge reports as not
+  green gets its whole gate restarted. One that is green again by the time the
+  state runs is left alone — somebody already re-ran it, and restarting it
+  would re-red a passing gate.
+
+`restarted` is a *successful* final state, so it satisfies the join and `land`
+runs, finds nothing to push, and re-enters `collect` to wait out the run the
+restart started. The budget is counted **out of the plan** rather than with
+`visits` — every round opens a new ticket and a per-state counter resets with
+it — and past `MAX_RESTARTS` the ticket parks for a person, because at that
+point the infrastructure is the thing that is wrong.
+
 `config/ci-failures.example.sh` and
 `config/ephor-work-ci.example.states.yaml` are a working pair: the script
 refreshes the project, reads the gate out of `ephor feed --json`, asks
 `ephor failures` when something failed, and exits with one of the codes above.
 Copy both, point `work.states` at the machine and `program.command` at the
 script, and give the recipe `"state": "collect"` so tickets start there.
+`config/ci-green.example.states.yaml` is the fuller machine, with triage,
+review and restart wired together.
 
 ### 8.6 A moved item reopens its own work
 
@@ -1014,6 +1213,54 @@ It answers one question — has this been handed over? — and holds the
 fingerprint that answers the next: has the item moved since. An entry whose
 plan has been deleted is reported as missing, never repaired.
 
+### 8.11 Rebasing a branch that has fallen behind
+
+A rebase is two git commands and a question. The commands are the same every
+time and a model is not needed to type them, so ephor runs them first and hands
+over only the question ([§FS-005-dispatch.12](../requirements.md#12-work-an-algorithm-can-finish-does-not-start-with-a-model)).
+
+```bash
+ephor rebase                                  # the working directory
+ephor rebase --project widget --checkout ~/c/widget/you/ABC-42-retry
+ephor rebase --onto release/24 --checkout .   # some other base
+ephor rebase --item forge:widget/42 --dispatch    # and open a ticket on conflict
+```
+
+It fetches and replays **every repository in the checkout** — the project
+type's `repos` where the registry names them, otherwise every git working tree
+directly under it — onto the project's `main_branch`, and reports per
+repository. Nothing is stashed: a repository with uncommitted work is named and
+left alone. Nothing is pushed either; a replayed branch cannot fast-forward,
+and forcing is a decision that belongs to a state that says so
+([§8.5](#85-a-script-in-front-of-the-agent)).
+
+| Exit | Means | The machine sends it to |
+|---|---|---|
+| `0` | every repository is on the base — replayed, or already there | land it |
+| `3` | one stopped in a conflict, left mid-rebase with the files named | an agent |
+| `1` | uncommitted work, no repository, or git refused | a person |
+
+Each argument can arrive as an environment variable instead — `CHECKOUT`,
+`PROJECT`, `ONTO`, `ITEM`, `REPORT` — which is how a program state passes it
+`{meta.*}`. `config/ci-green.example.states.yaml` wires the whole path:
+
+```
+rebase ──0──► land-rebase ──► rebased        (FORCE_WITH_LEASE=1 on land.sh)
+   └───3───► resolve-conflicts ──► verify-rebase ──► land-rebase
+   └─nonzero─► needs-human
+```
+
+`land-rebase` is a landing state of its own precisely because it forces:
+`land` proper never does, and a replayed branch is the one case where the push
+has to rewrite what the remote already has. It is `--force-with-lease`, so a
+remote that moved under you refuses the push instead of overwriting somebody
+else's commits.
+
+Give the `rebase` recipe `"state": "rebase"` in your `status.json` for tickets
+to start there; with the shipped two-state machine they start in `fix`, where
+the brief tells the agent to run `ephor rebase` itself and resolve what it
+stops on.
+
 ---
 
 ## 9. Automation
@@ -1061,6 +1308,7 @@ ephor-forge-<name> pull-requests  <<< '{"config":…,"tickets":[…],…}'
 ephor-forge-<name> issues         <<< '{"config":…,"tickets":[…],…}'
 ephor-forge-<name> failures       <<< '{"config":…,"repo":…,"number":…}'
 ephor-forge-<name> react          <<< '{"config":…,"target":…,"emoji":…}'
+ephor-forge-<name> resolve-task   <<< '{"config":…,"target":…}'
 ```
 
 The whole provider block is passed through as `config`, so an extension takes
@@ -1068,6 +1316,12 @@ its own options. `capabilities` declares what the rest will answer, and ephor
 degrades to that — but a capability probe that *fails* is a broken forge, not a
 forge that does very little. `failures` is the one call a refresh never makes:
 it is asked when a reader opens a red gate, so it may take as long as it needs.
+
+`react` and `resolve-task` receive back, verbatim, the `react` and `task`
+descriptors the extension put on a message: they are its own, and ephor reads
+only `task.state` (`open` / `resolved`) out of them. A message with no
+descriptor gets no key on the thread screen, which is how a read-only
+implementation says so — there is nothing to declare beyond leaving it out.
 
 Policy is never an extension's business: what counts as answered, what needs a
 response, how threads and gates roll up, how items match branches, what is
@@ -1116,6 +1370,7 @@ stalled on *"required outputs are missing"* no matter how well it reasons.
 ```
 ephor list | validate | ensure-agents | update            # the registry
 ephor refresh | status | feed | mark-read | failures      # the feed
+ephor rebase                                              # the checkout
 ephor work list | dispatch | ask | sync | run | forget | states
 ephor tui                                                 # alias: inbox
 ```

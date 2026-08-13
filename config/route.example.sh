@@ -7,6 +7,9 @@
 #
 #     2   NEEDS-HUMAN: <question>   → the ticket parks in a gating state until
 #                                     a person answers it in the plan
+#     3   NOT-OURS: <what died>     → the change was never the problem; restart
+#                                     the gate instead of fixing anything
+#                                     (§FS-005-dispatch.11)
 #     1   VERDICT: unsound          → round again, while the budget lasts
 #     0   VERDICT: sound, or no
 #         verdict line at all       → carry on
@@ -28,6 +31,13 @@ fi
 if question=$(grep -m1 -E '^[[:space:]]*NEEDS-HUMAN:' "$ARTIFACT"); then
   echo "$question" >&2
   exit 2
+fi
+
+# Likewise a failure that is not this change's: there is nothing here to be
+# sound or unsound about, so the verdict below does not apply to it.
+if foreign=$(grep -m1 -E '^[[:space:]]*NOT-OURS:' "$ARTIFACT"); then
+  echo "$foreign" >&2
+  exit 3
 fi
 
 verdict=$(grep -m1 -E '^[[:space:]]*VERDICT:' "$ARTIFACT" || true)

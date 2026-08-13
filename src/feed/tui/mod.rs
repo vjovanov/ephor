@@ -38,6 +38,7 @@ use crate::feed::cache::{self, ProjectFeed, Seen};
 use crate::feed::config::{load_config, ActionConfig, CheckoutConfig, StatusConfig};
 use crate::feed::model::{Item, ItemKind};
 use crate::feed::react::{self, ReactTarget};
+use crate::feed::task::Task;
 use crate::paths;
 use crate::registry;
 
@@ -124,8 +125,54 @@ impl Ctx {
             .map(Vec::as_slice)
             .unwrap_or_default();
         let mut menu = crate::feed::providers::quick_actions(blocks, item);
+        // ephor's own quick action, offered because of what is on disk rather
+        // than because a source said something (§FS-004-quick-actions.6).
+        if let (Some(main_branch), Some(behind)) = (
+            self.main_branches.get(&item.project),
+            self.item_behind(item).filter(|behind| *behind > 0),
+        ) {
+            menu.push(actions::rebase_action(main_branch, behind));
+        }
         menu.extend(actions::applicable(&self.actions, project, item));
         menu
+    }
+
+    /// Commits the item's own checkout trails the project's main branch,
+    /// summed across its repositories (§FS-004-quick-actions.6). None where
+    /// there is nothing on disk to measure: not a pull request, no branch, or
+    /// a workspace that was never checked out.
+    pub fn item_behind(&self, item: &Item) -> Option<u64> {
+        if item.kind != ItemKind::Pr {
+            return None;
+        }
+        let main_branch = self.main_branches.get(&item.project)?;
+        let root = self.roots.get(&item.project)?;
+        let (name, _) = self.effective_branch(item);
+        let workspace = match self.expand_workspace(&item.project, root, &name?) {
+            Some(workspace) => workspace,
+            // A project without branch workspaces works in its root.
+            None => root.clone(),
+        };
+        if !workspace.is_dir() {
+            return None;
+        }
+        let empty = Vec::new();
+        let repo_paths = self.repo_paths.get(&item.project).unwrap_or(&empty);
+        crate::git::repos(&workspace, repo_paths)
+            .iter()
+            .filter_map(|repo| crate::git::commits_behind(repo, main_branch))
+            .fold(None, |total: Option<u64>, count| {
+                Some(total.unwrap_or(0) + count)
+            })
+    }
+
+    /// A project's provider blocks, for a write that has to go back through
+    /// the source that reported what it acts on.
+    pub fn blocks_for(&self, project: &str) -> Vec<Value> {
+        self.provider_blocks
+            .get(project)
+            .cloned()
+            .unwrap_or_default()
     }
 
     pub fn org_projects(&self, org_id: &str) -> Vec<String> {
@@ -255,7 +302,7 @@ impl Ctx {
                     } else {
                         workspace.join(path)
                     };
-                    if let Some(count) = commits_behind(&repo, main_branch) {
+                    if let Some(count) = crate::git::commits_behind(&repo, main_branch) {
                         total = Some(total.unwrap_or(0) + count);
                     }
                 }
@@ -331,27 +378,6 @@ impl Ctx {
 
 pub(crate) use crate::branches::WorkspaceState;
 
-/// Commits `repo`'s HEAD is behind the main branch, preferring the
-/// last-fetched `origin/<main>`; None when not a git repo or no usable ref.
-fn commits_behind(repo: &Path, main_branch: &str) -> Option<u64> {
-    if !crate::update::is_git_work_tree(repo) {
-        return None;
-    }
-    for reference in [format!("origin/{main_branch}"), main_branch.to_string()] {
-        let output = std::process::Command::new("git")
-            .arg("-C")
-            .arg(repo)
-            .args(["rev-list", "--count", &format!("HEAD..{reference}")])
-            .stderr(std::process::Stdio::null())
-            .output()
-            .ok()?;
-        if output.status.success() {
-            return String::from_utf8_lossy(&output.stdout).trim().parse().ok();
-        }
-    }
-    None
-}
-
 pub(crate) use crate::branches::matches as matches_branch;
 
 /// What a screen asks the shell to do in response to a key.
@@ -377,11 +403,20 @@ pub(crate) enum Action {
         pop: bool,
     },
     /// Post `content` (palette name) on a message; `message` is the flat
-    /// message index for the optimistic local update.
+    /// message index for the optimistic local update. `project` is carried
+    /// because a reaction on a forge item is a write back through that
+    /// project's provider block, not a call ephor makes on its own.
     React {
         target: ReactTarget,
         content: &'static str,
         emoji: &'static str,
+        project: String,
+        message: usize,
+    },
+    /// Tick a task on a message (§FS-004-quick-actions.5).
+    ResolveTask {
+        task: Task,
+        project: String,
         message: usize,
     },
     /// Summon the configured action menu for an item.
@@ -663,7 +698,7 @@ impl App {
         let mut work = BTreeMap::new();
         for feed in &self.ctx.feeds {
             for item in feed.items() {
-                if let Some(status) = dispatcher.status(item) {
+                if let Some(status) = dispatcher.status(&item) {
                     work.insert(
                         item.id.clone(),
                         WorkBadge {
@@ -792,17 +827,39 @@ impl App {
                 target,
                 content,
                 emoji,
+                project,
                 message,
             } => {
                 self.message = format!("Reacting {emoji}…");
                 terminal
                     .draw(|frame| self.draw(frame))
                     .map_err(|err| EphorError::Command(format!("draw failed: {err}")))?;
-                match react::post(&target, content) {
+                let blocks = self.ctx.blocks_for(&project);
+                match react::post(&target, content, emoji, &blocks, &project, &config.defaults) {
                     Ok(()) => {
                         self.message = format!("Reacted {emoji}");
                         if let Screen::Thread(thread) = &mut self.screen {
                             thread.add_local_reaction(message, emoji);
+                        }
+                    }
+                    Err(err) => self.message = err.to_string(),
+                }
+            }
+            Action::ResolveTask {
+                task,
+                project,
+                message,
+            } => {
+                self.message = "Ticking…".to_string();
+                terminal
+                    .draw(|frame| self.draw(frame))
+                    .map_err(|err| EphorError::Command(format!("draw failed: {err}")))?;
+                let blocks = self.ctx.blocks_for(&project);
+                match crate::feed::task::resolve(&task, &blocks, &project, &config.defaults) {
+                    Ok(()) => {
+                        self.message = "Ticked".to_string();
+                        if let Screen::Thread(thread) = &mut self.screen {
+                            thread.tick_local(message);
                         }
                     }
                     Err(err) => self.message = err.to_string(),
@@ -1095,10 +1152,8 @@ impl App {
         let outcome = (|| {
             let mut workspace = menu.workspace.clone();
             if needs_checkout {
-                let checkout = menu.checkout.as_ref().expect("gated on checkout config");
-                let target = menu
-                    .checkout_target()
-                    .expect("gated on a missing workspace");
+                let (checkout, target) =
+                    menu.checkout_step().expect("gated on a missing workspace");
                 // The checkout runs in the root — its job is to create the
                 // target workspace, which ephor verifies rather than trusts.
                 step(
@@ -1276,15 +1331,17 @@ impl App {
         }
 
         let footer = if self.prompt.is_some() {
-            " type  ·  enter sends  ·  esc cancels  ·  ^w word back  ·  ^u clear"
+            " type  ·  enter sends  ·  esc cancels  ·  ^w word back  ·  ^u clear".to_string()
         } else if self.menu.is_some() {
-            " j/k move  1-9 run  enter run  esc cancel"
+            " j/k move  1-9 run  enter run  esc cancel".to_string()
         } else {
             match &self.screen {
-                Screen::Navigator => self.navigator.footer(),
+                Screen::Navigator => self.navigator.footer().to_string(),
+                // Built from what is selected, not fixed per screen
+                // (§FS-004-quick-actions.2).
                 Screen::Thread(thread) => thread.footer(),
-                Screen::Gate(gate) => gate.footer(),
-                Screen::Work(work) => work.footer(),
+                Screen::Gate(gate) => gate.footer().to_string(),
+                Screen::Work(work) => work.footer().to_string(),
             }
         };
         frame.render_widget(
@@ -1472,6 +1529,52 @@ mod tests {
                 .get(&("widget".to_string(), "you/ABC-42-retry-window".to_string())),
             Some(&5)
         );
+    }
+
+    /// The rebase is in the menu because of what is on disk, and only then
+    /// (§FS-004-quick-actions.6).
+    #[test]
+    fn the_rebase_is_offered_on_a_checkout_that_trails_main() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let workspace = root.join("you/ABC-42-retry-window");
+        repo_behind(&workspace.join("ce"), 2);
+        repo_behind(&workspace.join("ee"), 3);
+
+        let mut ctx = ctx_with_branch(root, Some("{project_root}/{branch}"));
+        ctx.repo_paths = BTreeMap::from([(
+            "widget".to_string(),
+            vec!["ce".to_string(), "ee".to_string()],
+        )]);
+        let pr = ticket_item();
+        assert_eq!(ctx.item_behind(&pr), Some(5));
+        let menu = ctx.actions_for(&pr);
+        assert_eq!(menu[0].description, "rebase onto master (5 behind)");
+        assert!(menu[0].command.contains("rebase --project"));
+        assert!(menu[0].requires_checkout);
+
+        // Level with master: nothing to replay, so nothing offered.
+        for repo in ["ce", "ee"] {
+            git(&workspace.join(repo), &["checkout", "-q", "master"]);
+        }
+        assert_eq!(ctx.item_behind(&pr), Some(0));
+        assert!(ctx.actions_for(&pr).is_empty());
+    }
+
+    #[test]
+    fn the_rebase_is_not_offered_where_there_is_nothing_to_measure() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let ctx = ctx_with_branch(root, Some("{project_root}/{branch}"));
+
+        // The branch workspace was never checked out.
+        assert_eq!(ctx.item_behind(&ticket_item()), None);
+        assert!(ctx.actions_for(&ticket_item()).is_empty());
+
+        // An item that is not a pull request has no branch to replay.
+        let mut message = ticket_item();
+        message.kind = ItemKind::Message;
+        assert_eq!(ctx.item_behind(&message), None);
     }
 
     #[test]

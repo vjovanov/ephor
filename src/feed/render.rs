@@ -94,7 +94,7 @@ pub fn render_project(feed: &ProjectFeed, seen: &Seen, style: &Style, recent_day
         }
     }
 
-    let mut items: Vec<&Item> = feed
+    let mut items: Vec<Item> = feed
         .items()
         .filter(|item| item.is_visible(now, recent_days))
         .collect();

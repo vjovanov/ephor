@@ -175,10 +175,10 @@ impl NavigatorState {
                 .filter(|item| section_filter(item))
                 .filter(|item| !ctx.unread_only || cache::is_unread(&ctx.seen, item))
                 .map(|item| Row {
-                    item: item.clone(),
                     stale: feed.is_stale(&item.source),
-                    checked_out: ctx.item_checked_out(item),
+                    checked_out: ctx.item_checked_out(&item),
                     work: ctx.work.get(&item.id).cloned(),
+                    item,
                 })
                 .collect();
             if rows.is_empty() {
