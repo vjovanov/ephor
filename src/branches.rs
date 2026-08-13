@@ -27,19 +27,24 @@ pub struct BranchInfo {
 /// Whether an item is work on this branch: by ticket key, by the branch name
 /// the provider recorded, or by the branch name appearing in the title.
 pub fn matches(item: &Item, branch: &BranchInfo) -> bool {
-    if let Some(ticket) = &branch.ticket {
-        if item.id.contains(ticket.as_str()) || item.title.contains(ticket.as_str()) {
-            return true;
-        }
-    }
-    if branch.branch.is_empty() {
-        return false;
-    }
-    // Providers that know the item's source branch record it in raw.branch.
-    if item.raw.get("branch").and_then(Value::as_str) == Some(branch.branch.as_str()) {
+    // The provider-recorded branch is ground truth and is not a match to be
+    // argued about: the forge said which branch this is on.
+    if item.raw.get("branch").and_then(Value::as_str) == Some(branch.branch.as_str())
+        && !branch.branch.is_empty()
+    {
         return true;
     }
-    item.title.contains(branch.branch.as_str())
+    // Everything else is the one matching engine at its second scope
+    // (§AR-003-attribution.3): the same evidence, the project's branches as
+    // the identity table.
+    let mut evidence = crate::matter::evidence_of(item);
+    // The id carries the ticket for sources that put it there and nowhere
+    // else, and it is evidence like any other.
+    evidence
+        .tickets
+        .extend(crate::registry::tickets_in(&item.id));
+    crate::attribution::branch(&evidence, &[(branch.branch.clone(), branch.ticket.clone())])
+        .is_some()
 }
 
 /// A branch name's workspace directory per the project's

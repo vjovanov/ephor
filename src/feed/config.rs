@@ -26,8 +26,42 @@ pub struct StatusConfig {
     /// (§FS-005-dispatch.1).
     #[serde(default)]
     pub work: crate::work::recipe::WorkConfig,
+    /// Sources shared across every project — a notification stream, a
+    /// mailbox — fetched once per site rather than once per project
+    /// (§AR-008-pipeline.1). What they report is placed by the attribution
+    /// engine (§AR-003-attribution), never by the source itself, which is
+    /// what lets one of them be exhaustive without being told in advance
+    /// where to look (§DA-002-fetch-attribution-split).
+    #[serde(default)]
+    pub sources: Vec<serde_json::Value>,
     #[serde(default)]
     pub projects: BTreeMap<String, ProjectFeedConfig>,
+}
+
+/// Whether a source fetches unscoped — asking nothing about any one project,
+/// and answering about all of them. These belong at site level; declared under
+/// a project they still work, and say so once (§DA-002-fetch-attribution-split).
+pub fn is_shared_source(name: &str) -> bool {
+    matches!(name, "github-notifications" | "slack" | "discord" | "email")
+}
+
+impl StatusConfig {
+    /// Shared sources still declared under a project. They keep working; the
+    /// note says where they belong now, once per run rather than per project.
+    pub fn misplaced_shared_sources(&self) -> Vec<(String, String)> {
+        let mut found = Vec::new();
+        for (project, config) in &self.projects {
+            for block in &config.providers {
+                let Some(name) = block.get("provider").and_then(serde_json::Value::as_str) else {
+                    continue;
+                };
+                if is_shared_source(name) {
+                    found.push((project.clone(), name.to_string()));
+                }
+            }
+        }
+        found
+    }
 }
 
 /// A user-defined action summoned on a feed item in the TUI (`x`). The

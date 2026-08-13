@@ -253,6 +253,37 @@ impl NavigatorState {
             self.stream_entries.push(Entry::Org(ctx.org_label(org)));
             self.stream_entries.append(&mut org_entries);
         }
+        // Last, and only where there is something in it: what nothing claimed,
+        // and what two projects claimed equally. Visible rather than dropped —
+        // a guess that lands wrong amends someone's matter silently
+        // (§FS-008-attribution.4).
+        let now = Utc::now();
+        let mut orphans: Vec<Row> = ctx
+            .unattributed
+            .iter()
+            .filter(|item| item.is_visible(now, ctx.recent_days))
+            .filter(|item| !ctx.unread_only || cache::is_unread(&ctx.seen, item))
+            .map(|item| Row {
+                stale: false,
+                checked_out: None,
+                work: None,
+                resurfacing: ctx.resurfacing.get(&item.id).cloned(),
+                item: item.clone(),
+            })
+            .collect();
+        if !orphans.is_empty() {
+            orphans.sort_by(|a, b| {
+                b.item
+                    .needs_response
+                    .cmp(&a.item.needs_response)
+                    .then(b.item.updated_at.cmp(&a.item.updated_at))
+            });
+            self.stream_entries.push(Entry::Org(
+                "Unattributed — no project claimed these".to_string(),
+            ));
+            self.stream_entries
+                .extend(orphans.into_iter().map(Entry::Item));
+        }
         fix_selection(&self.stream_entries, &mut self.stream_state);
     }
 

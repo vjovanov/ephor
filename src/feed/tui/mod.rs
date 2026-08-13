@@ -97,6 +97,10 @@ pub(crate) struct Ctx {
     /// reappearance never sends the reader to re-read everything
     /// (§FS-007-matters.5).
     pub resurfacing: BTreeMap<String, String>,
+    /// Conversations attribution could not place, and ones two projects
+    /// claimed equally. Shown rather than dropped: a guess that lands wrong
+    /// amends someone's matter silently (§FS-008-attribution.4).
+    pub unattributed: Vec<Item>,
     /// Item actions: global, plus per-project extras.
     pub actions: Vec<ActionConfig>,
     pub project_actions: BTreeMap<String, Vec<ActionConfig>>,
@@ -582,6 +586,7 @@ impl App {
                 behind: BTreeMap::new(),
                 capabilities: BTreeMap::new(),
                 resurfacing: BTreeMap::new(),
+                unattributed: Vec::new(),
                 actions: config.actions.clone(),
                 project_actions: config
                     .projects
@@ -625,6 +630,11 @@ impl App {
 
     fn reload_feeds(&mut self) -> Result<()> {
         self.ctx.feeds.clear();
+        // What nothing claimed is read like any other feed, so it can be shown
+        // rather than only counted (§FS-008-attribution.4).
+        self.ctx.unattributed = cache::load_feed(crate::feed::refresh::UNATTRIBUTED)?
+            .map(|feed| feed.items().collect())
+            .unwrap_or_default();
         for project in self.ctx.projects.clone() {
             match cache::load_feed(&project)? {
                 Some(feed) => self.ctx.feeds.push(feed),
@@ -1368,6 +1378,7 @@ mod tests {
             behind: BTreeMap::new(),
             capabilities: BTreeMap::new(),
             resurfacing: BTreeMap::new(),
+            unattributed: Vec::new(),
             actions: Vec::new(),
             project_actions: BTreeMap::new(),
             provider_blocks: BTreeMap::new(),

@@ -802,3 +802,97 @@ JSON
         0
     );
 }
+
+/// A source that asks nothing about any one project is fetched once for the
+/// whole site, and the engine says where each of its findings belongs
+/// (§AR-008-pipeline.1, §AR-003-attribution). A mention on a repository in a
+/// project's *territory* — in no forest at all — lands on that project
+/// (§FS-008-attribution.1), and what nothing claims is kept where it can be
+/// looked at (§FS-008-attribution.4).
+#[test]
+fn a_shared_source_is_placed_by_the_engine_rather_than_by_itself() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_feed_fixture(tmp.path());
+    let fake_bin = tmp.path().join("fakebin");
+    fs::create_dir_all(&fake_bin).unwrap();
+    make_executable(&fake_bin.join("gh"), FAKE_GH_NOTICES);
+    let path = format!(
+        "{}:{}",
+        fake_bin.to_string_lossy(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    // The project claims one repository beyond its forest.
+    let registry: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(tmp.path().join("workspaces.json")).unwrap())
+            .unwrap();
+    let mut registry = registry;
+    registry["projects"][0]["territory"] = json!(["other"]);
+    fs::write(
+        tmp.path().join("workspaces.json"),
+        serde_json::to_string_pretty(&registry).unwrap(),
+    )
+    .unwrap();
+
+    // The notification stream is a site-level source now, named nowhere near
+    // a project.
+    fs::write(
+        tmp.path().join("status.json"),
+        serde_json::to_string_pretty(&json!({
+            "defaults": { "ttl_seconds": 600, "provider_timeout_seconds": 10, "github_user": "tester" },
+            "sources": [{ "provider": "github-notifications" }],
+            "projects": { "demo": { "providers": [] } }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let mut cmd = ephor_cmd();
+    cmd.env("PATH", &path);
+    for (key, value) in feed_env(tmp.path()) {
+        cmd.env(key, value);
+    }
+    cmd.args(["refresh"]).assert().success();
+
+    // A notice about a repository in the project's territory is the project's,
+    // though no source ever said so.
+    let cache: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(tmp.path().join("state/ephor/feed/demo.json")).unwrap(),
+    )
+    .unwrap();
+    let placed = cache["providers"]["github-notifications"]["matters"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        placed.iter().any(|matter| matter["key"]
+            .as_str()
+            .is_some_and(|key| key.contains("other/lib"))),
+        "the territory repository should have landed on demo: {placed:#?}"
+    );
+    for matter in &placed {
+        assert_eq!(matter["placement"]["on"]["project"], "demo");
+    }
+
+    // And what nothing claimed is kept where it can be looked at, rather than
+    // dropped on the floor.
+    let bucket = tmp.path().join("state/ephor/feed/unattributed.json");
+    assert!(bucket.is_file(), "the bucket is part of the store");
+    let mut cmd = ephor_cmd();
+    cmd.env("PATH", &path);
+    for (key, value) in feed_env(tmp.path()) {
+        cmd.env(key, value);
+    }
+    let out = cmd
+        .args(["feed", "--unattributed", "--json"])
+        .assert()
+        .success();
+    let items: Vec<serde_json::Value> =
+        serde_json::from_slice(&out.get_output().stdout).expect("feed --unattributed --json");
+    assert!(
+        items
+            .iter()
+            .all(|item| item["project"].as_str().unwrap_or("").is_empty()),
+        "nothing in the bucket belongs to a project: {items:#?}"
+    );
+}

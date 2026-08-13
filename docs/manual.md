@@ -258,6 +258,7 @@ ephor ensure-agents --type monorepo --root ~/tmp/scratch \
     "github_user": "you",             // skips one `gh api user` per refresh
     "recent_days": 7                  // how long finished work stays under Recent
   },
+  "sources": [ /* §4.3 — fetched once, placed by ephor */ ],
   "actions": [ /* §7 */ ],
   "work":    { /* §8 */ },
   "projects": {
@@ -311,7 +312,47 @@ ephor checkout [--project P] [--branch B] [--item ID] [--from BRANCH] [--report 
   says where the workspace goes, which repositories it holds, and what a new
   branch grows from.
 
-### 4.2 Exit codes
+### 4.2 Shared sources
+
+A source that asks about specific repositories belongs to the project that
+owns them, and lives under `projects.<id>.providers`. A source that asks
+*nothing* — GitHub's notification list, a mailbox — answers about every
+project at once, so it is declared at the top level in `sources` and fetched
+once per refresh
+([§AR-008-pipeline.1](architecture/AR-008-pipeline.md#1-fetch)):
+
+```jsonc
+{ "sources": [ { "provider": "github-notifications" } ] }
+```
+
+Where each of its findings belongs is then ephor's to decide, not the
+source's: one matching engine weighs what the conversation carries against
+what each project's registry row declares — its repositories, the
+**territory** it claims beyond them, its ticket prefixes, the names it answers
+to ([§FS-008-attribution](../requirements.md#fs-008-attribution-every-conversation-finds-its-project-or-says-that-it-could-not)).
+An explicit venue wins outright, a reference places next, and resemblance only
+argues; two projects claiming the same thing equally is **not** settled by
+order — it goes to the unattributed bucket carrying both, because a guess that
+lands wrong amends someone else's row silently.
+
+```bash
+ephor feed --unattributed     # what nothing claimed, and what two projects claimed
+```
+
+Declaring a shared source under a project still works and says so once per
+refresh. The difference it makes: declared per project, a mention lands on
+whichever project happened to fetch it; declared at site level, it lands where
+it belongs.
+
+### 4.2.1 Territory
+
+`territory` on a registry row names repositories and organizations that are
+the project's business without being in its forest — `"acme/plugin"` for one,
+`"acme"` for a whole organization. It is what places the general case: a
+mention of you on some repository of the project's ecosystem, an issue filed
+there, none of it in any checkout.
+
+### 4.3 Exit codes
 
 | Code | Means |
 |---|---|
@@ -324,7 +365,7 @@ ephor checkout [--project P] [--branch B] [--item ID] [--from BRANCH] [--report 
 `status --check` is built for a shell prompt: it prints nothing and exits 4
 when something is waiting on you.
 
-### 4.3 What a failing source does
+### 4.4 What a failing source does
 
 A provider that cannot deliver **fails explicitly**
 ([§FS-001-forge-interface.6](../requirements.md#6-a-source-that-did-not-answer-says-so-and-says-which-kind-of-not)).

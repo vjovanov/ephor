@@ -266,6 +266,12 @@ pub struct FeedArgs {
     #[arg(long)]
     pub kind: Option<String>,
 
+    /// Show what nothing claimed instead: the conversations attribution could
+    /// not place, and the ones two projects claimed equally
+    /// (FS-008-attribution.4).
+    #[arg(long)]
+    pub unattributed: bool,
+
     /// Emit raw JSON instead of a table.
     #[arg(long)]
     pub json: bool,

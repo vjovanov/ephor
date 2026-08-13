@@ -1,5 +1,13 @@
 //! GitHub's own notification list as notices (§FS-001-forge-interface.1) — the
-//! source whose job is to be exhaustive.
+//! source whose job is to be exhaustive, and the first one to stop placing
+//! what it finds.
+//!
+//! It asks nothing about any one project, so it belongs in the site-level
+//! `sources` and is fetched once (§AR-008-pipeline.1); where each notice
+//! belongs is then decided by the one matching engine, against every
+//! project's declared identity (§AR-003-attribution). A mention on a
+//! repository in a project's territory lands on that project without this
+//! source ever having heard of it (§FS-008-attribution.1).
 //!
 //! Every other GitHub provider asks a question ephor composed: these
 //! repositories, these roles, these kinds of thing. Each of those questions can
@@ -206,6 +214,10 @@ impl Provider for GithubNotifications {
 
             items.push(policy::notice_item(
                 "github-notifications",
+                // No source places its own items (§AR-003-attribution): run at
+                // site level this is empty, and the engine says where the
+                // notice belongs. Declared under a project — the older shape —
+                // it is that project's, as before.
                 &ctx.project_id,
                 &Notice {
                     id: id.to_string(),

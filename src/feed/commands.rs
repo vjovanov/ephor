@@ -51,6 +51,16 @@ fn refresh_projects(
         projects.iter().collect()
     };
 
+    // Shared sources are fetched once for the whole site and placed by the
+    // engine (§AR-008-pipeline.1). Where one is still declared under a
+    // project it keeps working, and says where it belongs now.
+    for (project, source) in config.misplaced_shared_sources() {
+        eprintln!(
+            "note: '{source}' is declared under project '{project}'. It asks nothing about one \
+             project, so it belongs in the top-level \"sources\" where ephor places what it \
+             finds; the per-project form still works for now."
+        );
+    }
     let mut total_failures = 0usize;
     let mut degraded = 0usize;
     let mut refreshed = 0usize;
@@ -73,6 +83,18 @@ fn refresh_projects(
             println!("{project}: {} items", outcome.item_count);
         }
     }
+
+    // After the projects, not before: a per-project refresh writes its whole
+    // feed, so a shared source's slot has to be folded in once the file it
+    // lands in has been rewritten (§AR-008-pipeline.1).
+    let shared = crate::feed::refresh::refresh_shared(&registry_doc, config)?;
+    for failure in &shared.failures {
+        eprintln!("error: sources: {}", failure.describe());
+    }
+    if !quiet && shared.item_count > 0 {
+        println!("sources: {} items placed", shared.item_count);
+    }
+
     Ok(RefreshTally {
         refreshed,
         total_failures,
@@ -202,17 +224,25 @@ pub fn feed(args: &FeedArgs) -> Result<ExitCode> {
         None => None,
     };
 
-    let selected: Vec<&String> = if args.project.is_empty() {
-        config.projects.keys().collect()
-    } else {
-        args.project.iter().collect()
-    };
-
     let mut feeds = Vec::new();
-    for project in selected {
-        known_project(&config, project)?;
-        if let Some(feed) = cache::load_feed(project)? {
+    if args.unattributed {
+        // The bucket is part of the store rather than a log line
+        // (§AR-008-pipeline.2): what nothing claimed is still something
+        // somebody is waiting on.
+        if let Some(feed) = cache::load_feed(crate::feed::refresh::UNATTRIBUTED)? {
             feeds.push(feed);
+        }
+    } else {
+        let selected: Vec<&String> = if args.project.is_empty() {
+            config.projects.keys().collect()
+        } else {
+            args.project.iter().collect()
+        };
+        for project in selected {
+            known_project(&config, project)?;
+            if let Some(feed) = cache::load_feed(project)? {
+                feeds.push(feed);
+            }
         }
     }
 
