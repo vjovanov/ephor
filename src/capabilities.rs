@@ -201,7 +201,13 @@ impl CapabilitySet {
             fails(Rung::Ticketed, unplaced);
         }
 
-        if !bindings.gate_reported {
+        // A bound verb counts as much as a forge that reports one: above the
+        // seam nothing can tell the difference (§FS-006-project-interface.6).
+        let gated = crate::seams::gate::Verb::all().into_iter().any(|verb| {
+            crate::seams::gate::bind(verb, bindings.manifest, None, bindings.gate_reported)
+                .is_some()
+        });
+        if !gated {
             fails(
                 Rung::Gated,
                 format!("no source reports a gate for {project}, and no gate verbs are bound"),

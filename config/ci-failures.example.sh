@@ -52,6 +52,18 @@ fi
 if ephor failures --project "$PROJECT" --source "$SOURCE" \
                   --repo "${REPO:-}" --number "${NUMBER:-}" > "$REPORT" 2>/tmp/ephor-failures.$$; then
   rm -f "/tmp/ephor-failures.$$"
+  # This is also the shipped `failures` verb of the gate seam
+  # (§FS-006-project-interface.6), so where it is run as a summons it answers
+  # in structure as well as in prose: the report stays what a reader reads,
+  # and $EPHOR_ANSWER is what a program reads
+  # (§FS-006-project-interface.4).
+  if [ -n "${EPHOR_ANSWER:-}" ]; then
+    printf '{"v":1,"summary":%s,"failures":[{"job":%s,"repo":%s,"log":%s}]}' \
+      "\"$failed failing job(s)\"" \
+      "\"the gate of ${REPO:-the project}\"" \
+      "\"${REPO:-}\"" \
+      "\"$REPORT\"" > "$EPHOR_ANSWER"
+  fi
   exit 0
 fi
 

@@ -10,4 +10,5 @@
 pub mod answer;
 pub mod checks;
 pub mod dossier;
+pub mod gate;
 pub mod summons;

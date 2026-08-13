@@ -2,6 +2,11 @@
 # Restart the jobs that failed for reasons that were never this change's, and
 # every gate left red underneath them (§FS-005-dispatch.11).
 #
+# This is the shipped `restart` verb of the gate seam
+# (§FS-006-project-interface.6). Run as a summons it answers the seam's exit
+# semantics — 0 asked, 75 still running, non-zero refused — and the state
+# machine below reads the same run through the richer codes it needs.
+#
 # A runner died, a mirror was unreachable, a dependency shipped something
 # broken. There is nothing to diagnose and nothing to commit — those jobs need
 # running again. So this state commits nothing, touches no checkout, and asks
