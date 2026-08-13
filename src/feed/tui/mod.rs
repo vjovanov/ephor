@@ -1367,6 +1367,7 @@ mod tests {
             repos: Vec::new(),
             aliases: Vec::new(),
             territory: Vec::new(),
+            trust: crate::manifest::Trust::Full,
         };
         Ctx {
             feeds: Vec::new(),

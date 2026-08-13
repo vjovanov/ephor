@@ -128,6 +128,9 @@ pub struct Placement {
     /// its forest — what places a mention or an issue filed in its ecosystem
     /// (§FS-008-attribution.1).
     pub territory: Vec<String>,
+    /// How much of the project's own manifest the row is willing to believe
+    /// (§FS-006-project-interface.2).
+    pub trust: crate::manifest::Trust,
 }
 
 /// Where one item's work belongs.
@@ -187,6 +190,12 @@ impl Placement {
             repos: declarations(registry_doc, entry),
             aliases: strings(entry, "aliases"),
             territory: strings(entry, "territory"),
+            trust: registry::str_field(entry, "manifest_trust")
+                .map(crate::manifest::Trust::parse)
+                .transpose()
+                .ok()
+                .flatten()
+                .unwrap_or_default(),
         })
     }
 
@@ -194,7 +203,29 @@ impl Placement {
     /// (§FS-008-attribution.1), compiled from the row. The row has the last
     /// word: a checkout must not be able to claim another project's
     /// conversations.
+    /// What the project says about itself, where it says anything and the row
+    /// lets it be read (§FS-006-project-interface.2). Errors are not fatal
+    /// here: a manifest ephor cannot read must not stop the project being
+    /// watched, which is the whole of §DF-001-manifest-offered.
+    pub fn manifest(&self) -> Option<crate::manifest::Manifest> {
+        crate::manifest::Manifest::read(&self.root, self.trust)
+            .ok()
+            .flatten()
+    }
+
     pub fn identity(&self) -> crate::attribution::Identity {
+        let manifest = self.manifest();
+        let hint = |pick: fn(&crate::manifest::Identity) -> &Vec<String>| -> Vec<String> {
+            manifest
+                .as_ref()
+                .map(|manifest| pick(&manifest.identity).clone())
+                .unwrap_or_default()
+        };
+        // The row adopts a hint where it says nothing of its own, and
+        // overrides it where it does: a checkout must not be able to claim
+        // another project's conversations (§FS-008-attribution.1).
+        let adopt =
+            |own: Vec<String>, hinted: Vec<String>| if own.is_empty() { hinted } else { own };
         crate::attribution::Identity {
             project: self.project.clone(),
             // The prefixes its branches' ticket keys carry — what the row
@@ -210,17 +241,40 @@ impl Placement {
                     }
                     prefixes
                 }),
-            repos: self.repos.iter().map(|repo| repo.path.clone()).collect(),
-            territory: self.territory.clone(),
-            aliases: self.aliases.clone(),
-            addresses: Vec::new(),
+            repos: adopt(
+                self.repos.iter().map(|repo| repo.path.clone()).collect(),
+                hint(|identity| &identity.repos),
+            ),
+            territory: adopt(self.territory.clone(), hint(|identity| &identity.territory)),
+            aliases: adopt(self.aliases.clone(), hint(|identity| &identity.aliases)),
+            addresses: hint(|identity| &identity.addresses),
         }
     }
 
     /// This project's forest at `checkout` — the thing every git-facing
     /// feature folds over (§AR-004-forest).
     pub fn forest(&self, checkout: &Path) -> Forest {
-        Forest::resolve(checkout, self.main_branch.as_deref(), &self.repos)
+        // The row's layout where it declares one, the manifest's where it does
+        // not, probing where neither says (§AR-004-forest lead,
+        // §FS-006-project-interface.1).
+        if !self.repos.is_empty() {
+            return Forest::resolve(checkout, self.main_branch.as_deref(), &self.repos);
+        }
+        let declared: Vec<Declaration> = self
+            .manifest()
+            .map(|manifest| {
+                manifest
+                    .forest
+                    .iter()
+                    .map(|repo| Declaration {
+                        path: repo.path.clone(),
+                        role: repo.role.clone(),
+                        main: repo.main.clone(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Forest::resolve(checkout, self.main_branch.as_deref(), &declared)
     }
 
     /// The directory this project's workspace for `branch` belongs at, whether
@@ -327,6 +381,7 @@ mod tests {
             repos: Vec::new(),
             aliases: Vec::new(),
             territory: Vec::new(),
+            trust: crate::manifest::Trust::Full,
         }
     }
 

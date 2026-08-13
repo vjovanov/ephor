@@ -344,7 +344,46 @@ refresh. The difference it makes: declared per project, a mention lands on
 whichever project happened to fetch it; declared at site level, it lands where
 it belongs.
 
-### 4.2.1 Territory
+### 4.2.1 What a project can say about itself — `ephor.json`
+
+A project that wants to speak places one file at its forest root
+([§FS-006-project-interface.2](../requirements.md#2-the-manifest-is-offered-never-required)).
+It is **offered, never required**: every field is optional, an empty `{}` is
+valid, and a project that places nothing is fully watchable exactly as it
+stands. It may declare identity hints, its forest's own layout, check and gate
+verbs, ticket stores, and offers — menu entries you invoke.
+
+```jsonc
+{ "identity": { "aliases": ["widget"], "territory": ["acme-labs"] },
+  "forest":   [{ "name": "ce", "path": "ce" }],
+  "checks":   { "check": "./check.sh" },
+  "actions":  [{ "id": "rebuild", "description": "rebuild it",
+                 "command": "./build.sh", "requires": ["checkout-able"] }] }
+```
+
+Two rules make it safe to read. **The row is authoritative**: identity fields
+are hints your registry adopts where it says nothing of its own and overrides
+where it does, because attribution keys must not be forgeable by a checkout.
+And **the row sets the trust**: `manifest_trust` is `full` (the default —
+its commands run with the trust you extend to the project's own build),
+`descriptions` (read what it says about itself, run none of it), or `ignore`.
+
+Resolution is always **site configuration over manifest over probe**: probing
+is defaulting, the manifest is the project declaring what probing would have
+guessed, and your configuration overrides both.
+
+```bash
+ephor validate --manifest .        # check a manifest where it sits
+ephor schema manifest              # the published schema, verbatim
+ephor schema answer|registry|forge
+```
+
+The schemas are the interface's stability surface: what a release may change
+is answerable by diffing them
+([§FS-006-project-interface.11](../requirements.md#11-the-interface-is-versioned)).
+Each validates offline — nothing in one refers to another by URL.
+
+### 4.2.2 Territory
 
 `territory` on a registry row names repositories and organizations that are
 the project's business without being in its forest — `"acme/plugin"` for one,

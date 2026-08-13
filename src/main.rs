@@ -24,6 +24,47 @@ fn main() -> ExitCode {
     }
 }
 
+/// Print one published schema (§FS-006-project-interface.11). What a release
+/// may change is answerable by diffing these, so they are printed verbatim
+/// rather than re-rendered.
+fn print_schema(name: &str) -> Result<ExitCode> {
+    let schema = match name {
+        "manifest" => ephor::manifest::MANIFEST_SCHEMA,
+        "answer" => ephor::seams::answer::ANSWER_SCHEMA,
+        "registry" => registry::EMBEDDED_SCHEMA,
+        "forge" => include_str!("../assets/ephor-forge.schema.json"),
+        other => {
+            return Err(EphorError::Registry(format!(
+                "unknown schema '{other}': expected 'manifest', 'answer', 'registry', or 'forge'"
+            )))
+        }
+    };
+    print!("{schema}");
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Validate a project's own manifest, given the file or the forest root it
+/// sits at.
+fn validate_manifest(path: &str) -> Result<ExitCode> {
+    let path = paths::resolve_path(path);
+    let file = if path.is_dir() {
+        path.join(ephor::manifest::FILE)
+    } else {
+        path
+    };
+    if !file.is_file() {
+        return Err(EphorError::Registry(format!(
+            "No manifest at {} — a project that places none is fully watchable as it stands.",
+            file.display()
+        )));
+    }
+    let text = std::fs::read_to_string(&file)
+        .map_err(|err| EphorError::Command(format!("Cannot read {}: {err}", file.display())))?;
+    ephor::manifest::parse(&text, &file.display().to_string())?;
+    println!("Validated {}", file.display());
+    Ok(ExitCode::SUCCESS)
+}
+
 fn run(cli: Cli) -> Result<ExitCode> {
     match &cli.command {
         Command::Status(args) => return feed::commands::status(args),
@@ -35,6 +76,14 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Command::Checkout(args) => return checkout::checkout(args),
         Command::Work(args) => return work::commands::work(args),
         Command::Tui => return feed::tui::run(),
+        // The schemas are the interface's stability surface, printable without
+        // a registry to read (§FS-006-project-interface.11).
+        Command::Schema(args) => return print_schema(&args.name),
+        // A manifest is validated where it sits, with no registry involved:
+        // that is the point of publishing the schema.
+        Command::Validate(args) if args.manifest.is_some() => {
+            return validate_manifest(args.manifest.as_deref().unwrap())
+        }
         _ => {}
     }
 
@@ -67,7 +116,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             agents::write_agents_file(&registry, &registry_path, &workspace)?;
             Ok(ExitCode::SUCCESS)
         }
-        Command::Validate | Command::EnsureAgents(_) | Command::Update(_) => {
+        Command::Validate(_) | Command::EnsureAgents(_) | Command::Update(_) => {
             let workspaces = registry::select_managed_workspaces(
                 &registry,
                 &cli.workspace,
@@ -76,7 +125,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 cli.organization.as_deref(),
             )?;
             match &cli.command {
-                Command::Validate => {
+                Command::Validate(_) => {
                     for workspace in &workspaces {
                         let project_type =
                             registry::get_project_type(&registry, &workspace.type_id)?;
@@ -116,6 +165,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         | Command::Rebase(_)
         | Command::Checkout(_)
         | Command::Work(_)
+        | Command::Schema(_)
         | Command::Tui => {
             unreachable!("handled above")
         }

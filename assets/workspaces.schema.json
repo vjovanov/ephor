@@ -134,6 +134,10 @@
             "items": { "type": "string", "minLength": 1 },
             "description": "Alternative names for this project (useful for polyrepos with multiple repos)"
           },
+          "manifest_trust": {
+            "enum": ["full", "descriptions", "ignore"],
+            "description": "How much of the project's own ephor.json to believe (FS-006-project-interface.2): 'full' honors it, 'descriptions' reads what it says about itself and runs none of it, 'ignore' does not read it. Default: full."
+          },
           "territory": {
             "type": "array",
             "items": { "type": "string", "minLength": 1 },

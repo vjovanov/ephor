@@ -21,6 +21,7 @@ pub mod forest;
 pub mod forge;
 pub mod git;
 pub mod hooks;
+pub mod manifest;
 pub mod matter;
 pub mod paths;
 pub mod rebase;

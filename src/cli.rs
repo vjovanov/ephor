@@ -36,8 +36,10 @@ pub struct Cli {
 pub enum Command {
     /// List registered projects.
     List,
-    /// Validate the project registry.
-    Validate,
+    /// Validate the project registry, or a project's own manifest.
+    Validate(ValidateArgs),
+    /// Print one of the published schemas (manifest, answer, registry, forge).
+    Schema(SchemaArgs),
     /// Render root AGENTS.md files.
     EnsureAgents(EnsureAgentsArgs),
     /// Update selected managed branches and regenerate their AGENTS.md files.
@@ -275,6 +277,21 @@ pub struct FeedArgs {
     /// Emit raw JSON instead of a table.
     #[arg(long)]
     pub json: bool,
+}
+
+#[derive(Args, Debug, Default)]
+pub struct ValidateArgs {
+    /// Validate a project manifest (`ephor.json`) instead of the registry.
+    /// Pass the file, or the forest root it sits at.
+    #[arg(long, value_name = "PATH")]
+    pub manifest: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct SchemaArgs {
+    /// Which schema: manifest, answer, registry, or forge
+    /// (FS-006-project-interface.11).
+    pub name: String,
 }
 
 #[derive(Args, Debug)]

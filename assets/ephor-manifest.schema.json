@@ -64,7 +64,7 @@
             "features": {
               "oneOf": [
                 { "const": "list", "description": "Discover by running the command with --list; it prints one feature id per line, or a features[] envelope." },
-                { "type": "array", "items": { "$ref": "https://github.com/vjovanov/ephor/schemas/answer/v1#/$defs/feature" } }
+                { "type": "array", "items": { "$ref": "#/$defs/feature" } }
               ]
             }
           }
@@ -112,6 +112,16 @@
         }
       ],
       "description": "A command line run via sh -c in the resolved place (FS-006-project-interface.3)."
+    },
+    "feature": {
+      "type": "object",
+      "required": ["id"],
+      "description": "One feature a smoke test can run alone. The same shape the answer envelope uses, spelled here too so this schema validates offline (FS-006-project-interface.11).",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "description": { "type": "string" },
+        "paths": { "type": "array", "items": { "type": "string" }, "description": "Globs relating the feature to source paths, for change-driven selection." }
+      }
     },
     "cwd": {
       "type": "string",
