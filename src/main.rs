@@ -84,6 +84,9 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Command::Validate(args) if args.manifest.is_some() => {
             return validate_manifest(args.manifest.as_deref().unwrap())
         }
+        // A project's checks are the project's, run from its checkout with no
+        // registry and no site (§FS-009-shipped-actions.1).
+        Command::Check(args) => return ephor::seams::commands::check(args),
         _ => {}
     }
 
@@ -94,6 +97,16 @@ fn run(cli: Cli) -> Result<ExitCode> {
         .unwrap_or_else(paths::default_registry_path);
     let schema = load_schema(cli.schema.as_deref())?;
     let registry = registry::load_registry(&registry_path, &schema)?;
+
+    // Loading held it to the published schema, which is all a repository
+    // carrying a committed registry can check: the checkouts its rows name
+    // are on somebody's machine, not in CI (§FS-009-shipped-actions.1).
+    if let Command::Validate(args) = &cli.command {
+        if args.schema_only {
+            println!("Validated {}", registry_path.display());
+            return Ok(ExitCode::SUCCESS);
+        }
+    }
 
     match &cli.command {
         Command::List => {
@@ -166,6 +179,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         | Command::Checkout(_)
         | Command::Work(_)
         | Command::Schema(_)
+        | Command::Check(_)
         | Command::Tui => {
             unreachable!("handled above")
         }

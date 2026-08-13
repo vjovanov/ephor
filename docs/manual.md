@@ -1515,6 +1515,66 @@ ephor status widget --cached  # one project, no fetching
 Use `--cached` in anything that runs often: without it, `status` refetches
 whatever is older than the TTL and blocks until every provider answers.
 
+### 9.3 CI steps ephor ships
+
+Three steps ship, and they version with ephor
+([§FS-009-shipped-actions](../requirements.md#fs-009-shipped-actions-what-ephor-ships-for-ci-runs-from-the-repository-alone)):
+pin the release you consume, as you pin any dependency.
+
+| Step | Does |
+|---|---|
+| `setup` | installs a pinned ephor release, checksum-verified, and puts it on `PATH` |
+| `validate` | holds this repository's `ephor.json` — and a committed registry, if it keeps one — to the published schemas |
+| `check` | runs the check verbs this repository declares (§4.2.1), or one feature's smoke |
+
+The rule that selects them: **a shipped step runs from repository-committed
+material and workflow inputs alone**. None of them reads a registry of yours,
+your bindings, or a credential for your sources — so none of them is the watch.
+The loop stays on machines that have a site; shipping it hosted would be
+shipping someone's configuration.
+
+As whole jobs:
+
+```yaml
+jobs:
+  materials:
+    uses: vjovanov/ephor/.github/workflows/ephor-validate.yml@v0.4.1
+    with:
+      version: "0.4.1"
+      registry: infra/workspaces.json   # omit where you keep none
+
+  gate:
+    uses: vjovanov/ephor/.github/workflows/ephor-check.yml@v0.4.1
+    with:
+      version: "0.4.1"
+      per-feature: true                 # one job per feature your smoke lists
+```
+
+Or as steps, when you are composing something of your own:
+
+```yaml
+      - uses: vjovanov/ephor/.github/actions/setup@v0.4.1
+        with: { version: "0.4.1" }
+      - uses: vjovanov/ephor/.github/actions/check@v0.4.1
+        with: { verbs: "style smoke" }
+```
+
+`check` is the same command you can run yourself:
+
+```bash
+ephor check                        # the aggregate, or what else is declared
+ephor check --verb style --verb smoke
+ephor check --feature reflection   # one feature's smoke
+ephor check --list-features --json # what a matrix fans out over
+ephor validate --manifest .        # what `validate` runs
+ephor --registry infra/workspaces.json validate --schema-only
+```
+
+It reads the project's declaration and nothing else, exits non-zero when a
+verb fails, and treats `75` as parked rather than failed (§7.3). A project
+that declares nothing is told so — with both ways to declare something named
+— rather than passing an empty gate.
+
 ---
 
 ## 10. Extending ephor

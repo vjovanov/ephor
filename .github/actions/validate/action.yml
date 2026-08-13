@@ -1,0 +1,49 @@
+# Hold what a repository carries to the published schemas
+# (§FS-009-shipped-actions.1, §FS-006-project-interface.11): the `ephor.json`
+# it speaks with, and a committed registry where it keeps one. Nothing here
+# looks for the checkouts a registry's rows describe — those are on somebody's
+# machine, not in CI.
+name: Validate ephor materials
+description: Check a project's ephor.json, and a committed registry, against the published schemas.
+
+inputs:
+  manifest:
+    description: >-
+      The `ephor.json` to check, or the forest root it sits at. Empty skips
+      the manifest.
+    required: false
+    default: "."
+  registry:
+    description: >-
+      A committed registry to hold to the published schema. Empty — the
+      default — skips it, which is every repository that keeps none.
+    required: false
+    default: ""
+  ephor:
+    description: The ephor to run. Defaults to the one `setup` put on PATH.
+    required: false
+    default: ephor
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        EPHOR_BIN: ${{ inputs.ephor }}
+        EPHOR_MANIFEST: ${{ inputs.manifest }}
+        EPHOR_REGISTRY_FILE: ${{ inputs.registry }}
+      run: |
+        set -euo pipefail
+
+        if [ -z "$EPHOR_MANIFEST" ] && [ -z "$EPHOR_REGISTRY_FILE" ]; then
+          echo "::error::validate: nothing to validate — name a manifest, a registry, or both" >&2
+          exit 1
+        fi
+
+        if [ -n "$EPHOR_MANIFEST" ]; then
+          "$EPHOR_BIN" validate --manifest "$EPHOR_MANIFEST"
+        fi
+
+        if [ -n "$EPHOR_REGISTRY_FILE" ]; then
+          "$EPHOR_BIN" --registry "$EPHOR_REGISTRY_FILE" validate --schema-only
+        fi

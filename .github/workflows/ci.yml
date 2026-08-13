@@ -82,6 +82,50 @@ jobs:
       - name: cargo test
         run: cargo test --all-targets --locked
 
+  # ephor is a project ephor watches, so it consumes what it ships
+  # (§FS-009-shipped-actions): its own `ephor.json` is validated against the
+  # published schema, and its own style verb runs through the shipped check
+  # step. The binary is this checkout's rather than a release's — the steps
+  # take `ephor:` for exactly this, and a release cannot be the thing that
+  # tests the commit that makes it. The aggregate verb is deliberately not run
+  # here: `just check` is what the `test` job already is, and running it twice
+  # would double the gate to prove the same thing.
+  shipped-steps:
+    name: shipped steps (dogfood)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v5
+        continue-on-error: true
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build ephor
+        run: cargo build --locked
+
+      - uses: ./.github/actions/validate
+        with:
+          ephor: ./target/debug/ephor
+          manifest: .
+
+      - uses: ./.github/actions/check
+        with:
+          ephor: ./target/debug/ephor
+          verbs: style
+
   # The tree is a grund tree: citations in requirements.md, docs/, and src/ must
   # resolve. One platform — it checks the repository's text, not behaviour.
   grund:

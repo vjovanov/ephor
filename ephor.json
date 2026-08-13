@@ -1,0 +1,11 @@
+{
+  "identity": {
+    "name": "ephor",
+    "aliases": ["ephor"],
+    "repos": ["vjovanov/ephor"]
+  },
+  "checks": {
+    "check": "just check",
+    "style": "cargo fmt --all -- --check"
+  }
+}

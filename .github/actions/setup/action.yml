@@ -1,0 +1,103 @@
+# The building block the other shipped steps and anyone's own composition
+# stand on (§FS-009-shipped-actions.1): a pinned ephor on PATH, from the
+# release its consumer named. Nothing here reads a registry, a site, or a
+# credential of a person's — a repository and this input are the whole of it
+# (§REQ-001-boundary.2).
+name: Set up ephor
+description: Install a pinned ephor release and put it on PATH.
+
+inputs:
+  version:
+    description: >-
+      The release to install, as `0.4.1` or `v0.4.1`. Pin it as you pin any
+      dependency: a release that changes a schema or a verb ships the steps
+      that understand the change (§FS-009-shipped-actions.2).
+    required: true
+  repository:
+    description: The repository releases are downloaded from.
+    required: false
+    default: vjovanov/ephor
+  token:
+    description: Token used to download the release asset.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  version:
+    description: The version installed, without its leading `v`.
+    value: ${{ steps.install.outputs.version }}
+  path:
+    description: The directory holding the `ephor` binary.
+    value: ${{ steps.install.outputs.path }}
+
+runs:
+  using: composite
+  steps:
+    - id: install
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        EPHOR_VERSION: ${{ inputs.version }}
+        EPHOR_REPOSITORY: ${{ inputs.repository }}
+      run: |
+        set -euo pipefail
+
+        version="${EPHOR_VERSION#v}"
+        if [ -z "$version" ]; then
+          echo "::error::setup-ephor: no version given; pin the release you consume" >&2
+          exit 1
+        fi
+
+        # The triples the release actually ships. A runner ephor has no binary
+        # for is told so by name rather than left to fail in an extract step.
+        case "${RUNNER_OS}/${RUNNER_ARCH}" in
+          Linux/X64)    triple=x86_64-unknown-linux-gnu;  archive_ext=tar.gz ;;
+          Linux/ARM64)  triple=aarch64-unknown-linux-gnu; archive_ext=tar.gz ;;
+          macOS/X64)    triple=x86_64-apple-darwin;       archive_ext=tar.gz ;;
+          macOS/ARM64)  triple=aarch64-apple-darwin;      archive_ext=tar.gz ;;
+          Windows/X64)  triple=x86_64-pc-windows-msvc;    archive_ext=zip ;;
+          Windows/ARM64) triple=aarch64-pc-windows-msvc;  archive_ext=zip ;;
+          *)
+            echo "::error::setup-ephor: no ephor release for ${RUNNER_OS}/${RUNNER_ARCH}" >&2
+            exit 1
+            ;;
+        esac
+
+        base="ephor-${version}-${triple}"
+        archive="${base}.${archive_ext}"
+        dir="${RUNNER_TEMP}/ephor-${version}"
+        mkdir -p "$dir"
+
+        gh release download "v${version}" \
+          --repo "$EPHOR_REPOSITORY" \
+          --pattern "$archive" \
+          --pattern "${archive}.sha256" \
+          --dir "$dir" \
+          --clobber
+
+        # Verified, not trusted: the release publishes a checksum beside every
+        # archive, and a step that downloads a binary without checking it is a
+        # supply chain nobody looked at.
+        cd "$dir"
+        if command -v sha256sum >/dev/null 2>&1; then
+          sha256sum --check "${archive}.sha256"
+        elif command -v shasum >/dev/null 2>&1; then
+          shasum -a 256 --check "${archive}.sha256"
+        else
+          echo "::error::setup-ephor: no sha256 tool on this runner to verify ${archive}" >&2
+          exit 1
+        fi
+
+        if [ "$archive_ext" = "zip" ]; then
+          pwsh -NoProfile -Command "Expand-Archive -Path '${archive}' -DestinationPath '.' -Force"
+        else
+          tar -xzf "$archive"
+        fi
+
+        echo "${dir}/${base}" >> "$GITHUB_PATH"
+        echo "version=${version}" >> "$GITHUB_OUTPUT"
+        echo "path=${dir}/${base}" >> "$GITHUB_OUTPUT"
+
+    - name: Report what was installed
+      shell: bash
+      run: ephor --version

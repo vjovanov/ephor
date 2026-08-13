@@ -30,6 +30,31 @@ ships, the previous "latest" section moves verbatim to
 
 ### Added
 
+- **Three CI steps ship, and they run from your repository alone**
+  ([§FS-009-shipped-actions](../requirements.md#fs-009-shipped-actions-what-ephor-ships-for-ci-runs-from-the-repository-alone),
+  manual §9.3). `setup` installs a pinned ephor release, checksum-verified,
+  and puts it on `PATH`; `validate` holds a repository's `ephor.json` — and a
+  committed registry where it keeps one — to the published schemas; `check`
+  runs the check verbs the repository declares, one job per feature where its
+  smoke enumerates them. Each ships twice: as a composite action to compose
+  with, and as a `workflow_call` workflow that is a whole job. What selects
+  them is the rule that a shipped step reads repository-committed material and
+  workflow inputs and nothing else — no registry, no bindings, no credentials
+  for anybody's sources — so the watch-and-work loop stays on machines that
+  have a site. ephor's own CI is the first consumer, running them against
+  ephor's own `ephor.json`.
+- **`ephor check` runs a project's own verbs from its checkout**
+  ([§FS-006-project-interface.5](../requirements.md#5-checks-are-verbs-and-every-script-is-self-contained),
+  manual §9.3). The seam had no command line; now it has one, and it is what
+  the shipped step stands on. With no verb named it runs the aggregate where a
+  project declares one and whatever else it declares where it does not; the
+  project's output streams to your log rather than being swallowed and
+  summarized; a verb that exits `75` is parked, not failed; and
+  `--list-features --json` prints what a matrix fans out over.
+  `ephor validate --schema-only` is the registry half — the schema is what a
+  repository can check, since the checkouts its rows name are on somebody's
+  machine.
+
 - **A project can offer menu entries, and yours still win**
   ([§FS-006-project-interface.9](../requirements.md#9-offers-the-projects-actions),
   manual §7.6). The `actions` of a project's `ephor.json` now arrive in the

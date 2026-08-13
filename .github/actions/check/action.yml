@@ -1,0 +1,51 @@
+# The project's own gate, derived from the project's own declaration
+# (§FS-009-shipped-actions.1, §FS-006-project-interface.5): ephor runs the
+# check verbs the repository declares — or the well-known names it carries —
+# and nothing project-specific lives in the workflow.
+name: Run a project's check verbs
+description: Run the check verbs a project declares, or one feature's smoke.
+
+inputs:
+  root:
+    description: The forest root to check.
+    required: false
+    default: "."
+  verbs:
+    description: >-
+      Which verbs to run — `check`, `style`, `smoke` — whitespace separated.
+      Empty runs the aggregate where the project declares one, and whatever
+      else it declares where it does not.
+    required: false
+    default: ""
+  feature:
+    description: >-
+      Run one feature's smoke rather than the whole of it. Empty runs the
+      verb whole.
+    required: false
+    default: ""
+  ephor:
+    description: The ephor to run. Defaults to the one `setup` put on PATH.
+    required: false
+    default: ephor
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        EPHOR_BIN: ${{ inputs.ephor }}
+        EPHOR_CHECK_ROOT: ${{ inputs.root }}
+        EPHOR_CHECK_VERBS: ${{ inputs.verbs }}
+        EPHOR_CHECK_FEATURE: ${{ inputs.feature }}
+      run: |
+        set -euo pipefail
+
+        args=(check --root "$EPHOR_CHECK_ROOT")
+        for verb in $EPHOR_CHECK_VERBS; do
+          args+=(--verb "$verb")
+        done
+        if [ -n "$EPHOR_CHECK_FEATURE" ]; then
+          args+=(--feature "$EPHOR_CHECK_FEATURE")
+        fi
+
+        "$EPHOR_BIN" "${args[@]}"

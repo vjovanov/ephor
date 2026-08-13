@@ -38,6 +38,8 @@ pub enum Command {
     List,
     /// Validate the project registry, or a project's own manifest.
     Validate(ValidateArgs),
+    /// Run a project's own check verbs, from its checkout alone.
+    Check(CheckArgs),
     /// Print one of the published schemas (manifest, answer, registry, forge).
     Schema(SchemaArgs),
     /// Render root AGENTS.md files.
@@ -285,6 +287,42 @@ pub struct ValidateArgs {
     /// Pass the file, or the forest root it sits at.
     #[arg(long, value_name = "PATH")]
     pub manifest: Option<String>,
+
+    /// Hold the registry to the published schema and stop, without looking
+    /// for the checkouts its rows describe. What a repository carrying a
+    /// committed registry can check in CI (FS-009-shipped-actions.1).
+    #[arg(long)]
+    pub schema_only: bool,
+}
+
+/// `ephor check`: the project's own gate, derived from the project's own
+/// declaration (FS-006-project-interface.5).
+#[derive(Args, Debug)]
+pub struct CheckArgs {
+    /// The forest root to check. Defaults to the working directory.
+    #[arg(long, value_name = "PATH")]
+    pub root: Option<String>,
+
+    /// Which verbs to run — `check`, `style`, `smoke` — repeatable. With none
+    /// named, the aggregate runs where the project declares one, and whatever
+    /// else it declares where it does not.
+    #[arg(long = "verb", value_name = "VERB")]
+    pub verbs: Vec<String>,
+
+    /// Run one feature's smoke rather than the whole of it
+    /// (FS-006-project-interface.5).
+    #[arg(long, value_name = "ID")]
+    pub feature: Option<String>,
+
+    /// Print the features this project's smoke enumerates and stop — one per
+    /// line, or `--json` for a workflow matrix.
+    #[arg(long)]
+    pub list_features: bool,
+
+    /// Print the feature list as a JSON array, which is what a workflow
+    /// matrix reads.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Args, Debug)]

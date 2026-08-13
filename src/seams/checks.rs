@@ -205,14 +205,19 @@ pub fn summary_of(answer: &Answer) -> Option<String> {
         .and_then(|normalized| normalized.facts.summary.clone())
 }
 
-/// Run one bound verb at a project's root, capturing its output. `feature`
-/// runs that feature's smoke alone (§FS-006-project-interface.5).
+/// Run one bound verb at a project's root. `feature` runs that feature's
+/// smoke alone (§FS-006-project-interface.5).
+///
+/// The mode is the caller's, as it is for every summons
+/// (§AR-002-summons.2): a dossier being assembled wants the output back and
+/// captures it; a person or a CI log watching a gate run wants it streamed,
+/// which is also the only way the command's own standard error reaches them.
 pub fn run(
     bound: &Bound,
     root: &Path,
     dossier: Vec<(String, String)>,
     feature: Option<&str>,
-    timeout: std::time::Duration,
+    mode: Mode,
 ) -> Result<Answer> {
     let mut summons = bound.summons(dossier)?;
     if let Some(feature) = feature {
@@ -222,7 +227,7 @@ pub fn run(
             crate::seams::summons::quote(feature)
         );
     }
-    crate::seams::summons::run(&summons, &Site::root(root), Mode::Captured(timeout))
+    crate::seams::summons::run(&summons, &Site::root(root), mode)
 }
 
 #[cfg(test)]
@@ -310,7 +315,7 @@ mod tests {
             tmp.path(),
             Vec::new(),
             Some("--list"),
-            std::time::Duration::from_secs(10),
+            Mode::Captured(std::time::Duration::from_secs(10)),
         )
         .unwrap();
         let features: Vec<String> = features_of(&answer)
@@ -342,7 +347,7 @@ mod tests {
             tmp.path(),
             Vec::new(),
             None,
-            std::time::Duration::from_secs(10),
+            Mode::Captured(std::time::Duration::from_secs(10)),
         )
         .unwrap();
         assert!(!answer.is_done(), "the exit code is the answer");

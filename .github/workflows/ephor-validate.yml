@@ -1,0 +1,53 @@
+# A shipped step, whole: checkout, a pinned ephor, and the published schemas
+# held against what this repository carries (§FS-009-shipped-actions.1).
+#
+# Call it from your own workflow:
+#
+#     jobs:
+#       ephor:
+#         uses: vjovanov/ephor/.github/workflows/ephor-validate.yml@v0.4.1
+#         with:
+#           version: "0.4.1"
+name: ephor validate
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: The ephor release to run, pinned by you.
+        required: true
+        type: string
+      manifest:
+        description: The `ephor.json` to check, or the root it sits at.
+        required: false
+        type: string
+        default: "."
+      registry:
+        description: A committed registry to hold to the schema; empty skips it.
+        required: false
+        type: string
+        default: ""
+      runs-on:
+        description: The runner to use.
+        required: false
+        type: string
+        default: ubuntu-latest
+
+jobs:
+  validate:
+    name: validate
+    runs-on: ${{ inputs.runs-on }}
+    steps:
+      - uses: actions/checkout@v6
+
+      # Relative, so the steps a caller gets are the ones from the ref they
+      # pinned this workflow at — the actions and the workflow ship together
+      # and version together (§FS-009-shipped-actions.2).
+      - uses: ./.github/actions/setup
+        with:
+          version: ${{ inputs.version }}
+
+      - uses: ./.github/actions/validate
+        with:
+          manifest: ${{ inputs.manifest }}
+          registry: ${{ inputs.registry }}

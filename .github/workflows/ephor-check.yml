@@ -1,0 +1,105 @@
+# A shipped step, whole: checkout, a pinned ephor, and the project's own
+# check verbs run from the project's own declaration
+# (§FS-009-shipped-actions.1, §FS-006-project-interface.5). Where the project's
+# smoke enumerates features, one job runs per feature — the matrix is the
+# project's list, not a list written into this file.
+#
+# Call it from your own workflow:
+#
+#     jobs:
+#       ephor:
+#         uses: vjovanov/ephor/.github/workflows/ephor-check.yml@v0.4.1
+#         with:
+#           version: "0.4.1"
+name: ephor check
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: The ephor release to run, pinned by you.
+        required: true
+        type: string
+      root:
+        description: The forest root to check.
+        required: false
+        type: string
+        default: "."
+      verbs:
+        description: >-
+          Which verbs to run — `check`, `style`, `smoke` — whitespace
+          separated. Empty runs the aggregate where the project declares one.
+        required: false
+        type: string
+        default: ""
+      per-feature:
+        description: >-
+          Fan one job out per feature the project's smoke enumerates. A
+          project that enumerates none runs once, which is the same run it
+          would have had.
+        required: false
+        type: boolean
+        default: false
+      runs-on:
+        description: The runner to use.
+        required: false
+        type: string
+        default: ubuntu-latest
+
+jobs:
+  # What the project says it has, asked of the project rather than configured
+  # here. A smoke that is one opaque verb answers the empty list, and the
+  # matrix below then holds exactly one nameless leg.
+  features:
+    name: features
+    if: ${{ inputs.per-feature }}
+    runs-on: ${{ inputs.runs-on }}
+    outputs:
+      features: ${{ steps.list.outputs.features }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: ./.github/actions/setup
+        with:
+          version: ${{ inputs.version }}
+
+      - id: list
+        shell: bash
+        env:
+          EPHOR_CHECK_ROOT: ${{ inputs.root }}
+        run: |
+          set -euo pipefail
+          features="$(ephor check --root "$EPHOR_CHECK_ROOT" --list-features --json)"
+          # One nameless leg where a project enumerates nothing: the whole
+          # smoke is the run it would have had anyway.
+          if [ "$features" = "[]" ]; then
+            features='[""]'
+          fi
+          echo "features=$features" >> "$GITHUB_OUTPUT"
+          echo "$features"
+
+  check:
+    name: ${{ matrix.feature && format('check ({0})', matrix.feature) || 'check' }}
+    needs: [features]
+    # `features` is skipped when nothing asked for a per-feature run, and a
+    # skipped dependency must not skip this.
+    if: ${{ always() && needs.features.result != 'failure' }}
+    runs-on: ${{ inputs.runs-on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Skipped `features` leaves the output empty, which is one nameless
+        # leg — the same run a project that enumerates nothing gets.
+        feature: ${{ fromJSON(needs.features.outputs.features || '[""]') }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: ./.github/actions/setup
+        with:
+          version: ${{ inputs.version }}
+
+      - uses: ./.github/actions/check
+        with:
+          root: ${{ inputs.root }}
+          verbs: ${{ inputs.verbs }}
+          feature: ${{ matrix.feature }}
