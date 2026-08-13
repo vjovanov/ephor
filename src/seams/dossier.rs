@@ -34,6 +34,20 @@ fn place(project: &str, root: &Path, workspace: &Path) -> Vec<(String, String)> 
 /// disagree about what the workspace holds.
 pub const REPOS: &str = "EPHOR_REPOS";
 
+/// The check verbs a project fills, one per line, in the order a verify step
+/// should run them (§FS-006-project-interface.5). Which verbs run and in what
+/// order is policy above the interface, so it is handed over rather than
+/// decided inside ephor.
+pub const CHECKS: &str = "EPHOR_CHECKS";
+
+/// Add the bound check verbs to a dossier, where the project fills any.
+pub fn with_checks(mut pairs: Vec<(String, String)>, checks: &[String]) -> Vec<(String, String)> {
+    if !checks.is_empty() {
+        pairs.push((CHECKS.to_string(), checks.join("\n")));
+    }
+    pairs
+}
+
 fn with_forest(mut pairs: Vec<(String, String)>, forest: Option<&Forest>) -> Vec<(String, String)> {
     if let Some(forest) = forest.filter(|forest| !forest.is_empty()) {
         pairs.push((REPOS.to_string(), forest.names().join("\n")));
@@ -170,6 +184,22 @@ mod tests {
         let empty = Forest::resolve(tmp.path(), None, &[crate::forest::Declaration::at("gone")]);
         let pairs = of_project("widget", tmp.path(), tmp.path(), Some(&empty));
         assert!(pairs.iter().all(|(name, _)| name != REPOS));
+    }
+
+    #[test]
+    fn the_check_verbs_are_handed_over_so_composition_stays_configuration() {
+        let pairs = with_checks(
+            of_project("widget", Path::new("/w"), Path::new("/w"), None),
+            &["./check.sh".to_string(), "mx gate".to_string()],
+        );
+        assert_eq!(value(&pairs, CHECKS), "./check.sh\nmx gate");
+
+        // A project that fills none says nothing, rather than saying "none".
+        let bare = with_checks(
+            of_project("widget", Path::new("/w"), Path::new("/w"), None),
+            &[],
+        );
+        assert!(bare.iter().all(|(name, _)| name != CHECKS));
     }
 
     #[test]

@@ -96,6 +96,9 @@ pub struct Bindings<'a> {
     /// last answer is what establishes the rung until gate verbs are bound
     /// (§AR-005-capabilities.1).
     pub gate_reported: bool,
+    /// What the project says about itself, where it says anything
+    /// (§FS-006-project-interface.2).
+    pub manifest: Option<&'a crate::manifest::Manifest>,
 }
 
 /// One project's ladder.
@@ -307,6 +310,7 @@ mod tests {
             checkout: Some("gco \"$EPHOR_BRANCH\""),
             runner: None,
             gate_reported: true,
+            manifest: None,
         }
     }
 

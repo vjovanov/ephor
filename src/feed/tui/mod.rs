@@ -211,6 +211,12 @@ impl Ctx {
                 feed.items()
                     .any(|item| crate::feed::gate::Gate::of(&item).is_some())
             });
+            // What the project says about itself, read once per project here
+            // rather than by each rung (§FS-006-project-interface.2).
+            let manifest = self
+                .placements
+                .get(project)
+                .and_then(crate::branches::Placement::manifest);
             let bindings = Bindings {
                 sources: self.provider_blocks.get(project).map(Vec::len).unwrap_or(0),
                 checkout: self
@@ -219,6 +225,7 @@ impl Ctx {
                     .map(|checkout| checkout.command.as_str()),
                 runner: Some(crate::work::runner::RUNNER),
                 gate_reported,
+                manifest: manifest.as_ref(),
             };
             table.insert(
                 project.clone(),

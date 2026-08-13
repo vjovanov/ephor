@@ -8,5 +8,6 @@
 //! (§FS-006-project-interface.4).
 
 pub mod answer;
+pub mod checks;
 pub mod dossier;
 pub mod summons;

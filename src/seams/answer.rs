@@ -206,7 +206,7 @@ pub struct Failure {
 }
 
 /// One feature a project's checks enumerate (§FS-006-project-interface.5).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Feature {
     pub id: String,
     #[serde(default)]

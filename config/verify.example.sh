@@ -37,11 +37,29 @@ if [ ! -d "${CHECKOUT:-}" ] || [ -z "${CHECKOUT##*\{*}" ]; then
 fi
 cd "$CHECKOUT" || { echo "no checkout at $CHECKOUT" > "$REPORT"; exit 1; }
 
-# The project's own hook first: `./check.sh` outranks every guessed
-# convention below, because the project wrote it to mean exactly "check me".
-for check in "./check.sh" "just check" "make check" "npm test" "cargo test --locked"; do
+# Which verbs run, and in what order, is policy above the interface
+# (§FS-006-project-interface.5): $EPHOR_CHECKS names them, newline-separated,
+# and this script sequences what it is given. Composition stays here, in
+# configuration, rather than inside ephor.
+#
+# Unset, it falls back to the project's own hook first — `./check.sh` outranks
+# every guessed convention below, because the project wrote it to mean exactly
+# "check me" — and then to the ways a repository usually says so.
+checks=()
+if [ -n "${EPHOR_CHECKS:-}" ]; then
+  while IFS= read -r verb; do
+    [ -n "$verb" ] && checks+=("$verb")
+  done <<< "$EPHOR_CHECKS"
+else
+  checks=("./check.sh" "just check" "make check" "npm test" "cargo test --locked")
+fi
+
+for check in "${checks[@]}"; do
   tool=${check%% *}
   # `just check` needs a justfile as well as `just`; the same for the rest.
+  # A verb ephor handed over is already the answer to "what checks this",
+  # so it is run rather than second-guessed.
+  if [ -z "${EPHOR_CHECKS:-}" ]; then
   case "$tool" in
     just)  [ -f justfile ] || [ -f Justfile ] || continue ;;
     make)  [ -f Makefile ] || continue ;;
@@ -50,6 +68,7 @@ for check in "./check.sh" "just check" "make check" "npm test" "cargo test --loc
     ./*)   [ -x "$tool" ] || continue ;;
   esac
   command -v "${tool#./}" >/dev/null 2>&1 || [ -x "$tool" ] || continue
+  fi
 
   {
     echo "# $check"
