@@ -53,6 +53,10 @@ pub struct Capabilities {
     /// still render with their state, since an unticked box is worth seeing
     /// even where ephor cannot tick it (§FS-001-forge-interface.1).
     pub tasks: bool,
+    /// Answers [`Forge::reply`]; without it, a conversation is read here and
+    /// answered where it lives, and a drafted reply is material to copy rather
+    /// than something to send (§FS-005-dispatch.13).
+    pub replies: bool,
 }
 
 /// Which side of a pull request or issue the user is on. Defaults to author:
@@ -175,6 +179,13 @@ pub struct Reaction {
 pub struct Thread {
     #[serde(default)]
     pub messages: Vec<Message>,
+    /// What the implementation needs handed back to send a reply here — the
+    /// channel declaring it can carry one (§FS-007-matters.4). Opaque to
+    /// ephor, like `react` on a message; absent means the conversation is
+    /// display-only and a drafted answer is copy material
+    /// (§FS-005-dispatch.13).
+    #[serde(default, skip_serializing_if = "Value::is_null")]
+    pub reply: Value,
 }
 
 /// Review state as the forge reports it, lowercased and free-form: it is shown
@@ -396,6 +407,17 @@ pub trait Forge: Send + Sync {
     fn resolve_task(&self, _request: &Request, _target: &Value) -> Result<(), ProviderError> {
         Err(ProviderError(format!(
             "{} does not support ticking tasks",
+            self.name()
+        )))
+    }
+
+    /// Send a reply to a conversation, given the thread's `reply` value
+    /// verbatim (§FS-007-matters.4). The one write that carries the reader's
+    /// own words, and the last step of an answer a run drafted
+    /// (§FS-005-dispatch.13).
+    fn reply(&self, _request: &Request, _target: &Value, _text: &str) -> Result<(), ProviderError> {
+        Err(ProviderError(format!(
+            "{} does not support posting replies",
             self.name()
         )))
     }

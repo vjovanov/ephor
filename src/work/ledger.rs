@@ -244,24 +244,6 @@ pub fn store(ledger: &Ledger) -> Result<()> {
         .map_err(|err| EphorError::Command(format!("Cannot rename {}: {err}", tmp.display())))
 }
 
-/// The verdict a finished ticket left behind, as the state machine ephor ships
-/// asks for it. Found by what it says rather than by where it sits: an agent
-/// asked for a document writes a document, and its first line is a heading.
-/// Absent while the work has not reached that state, which is not a failure.
-pub fn verdict(root: &Path, plan_id: &str, ticket: &str) -> Option<String> {
-    let path = root
-        .join("runtime/ephor")
-        .join(format!("{plan_id}.{ticket}.verdict.md"));
-    let text = fs::read_to_string(path).ok()?;
-    let line = text
-        .lines()
-        .map(str::trim)
-        .find(|line| line.starts_with("VERDICT:"))
-        .map(|line| line.trim_start_matches("VERDICT:").trim())
-        .or_else(|| text.lines().map(str::trim).find(|line| !line.is_empty()))?;
-    Some(line.to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -353,26 +335,6 @@ mod tests {
         // Activity nothing else explains is still activity.
         let later = Snapshot::of(&item(gate(0, false), "open", 0));
         assert_eq!(before.changes(&later), ["there is new activity"]);
-    }
-
-    #[test]
-    fn a_verdict_is_read_back_without_its_label() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path().join("runtime/ephor");
-        fs::create_dir_all(&dir).unwrap();
-        // As an agent asked for a document actually writes one: a heading
-        // first, and the verdict in the body.
-        fs::write(
-            dir.join("widget-42.fix-gate-1.verdict.md"),
-            "# widget-42.fix-gate-1 — review verdict\n\n\
-             VERDICT: blocked — the failing job needs a credential\n\n## What was done\n",
-        )
-        .unwrap();
-        assert_eq!(
-            verdict(tmp.path(), "widget-42", "fix-gate-1").as_deref(),
-            Some("blocked — the failing job needs a credential")
-        );
-        assert!(verdict(tmp.path(), "widget-42", "nothing-1").is_none());
     }
 }
 

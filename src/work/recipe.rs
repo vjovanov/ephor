@@ -82,7 +82,10 @@ pub struct Recipe {
     #[serde(default = "yes")]
     pub needs_checkout: bool,
     /// What the ticket asks for, in the reader's words. `{...}` placeholders
-    /// are filled from the item (see [`super::dossier::Subject::placeholders`]).
+    /// are filled from the item (see [`super::dossier::Subject::placeholders`]),
+    /// plus `{reply}` — where a proposed answer for this matter belongs, which
+    /// ephor reads back and offers beside the conversation
+    /// (§FS-005-dispatch.13).
     pub brief: String,
     /// Pin the runtime's execution identity for this ticket.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -268,19 +271,27 @@ pub fn shipped() -> Vec<Recipe> {
             "answer the conversation",
             // An answer is usually words, and the ones that need code can fetch
             // it: refusing every question asked about a branch that happens not
-            // to be checked out would leave most of them unanswered.
+            // to be checked out would leave most of them unanswered
+            // (§FS-005-dispatch.13).
             false,
             Selector {
                 kinds: vec!["pr".to_string(), "issue".to_string(), "message".to_string()],
                 needs_response: Some(true),
                 ..Selector::default()
             },
+            // The reply is asked for as a file of its own, because ephor reads
+            // it back and offers it beside the conversation it answers
+            // (§FS-005-dispatch.13). Prose about the reply belongs in the
+            // report; that file is the reply and nothing else.
             "{title} is waiting on an answer from me.\n\n\
              The conversation is above, last message last. Work out what is being\n\
              asked. Where the answer is a change, make it. Where the answer is a\n\
-             sentence, write the sentence — into the report, as the reply I would\n\
-             post — and change nothing.\n\n\
-             Do not post it. The report is where the answer goes.",
+             sentence, write the sentence.\n\n\
+             Write the reply itself to {reply} — the whole message, in my voice,\n\
+             exactly as it would be posted, and nothing else in that file: no\n\
+             heading, no preamble, no notes about it. Say in the report what you\n\
+             based it on and what you were unsure of.\n\n\
+             Do not post it anywhere. Posting is mine to do.",
         ),
         recipe(
             "review",

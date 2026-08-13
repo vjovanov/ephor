@@ -23,7 +23,7 @@ me=$(printf '%s' "$request" | jq -r '.config.user')
 
 case "${1:?subcommand}" in
   capabilities)
-    printf '{"pull_requests":true,"conversation":true,"gate":true,"issues":true,"tasks":true}'
+    printf '{"pull_requests":true,"conversation":true,"gate":true,"issues":true,"tasks":true,"replies":true}'
     ;;
   pull-requests)
     jq -n --arg me "$me" '[
@@ -86,6 +86,13 @@ case "${1:?subcommand}" in
     log="$(printf '%s' "$request" | jq -r '.config.resolved_log // ""')"
     if [ -n "$log" ]; then
       printf '%s' "$request" | jq -c '.target' > "$log"
+    fi
+    printf '{}'
+    ;;
+  reply)
+    log="$(printf '%s' "$request" | jq -r '.config.replied_log // ""')"
+    if [ -n "$log" ]; then
+      printf '%s' "$request" | jq -c '{target, text}' > "$log"
     fi
     printf '{}'
     ;;
@@ -637,6 +644,49 @@ fn ticking_a_task_reaches_the_extension_verbatim() {
 
     let sent: Value = serde_json::from_str(&fs::read_to_string(&log).unwrap()).unwrap();
     assert_eq!(sent, target);
+}
+
+/// §FS-005-dispatch.13: an answer a run drafted goes out over the same
+/// transport, in the reader's own words, with the thread descriptor the
+/// implementation wrote for itself arriving verbatim. ephor never posts on its
+/// own — this is the call a person made.
+#[test]
+fn a_reply_reaches_the_extension_with_the_words_and_the_thread() {
+    use ephor::forge::external::ExternalForge;
+    use ephor::forge::{Forge, Request};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let extension = tmp.path().join("ephor-forge-demoforge");
+    make_executable(&extension, FAKE_FORGE);
+    let log = tmp.path().join("replied.json");
+
+    let forge = ExternalForge::new("demoforge", Some(extension.to_string_lossy().into_owned()));
+    assert!(
+        forge.capabilities().unwrap().replies,
+        "an extension declares that its channels can carry a reply"
+    );
+
+    let target = json!({ "kind": "conversation", "repo": "app", "pull_request": "101" });
+    forge
+        .reply(
+            &Request {
+                config: json!({ "user": "dev", "replied_log": log.to_string_lossy() }),
+                project: "demo".to_string(),
+                tickets: Vec::new(),
+                user: Some("dev".to_string()),
+                timeout_seconds: 10,
+            },
+            &target,
+            "Widened to 30s — see the test in retry_test.rs.",
+        )
+        .unwrap();
+
+    let sent: Value = serde_json::from_str(&fs::read_to_string(&log).unwrap()).unwrap();
+    assert_eq!(sent["target"], target);
+    assert_eq!(
+        sent["text"],
+        "Widened to 30s — see the test in retry_test.rs."
+    );
 }
 
 /// An implementation that reads task state without writing it declares no

@@ -10,8 +10,14 @@
 //! carries a `react` descriptor, `t` ticks where it carries an unresolved
 //! `task`. A source that reports neither shows neither key, and the footer is
 //! built from the selection for exactly that reason.
+//!
+//! A reply a run drafted is shown here too, under the conversation it answers
+//! and marked as unsent (§FS-005-dispatch.13): `p` posts it where the channel
+//! declares reply (§FS-007-matters.4), `e` opens it for editing first, and
+//! where nothing can post it the card is what the reader copies.
 
 use std::ops::Range;
+use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use ratatui::crossterm::event::KeyCode;
@@ -25,7 +31,9 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use crate::feed::model::Item;
 use crate::feed::react::{self, ReactTarget, PALETTE};
 use crate::feed::render::age;
+use crate::feed::reply::{self, ReplyTarget};
 use crate::feed::task::{self, Task};
+use crate::work::runtime::results::Proposal;
 
 use super::Action;
 
@@ -45,9 +53,26 @@ struct Msg {
     task: Option<Task>,
 }
 
+/// A reply a run drafted, waiting under the conversation it answers
+/// (§FS-005-dispatch.13). It is a file until a person sends it, which is why
+/// `path` is shown wherever the channel cannot carry it.
+struct Draft {
+    text: String,
+    path: PathBuf,
+    /// The thread it belongs under: the last one that can carry a reply, or
+    /// the last one there is.
+    thread: usize,
+    /// How to send it, where the channel declared that it can be sent
+    /// (§FS-007-matters.4).
+    target: Option<ReplyTarget>,
+    posted: bool,
+}
+
 pub(crate) struct ThreadScreen {
     item: Item,
     messages: Vec<Msg>,
+    /// The reply a run proposed about this matter, where one is waiting.
+    draft: Option<Draft>,
     /// Flat message index of the selected card.
     selected: usize,
     scroll: u16,
@@ -66,8 +91,10 @@ pub(crate) struct ThreadScreen {
 }
 
 impl ThreadScreen {
-    /// None when the item has no recorded thread messages.
-    pub fn open(item: Item) -> Option<Self> {
+    /// None when the item has no recorded thread messages. `proposal` is the
+    /// reply a run drafted about this matter, where one is waiting
+    /// (§FS-005-dispatch.13).
+    pub fn open(item: Item, proposal: Option<Proposal>) -> Option<Self> {
         let threads = item
             .raw
             .get("threads")
@@ -88,9 +115,11 @@ impl ThreadScreen {
         if messages.is_empty() {
             return None;
         }
+        let draft = proposal.map(|proposal| draft_of(proposal, &threads, &item.source, &messages));
         Some(ThreadScreen {
             item,
             messages,
+            draft,
             selected: 0,
             scroll: 0,
             follow: true,
@@ -100,6 +129,22 @@ impl ThreadScreen {
             lines: Vec::new(),
             ranges: Vec::new(),
         })
+    }
+
+    /// Take the proposal again after the reader edited it, so the card shows
+    /// what would actually be posted.
+    pub fn reread(&mut self, proposal: Option<Proposal>) {
+        match (proposal, &mut self.draft) {
+            (Some(proposal), Some(draft)) => {
+                draft.text = proposal.text;
+                draft.path = proposal.path;
+            }
+            // Edited to nothing, or already posted from elsewhere: a proposal
+            // that is no longer there is no longer offered.
+            (None, _) => self.draft = None,
+            (Some(_), None) => {}
+        }
+        self.wrap_width = 0;
     }
 
     pub fn title(&self) -> String {
@@ -123,6 +168,16 @@ impl ThreadScreen {
         }
         if selected.task.as_ref().is_some_and(|task| !task.resolved) {
             keys.push_str("  t tick");
+        }
+        // Offered where the channel declared it can carry a reply, and
+        // nowhere else (§FS-007-matters.4): on a channel that cannot, the
+        // draft is copy material and teaching a key for it would be a
+        // keystroke spent to be refused.
+        if let Some(draft) = self.draft.as_ref().filter(|draft| !draft.posted) {
+            keys.push_str("  e edit reply");
+            if draft.target.is_some() {
+                keys.push_str("  p post reply");
+            }
         }
         keys.push_str("  x actions  o open  m done  esc back");
         keys
@@ -187,8 +242,56 @@ impl ThreadScreen {
                 }
             }
             KeyCode::Char('t') => self.tick(),
+            KeyCode::Char('p') => self.post_reply(),
+            KeyCode::Char('e') => self.edit_reply(),
             _ => Action::None,
         }
+    }
+
+    /// Post the drafted reply as it stands (§FS-005-dispatch.13). One
+    /// deliberate move: nothing here posts on its own, and the refusals name
+    /// the channel rather than the key.
+    fn post_reply(&mut self) -> Action {
+        match &self.draft {
+            None => Action::SetMessage("No reply has been drafted for this".to_string()),
+            Some(draft) if draft.posted => {
+                Action::SetMessage("This reply has already been posted".to_string())
+            }
+            Some(draft) => match &draft.target {
+                Some(target) => Action::PostReply {
+                    target: target.clone(),
+                    text: draft.text.clone(),
+                    project: self.item.project.clone(),
+                    item: self.item.clone(),
+                },
+                None => Action::SetMessage(format!(
+                    "This conversation cannot be replied to from here — the draft is at {}",
+                    draft.path.display()
+                )),
+            },
+        }
+    }
+
+    /// Open the draft in the reader's editor before it goes anywhere: posted
+    /// edited or as it stands is the reader's call (§FS-005-dispatch.13).
+    fn edit_reply(&mut self) -> Action {
+        match &self.draft {
+            Some(draft) if !draft.posted => Action::EditReply {
+                path: draft.path.clone(),
+                item: self.item.clone(),
+            },
+            Some(_) => Action::SetMessage("This reply has already been posted".to_string()),
+            None => Action::SetMessage("No reply has been drafted for this".to_string()),
+        }
+    }
+
+    /// Record a posted reply without waiting for a refresh, the way a posted
+    /// reaction is recorded — and stop offering to post it again.
+    pub fn reply_posted(&mut self) {
+        if let Some(draft) = &mut self.draft {
+            draft.posted = true;
+        }
+        self.wrap_width = 0;
     }
 
     /// Tick the selected task (§FS-004-quick-actions.5). Both refusals name
@@ -497,7 +600,91 @@ impl ThreadScreen {
 
             self.ranges.push(start..self.lines.len());
             self.lines.push(Line::default());
+
+            // Under the last message of the conversation it answers, which is
+            // where a reader looks for what to say next (§FS-005-dispatch.13).
+            let last_of_thread = self
+                .messages
+                .get(index + 1)
+                .map(|next| next.thread != msg.thread)
+                .unwrap_or(true);
+            if last_of_thread {
+                if let Some(draft) = self
+                    .draft
+                    .as_ref()
+                    .filter(|draft| draft.thread == msg.thread)
+                {
+                    draft_lines(draft, wrap_width, &mut self.lines);
+                }
+            }
         }
+    }
+}
+
+/// The draft as a card of its own: marked as unsent, with the one thing the
+/// reader can do about it here — post it, or copy it from where it sits
+/// (§FS-005-dispatch.13, §REQ-001-boundary.1).
+fn draft_lines(draft: &Draft, wrap_width: usize, lines: &mut Vec<Line<'static>>) {
+    let color = if draft.posted {
+        Color::Green
+    } else {
+        Color::Magenta
+    };
+    let gutter = || Span::styled("▍ ", Style::default().fg(color));
+    let banner = match (draft.posted, draft.target.is_some()) {
+        (true, _) => "posted".to_string(),
+        (false, true) => "proposed reply — not posted".to_string(),
+        // A channel that declared no reply gets the honest half-offer: the
+        // words are here, sending them is somewhere else.
+        (false, false) => "proposed reply — this channel takes none from here".to_string(),
+    };
+    lines.push(Line::from(vec![
+        gutter(),
+        Span::styled(
+            banner,
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ),
+    ]));
+    for text_line in draft.text.lines() {
+        for wrapped in wrap_line(text_line, wrap_width) {
+            lines.push(Line::from(vec![gutter(), Span::raw(wrapped)]));
+        }
+    }
+    if !draft.posted {
+        let hint = match draft.target.is_some() {
+            true => format!("p posts it · e edits it first · {}", draft.path.display()),
+            false => format!("e edits it · copy it from {}", draft.path.display()),
+        };
+        lines.push(Line::from(vec![
+            gutter(),
+            Span::styled(hint, Style::default().fg(Color::DarkGray)),
+        ]));
+    }
+    lines.push(Line::default());
+}
+
+/// Where a proposal belongs and how it would be sent: under the last
+/// conversation that can carry a reply, and under the last one there is where
+/// none can (§FS-007-matters.4).
+fn draft_of(proposal: Proposal, threads: &[Value], source: &str, messages: &[Msg]) -> Draft {
+    let targets: Vec<Option<ReplyTarget>> = threads
+        .iter()
+        .map(|thread| reply::parse_target(thread, source))
+        .collect();
+    // Only threads that made it onto the screen: one with no messages is not
+    // somewhere a reader can be shown anything.
+    let shown = |index: usize| messages.iter().any(|msg| msg.thread == index);
+    let thread = (0..threads.len())
+        .filter(|index| shown(*index) && targets.get(*index).is_some_and(Option::is_some))
+        .next_back()
+        .or_else(|| (0..threads.len()).filter(|index| shown(*index)).next_back())
+        .unwrap_or(0);
+    Draft {
+        text: proposal.text,
+        path: proposal.path,
+        target: targets.get(thread).cloned().flatten(),
+        thread,
+        posted: false,
     }
 }
 
@@ -645,16 +832,32 @@ mod tests {
     }
 
     fn rendered(threads: Value, width: u16) -> (ThreadScreen, Vec<String>) {
-        let mut screen = ThreadScreen::open(item_with_threads(threads)).unwrap();
+        with_proposal(threads, None, width)
+    }
+
+    /// The same screen, with a reply a run drafted waiting under it.
+    fn with_proposal(
+        threads: Value,
+        proposal: Option<Proposal>,
+        width: u16,
+    ) -> (ThreadScreen, Vec<String>) {
+        let mut screen = ThreadScreen::open(item_with_threads(threads), proposal).unwrap();
         screen.rebuild_lines(width);
         let text = plain_text(&screen.lines);
         (screen, text)
     }
 
+    fn proposal(text: &str) -> Proposal {
+        Proposal {
+            text: text.to_string(),
+            path: PathBuf::from("/w/widget/panta/runtime/ephor/widget-77.reply.md"),
+        }
+    }
+
     #[test]
     fn open_returns_none_without_messages() {
-        assert!(ThreadScreen::open(item_with_threads(json!([]))).is_none());
-        assert!(ThreadScreen::open(item_with_threads(json!([{ "messages": [] }]))).is_none());
+        assert!(ThreadScreen::open(item_with_threads(json!([])), None).is_none());
+        assert!(ThreadScreen::open(item_with_threads(json!([{ "messages": [] }])), None).is_none());
     }
 
     #[test]
@@ -940,6 +1143,184 @@ mod tests {
         match screen.handle_key(KeyCode::Char('t')) {
             Action::SetMessage(message) => assert!(message.contains("not a task"), "{message}"),
             _ => panic!("expected a status message"),
+        }
+    }
+
+    /// A conversation the venue can carry a reply into, as a source that
+    /// declares it reports one (§FS-007-matters.4).
+    fn answerable() -> Value {
+        json!([{
+            "messages": [{ "author": "ada", "text": "does the retry window reset?" }],
+            "reply": { "provider": "github", "subject_id": "PR_1" },
+        }])
+    }
+
+    /// The proposal is shown under the conversation it answers, marked as
+    /// unsent, and the key to post it is offered because the channel declared
+    /// it can carry one (§FS-005-dispatch.13).
+    #[test]
+    fn a_drafted_reply_waits_under_the_conversation_and_offers_the_post_key() {
+        let (mut screen, text) = with_proposal(
+            answerable(),
+            Some(proposal("Yes — it resets per attempt.")),
+            80,
+        );
+        assert!(
+            text.iter()
+                .any(|line| line.contains("proposed reply — not posted")),
+            "{text:?}"
+        );
+        assert!(
+            text.contains(&"▍ Yes — it resets per attempt.".to_string()),
+            "{text:?}"
+        );
+        // After the message it answers, not before it.
+        let message = text.iter().position(|line| line.contains("retry window"));
+        let card = text.iter().position(|line| line.contains("proposed reply"));
+        assert!(message < card, "{text:?}");
+        assert!(
+            screen.footer().contains("p post reply"),
+            "{}",
+            screen.footer()
+        );
+        assert!(
+            screen.footer().contains("e edit reply"),
+            "{}",
+            screen.footer()
+        );
+
+        match screen.handle_key(KeyCode::Char('p')) {
+            Action::PostReply {
+                target,
+                text,
+                project,
+                ..
+            } => {
+                assert_eq!(
+                    target,
+                    ReplyTarget::Github {
+                        host: None,
+                        subject_id: "PR_1".to_string()
+                    }
+                );
+                assert_eq!(text, "Yes — it resets per attempt.");
+                assert_eq!(project, "widget");
+            }
+            _ => panic!("expected a reply to be posted"),
+        }
+
+        // Posted once: the card says so and the key stops being offered, so
+        // the same words cannot go out twice (§FS-005-dispatch.13).
+        screen.reply_posted();
+        screen.rebuild_lines(80);
+        let text = plain_text(&screen.lines);
+        assert!(
+            text.iter().any(|line| line.contains("▍ posted")),
+            "{text:?}"
+        );
+        assert!(
+            !screen.footer().contains("p post reply"),
+            "{}",
+            screen.footer()
+        );
+        assert!(matches!(
+            screen.handle_key(KeyCode::Char('p')),
+            Action::SetMessage(_)
+        ));
+    }
+
+    /// A channel that declared no reply is a stated degrade, not a failure
+    /// (§REQ-001-boundary.1): the words are still here, and where they sit is
+    /// what the reader copies from.
+    #[test]
+    fn a_channel_that_cannot_carry_a_reply_offers_the_draft_as_copy_material() {
+        let threads = json!([{ "messages": [{ "author": "ada", "text": "why?" }] }]);
+        let (mut screen, text) =
+            with_proposal(threads, Some(proposal("Because of the retry.")), 80);
+        assert!(
+            text.iter()
+                .any(|line| line.contains("this channel takes none from here")),
+            "{text:?}"
+        );
+        assert!(
+            text.iter()
+                .any(|line| line.contains("copy it from /w/widget")),
+            "{text:?}"
+        );
+        assert!(
+            !screen.footer().contains("p post reply"),
+            "{}",
+            screen.footer()
+        );
+        // Pressing it anyway says where the words are rather than what key
+        // this is.
+        match screen.handle_key(KeyCode::Char('p')) {
+            Action::SetMessage(message) => {
+                assert!(message.contains("widget-77.reply.md"), "{message}")
+            }
+            _ => panic!("expected a status message"),
+        }
+        // Editing is still offered: the draft is a file wherever it can go.
+        assert!(
+            screen.footer().contains("e edit reply"),
+            "{}",
+            screen.footer()
+        );
+        assert!(matches!(
+            screen.handle_key(KeyCode::Char('e')),
+            Action::EditReply { .. }
+        ));
+    }
+
+    /// With several conversations, the draft belongs under the one that can
+    /// carry it (§FS-007-matters.4).
+    #[test]
+    fn the_draft_lands_under_the_conversation_that_can_carry_it() {
+        let threads = json!([
+            { "messages": [{ "author": "ada", "text": "on the diff" }] },
+            {
+                "messages": [{ "author": "bo", "text": "in the conversation" }],
+                "reply": { "provider": "github", "subject_id": "PR_1" },
+            },
+        ]);
+        let (_, text) = with_proposal(threads, Some(proposal("answered")), 80);
+        let diff = text.iter().position(|l| l.contains("on the diff")).unwrap();
+        let card = text
+            .iter()
+            .position(|l| l.contains("proposed reply"))
+            .unwrap();
+        let convo = text
+            .iter()
+            .position(|l| l.contains("in the conversation"))
+            .unwrap();
+        assert!(diff < convo && convo < card, "{text:?}");
+    }
+
+    /// Edited to nothing is withdrawn: what is on disk is what would be
+    /// posted, and there is nothing there.
+    #[test]
+    fn a_draft_edited_away_stops_being_offered() {
+        let (mut screen, _) = with_proposal(answerable(), Some(proposal("draft")), 80);
+        screen.reread(None);
+        screen.rebuild_lines(80);
+        let text = plain_text(&screen.lines);
+        assert!(
+            !text.iter().any(|line| line.contains("proposed reply")),
+            "{text:?}"
+        );
+        assert!(
+            !screen.footer().contains("p post reply"),
+            "{}",
+            screen.footer()
+        );
+
+        // Edited to something else: that is what goes out.
+        let (mut screen, _) = with_proposal(answerable(), Some(proposal("draft")), 80);
+        screen.reread(Some(proposal("what I actually want to say")));
+        screen.rebuild_lines(80);
+        match screen.handle_key(KeyCode::Char('p')) {
+            Action::PostReply { text, .. } => assert_eq!(text, "what I actually want to say"),
+            _ => panic!("expected a reply to be posted"),
         }
     }
 }

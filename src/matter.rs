@@ -836,7 +836,10 @@ fn discussions_of(item: &Item) -> Vec<Discussion> {
                 return None;
             }
             Some(Discussion {
-                channel: Channel::new(format!("{}#{index}", item.source)),
+                channel: Channel {
+                    id: format!("{}#{index}", item.source),
+                    capabilities: capabilities_of(thread),
+                },
                 needs_response: false,
                 label: thread
                     .get("label")
@@ -846,6 +849,36 @@ fn discussions_of(item: &Item) -> Vec<Discussion> {
             })
         })
         .collect()
+}
+
+/// What a channel says it can carry (§FS-007-matters.4). A source may declare
+/// it outright with `can`, or by leaving the descriptor a write needs — the
+/// pattern `react` already uses, where the thing handed back is also the
+/// declaration. Nothing is inferred beyond that: a capability nobody declared
+/// narrows the offer rather than being guessed at (§REQ-001-boundary.1).
+fn capabilities_of(thread: &Value) -> Vec<Capability> {
+    let mut capabilities: Vec<Capability> = thread
+        .get("can")
+        .and_then(Value::as_array)
+        .map(|declared| {
+            declared
+                .iter()
+                .filter_map(Value::as_str)
+                .filter_map(|name| match name {
+                    "reply" => Some(Capability::Reply),
+                    "react" => Some(Capability::React),
+                    "tick" => Some(Capability::Tick),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if thread.get("reply").is_some_and(|reply| !reply.is_null())
+        && !capabilities.contains(&Capability::Reply)
+    {
+        capabilities.push(Capability::Reply);
+    }
+    capabilities
 }
 
 fn message_of(message: &Value) -> Message {
@@ -1022,6 +1055,29 @@ mod tests {
         assert_eq!(round_tripped.needs_response, original.needs_response);
         assert_eq!(round_tripped.updated_at, original.updated_at);
         assert_eq!(round_tripped.raw, original.raw);
+    }
+
+    /// A channel says what it can carry, and nothing is inferred beyond what
+    /// it said (§FS-007-matters.4): the declaration is either the word or the
+    /// descriptor a write needs, and a channel that left both out is
+    /// display-only (§REQ-001-boundary.1).
+    #[test]
+    fn a_channel_carries_only_the_capabilities_it_declared() {
+        let matter = Matter::of_item(&item(json!({"threads": [
+            {"messages": [{"author": "ada", "text": "on the diff"}]},
+            {"messages": [{"author": "bo", "text": "in the conversation"}],
+             "reply": {"provider": "github", "subject_id": "PR_1"}},
+            {"messages": [{"author": "cy", "text": "by mail"}], "can": ["reply", "react"]}
+        ]})));
+        let can = |index: usize, capability| matter.discussions[index].channel.can(capability);
+        assert!(!can(0, Capability::Reply));
+        // The descriptor a reply needs is also the declaration that one can be
+        // sent — the pattern `react` already uses on a message.
+        assert!(can(1, Capability::Reply));
+        // Or the channel says so outright, which is what the answer envelope
+        // gives a project that speaks for itself.
+        assert!(can(2, Capability::Reply) && can(2, Capability::React));
+        assert!(!can(2, Capability::Tick));
     }
 
     #[test]

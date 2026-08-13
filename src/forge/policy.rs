@@ -179,7 +179,15 @@ fn threads_json(threads: &[Thread]) -> Value {
             .iter()
             .filter(|thread| !thread.messages.is_empty())
             .map(|thread| {
-                json!({ "messages": thread.messages.iter().map(message_json).collect::<Vec<_>>() })
+                let mut value =
+                    json!({ "messages": thread.messages.iter().map(message_json).collect::<Vec<_>>() });
+                // What the channel can carry travels with the conversation, so
+                // a surface knows whether an answer can be sent from here
+                // (§FS-007-matters.4).
+                if !thread.reply.is_null() {
+                    value["reply"] = thread.reply.clone();
+                }
+                value
             })
             .collect(),
     )
@@ -320,6 +328,7 @@ fn merge_reports(reports: Vec<Item>) -> Vec<Item> {
 pub fn issue_item(forge: &str, project: &str, issue: &Issue) -> Item {
     let thread = Thread {
         messages: issue.messages.clone(),
+        ..Thread::default()
     };
     let pending = thread_pending(&thread);
     let threads = threads_json(std::slice::from_ref(&thread));
@@ -420,6 +429,7 @@ mod tests {
     fn a_thread_whose_last_word_is_not_mine_awaits_me() {
         let theirs = Thread {
             messages: vec![message("me", true), message("them", false)],
+            ..Thread::default()
         };
         assert!(needs_response(&pr(
             vec![theirs],
@@ -430,6 +440,7 @@ mod tests {
 
         let mine = Thread {
             messages: vec![message("them", false), message("me", true)],
+            ..Thread::default()
         };
         assert!(!needs_response(&pr(
             vec![mine],
@@ -449,6 +460,7 @@ mod tests {
         }];
         let reacted = Thread {
             messages: vec![message("me", true), last],
+            ..Thread::default()
         };
         assert!(!needs_response(&pr(
             vec![reacted],
@@ -466,6 +478,7 @@ mod tests {
     fn a_ticked_task_answers_a_thread_nobody_of_mine_spoke_in() {
         let ticked = Thread {
             messages: vec![message("Bot", false), task("resolved")],
+            ..Thread::default()
         };
         assert!(!needs_response(&pr(
             vec![ticked],
@@ -476,6 +489,7 @@ mod tests {
 
         let unticked = Thread {
             messages: vec![message("Bot", false), task("open")],
+            ..Thread::default()
         };
         assert!(needs_response(&pr(
             vec![unticked],
@@ -491,6 +505,7 @@ mod tests {
     fn an_open_task_awaits_me_even_when_i_had_the_last_word() {
         let answered_but_unticked = Thread {
             messages: vec![task("open"), message("me", true)],
+            ..Thread::default()
         };
         assert!(needs_response(&pr(
             vec![answered_but_unticked],
@@ -506,6 +521,7 @@ mod tests {
     fn an_unknown_task_state_is_not_ticked() {
         let odd = Thread {
             messages: vec![task("pending-review")],
+            ..Thread::default()
         };
         assert!(needs_response(&pr(vec![odd], false, "open", Role::Author)));
     }
@@ -520,6 +536,7 @@ mod tests {
             &pr(
                 vec![Thread {
                     messages: vec![task("open")],
+                    ..Thread::default()
                 }],
                 false,
                 "open",
@@ -594,6 +611,7 @@ mod tests {
                 reasons: vec![Reason::InThread],
                 threads: vec![Thread {
                     messages: vec![message("them", false), message("me", true)],
+                    ..Thread::default()
                 }],
                 ..pr(Vec::new(), false, "open", Role::Reviewer)
             },
@@ -752,6 +770,7 @@ mod tests {
         let mut request = pr(
             vec![Thread {
                 messages: vec![message("them", false)],
+                ..Thread::default()
             }],
             false,
             "open",

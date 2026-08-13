@@ -40,6 +40,7 @@ use crate::feed::cache::{self, ProjectFeed, Seen};
 use crate::feed::config::{load_config, ActionConfig, CheckoutConfig, StatusConfig};
 use crate::feed::model::{Item, ItemKind};
 use crate::feed::react::{self, ReactTarget};
+use crate::feed::reply::{self, ReplyTarget};
 use crate::feed::task::Task;
 use crate::forest::Staleness;
 use crate::paths;
@@ -443,6 +444,19 @@ pub(crate) enum Action {
         project: String,
         message: usize,
     },
+    /// Send the reply a run drafted, as it now stands (§FS-005-dispatch.13).
+    /// The item comes along because posting is also what retires the draft.
+    PostReply {
+        target: ReplyTarget,
+        text: String,
+        project: String,
+        item: Item,
+    },
+    /// Open a drafted reply in the reader's editor before it goes anywhere.
+    EditReply {
+        path: PathBuf,
+        item: Item,
+    },
     /// Summon the configured action menu for an item.
     OpenActionMenu(Item),
     /// Show what is being done about an item, and what could be
@@ -775,11 +789,16 @@ impl App {
             Action::Quit => return Ok(true),
             Action::SetMessage(message) => self.message = message,
             Action::OpenUrl(url) => self.open_url(url),
-            Action::OpenThread { item, or_url } => match ThreadScreen::open(item.clone()) {
-                Some(screen) => self.screen = Screen::Thread(screen),
-                None if or_url => self.open_url(item.url),
-                None => self.message = "No messages recorded for this item".to_string(),
-            },
+            Action::OpenThread { item, or_url } => {
+                // What a run drafted about this matter, read from the work
+                // root every time it is shown (§FS-005-dispatch.13).
+                let proposal = self.proposal(&item);
+                match ThreadScreen::open(item.clone(), proposal) {
+                    Some(screen) => self.screen = Screen::Thread(screen),
+                    None if or_url => self.open_url(item.url),
+                    None => self.message = "No messages recorded for this item".to_string(),
+                }
+            }
             Action::OpenGate(item) => match GateScreen::open(item) {
                 Some(screen) => self.screen = Screen::Gate(screen),
                 None => self.message = "No gate recorded for this item".to_string(),
@@ -835,6 +854,46 @@ impl App {
                         }
                     }
                     Err(err) => self.message = err.to_string(),
+                }
+            }
+            Action::PostReply {
+                target,
+                text,
+                project,
+                item,
+            } => {
+                self.message = "Posting the reply…".to_string();
+                terminal
+                    .draw(|frame| self.draw(frame))
+                    .map_err(|err| EphorError::Command(format!("draw failed: {err}")))?;
+                let blocks = self.ctx.blocks_for(&project);
+                match reply::post(&target, &text, &blocks, &project, &config.defaults) {
+                    Ok(()) => {
+                        // Sent, so the draft is retired where it lives: a
+                        // proposal still offered after it was posted invites
+                        // posting it twice (§FS-005-dispatch.13).
+                        self.message = match self
+                            .dispatcher
+                            .as_ref()
+                            .map(|dispatcher| dispatcher.proposal_posted(&item))
+                        {
+                            Some(Err(err)) => format!("Posted — but {err}"),
+                            _ => "Posted".to_string(),
+                        };
+                        if let Screen::Thread(thread) = &mut self.screen {
+                            thread.reply_posted();
+                        }
+                    }
+                    Err(err) => self.message = err.to_string(),
+                }
+            }
+            Action::EditReply { path, item } => {
+                self.edit_file(terminal, &path)?;
+                // The reader may have rewritten it, emptied it, or left it
+                // alone: what is on disk now is what would be posted.
+                let proposal = self.proposal(&item);
+                if let Screen::Thread(thread) = &mut self.screen {
+                    thread.reread(proposal);
                 }
             }
             Action::OpenActionMenu(item) => {
@@ -926,19 +985,7 @@ impl App {
                 ))
             }
             Action::ReadPlan(path) => {
-                let editor = std::env::var("EDITOR").unwrap_or_else(|_| "less".to_string());
-                let dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
-                let command = format!(
-                    "{editor} {}",
-                    crate::feed::providers::shell_quote(&path.to_string_lossy())
-                );
-                self.handover(
-                    terminal,
-                    "📖",
-                    &editor,
-                    &Site::root(&dir),
-                    &summons::Summons::new("read-plan", command),
-                )?;
+                self.edit_file(terminal, &path)?;
                 self.reload_work();
             }
             Action::Refresh => {
@@ -998,6 +1045,33 @@ impl App {
     }
 
     /// The work screen for an item, rebuilt from the plan each time it opens.
+    /// Hand a file to the reader's editor, the terminal theirs while they have
+    /// it — the same handover the runtime gets (§AR-002-summons).
+    fn edit_file(&mut self, terminal: &mut DefaultTerminal, path: &Path) -> Result<()> {
+        let editor = std::env::var("EDITOR").unwrap_or_else(|_| "less".to_string());
+        let dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
+        let command = format!(
+            "{editor} {}",
+            crate::feed::providers::shell_quote(&path.to_string_lossy())
+        );
+        self.handover(
+            terminal,
+            "📖",
+            &editor,
+            &Site::root(&dir),
+            &summons::Summons::new("edit", command),
+        )?;
+        Ok(())
+    }
+
+    /// The reply a run drafted about a matter, where there is a dispatcher to
+    /// ask and a run that drafted one (§FS-005-dispatch.13).
+    fn proposal(&self, item: &Item) -> Option<crate::work::runtime::results::Proposal> {
+        self.dispatcher
+            .as_ref()
+            .and_then(|dispatcher| dispatcher.proposal(item))
+    }
+
     fn open_work(&mut self, item: Item) {
         let Some(dispatcher) = &mut self.dispatcher else {
             self.message =

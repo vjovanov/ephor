@@ -670,6 +670,7 @@ its author, age, text and reactions:
 | `g` `G` | first / last |
 | `+` | react (`←`/`→` or `1`-`8` choose, `Enter` posts) |
 | `t` | tick the selected task |
+| `e` `p` | edit / post a drafted reply (§8.12) |
 | `x` | actions · `o` open · `m` done · `Esc` back |
 
 `+` and `t` are offered on the selected message rather than on the screen, so
@@ -1409,6 +1410,40 @@ to start there; with the shipped two-state machine they start in `fix`, where
 the brief tells the agent to run `ephor rebase` itself and resolve what it
 stops on.
 
+### 8.12 An answer comes back as a proposal
+
+Often the next move on a matter is not a change but a reply. The shipped
+`answer` recipe asks for one, and it needs no checkout: the plan is written at
+the branch workspace where one resolves and at the forest root where none
+does, so a conversation is answerable on a project whose branch is not on this
+machine ([§FS-005-dispatch.13](../requirements.md#13-a-communication-is-work-too-and-its-answer-comes-back-as-a-proposal)).
+
+The reply is asked for as a file of its own — `{reply}` in a brief expands to
+it, `<work root>/runtime/ephor/<plan>.reply.md` — and **nothing posts it**. The
+run writes it, ephor reads it back, and the thread screen shows it under the
+conversation it answers:
+
+```
+▍ Ada  2h ago
+▍ does the retry window reset between attempts?
+
+▍ proposed reply — not posted
+▍ Yes — it resets per attempt; the test in retry_test.rs covers it.
+▍ p posts it · e edits it first · /home/you/c/demo/panta/runtime/ephor/…reply.md
+```
+
+`e` opens it in `$EDITOR` — what you leave there is what goes out, and leaving
+it empty withdraws it. `p` posts it through the same provider a reaction goes
+through, and then the card says `posted` and the key stops being offered: the
+file is moved aside so the same words cannot go out twice.
+
+`p` appears only where the channel **said** it can carry a reply
+([§FS-007-matters.4](../requirements.md#4-a-channel-says-what-it-can-do)) — a
+forge declares the `replies` capability and puts a `reply` descriptor on the
+threads that take one ([§10.1](#101-a-forge-out-of-process)). Where it does
+not, the card is still there and names the file: the proposal is what you copy,
+which is the offer narrowing rather than the feature failing.
+
 ---
 
 ## 9. Automation
@@ -1457,6 +1492,7 @@ ephor-forge-<name> issues         <<< '{"config":…,"tickets":[…],…}'
 ephor-forge-<name> failures       <<< '{"config":…,"repo":…,"number":…}'
 ephor-forge-<name> react          <<< '{"config":…,"target":…,"emoji":…}'
 ephor-forge-<name> resolve-task   <<< '{"config":…,"target":…}'
+ephor-forge-<name> reply          <<< '{"config":…,"target":…,"text":…}'
 ```
 
 The whole provider block is passed through as `config`, so an extension takes
@@ -1465,11 +1501,13 @@ degrades to that — but a capability probe that *fails* is a broken forge, not 
 forge that does very little. `failures` is the one call a refresh never makes:
 it is asked when a reader opens a red gate, so it may take as long as it needs.
 
-`react` and `resolve-task` receive back, verbatim, the `react` and `task`
-descriptors the extension put on a message: they are its own, and ephor reads
-only `task.state` (`open` / `resolved`) out of them. A message with no
-descriptor gets no key on the thread screen, which is how a read-only
-implementation says so — there is nothing to declare beyond leaving it out.
+`react`, `resolve-task` and `reply` receive back, verbatim, the `react` and
+`task` descriptors the extension put on a message and the `reply` descriptor it
+put on a thread: they are its own, and ephor reads only `task.state` (`open` /
+`resolved`) out of them. A message with no descriptor gets no key on the thread
+screen, which is how a read-only implementation says so — there is nothing to
+declare beyond leaving it out. `reply` carries the words a person settled on
+and posts them as they stand ([§8.12](#812-an-answer-comes-back-as-a-proposal)).
 
 Policy is never an extension's business: what counts as answered, what needs a
 response, how threads and gates roll up, how items match branches, what is

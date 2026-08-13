@@ -322,6 +322,10 @@ impl Dispatcher {
                     .unwrap_or_else(|| format!("{} cannot be placed", item.project)),
             )
         })?;
+        // The workspace where the matter resolves, and the forest root where
+        // none does (§FS-005-dispatch.13, §AR-004-forest.1) — which is what
+        // lets work about a conversation run without the checkout-able rung
+        // (§FS-006-project-interface.10).
         let checkout = placement.checkout(item);
         if let WorkspaceState::Missing(target) = &checkout.state {
             // Only for work that edits the change. A review or a reply runs in
@@ -342,9 +346,19 @@ impl Dispatcher {
             checkout: &checkout,
             root: &placement.root,
         };
-        let values = subject.placeholders();
+        let mut values = subject.placeholders();
+        let dir = crate::paths::resolve_path(&dossier::render(&template, &values));
+        // Where a proposed reply belongs, named absolutely: the runtime runs
+        // from the checkout, not from the work root, so a brief that asks for
+        // a file has to say which one (§FS-005-dispatch.13).
+        values.insert(
+            "reply",
+            runtime::results::reply_path(&dir, &plan::plan_id(&item.id))
+                .to_string_lossy()
+                .into_owned(),
+        );
         Ok(Site {
-            dir: crate::paths::resolve_path(&dossier::render(&template, &values)),
+            dir,
             dossier: subject.dossier(),
             metadata: subject.metadata(),
             values,
@@ -569,6 +583,25 @@ impl Dispatcher {
         self.dispatch(item, &recipe, dry_run)
     }
 
+    /// The reply a run drafted about this matter and did not send, where one
+    /// was drafted (§FS-005-dispatch.13). Attached to the matter here rather
+    /// than stored on it: it is what the runtime left on disk, and reading it
+    /// every time is what keeps ephor from reporting on itself
+    /// (§FS-005-dispatch.4).
+    pub fn proposal(&self, item: &Item) -> Option<runtime::results::Proposal> {
+        let entry = self.ledger.entries.get(&item.id)?;
+        runtime::results::proposal(&entry.root, &entry.plan_id)
+    }
+
+    /// Record that this matter's proposed reply was posted, so it is offered
+    /// once (§FS-005-dispatch.13).
+    pub fn proposal_posted(&self, item: &Item) -> Result<()> {
+        let Some(entry) = self.ledger.entries.get(&item.id) else {
+            return Ok(());
+        };
+        runtime::results::mark_posted(&entry.root, &entry.plan_id)
+    }
+
     /// What an item's work is doing, read from the plan.
     pub fn status(&self, item: &Item) -> Option<WorkStatus> {
         let entry = self.ledger.entries.get(&item.id)?;
@@ -613,7 +646,7 @@ impl Dispatcher {
                                     .unwrap_or(false)
                             })
                             .unwrap_or(false),
-                        verdict: ledger::verdict(&entry.root, &entry.plan_id, &ticket.id),
+                        verdict: runtime::results::verdict(&entry.root, &entry.plan_id, &ticket.id),
                         id: ticket.id,
                         title: ticket.title,
                         state: ticket.state,

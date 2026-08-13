@@ -13,6 +13,7 @@
 //!     ephor-forge-<name> failures       <<< '{"config":…,"repo":…,"number":…}'
 //!     ephor-forge-<name> react          <<< '{"config":…,"target":…,"emoji":…}'
 //!     ephor-forge-<name> resolve-task   <<< '{"config":…,"target":…}'
+//!     ephor-forge-<name> reply          <<< '{"config":…,"target":…,"text":…}'
 //! ```
 //!
 //! The [`Request`] goes in on stdin, the answer comes back as JSON on stdout,
@@ -158,6 +159,11 @@ impl Forge for ExternalForge {
 
     fn resolve_task(&self, request: &Request, target: &Value) -> Result<(), ProviderError> {
         self.call("resolve-task", request, json!({ "target": target }))?;
+        Ok(())
+    }
+
+    fn reply(&self, request: &Request, target: &Value, text: &str) -> Result<(), ProviderError> {
+        self.call("reply", request, json!({ "target": target, "text": text }))?;
         Ok(())
     }
 }

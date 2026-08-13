@@ -414,6 +414,96 @@ fn an_item_can_be_asked_for_anything_including_what_no_recipe_matches() {
         .stderr(predicate::str::contains("Nothing was asked for"));
 }
 
+/// §FS-005-dispatch.13: work about a conversation needs no checkout — the
+/// plan is written at the branch workspace where one resolves and at the
+/// forest root where none does, so the checkout-able rung
+/// (§FS-006-project-interface.10) is not required for it — and the reply it
+/// asks for is a file ephor names and reads back.
+#[test]
+fn an_answer_is_dispatched_without_a_checkout_and_its_reply_comes_back() {
+    let tmp = tempfile::tempdir().unwrap();
+    fixture(tmp.path(), Value::Null);
+    // The project resolves branches to workspaces of their own, and this
+    // branch has none on disk: nothing that edits the change can run here.
+    let registry_path = tmp.path().join("workspaces.json");
+    let mut registry: Value =
+        serde_json::from_str(&fs::read_to_string(&registry_path).unwrap()).unwrap();
+    registry["projects"][0]["branch_root_template"] = json!(format!(
+        "{}/branches/{{branch}}",
+        tmp.path().to_string_lossy()
+    ));
+    write_registry(&registry_path, &registry);
+
+    ephor(tmp.path())
+        .args(["refresh", "demo"])
+        .assert()
+        .success();
+    // Someone asked something, which is what an answer is dispatched for.
+    with_pr(tmp.path(), |item| {
+        item["needs_response"] = json!(true);
+        item["raw"]["threads"] = json!([{ "messages": [
+            { "author": "Ada", "when": "2026-08-02T09:00:00Z", "text": "does the retry window reset?" }
+        ]}]);
+    });
+
+    // Work that edits the change is refused while the branch is not here…
+    ephor(tmp.path())
+        .args([
+            "work",
+            "dispatch",
+            "--item",
+            "github-prs:acme/widget#42",
+            "--recipe",
+            "fix-gate",
+        ])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("is not checked out"));
+
+    // …and the answer is dispatched anyway, at the forest root.
+    ephor(tmp.path())
+        .args([
+            "work",
+            "dispatch",
+            "--item",
+            "github-prs:acme/widget#42",
+            "--recipe",
+            "answer",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1 ticket(s) opened"));
+
+    let root = tmp.path().join("demo/panta");
+    let plan_path = root.join("github-prs-acme-widget-42.rhei.md");
+    let plan = fs::read_to_string(&plan_path).unwrap();
+    assert!(plan.contains("### Task answer-1:"), "{plan}");
+    // The brief names the file the reply goes into, absolutely: the runtime
+    // runs from the checkout, not from the work root.
+    let reply = root.join("runtime/ephor/github-prs-acme-widget-42.reply.md");
+    assert!(
+        plan.contains(&reply.to_string_lossy().to_string()),
+        "{plan}"
+    );
+
+    // Nothing to read back until a run writes one — an unanswered ticket is
+    // not a failure.
+    let listed = ephor(tmp.path())
+        .args(["work", "list", "--json"])
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&listed.stdout).contains("answer-1"));
+
+    // The run writes the reply where it was asked to, and ephor reads it back
+    // whole — never posting it.
+    fs::create_dir_all(reply.parent().unwrap()).unwrap();
+    fs::write(&reply, "Yes — the window resets per attempt.\n").unwrap();
+    let proposal = ephor::work::runtime::results::proposal(&root, "github-prs-acme-widget-42")
+        .expect("the run drafted a reply");
+    assert_eq!(proposal.text, "Yes — the window resets per attempt.");
+    assert_eq!(proposal.path, reply);
+}
+
 /// A multi-repo workspace has no one repository to be found by looking, so
 /// where the runtime runs is recorded rather than guessed
 /// (§FS-005-dispatch.3).

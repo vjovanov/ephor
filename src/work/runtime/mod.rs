@@ -1,11 +1,12 @@
 //! The runtime adapter (§AR-007-runtime).
 //!
 //! Everything runtime-specific lives here: the plan language ephor writes, the
-//! runner command that executes it, and the verdict read back from its
-//! results. That is the whole coupling — a contract in files, never a linked
-//! process — and no product literal for the shipped runtime exists outside
-//! this module, shipped assets, examples, and documentation
-//! (§REQ-001-boundary.5, §DA-001-runtime-bound-default).
+//! runner command that executes it, and what is read back from its results —
+//! the verdict a ticket reached, and the reply a ticket about a conversation
+//! drafted (§FS-005-dispatch.13). That is the whole coupling — a contract in
+//! files, never a linked process — and no product literal for the shipped
+//! runtime exists outside this module, shipped assets, examples, and
+//! documentation (§REQ-001-boundary.5, §DA-001-runtime-bound-default).
 //!
 //! Running a plan is a summons like every other command ephor asks of the
 //! world — the same place resolution, the same exit semantics, the same
@@ -13,6 +14,7 @@
 //! drift into two different invocations (§FS-005-dispatch.12).
 
 pub mod plan;
+pub mod results;
 
 use std::path::Path;
 

@@ -39,6 +39,7 @@ use crate::feed::providers::{
     gh_command, github_login, parse_config, parse_github_time, show_failing_checks,
 };
 use crate::feed::react;
+use crate::feed::reply;
 use crate::forge::{policy, Message, PullRequest, Reason, Role, Thread};
 
 #[derive(Debug, Deserialize)]
@@ -88,7 +89,7 @@ pub struct GithubPrs {
 /// is an answer, and a rule reading only the conversation tab would go on
 /// reporting the citation as unanswered forever.
 const CONVERSATION_QUERY: &str = "query($owner:String!,$repo:String!,$number:Int!){\
-repository(owner:$owner,name:$repo){pullRequest(number:$number){headRefName \
+repository(owner:$owner,name:$repo){pullRequest(number:$number){id headRefName \
 comments(last:30){nodes{id author{login} body createdAt reactions(first:50){nodes{content user{login}}}}} \
 reviewThreads(first:50){nodes{comments(last:20){nodes{\
 id author{login} body createdAt reactions(first:50){nodes{content user{login}}}}}}}}}}";
@@ -252,8 +253,18 @@ impl GithubPrs {
         let mut threads = Vec::new();
         let conversation = messages(pull.and_then(|pull| pull.pointer("/comments/nodes")));
         if !conversation.is_empty() {
+            // The conversation tab takes a comment, and the pull request is
+            // what one is added to, so the channel declares reply
+            // (§FS-007-matters.4). A review thread does not: a reply there is
+            // part of a review, which is more than this key promises, so it
+            // stays display-only and says so by declaring nothing.
             threads.push(Thread {
                 messages: conversation,
+                reply: pull
+                    .and_then(|pull| pull.get("id"))
+                    .and_then(Value::as_str)
+                    .map(|id| reply::github_target_json(host, id))
+                    .unwrap_or(Value::Null),
             });
         }
         for thread in pull
@@ -264,7 +275,10 @@ impl GithubPrs {
         {
             let messages = messages(thread.pointer("/comments/nodes"));
             if !messages.is_empty() {
-                threads.push(Thread { messages });
+                threads.push(Thread {
+                    messages,
+                    ..Thread::default()
+                });
             }
         }
         (branch, threads)
@@ -713,6 +727,7 @@ mod tests {
                 text: text.to_string(),
                 ..Message::default()
             }],
+            ..Thread::default()
         };
         let handles = vec!["@vjovanov".to_string(), "@acme/reviewers".to_string()];
 
