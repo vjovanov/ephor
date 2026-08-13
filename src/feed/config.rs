@@ -64,23 +64,78 @@ impl StatusConfig {
     }
 }
 
-/// A user-defined action summoned on a feed item in the TUI (`x`). The
-/// command runs via `sh -c` in the project's checkout, with the item's
-/// context exported as `EPHOR_*` environment variables.
-#[derive(Debug, Clone, Deserialize)]
+/// One entry of the action menu, whoever it came from: ephor's own quick
+/// actions, the project's offers, and the person's configured commands are one
+/// shape (§FS-006-project-interface.9). The command runs via `sh -c` in the
+/// project's checkout, with the item's context exported as `EPHOR_*`
+/// environment variables.
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ActionConfig {
+    /// What an entry of the same name overrides, in provenance order — the
+    /// person's beats the project's beats the shipped one. Empty is anonymous:
+    /// it overrides nothing and nothing overrides it.
+    #[serde(default)]
+    pub id: String,
     pub icon: String,
     pub description: String,
     pub command: String,
+    /// Where it runs — `workspace` (the default), `root`, or `repo:<name>`
+    /// (§AR-002-summons.1).
+    #[serde(default)]
+    pub cwd: Option<String>,
     /// Restrict to item kinds (`pr`, `ci`, `message`, `status`); empty
-    /// offers the action on every kind.
+    /// offers the action on every kind. The older spelling of `when.kinds`,
+    /// kept because it is what configurations say today.
     #[serde(default)]
     pub kinds: Vec<String>,
+    /// Which items this is offered on, in the language recipes use
+    /// (§FS-006-project-interface.9).
+    #[serde(default)]
+    pub when: crate::work::recipe::Selector,
+    /// Capability rungs it needs (§FS-006-project-interface.10). A missing one
+    /// leaves the entry visible with its reason, never removed.
+    #[serde(default)]
+    pub requires: Vec<String>,
     /// The action needs the item's branch workspace on disk. When it is
     /// missing, the project's `checkout` command runs first.
     #[serde(default)]
     pub requires_checkout: bool,
+    /// Ask before running it.
+    #[serde(default)]
+    pub confirm: bool,
+}
+
+impl ActionConfig {
+    /// Whether this entry is offered on an item: the selector, plus the older
+    /// `kinds` spelling, which is read as if it were `when.kinds`.
+    pub fn matches(
+        &self,
+        item: &crate::feed::model::Item,
+        facts: &crate::work::recipe::Facts,
+    ) -> bool {
+        if !self.kinds.is_empty() && self.when.kinds.is_empty() {
+            let mut widened = self.when.clone();
+            widened.kinds = self.kinds.clone();
+            return widened.matches(item, facts);
+        }
+        self.when.matches(item, facts)
+    }
+
+    /// The rungs it named, and the words it named that are not rungs — one
+    /// pass, because an unknown requirement has to be said out loud rather
+    /// than silently satisfied.
+    pub fn rungs(&self) -> (Vec<crate::capabilities::Rung>, Vec<String>) {
+        let mut rungs = Vec::new();
+        let mut unknown = Vec::new();
+        for name in &self.requires {
+            match crate::capabilities::Rung::parse(name) {
+                Some(rung) => rungs.push(rung),
+                None => unknown.push(name.clone()),
+            }
+        }
+        (rungs, unknown)
+    }
 }
 
 /// The per-project command that materializes a branch workspace. Contract:

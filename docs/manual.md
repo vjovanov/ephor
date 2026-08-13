@@ -376,8 +376,14 @@ verbs, ticket stores, and offers — menu entries you invoke.
   "forest":   [{ "name": "ce", "path": "ce" }],
   "checks":   { "check": "./check.sh" },
   "actions":  [{ "id": "rebuild", "description": "rebuild it",
-                 "command": "./build.sh", "requires": ["checkout-able"] }] }
+                 "command": "./build.sh", "cwd": "repo:ce",
+                 "when": { "kinds": ["pr"] },
+                 "requires": ["checkout-able"], "confirm": true }] }
 ```
+
+An offer is a menu entry in the same shape yours have (§7.2), selected by the
+same `when` language and gated by the same rungs — it sits between the shipped
+entries and your own, and yours wins on a shared `id` (§7.6).
 
 Two rules make it safe to read. **The row is authoritative**: identity fields
 are hints your registry adopts where it says nothing of its own and overrides
@@ -767,10 +773,19 @@ difference is only whether anyone expects to want their own.
 
 | Field | Meaning |
 |---|---|
+| `id` | what an entry of the same name overrides (§7.6); empty is anonymous |
 | `icon`, `description` | the menu row |
 | `command` | run with `sh -c` in the item's checkout |
+| `cwd` | where it runs: `workspace` (default), `root`, or `repo:<name>` |
 | `kinds` | restrict to item kinds; empty offers it everywhere |
+| `when` | which items it is offered on, in the language recipes use (§8.3) |
+| `requires` | capability rungs it needs (§7.5); an unmet one shows its reason |
 | `requires_checkout` | the action needs the item's branch workspace on disk |
+| `confirm` | ask before running it: the second Enter on the row runs it |
+
+`kinds` is the older spelling of `when.kinds` and still works; `when` is the
+whole language — roles, gate, `needs_response`, sources, `behind` — so an
+action can be offered exactly where a recipe would be.
 
 **The checkout dependency.** A project may define one `checkout` command whose
 contract is to make `$EPHOR_WORKSPACE` exist — ephor verifies the directory
@@ -838,6 +853,33 @@ resolved, so a command about to run re-checks the two things it leans on (its
 directory, and its script if it names one) and fails as the world rather than
 from the table
 ([§AR-005-capabilities.3](architecture/AR-005-capabilities.md#3-the-table-is-honest-about-time)).
+
+An entry — yours or the project's — names the rungs it needs in `requires`,
+and an unmet one leaves the row where it is, marked with the ladder's own
+sentence. A word that is not a rung is *also* refused, by name: a requirement
+nobody checks would be worse than one nobody wrote.
+
+### 7.6 Three places a menu entry comes from
+
+The menu is assembled in provenance order
+([§FS-006-project-interface.9](../requirements.md#9-offers-the-projects-actions)):
+
+1. **what ephor recognized** — a source's own quick actions (§7.1), the rebase
+   on a branch that has fallen behind, the checkout on a workspace that is not
+   there;
+2. **what the project offers** — the `actions` of its `ephor.json` (§4.2.1),
+   under the trust your row extends to it;
+3. **what you configured** — `actions` and `projects.<id>.actions` (§7.2).
+
+Where two entries share an `id`, the later one wins **in the place the earlier
+one held**: yours beats the project's beats the shipped one, and the key that
+ran a thing goes on running that thing. An entry with no `id` overrides nothing
+and is overridden by nothing, which is what every action written before ids
+existed is.
+
+That is the whole difference between the three: an offer is selected, gated,
+run, and refused exactly as your own action is — it is only invoked by you, and
+never runs on its own.
 
 ---
 

@@ -154,11 +154,11 @@ pub(crate) fn show_failing_checks(host: Option<&str>) -> ActionConfig {
         None => SHOW_FAILING_CHECKS.to_string(),
     };
     ActionConfig {
+        id: "ci-failures".to_string(),
         icon: "✗".to_string(),
         description: "see the CI failures".to_string(),
         command,
-        kinds: Vec::new(),
-        requires_checkout: false,
+        ..ActionConfig::default()
     }
 }
 

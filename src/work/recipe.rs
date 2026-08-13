@@ -150,7 +150,10 @@ pub struct Facts {
 }
 
 impl Selector {
-    fn matches(&self, item: &Item, facts: &Facts) -> bool {
+    /// Whether this selector holds for an item. Public because the same
+    /// language selects menu offers, whoever wrote them
+    /// (§FS-006-project-interface.9).
+    pub fn matches(&self, item: &Item, facts: &Facts) -> bool {
         if let Some(want) = self.behind {
             match facts.behind {
                 Some(behind) => {

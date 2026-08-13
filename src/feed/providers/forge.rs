@@ -75,11 +75,11 @@ impl ForgeProvider {
             return Vec::new();
         }
         vec![ActionConfig {
+            id: "ci-failures".to_string(),
             icon: "✗".to_string(),
             description: "see the CI failures".to_string(),
             command: failures_command(),
-            kinds: Vec::new(),
-            requires_checkout: false,
+            ..ActionConfig::default()
         }]
     }
 }

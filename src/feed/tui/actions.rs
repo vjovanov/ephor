@@ -1,9 +1,14 @@
-//! The action menu: user-configured commands summoned on a feed item.
+//! The action menu: what can be run on a feed item, from all three places it
+//! can come from (§FS-006-project-interface.9).
 //!
-//! Actions come from `status.json` (`actions` globally, plus per-project
-//! `projects.<id>.actions`), each with an icon, a description, and a shell
-//! command. The command runs via `sh -c` in the project's checkout with the
-//! item's context exported as `EPHOR_*` environment variables.
+//! Provenance orders the menu — what ephor itself recognized
+//! (§FS-004-quick-actions.3), then the project's offers, then the person's own
+//! from `status.json` (`actions` globally, plus per-project
+//! `projects.<id>.actions`) — and where two entries share an id, the later
+//! provenance wins in place. Every entry is one shape, selected by the same
+//! `when` language recipes use and gated by the same capability rungs. The
+//! command runs via `sh -c` in the project's checkout with the item's context
+//! exported as `EPHOR_*` environment variables.
 
 use std::path::{Path, PathBuf};
 
@@ -13,35 +18,49 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState};
 
+use crate::capabilities::CapabilitySet;
 use crate::feed::config::{ActionConfig, CheckoutConfig};
-use crate::feed::model::{Item, ItemKind};
+use crate::feed::model::Item;
+use crate::work::recipe::Facts;
 
 use super::{highlight_style, BranchInfo, WorkspaceState};
 
 /// Actions applicable to one item: global first, then the project's own,
-/// filtered by the item's kind.
+/// selected by the shared language (§FS-006-project-interface.9).
 pub(crate) fn applicable(
     global: &[ActionConfig],
     project: &[ActionConfig],
     item: &Item,
+    facts: &Facts,
 ) -> Vec<ActionConfig> {
     global
         .iter()
         .chain(project)
-        .filter(|action| {
-            action.kinds.is_empty()
-                || action
-                    .kinds
-                    .iter()
-                    .any(|kind| kind_matches(item.kind, kind))
-        })
+        .filter(|action| action.matches(item, facts))
         .cloned()
         .collect()
 }
 
-fn kind_matches(kind: ItemKind, name: &str) -> bool {
-    // The Message label is "msg"; accept the config-friendly spelling too.
-    name == kind.label() || (kind == ItemKind::Message && name == "message")
+/// The menu, in provenance order: each list in turn, an entry whose id a later
+/// list repeats **replacing it where it already sits**
+/// (§FS-006-project-interface.9). Replacing in place rather than appending is
+/// what keeps the numbering of a menu stable when a project starts offering an
+/// entry the person had already written — the key that ran a thing goes on
+/// running that thing.
+pub(crate) fn merge(provenances: Vec<Vec<ActionConfig>>) -> Vec<ActionConfig> {
+    let mut merged: Vec<ActionConfig> = Vec::new();
+    for provenance in provenances {
+        for action in provenance {
+            match merged
+                .iter()
+                .position(|existing| !existing.id.is_empty() && existing.id == action.id)
+            {
+                Some(index) => merged[index] = action,
+                None => merged.push(action),
+            }
+        }
+    }
+    merged
 }
 
 /// The rebase ephor offers on a pull request whose checkout trails its main
@@ -54,6 +73,7 @@ pub(crate) fn rebase_action(main_branch: &str, behind: u64) -> ActionConfig {
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_else(|_| "ephor".to_string());
     ActionConfig {
+        id: "rebase".to_string(),
         icon: "⤴".to_string(),
         description: format!("rebase onto {main_branch} ({behind} behind)"),
         // `--dispatch` is what makes a conflict work rather than a dead end:
@@ -65,6 +85,7 @@ pub(crate) fn rebase_action(main_branch: &str, behind: u64) -> ActionConfig {
         ),
         kinds: vec!["pr".to_string()],
         requires_checkout: true,
+        ..ActionConfig::default()
     }
 }
 
@@ -78,14 +99,14 @@ pub(crate) fn checkout_action(target: &Path) -> ActionConfig {
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_else(|_| "ephor".to_string());
     ActionConfig {
+        id: "checkout".to_string(),
         icon: "⇣".to_string(),
         description: format!("check out {}", target.display()),
         command: format!(
             "{} checkout --project \"$EPHOR_PROJECT\" --item \"$EPHOR_ITEM_ID\"",
             crate::feed::providers::shell_quote(&exe)
         ),
-        kinds: Vec::new(),
-        requires_checkout: false,
+        ..ActionConfig::default()
     }
 }
 
@@ -105,11 +126,11 @@ pub(crate) fn checkout_step(
     };
     let action = match checkout {
         Some(checkout) => ActionConfig {
+            id: "checkout".to_string(),
             icon: checkout.icon.clone(),
             description: checkout.description.clone(),
             command: checkout.command.clone(),
-            kinds: Vec::new(),
-            requires_checkout: false,
+            ..ActionConfig::default()
         },
         None => checkout_action(target),
     };
@@ -156,6 +177,9 @@ pub(crate) struct ActionMenu {
     pub checkout: Option<CheckoutConfig>,
     entries: Vec<MenuEntry>,
     selected: usize,
+    /// An entry that asked to be confirmed and has been chosen once
+    /// (§FS-006-project-interface.9): the next Enter on it runs it.
+    confirming: Option<usize>,
 }
 
 impl ActionMenu {
@@ -166,6 +190,7 @@ impl ActionMenu {
         branch: Option<BranchInfo>,
         state: WorkspaceState,
         checkout: Option<CheckoutConfig>,
+        can: &CapabilitySet,
         actions: Vec<ActionConfig>,
     ) -> Self {
         let mut entries = Vec::new();
@@ -182,7 +207,21 @@ impl ActionMenu {
             });
         }
         for action in actions {
-            let gate = if !action.requires_checkout {
+            // What the entry said it needs, answered by the one table
+            // (§AR-005-capabilities.2) — so a project's offer and a person's
+            // action are refused in the same sentence, and a requirement
+            // nobody recognizes is named rather than treated as met.
+            let (rungs, unknown) = action.rungs();
+            let gate = if let Some(name) = unknown.first() {
+                Gate::Blocked(format!(
+                    "'{name}' is not a capability ephor knows; it has: {}",
+                    crate::capabilities::Rung::all()
+                        .map(|rung| rung.name())
+                        .join(", ")
+                ))
+            } else if let Some(reason) = can.refusal(&rungs) {
+                Gate::Blocked(reason)
+            } else if !action.requires_checkout {
                 Gate::Ready
             } else {
                 match &state {
@@ -213,9 +252,7 @@ impl ActionMenu {
             action: ActionConfig {
                 icon: "⌨".to_string(),
                 description: "run a command here…".to_string(),
-                command: String::new(),
-                kinds: Vec::new(),
-                requires_checkout: false,
+                ..ActionConfig::default()
             },
             is_checkout: false,
             is_freehand: true,
@@ -230,6 +267,7 @@ impl ActionMenu {
             checkout,
             entries,
             selected: 0,
+            confirming: None,
         }
     }
 
@@ -246,22 +284,42 @@ impl ActionMenu {
                 if self.selected + 1 < self.entries.len() {
                     self.selected += 1;
                 }
+                self.confirming = None;
                 MenuOutcome::Stay
             }
             KeyCode::Char('k') | KeyCode::Up => {
                 self.selected = self.selected.saturating_sub(1);
+                self.confirming = None;
                 MenuOutcome::Stay
             }
-            KeyCode::Enter => MenuOutcome::Run(self.entries[self.selected].clone()),
+            KeyCode::Enter => self.choose(self.selected),
             KeyCode::Char(digit) if digit.is_ascii_digit() => {
                 let index = (digit as usize).wrapping_sub('1' as usize);
                 match self.entries.get(index) {
-                    Some(entry) => MenuOutcome::Run(entry.clone()),
+                    Some(_) => self.choose(index),
                     None => MenuOutcome::Stay,
                 }
             }
             _ => MenuOutcome::Stay,
         }
+    }
+
+    /// Choosing an entry runs it — unless it asked to be confirmed, and this
+    /// is the first time it was chosen (§FS-006-project-interface.9). The
+    /// second choice on the same entry runs it; choosing anything else drops
+    /// the question, because a confirmation that survives the reader moving
+    /// away is a trap.
+    fn choose(&mut self, index: usize) -> MenuOutcome {
+        let Some(entry) = self.entries.get(index) else {
+            return MenuOutcome::Stay;
+        };
+        if entry.action.confirm && self.confirming != Some(index) {
+            self.confirming = Some(index);
+            self.selected = index;
+            return MenuOutcome::Stay;
+        }
+        self.confirming = None;
+        MenuOutcome::Run(entry.clone())
     }
 
     /// Centered overlay over the given area.
@@ -293,6 +351,14 @@ impl ActionMenu {
                         entry.action.icon, entry.action.description
                     )),
                 ];
+                if self.confirming == Some(index) {
+                    spans.push(Span::styled(
+                        "  press again to run",
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    ));
+                }
                 match &entry.gate {
                     Gate::NeedsCheckout if !entry.is_checkout => spans.push(Span::styled(
                         "  (will check out first)",
@@ -329,6 +395,7 @@ impl ActionMenu {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::feed::model::ItemKind;
     use chrono::Utc;
     use serde_json::json;
 
@@ -338,8 +405,44 @@ mod tests {
             description: description.to_string(),
             command: "true".to_string(),
             kinds: kinds.iter().map(|kind| kind.to_string()).collect(),
-            requires_checkout: false,
+            ..ActionConfig::default()
         }
+    }
+
+    /// Nothing measured about the checkout — the answer for every item whose
+    /// branch is not on this machine.
+    fn facts() -> Facts {
+        Facts::default()
+    }
+
+    /// A project that holds every rung, so gating is only what a test asks
+    /// for.
+    fn can_everything() -> CapabilitySet {
+        let tmp = Box::leak(Box::new(tempfile::tempdir().unwrap()));
+        let placement = crate::branches::Placement {
+            project: "widget".to_string(),
+            root: tmp.path().to_path_buf(),
+            template: Some("{project_root}/{branch}".to_string()),
+            branches: Vec::new(),
+            main_branch: Some("main".to_string()),
+            repos: Vec::new(),
+            aliases: Vec::new(),
+            territory: Vec::new(),
+            trust: crate::manifest::Trust::Full,
+        };
+        std::fs::write(tmp.path().join("check.sh"), "#!/bin/sh\n").unwrap();
+        std::fs::create_dir_all(tmp.path().join("panta")).unwrap();
+        CapabilitySet::resolve(
+            "widget",
+            Some(&placement),
+            &crate::capabilities::Bindings {
+                sources: 1,
+                checkout: Some("git worktree add"),
+                runner: Some("sh"),
+                gate_reported: true,
+                manifest: None,
+            },
+        )
     }
 
     fn item(kind: ItemKind, id: &str, raw: serde_json::Value) -> Item {
@@ -364,14 +467,14 @@ mod tests {
         let project = [action("project ci", &["ci"])];
 
         let pr = item(ItemKind::Pr, "github-prs:acme/widget#42", json!({}));
-        let names: Vec<String> = applicable(&global, &project, &pr)
+        let names: Vec<String> = applicable(&global, &project, &pr, &facts())
             .into_iter()
             .map(|action| action.description)
             .collect();
         assert_eq!(names, ["everywhere", "prs only"]);
 
         let ci = item(ItemKind::Ci, "github-ci:acme/widget#42", json!({}));
-        let names: Vec<String> = applicable(&global, &project, &ci)
+        let names: Vec<String> = applicable(&global, &project, &ci, &facts())
             .into_iter()
             .map(|action| action.description)
             .collect();
@@ -382,11 +485,17 @@ mod tests {
     fn message_kind_accepts_both_spellings() {
         let message = item(ItemKind::Message, "slack:123", json!({}));
         assert_eq!(
-            applicable(&[action("a", &["message"])], &[], &message).len(),
+            applicable(&[action("a", &["message"])], &[], &message, &facts()).len(),
             1
         );
-        assert_eq!(applicable(&[action("a", &["msg"])], &[], &message).len(), 1);
-        assert_eq!(applicable(&[action("a", &["pr"])], &[], &message).len(), 0);
+        assert_eq!(
+            applicable(&[action("a", &["msg"])], &[], &message, &facts()).len(),
+            1
+        );
+        assert_eq!(
+            applicable(&[action("a", &["pr"])], &[], &message, &facts()).len(),
+            0
+        );
     }
 
     fn menu(
@@ -402,6 +511,7 @@ mod tests {
             None,
             state,
             checkout,
+            &can_everything(),
             actions,
         )
     }
@@ -513,5 +623,168 @@ mod tests {
 
     fn menu_unmatched(actions: Vec<ActionConfig>) -> ActionMenu {
         menu(WorkspaceState::Unmatched, Some(checkout_config()), actions)
+    }
+
+    fn named(id: &str, description: &str) -> ActionConfig {
+        ActionConfig {
+            id: id.to_string(),
+            ..action(description, &[])
+        }
+    }
+
+    /// Provenance orders the menu and a repeated id replaces where it already
+    /// sits, so the key that ran a thing goes on running that thing
+    /// (§FS-006-project-interface.9).
+    #[test]
+    fn a_later_provenance_replaces_a_shared_id_where_it_already_sits() {
+        let merged = merge(vec![
+            vec![
+                named("ci-failures", "see the CI failures"),
+                named("rebase", "rebase"),
+            ],
+            vec![
+                named("ci-failures", "the project's own failure view"),
+                named("bench", "benchmark it"),
+            ],
+            vec![named("bench", "my benchmark"), named("ide", "open the ide")],
+        ]);
+        let described: Vec<&str> = merged
+            .iter()
+            .map(|action| action.description.as_str())
+            .collect();
+        assert_eq!(
+            described,
+            [
+                // The project's view of the failures, still first because that
+                // is where the shipped entry it replaced was.
+                "the project's own failure view",
+                "rebase",
+                // The person's benchmark, at the position the project's took.
+                "my benchmark",
+                "open the ide",
+            ]
+        );
+    }
+
+    /// An entry with no id is nobody's to override — two anonymous entries
+    /// are two entries.
+    #[test]
+    fn anonymous_entries_never_collapse_into_one() {
+        let merged = merge(vec![
+            vec![action("first", &[])],
+            vec![action("second", &[])],
+        ]);
+        assert_eq!(merged.len(), 2);
+    }
+
+    fn requiring(rungs: &[&str]) -> ActionConfig {
+        ActionConfig {
+            requires: rungs.iter().map(|rung| rung.to_string()).collect(),
+            ..action("rebuild it", &[])
+        }
+    }
+
+    /// What an entry says it needs is answered by the one table, and the
+    /// entry stays visible with the reason (§AR-005-capabilities.2).
+    #[test]
+    fn an_entry_is_gated_by_the_rungs_it_named() {
+        // Every rung this fixture holds: nothing to refuse.
+        let mut held = menu(
+            WorkspaceState::Ready,
+            None,
+            vec![requiring(&["placed", "checkable"])],
+        );
+        match held.handle_key(KeyCode::Char('1')) {
+            MenuOutcome::Run(entry) => assert!(matches!(entry.gate, Gate::Ready)),
+            _ => panic!("expected Run"),
+        }
+
+        // A rung the project does not hold: refused in the ladder's own words.
+        let pr = item(ItemKind::Pr, "github-prs:acme/widget#42", json!({}));
+        let unplaced = crate::capabilities::CapabilitySet::unknown("widget");
+        let mut menu = ActionMenu::new(
+            pr,
+            PathBuf::from("/tmp"),
+            PathBuf::from("/tmp"),
+            None,
+            WorkspaceState::Ready,
+            None,
+            &unplaced,
+            vec![requiring(&["ticketed"])],
+        );
+        match menu.handle_key(KeyCode::Char('1')) {
+            MenuOutcome::Run(entry) => match entry.gate {
+                Gate::Blocked(reason) => assert!(reason.contains("no registry row"), "{reason}"),
+                _ => panic!("expected the ladder's refusal"),
+            },
+            _ => panic!("expected Run"),
+        }
+    }
+
+    /// A requirement ephor does not recognize is said out loud: a rung nobody
+    /// checks is worse than a rung nobody wrote.
+    #[test]
+    fn a_requirement_nobody_recognizes_is_named_rather_than_met() {
+        let mut menu = menu(WorkspaceState::Ready, None, vec![requiring(&["magic"])]);
+        match menu.handle_key(KeyCode::Char('1')) {
+            MenuOutcome::Run(entry) => match entry.gate {
+                Gate::Blocked(reason) => {
+                    assert!(reason.contains("'magic' is not a capability"), "{reason}");
+                    assert!(reason.contains("checkout-able"), "{reason}");
+                }
+                _ => panic!("expected it to be blocked"),
+            },
+            _ => panic!("expected Run"),
+        }
+    }
+
+    /// An entry that asked to be confirmed runs on the second choice, and the
+    /// question does not follow the reader around
+    /// (§FS-006-project-interface.9).
+    #[test]
+    fn an_entry_that_asked_to_be_confirmed_runs_on_the_second_choice() {
+        let asking = ActionConfig {
+            confirm: true,
+            ..action("wipe the build", &[])
+        };
+        let mut asked = menu(
+            WorkspaceState::Ready,
+            None,
+            vec![asking, action("harmless", &[])],
+        );
+        assert!(matches!(
+            asked.handle_key(KeyCode::Char('1')),
+            MenuOutcome::Stay
+        ));
+        match asked.handle_key(KeyCode::Char('1')) {
+            MenuOutcome::Run(entry) => assert_eq!(entry.action.description, "wipe the build"),
+            _ => panic!("expected it to run on the second choice"),
+        }
+
+        // Asked, then moved away from: the question is dropped rather than
+        // waiting to catch the next Enter.
+        let asking = ActionConfig {
+            confirm: true,
+            ..action("wipe the build", &[])
+        };
+        let mut moved_away = menu(
+            WorkspaceState::Ready,
+            None,
+            vec![asking, action("harmless", &[])],
+        );
+        assert!(matches!(
+            moved_away.handle_key(KeyCode::Char('1')),
+            MenuOutcome::Stay
+        ));
+        moved_away.handle_key(KeyCode::Char('j'));
+        match moved_away.handle_key(KeyCode::Enter) {
+            MenuOutcome::Run(entry) => assert_eq!(entry.action.description, "harmless"),
+            _ => panic!("expected the entry moved to"),
+        }
+        // And an entry that asked nothing runs on the first choice.
+        match moved_away.handle_key(KeyCode::Char('2')) {
+            MenuOutcome::Run(entry) => assert_eq!(entry.action.description, "harmless"),
+            _ => panic!("expected Run"),
+        }
     }
 }

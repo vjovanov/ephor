@@ -56,6 +56,15 @@ impl Rung {
         }
     }
 
+    /// A rung by the name the ladder spells it with — what a manifest offer or
+    /// a configured action names in `requires` (§FS-006-project-interface.9).
+    /// An unknown word is None: the caller reports it rather than quietly
+    /// requiring nothing, since a requirement nobody checks is worse than one
+    /// nobody wrote.
+    pub fn parse(name: &str) -> Option<Rung> {
+        Rung::all().into_iter().find(|rung| rung.name() == name)
+    }
+
     /// Every rung, in ladder order.
     pub fn all() -> [Rung; 8] {
         [

@@ -122,8 +122,10 @@ impl Ctx {
         self.feeds.iter().find(|feed| feed.project == project)
     }
 
-    /// The item's menu: what its source offers on it unasked, then the
-    /// configured actions (§FS-004-quick-actions.3).
+    /// The item's menu, in provenance order (§FS-006-project-interface.9):
+    /// what its source offers on it unasked (§FS-004-quick-actions.3), then
+    /// what the project offers of itself, then the person's own — an id
+    /// repeated later replacing the entry where it already sits.
     pub fn actions_for(&self, item: &Item) -> Vec<ActionConfig> {
         let project = self
             .project_actions
@@ -135,17 +137,42 @@ impl Ctx {
             .get(&item.project)
             .map(Vec::as_slice)
             .unwrap_or_default();
-        let mut menu = crate::feed::providers::quick_actions(blocks, item);
+        let facts = crate::work::recipe::Facts {
+            behind: self.item_behind(item),
+        };
+        let mut recognized = crate::feed::providers::quick_actions(blocks, item);
         // ephor's own quick action, offered because of what is on disk rather
         // than because a source said something (§FS-004-quick-actions.6).
         if let (Some(main_branch), Some(behind)) = (
             self.main_branch(&item.project),
-            self.item_behind(item).filter(|behind| *behind > 0),
+            facts.behind.filter(|behind| *behind > 0),
         ) {
-            menu.push(actions::rebase_action(main_branch, behind));
+            recognized.push(actions::rebase_action(main_branch, behind));
         }
-        menu.extend(actions::applicable(&self.actions, project, item));
-        menu
+        actions::merge(vec![
+            recognized,
+            self.offers(item, &facts),
+            actions::applicable(&self.actions, project, item, &facts),
+        ])
+    }
+
+    /// What the project says it can do on this item, where it speaks and the
+    /// row lets it be read (§FS-006-project-interface.2,
+    /// §FS-006-project-interface.9). A manifest trusted for descriptions only
+    /// carries no offers to begin with, so trust needs no second check here.
+    fn offers(&self, item: &Item, facts: &crate::work::recipe::Facts) -> Vec<ActionConfig> {
+        self.placements
+            .get(&item.project)
+            .and_then(crate::branches::Placement::manifest)
+            .map(|manifest| {
+                manifest
+                    .offers
+                    .iter()
+                    .map(crate::manifest::Offer::action)
+                    .filter(|offer| offer.matches(item, facts))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Commits the item's own checkout trails the project's main branch,
@@ -915,6 +942,10 @@ impl App {
                             .placement(&item.project)
                             .and_then(|placement| placement.matched(&item).cloned());
                         let checkout = self.ctx.checkouts.get(&item.project).cloned();
+                        // The ladder answers what each entry said it needs, so
+                        // an offer and a configured action are refused in the
+                        // same sentence (§AR-005-capabilities.2).
+                        let can = self.ctx.can(&item.project);
                         self.menu = Some(ActionMenu::new(
                             item,
                             root.clone(),
@@ -922,6 +953,7 @@ impl App {
                             branch,
                             placed.state,
                             checkout,
+                            &can,
                             applicable,
                         ));
                     }
@@ -1031,8 +1063,7 @@ impl App {
                         icon: "⌨".to_string(),
                         description: line.to_string(),
                         command: line.to_string(),
-                        kinds: Vec::new(),
-                        requires_checkout: false,
+                        ..ActionConfig::default()
                     },
                     is_checkout: false,
                     is_freehand: false,
@@ -1189,9 +1220,14 @@ impl App {
         // (§AR-002-summons): one spawn path, one environment contract, one
         // reading of the exit code. The terminal is handed over because that is
         // this call site's property, not the binding's (§AR-002-summons.2).
-        let step = |command: &str, icon: &str, description: &str, site: &Site, workspace: &Path| {
+        let step = |command: &str,
+                    icon: &str,
+                    description: &str,
+                    where_: &Place,
+                    site: &Site,
+                    workspace: &Path| {
             let place = site
-                .resolve(&Place::Workspace)
+                .resolve(where_)
                 .map_err(|err| format!("{description}: {err}"))?;
             println!("\n▶ {icon} {description}   ({})", place.display());
             println!("  $ {command}\n");
@@ -1230,6 +1266,7 @@ impl App {
                     &checkout.command,
                     &checkout.icon,
                     &checkout.description,
+                    &Place::Root,
                     &Site::root(&menu.root),
                     &target,
                 )?;
@@ -1244,10 +1281,18 @@ impl App {
             }
             if !entry.is_checkout {
                 let action = &entry.action;
+                // Where the entry said it runs — a project's offer may name
+                // one repository of the forest (§AR-002-summons.1); a person's
+                // action that says nothing runs where it always has.
+                let where_ = match &action.cwd {
+                    Some(spec) => Place::parse(spec).map_err(|err| err.to_string())?,
+                    None => Place::Workspace,
+                };
                 step(
                     &action.command,
                     &action.icon,
                     &action.description,
+                    &where_,
                     &Site::workspace(&menu.root, &workspace),
                     &workspace,
                 )?;
@@ -1541,6 +1586,57 @@ mod tests {
         if quick == 1 {
             assert_eq!(menu[0].description, "see the CI failures");
         }
+    }
+
+    /// Provenance orders the menu and a repeated id wins in place: what ephor
+    /// recognized, then what the project offers of itself, then the person's
+    /// own (§FS-006-project-interface.9). The project's offers arrive under
+    /// the trust the row extends to them (§FS-006-project-interface.2).
+    #[test]
+    fn the_menu_is_shipped_then_the_projects_then_the_persons() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join(crate::manifest::FILE),
+            r#"{"actions": [
+                 {"id": "bench", "description": "the project's benchmark",
+                  "command": "./bench.sh", "when": {"kinds": ["pr"]}},
+                 {"id": "nightly", "description": "only on a green gate",
+                  "command": "./nightly.sh", "when": {"gate": "green"}},
+                 {"id": "rebase", "description": "the project's own rebase",
+                  "command": "./rebase.sh"}
+               ]}"#,
+        )
+        .unwrap();
+        let mut ctx = ctx_with_branch(tmp.path(), None);
+        ctx.actions = vec![serde_json::from_value(json!({
+            "id": "bench", "icon": "🧪", "description": "my benchmark", "command": "just bench"
+        }))
+        .unwrap()];
+
+        let menu = ctx.actions_for(&ticket_item());
+        let described: Vec<&str> = menu
+            .iter()
+            .map(|action| action.description.as_str())
+            .collect();
+        // The item has no gate, so the offer asking for a green one is not
+        // there at all; the person's `bench` replaced the project's, in the
+        // place the project's held.
+        assert_eq!(
+            described,
+            ["my benchmark", "the project's own rebase"],
+            "{described:?}"
+        );
+        assert_eq!(menu[0].command, "just bench");
+
+        // A row that trusts the checkout for descriptions only runs none of
+        // what it offers.
+        ctx.placements
+            .get_mut("widget")
+            .expect("the fixture project")
+            .trust = crate::manifest::Trust::Descriptions;
+        let menu = ctx.actions_for(&ticket_item());
+        assert_eq!(menu.len(), 1, "only the person's own is left");
+        assert_eq!(menu[0].description, "my benchmark");
     }
 
     #[test]

@@ -150,13 +150,22 @@
     },
     "selector": {
       "type": "object",
-      "description": "The shared offer/recipe selector language (FS-006-project-interface.9). Every stated field must hold.",
+      "additionalProperties": false,
+      "description": "The shared offer/recipe selector language (FS-006-project-interface.9): the same fields a work recipe's 'when' takes, so one language selects both. Every stated field must hold; a field left out asks nothing.",
       "properties": {
-        "kinds": { "type": "array", "items": { "enum": ["pr", "issue", "ticket", "build", "status", "topic"] } },
+        "kinds": {
+          "type": "array",
+          "items": { "enum": ["pr", "ci", "issue", "msg", "message", "status"] },
+          "description": "Item kinds as ephor spells them; 'message' is accepted for 'msg'."
+        },
         "roles": { "type": "array", "items": { "enum": ["author", "reviewer"] } },
         "gate": { "enum": ["failing", "blocked", "red", "green", "any"] },
         "needs_response": { "type": "boolean" },
-        "sources": { "type": "array", "items": { "type": "string" } }
+        "sources": { "type": "array", "items": { "type": "string" } },
+        "behind": {
+          "type": "boolean",
+          "description": "The matter's branch trails its main branch (true) or is level with it (false), measured in the checkout. An unmeasurable checkout matches neither (FS-004-quick-actions.6)."
+        }
       }
     }
   }

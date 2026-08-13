@@ -144,7 +144,9 @@ pub struct TicketStore {
     pub path: String,
 }
 
-/// A menu entry the project offers (§FS-006-project-interface.9).
+/// A menu entry the project offers (§FS-006-project-interface.9): the same
+/// shape a person's configured action has, selected by the same language and
+/// gated by the same rungs.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Offer {
     pub id: String,
@@ -155,11 +157,35 @@ pub struct Offer {
     #[serde(default)]
     pub cwd: Option<String>,
     #[serde(default)]
-    pub when: Option<Value>,
+    pub when: crate::work::recipe::Selector,
     #[serde(default)]
     pub requires: Vec<String>,
     #[serde(default)]
     pub confirm: bool,
+}
+
+/// What a project offers, as a menu entry. The icon is the only thing ephor
+/// fills in: an offer that named none still has to look like the entries
+/// beside it.
+const OFFER_ICON: &str = "▸";
+
+impl Offer {
+    pub fn action(&self) -> crate::feed::config::ActionConfig {
+        crate::feed::config::ActionConfig {
+            id: self.id.clone(),
+            icon: self.icon.clone().unwrap_or_else(|| OFFER_ICON.to_string()),
+            description: self.description.clone(),
+            command: self.command.clone(),
+            cwd: self.cwd.clone(),
+            kinds: Vec::new(),
+            when: self.when.clone(),
+            requires: self.requires.clone(),
+            // A project cannot ask ephor to make a workspace for it; what it
+            // needs on disk it says through `requires` like everything else.
+            requires_checkout: false,
+            confirm: self.confirm,
+        }
+    }
 }
 
 /// Everything a project chose to say.
@@ -299,6 +325,48 @@ mod tests {
         assert_eq!(manifest.offers[0].id, "rebuild");
         assert_eq!(manifest.offers[0].requires, vec!["checkout-able"]);
         assert!(!manifest.offers[0].confirm);
+    }
+
+    /// An offer is a menu entry in the shape a person's action has, selected
+    /// by the same language and gated by the same rungs
+    /// (§FS-006-project-interface.9) — one shape, so the menu cannot tell
+    /// them apart except by where they came from.
+    #[test]
+    fn an_offer_becomes_a_menu_entry_of_the_same_shape() {
+        let manifest = parse(
+            r#"{"actions": [{"id": "bench", "description": "run the benchmarks",
+                             "command": "./bench.sh", "cwd": "repo:ce",
+                             "when": {"kinds": ["pr"], "gate": "green"},
+                             "requires": ["checkable"], "confirm": true}]}"#,
+            "ephor.json",
+        )
+        .unwrap();
+        let action = manifest.offers[0].action();
+        assert_eq!(action.id, "bench");
+        assert_eq!(action.command, "./bench.sh");
+        assert_eq!(action.cwd.as_deref(), Some("repo:ce"));
+        assert_eq!(action.when.kinds, vec!["pr"]);
+        assert_eq!(action.when.gate.as_deref(), Some("green"));
+        assert!(action.confirm);
+        assert_eq!(action.rungs().0, vec![crate::capabilities::Rung::Checkable]);
+        // An offer that named no icon still looks like the entries beside it,
+        // and a project cannot ask ephor to make it a workspace.
+        assert_eq!(action.icon, OFFER_ICON);
+        assert!(!action.requires_checkout);
+    }
+
+    /// The selector is the recipes' language, so a field neither of them has
+    /// is refused where it is written rather than ignored
+    /// (§FS-006-project-interface.11).
+    #[test]
+    fn an_offer_selecting_on_something_nobody_selects_on_is_refused() {
+        let err = parse(
+            r#"{"actions": [{"id": "x", "description": "d", "command": "c",
+                             "when": {"phase": "nightly"}}]}"#,
+            "ephor.json",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("manifest schema"), "{err}");
     }
 
     #[test]
