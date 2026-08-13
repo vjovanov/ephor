@@ -4,10 +4,12 @@
 #     0   the check passed        → done
 #     1   it did not              → back to the fix state with this output
 #
-# What the check *is* belongs to the project, not to ephor: this looks for the
-# ways a repository usually says so, in the checkout the ticket names. Replace
-# the list with your project's one real command — a check that guesses is a
-# check nobody trusts.
+# What the check *is* belongs to the project, not to ephor: a checkout that
+# ships an executable `./check.sh` is taken at its word — that is the one
+# hook, and whatever project-specific steps it aggregates live in the project.
+# Only a checkout without one falls back to the ways a repository usually
+# says so. Replace the fallback list with your project's one real command —
+# a check that guesses is a check nobody trusts.
 set -uo pipefail
 
 : "${REPORT:?the state machine must pass {output.<name>.path}}"
@@ -35,7 +37,9 @@ if [ ! -d "${CHECKOUT:-}" ] || [ -z "${CHECKOUT##*\{*}" ]; then
 fi
 cd "$CHECKOUT" || { echo "no checkout at $CHECKOUT" > "$REPORT"; exit 1; }
 
-for check in "just check" "make check" "npm test" "cargo test --locked" "./check.sh"; do
+# The project's own hook first: `./check.sh` outranks every guessed
+# convention below, because the project wrote it to mean exactly "check me".
+for check in "./check.sh" "just check" "make check" "npm test" "cargo test --locked"; do
   tool=${check%% *}
   # `just check` needs a justfile as well as `just`; the same for the rest.
   case "$tool" in
