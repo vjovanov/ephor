@@ -6,9 +6,10 @@ Declare each behavior or requirement inline as an H2: `## FS-NNN-slug: …`.
 
 ephor aggregates work from places that host code review and places that track
 issues. Which ones they are is a property of a person's employer, not of ephor.
-No forge, tracker, or vendor CLI may therefore be named in ephor's core: every
-one of them is reached through a single interface with a fixed capability set,
-and an implementation is selected per project by configuration.
+No forge, tracker, or vendor CLI may therefore be named in ephor's core
+(§REQ-001-boundary.5): every one of them is reached through a single interface
+with a fixed capability set, and an implementation is selected per project by
+configuration.
 
 ### 1. Capabilities
 
@@ -205,17 +206,19 @@ partially-failed release skips what already exists rather than failing.
 ### 4. Publication is gated on carrying nothing site-specific
 
 No artifact is published while the tree still violates
-[§FS-001-forge-interface.5](#5-no-site-specific-data-in-the-repository). The
-check is mechanical and runs before anything is uploaded.
+[§FS-001-forge-interface.5](#5-no-site-specific-data-in-the-repository) or the
+literal confinement of §REQ-001-boundary.5. The checks are mechanical and run
+before anything is uploaded.
 
 ## FS-003-feed-categories: the feed sorts itself into categories, and finished work lands in Recent
 
 A feed is read by scanning, not by searching, so items arrive already sorted
 into the categories a person works in. The categories are ephor's, never a
 provider's — a provider reports items and ephor places them
-([§FS-001-forge-interface.3](#3-policy-lives-above-the-interface-never-in-an-implementation))
-— so every forge lands in the same categories and a new implementation
-inherits them without asking.
+([§FS-001-forge-interface.3](#3-policy-lives-above-the-interface-never-in-an-implementation)),
+policy staying on ephor's side of the seam (§REQ-001-boundary) — so every
+forge lands in the same categories and a new implementation inherits them
+without asking.
 
 ### 1. The categories
 
@@ -309,7 +312,8 @@ anyway. The reader would have to leave, find the repository, remember the
 tool's flags, and come back with an answer ephor could have handed them.
 
 So ephor offers those itself. A **quick action** is a menu entry ephor has
-without being told, on an item where it already knows what the problem is.
+without being told, on an item where it already knows what the problem is —
+the most frequent response made the cheapest one (§GOAL-001-fewest-moves).
 
 ### 1. A quick action belongs to the source that found the problem
 
@@ -320,7 +324,8 @@ anywhere above that is what
 forbids. A quick action is therefore offered by the source; ephor's core only
 merges it into the menu and runs it, exactly as it runs a configured action —
 the same checkout resolution, the same `EPHOR_*` environment, the same
-handover of the terminal while it runs. A quick action is an ordinary menu
+handover of the terminal while it runs, one crossing in the seam's materials
+(§REQ-001-boundary.1). A quick action is an ordinary menu
 entry that nobody had to write, and a source that offers none is complete.
 
 ### 2. Offered only where it would work
@@ -470,17 +475,22 @@ agent can be asked to do, and asking it is the boring half of the day.
 ephor does not do that work. It **dispatches** it: it turns an item into a
 ticket in an agent runtime, hands over what it already knows, and then keeps
 the ledger — which items have work under way, what that work reached, and
-whether the item has moved since. Watching and working are one loop, and ephor
-is the half that remembers.
+whether the item has moved since. Watching and working are one loop, ephor is
+the half that remembers, and the routine moves leave the reader's hands
+(§GOAL-004-handover).
 
-The runtime is [rhei](https://github.com/vjovanov/rhei), named here rather than
-hidden behind an interface. That is not the neutrality
-[§FS-001-forge-interface](#fs-001-forge-interface-ephor-reaches-every-forge-and-issue-tracker-through-one-provider-interface)
-asks for: a forge is a property of a person's employer and may not be named,
-where the runtime that executes their work is a property of how they choose to
-work. What ephor writes is a plan file in a documented plain-text language, so
-the coupling is a file format and not a process — the tickets stay readable,
-diffable, and hand-editable if the runtime is never run at all.
+The runtime is a binding with [rhei](https://github.com/vjovanov/rhei) as the
+shipped default (§REQ-001-boundary.1, decided with its tradeoff recorded in
+§DA-001-runtime-bound-default). What ephor writes is a plan file in a
+documented plain-text language, and that language — together with the runner
+command configured to execute it and the verdict read back from its results —
+is the entire coupling: a contract in files, never a linked process. Choosing
+a runtime remains a property of how a person works, which is why one ships
+wired and ready; requiring it would be something else. Nothing in ephor's
+core names the default runner, and with no runner installed every part of
+dispatch except the running still holds — tickets are written, read, and
+reopened, staying readable, diffable, and hand-editable on disk — while
+running refuses with the configured runner named.
 
 ### 1. A recipe decides which items deserve work, and what to ask for
 
@@ -748,3 +758,323 @@ runnable on its own ([§FS-004-quick-actions.6](#6-a-branch-that-trails-its-main
 the same rebase the reader presses a key for is the one a state machine runs,
 and two implementations of it would eventually disagree about what a clean
 rebase is.
+
+### 13. A communication is work too, and its answer comes back as a proposal
+
+Not every matter's next move is a change in a checkout; often it is a reply.
+A matter owing a response — a question in a review thread, a mail asking for
+a decision, a mention carrying a request
+(§FS-003-feed-categories.4) — is dispatched like any other: the ticket
+carries the discussions as its dossier, and asks the runtime for a
+**proposed answer**, drafted in the matter's context. The shipped answer
+recipe is this shape, and an ask in the reader's own words (§10) may request
+one for anything.
+
+Three things distinguish it. **It needs no checkout**: the work is about the
+conversation, so the plan is written where the matter resolves — the branch
+workspace where one exists, because sitting in the change makes a better
+answer, and the project root otherwise — and the checkout-able rung is not
+required (§FS-006-project-interface.10). **The proposal is a file, never a
+post**: §7 holds — the runtime writes the proposed reply into the plan's
+results, ephor reads it back and surfaces it beside the discussion it
+answers, and nothing reaches the channel by itself. **Posting is one
+deliberate move, where the channel can carry it**: on a channel that
+declares reply (§FS-007-matters.4) the surfaced proposal is offered for
+posting, edited or as it stands, exactly as a reaction is posted today; on
+a channel that does not, the proposal is what the person copies — a stated
+degrade (§REQ-001-boundary.1), not a failure.
+
+## FS-006-project-interface: a project and ephor meet over one interface, in three homes
+
+ephor requires capabilities of a project, never artifacts in it
+(§REQ-001-boundary.3): a project is fully watchable exactly as it stands, and
+everything beyond watching is something the project *can do* or *chooses to
+offer*. This section is the whole of how a project and ephor speak — where
+each fact lives, how a command is invoked, what it may answer, and what its
+absence degrades to — so that tracking a new project costs minutes and
+touches nothing in it (§GOAL-005-costless). Whatever crosses this interface
+in structure is validated against a published schema; nothing crosses it as
+linked code.
+
+### 1. The three homes
+
+Every fact the interface carries lives in exactly one of three places.
+**Description and identity** live in the registry row: where the forest is,
+how a branch becomes a workspace, and the signals by which the project's
+matters are recognized (§FS-008-attribution.1). **Operational bindings**
+live in site configuration: which command fills which verb, which runtime
+runs work, the person's own actions and recipes. **Conventions** are probed
+in the checkout: well-known names a project carries for its own sake. One
+precedence resolves them all — *site configuration over manifest over
+probe* (§REQ-001-boundary.2) — so a probe is a default, a manifest is a
+declaration, and the person always has the last word.
+
+### 2. The manifest is offered, never required
+
+A project that chooses to speak places one file, `ephor.json`, at its forest
+root (decided in §DF-001-manifest-offered). It may declare identity hints,
+the forest's own layout, check verbs, gate verbs, ticket stores, and
+offers — every field optional, an empty
+manifest valid, and nothing in it able to gate a capability that probing or
+site configuration could not establish alone. Identity fields are hints the
+registry row adopts unless it overrides: **the row is authoritative, because
+attribution keys must not be forgeable by a checkout.** Manifest commands
+run with exactly the trust a person extends to running the project's own
+build, and the row can narrow it — honoring the manifest fully, reading only
+its descriptions, or ignoring it — for checkouts trusted less. Offers are
+menu entries a person invokes; what spends agent time on its own match (a
+recipe) is site configuration only, because a repository does not get to
+spend it.
+
+### 3. A summons: environment in, exit code and answer out
+
+Every command the interface names — a check verb, a gate verb, a checkout, a
+ticket store's CLI, an offer — is invoked one way. It runs in the resolved
+place: the item's branch workspace where one resolves, the forest root
+otherwise, a manifest-designated repository of the forest where the entry
+says so. It receives the dossier as `EPHOR_*` environment — one vocabulary,
+identical to what a shell action and a state-machine script receive
+(§FS-005-dispatch.8). It answers first with its exit code — `0` for done,
+non-zero for failed, `75` for *parked*: not applicable now, ask again later —
+and optionally in structure, written to the file named by `$EPHOR_ANSWER`.
+Standard output and error remain the command's own, streamed to the person
+or the log; a contract that parsed them would make every honest build log a
+protocol violation.
+
+### 4. The answer envelope
+
+Structured answers share one envelope, speaking the model's nouns
+(§FS-007-matters): `matters`, `discussions`, and `events` for sources with
+something to report; `summary`, `url`, and `needs_response` for the common
+one-line cases; `failures` and `features` as verb-level conveniences that
+ephor normalizes into events and facts; `data` as free passthrough that
+returns wherever the dossier's metadata goes. Each verb's contract names the
+fields it reads and ignores the rest, and unknown fields are ignored
+everywhere — the envelope evolves by addition, and an incompatible change is
+a version bump with a changelog entry (§11). Paths in an answer resolve
+against the summons's working directory.
+
+### 5. Checks are verbs, and every script is self-contained
+
+A project's checks are three well-known names probed at the forest root —
+`./check.sh` the aggregate, `./check-style.sh` the fast style pass,
+`./smoke-test.sh` the smoke — or the same three declared in the manifest
+under whatever paths the project prefers. Each is self-contained: a smoke
+test that needs a build performs its build, because how a project builds is
+the project's knowledge and stays there. Smoke may enumerate **features** —
+`--list` printing one id per line, or a static list in the manifest — and a
+feature id given as an argument runs that feature's smoke alone; without
+enumeration, smoke is one opaque verb and that is a complete
+implementation. Which verbs run, and in what order, is policy above the
+interface: a verify step sequences them from site configuration, one
+summons each.
+
+### 6. The gate is the project's, in three verbs
+
+How to ask a project's CI what it is doing is project truth — the same for
+every person who works on it — so its home is the manifest, with site
+configuration overriding where credentials or variants demand. Three verbs:
+**status** answers the gate's counts per repository of the forest;
+**failures** answers what actually failed, as the failing job, its log, and
+the error where it can be had — the expensive question, asked on demand
+(§FS-001-forge-interface.1); **restart** re-runs the failing gate and every
+gate downstream of it, committing nothing, under the semantics of
+§FS-005-dispatch.11. A forge-hosted gate needs no manifest at all: the
+provider's own gate capability is the shipped default binding. A project
+with an internal gate binds three commands, and nothing above the seam can
+tell the difference.
+
+### 7. Local ticket stores are read where they live
+
+A project may keep tickets in its checkout — a plan directory, a
+git-backed issue store — and a store ephor recognizes is read through the
+store's own files and CLI, as matters with their discussions
+(§FS-007-matters), into the same feed under the same rules as anything a
+forge reported. Recognition is by probed convention or manifest
+declaration; attribution is the checkout's own project; and the stores are
+project-native things that exist without ephor — a store's presence is a
+capability rung, never an obligation.
+
+### 8. The checkout contract
+
+A project may bind one **checkout** command; its contract is to make
+`$EPHOR_WORKSPACE` exist, and ephor verifies the directory afterwards
+rather than trusting the exit code alone. Where none is bound, ephor
+supplies the git checkout itself (§FS-004-quick-actions.7). Everything that
+needs a workspace — offers marked as requiring one, work whose recipe edits
+the change — is gated on this contract and degrades by naming it.
+
+### 9. Offers: the project's actions
+
+A manifest may offer actions: entries for the same menu configured actions
+occupy, in the same shape, selected by the same `when` language recipes use,
+and gated by the same capability requirements. Provenance orders the menu —
+what ephor itself recognized first (§FS-004-quick-actions.3), then the
+project's offers, then the person's own — and where two entries share an id,
+the person's beats the project's beats the shipped one. An offer is invoked
+by a person, runs as a summons (§3), and is refused with its reason where
+its requirements do not hold (§FS-004-quick-actions.2).
+
+### 10. Capability, rung by rung
+
+What a project can do is resolved into a ladder, and every feature names
+the rungs it needs: *observable* (a registry row and at least one source
+answering) buys the watch; *placed* (the forest root on disk) buys actions
+and update; *branch-addressable* (a workspace template) buys resolution of
+matters to workspaces; *checkout-able* (§8) buys work that edits;
+*checkable* (§5) buys verification that means something; *gated* (§6) buys
+failure dossiers and the restart; *ticketed* (§7) buys local matters;
+*workable* (a bound runtime, §FS-005-dispatch) buys the loop. A missing
+rung degrades exactly the features that named it, with the reason stated
+where the feature would have appeared — never an error, never silence
+(§REQ-001-boundary.1).
+
+### 11. The interface is versioned
+
+The manifest, the envelope, and the registry schema are published schemas,
+embedded in the binary and printable on demand, so a project can validate
+what it says without ephor present. They evolve by addition: an optional
+field costs nothing, unknown fields are ignored, and any incompatible
+change bumps the schema version with a changelog entry per
+§FS-002-release.1. The schemas are the interface's stability surface — what
+a release may change is answerable by diffing them.
+
+## FS-007-matters: the feed is made of matters, and a matter knows why it is there
+
+The unit of the watch is the **matter**: the subject under discussion or
+observation — a pull request, an issue, a ticket in a local store, a
+periodic build, a status subject, or a bare topic. What the spec has so far
+called an item is a matter seen through one source's report. A matter is
+the feed's row, the unit of attribution, of state, of fingerprinting, and
+of dispatch — the dossier is the dossier of a matter — and the reason for
+the noun is that the same matter is discussed in more than one place: the
+pull request's review threads, a mail thread about it, a chat fragment
+naming it. One subject, several venues, one row (§GOAL-002-glance).
+
+### 1. A matter is a subject with a stated identity
+
+A matter's identity is the subject key its source stated — the pull request
+the forge names, the ticket by its key, the store's own id — or, where a
+conversation matched a project but no known subject, an identity synthesized
+for it as a topic. Identity is never guessed from resemblance: two pull
+requests may share a title, and a subject whose identity cannot be
+established is left alone (§FS-003-feed-categories.5).
+
+### 2. Same subject, one matter; related subjects, linked matters
+
+Reports of the same subject key merge into one matter, however many sources
+made them, under the survival rules of §FS-003-feed-categories.5. Matters
+that *reference* each other — the pull request implementing a ticket, the
+local ticket tracking a gate — stay distinct and are **linked**, presented
+together under the branch that relates them. Merging what is one thing and
+linking what is related is the difference between a readable pile and a
+lossy one.
+
+### 3. A discussion is messages grouped in a channel
+
+A matter's conversation arrives as **discussions**: ordered messages with
+authors, times, reactions, and task boxes, grouped within one channel.
+Whether a discussion awaits the reader is decided per discussion, by the
+calculus of §FS-003-feed-categories.4, identically in every channel. A
+matter awaits its reader while any of its discussions does.
+
+### 4. A channel says what it can do
+
+The venue a discussion lives in — review threads, an issue's comments, a
+mail thread, a chat thread — declares its capabilities in the pattern of
+§FS-001-forge-interface.1: whether a reaction can be posted, a task ticked,
+a reply sent. What grouping means is the channel's own policy; what the
+reader can do about a message is offered only where the channel declared it
+(§FS-004-quick-actions.2) — an undeclared capability narrows the offer by
+the degrade rule of §REQ-001-boundary.1, never silently.
+
+### 5. An event moves state, and resurfacing names its reason
+
+Everything about a matter that is not conversation arrives as **events**:
+the gate's counts changed, the state closed, a check finished, a ticket
+resolved. Events fold into the matter's state, and the matter's fingerprint
+digests state, discussions, and the event tail — so when a done matter
+moves and resurfaces (§FS-005-dispatch.5), the row can say *what* moved:
+resurfacing is always accompanied by its reason, because a row that
+reappears without one sends the reader to re-read everything, which is the
+sweep this tool exists to retire (§GOAL-003-nothing-lost).
+
+## FS-008-attribution: every conversation finds its project, or says that it could not
+
+Conversations arrive from places that know nothing of the registry: a
+mailbox serves every project a person has, a discussion sits on an adjacent
+repository, a notice names a subject nobody configured. Attribution is
+ephor's own move — deciding whose business a conversation is — and it is
+data matching, never code: evidence the conversation carries against
+identity the registry declares (§GOAL-003-nothing-lost).
+
+### 1. Identity is declared, and the row has the last word
+
+A project's identity is the set of signals by which its matters are
+recognized: ticket patterns, the forest's repositories, the wider
+**territory** the project claims — repositories and organizations that are
+its business without being in its forest — names and aliases, addresses. It
+lives in the registry row; a manifest may hint it
+(§FS-006-project-interface.2), and the row adopts or overrides — a checkout
+must not be able to claim another project's conversations. Territory is what
+places the general case: a mention of the person on some repository of the
+project's ecosystem, an issue filed there, a discussion opened there —
+none of it in any forest, all of it the project's business
+(§GOAL-003-nothing-lost).
+
+### 2. Two stages, one engine
+
+Attribution runs discussion → matter, then matter → project and branch. It
+is one matching engine at two scopes: the branch matching that already
+places items under registry branches is this engine confined to one
+project, and it is promoted, not duplicated.
+
+### 3. Venue beats reference beats resemblance
+
+A discussion *on* a subject belongs to that subject's matter. A discussion
+*naming* a subject — a ticket key in a mail's text, a pull request's URL in
+a chat message — belongs to the named matter, linked onward
+(§FS-007-matters.2). Only where neither holds may declared aliases place a
+conversation, and then as a topic matter, never onto an existing subject:
+resemblance may start a new row, it may not amend one. At the second stage
+the venue itself is the explicit signal: a matter whose subject sits on a
+repository of a project's forest or declared territory
+(§FS-008-attribution.1) is that project's before any reference or alias is
+consulted.
+
+### 4. Unattributed is a place, not a fate
+
+A conversation that matched nothing lands in a visible unattributed bucket,
+in the interactive view and on demand — never dropped. The bucket is the
+attribution seam's degrade rule (§REQ-001-boundary.1): mapping failures are
+seen where they can be fixed, by adding the signal the identity was
+missing.
+
+## FS-009-shipped-actions: what ephor ships for CI runs from the repository alone
+
+ephor ships continuous-integration entry points — workflow steps a project
+wires into its own CI — and every one of them obeys the rule that selects
+them: **a shipped step runs from repository-committed material and workflow
+inputs alone**, never from a personal site. A step that would need a
+registry, credentials for a person's sources, or a person's bindings does
+not ship as CI; the watch-and-work loop stays on machines that have a site,
+and shipping it hosted would mean shipping someone's configuration
+(§REQ-001-boundary.2).
+
+### 1. The set
+
+Three steps ship. **Validate** checks a repository's `ephor.json` — and a
+committed registry, where a repository carries one — against the published
+schemas (§FS-006-project-interface.11). **Check** reads the manifest's
+declared check verbs and runs them, per-feature where features are
+enumerated (§FS-006-project-interface.5) — the project's own gate derived
+from the project's own declaration, with nothing project-specific in the
+workflow. **Setup** installs a pinned ephor release, and is the building
+block the other two and anyone's own composition stand on.
+
+### 2. Versioned and released with ephor
+
+The steps live in ephor's repository and version with it: a release that
+changes a schema or a verb ships the steps that understand the change, per
+§FS-002-release. A repository pins the version it consumes, as it pins any
+dependency (§GOAL-005-costless).

@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/vjovanov/ephor/schemas/manifest/v1",
+  "title": "ephor project manifest (ephor.json)",
+  "description": "What a project may offer ephor, placed as 'ephor.json' at the forest root (FS-006-project-interface.2). Offered, never required: every field is optional, an empty object is valid, and nothing here gates a capability that probing or site configuration could not establish alone. Resolution is always site configuration over manifest over probe (REQ-001-boundary.2). Identity fields are hints the registry row adopts unless it overrides — the row is authoritative. Commands run relative to the forest root with the trust the person extends to the project's own build; the row's trust switch can narrow this to descriptions only.",
+  "type": "object",
+  "properties": {
+    "v": { "const": 1 },
+    "identity": {
+      "type": "object",
+      "description": "Hints for attribution (FS-008-attribution.1). Adopted by the registry row, never overriding it.",
+      "properties": {
+        "name": { "type": "string" },
+        "aliases": { "type": "array", "items": { "type": "string" } },
+        "ticket_patterns": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Regular expressions matching the project's ticket keys, e.g. 'GR-\\\\d+'."
+        },
+        "repos": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "The forest's repositories as the forge names them (owner/name or slug)."
+        },
+        "territory": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Repositories and organizations that are this project's business without being in its forest — 'owner/name', or 'owner/*' for an organization. Places general mentions, stray issues, adjacent discussions (FS-008-attribution.1)."
+        },
+        "addresses": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Mail addresses and lists whose conversations belong to this project."
+        }
+      }
+    },
+    "forest": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "path"],
+        "properties": {
+          "name": { "type": "string" },
+          "path": { "type": "string", "description": "Relative to the forest root." },
+          "remote": { "type": "string" },
+          "main": { "type": "string", "description": "The main branch this repository trails (default: the project's)." },
+          "role": { "type": "string" }
+        }
+      },
+      "description": "The forest's own layout (AR-004-forest). The registry row overrides paths and remotes for where things sit on a particular machine."
+    },
+    "checks": {
+      "type": "object",
+      "description": "Check verbs (FS-006-project-interface.5), overriding the probed ./check.sh, ./check-style.sh, ./smoke-test.sh. Each script is self-contained: a smoke test that needs a build performs its build.",
+      "properties": {
+        "check": { "$ref": "#/$defs/command" },
+        "style": { "$ref": "#/$defs/command" },
+        "smoke": {
+          "type": "object",
+          "required": ["command"],
+          "properties": {
+            "command": { "type": "string" },
+            "cwd": { "$ref": "#/$defs/cwd" },
+            "features": {
+              "oneOf": [
+                { "const": "list", "description": "Discover by running the command with --list; it prints one feature id per line, or a features[] envelope." },
+                { "type": "array", "items": { "$ref": "https://github.com/vjovanov/ephor/schemas/answer/v1#/$defs/feature" } }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "ci": {
+      "type": "object",
+      "description": "Gate verbs (FS-006-project-interface.6) — project truth, the same for every developer; site configuration overrides for credentials or variants. Each is a summons: EPHOR_* environment in (EPHOR_REPO, EPHOR_NUMBER, EPHOR_BRANCH name the matter), exit code plus $EPHOR_ANSWER envelope out. status answers gate; failures answers failures[]; restart re-runs the failing gate and everything downstream of it, committing nothing (FS-005-dispatch.11), exit 75 meaning 'still running, ask again later'.",
+      "properties": {
+        "status": { "$ref": "#/$defs/command" },
+        "failures": { "$ref": "#/$defs/command" },
+        "restart": { "$ref": "#/$defs/command" }
+      }
+    },
+    "tickets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "path"],
+        "properties": {
+          "kind": { "type": "string", "description": "'rhei', 'beads', or another store ephor has a reader for." },
+          "path": { "type": "string", "description": "Relative to the forest root." }
+        }
+      },
+      "description": "Local ticket stores beyond the probed conventions (FS-006-project-interface.7)."
+    },
+    "actions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/offer" },
+      "description": "The project's offers (FS-006-project-interface.9): menu entries beside the person's own, person's same-id entries winning. Invoked by a person, run as a summons, gated by 'requires'."
+    }
+  },
+  "$defs": {
+    "command": {
+      "oneOf": [
+        { "type": "string" },
+        {
+          "type": "object",
+          "required": ["command"],
+          "properties": {
+            "command": { "type": "string" },
+            "cwd": { "$ref": "#/$defs/cwd" }
+          }
+        }
+      ],
+      "description": "A command line run via sh -c in the resolved place (FS-006-project-interface.3)."
+    },
+    "cwd": {
+      "type": "string",
+      "pattern": "^(root|repo:[A-Za-z0-9._-]+)$",
+      "description": "'root' (default) or 'repo:<name>' naming a forest repository."
+    },
+    "offer": {
+      "type": "object",
+      "required": ["id", "description", "command"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "icon": { "type": "string" },
+        "description": { "type": "string" },
+        "command": { "type": "string" },
+        "cwd": { "$ref": "#/$defs/cwd" },
+        "when": { "$ref": "#/$defs/selector" },
+        "requires": {
+          "type": "array",
+          "items": {
+            "enum": ["placed", "branch-addressable", "checkout-able", "checkable", "gated", "ticketed", "workable"]
+          },
+          "description": "Capability rungs this offer needs (FS-006-project-interface.10); unmet rungs render '(unavailable: …)'."
+        },
+        "confirm": { "type": "boolean", "description": "Ask before running." }
+      }
+    },
+    "selector": {
+      "type": "object",
+      "description": "The shared offer/recipe selector language (FS-006-project-interface.9). Every stated field must hold.",
+      "properties": {
+        "kinds": { "type": "array", "items": { "enum": ["pr", "issue", "ticket", "build", "status", "topic"] } },
+        "roles": { "type": "array", "items": { "enum": ["author", "reviewer"] } },
+        "gate": { "enum": ["failing", "blocked", "red", "green", "any"] },
+        "needs_response": { "type": "boolean" },
+        "sources": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

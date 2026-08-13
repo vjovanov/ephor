@@ -1,0 +1,247 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/vjovanov/ephor/schemas/answer/v1",
+  "title": "ephor answer envelope",
+  "description": "What a summoned command may write to the file named by $EPHOR_ANSWER (FS-006-project-interface.4). The exit code is always authoritative (0 done, non-zero failed, 75 parked); this envelope is optional structure on top. Every field is optional; unknown fields are ignored (must-ignore). Fields that describe 'the matter of this summons' (gate, failures, features, summary, url, needs_response) need no matter key: the summons's EPHOR_* environment already names it. Sources reporting more than one subject use matters/discussions/events with explicit keys.",
+  "type": "object",
+  "required": ["v"],
+  "properties": {
+    "v": {
+      "const": 1,
+      "description": "Envelope version. Bumps only on incompatible change (FS-006-project-interface.11)."
+    },
+    "summary": {
+      "type": "string",
+      "description": "One line about the matter of this summons. Read by checks, custom-status."
+    },
+    "url": {
+      "type": "string",
+      "description": "Where a person would look. Read by custom-status, ci.status."
+    },
+    "needs_response": {
+      "type": "boolean",
+      "description": "Source's hint that the matter awaits the person. ephor's own calculus (FS-003-feed-categories.4) governs where it applies; this hint stands where only the source can know."
+    },
+    "gate": {
+      "$ref": "#/$defs/gate",
+      "description": "The gate of the matter of this summons. Read by ci.status (FS-006-project-interface.6)."
+    },
+    "failures": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/failure" },
+      "description": "What actually failed for the matter of this summons. Read by ci.failures and by check verbs (FS-006-project-interface.5, .6)."
+    },
+    "features": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/feature" },
+      "description": "Feature enumeration. Read by smoke --list (FS-006-project-interface.5)."
+    },
+    "matters": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/matter" },
+      "description": "Subjects this command reports (FS-007-matters). Read by ticket stores and custom-status."
+    },
+    "discussions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/discussion" },
+      "description": "Message groups this command reports, attributed by their matter key or to the matter of this summons."
+    },
+    "events": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/event" },
+      "description": "State observations (FS-007-matters.5)."
+    },
+    "channels": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/channel" },
+      "description": "Capability declarations for channels named by discussions (FS-007-matters.4). Declared once here, not per discussion."
+    },
+    "data": {
+      "type": "object",
+      "description": "Free passthrough. Returns wherever the dossier's metadata goes (EPHOR_RAW, {meta.*})."
+    }
+  },
+  "$defs": {
+    "matter": {
+      "type": "object",
+      "required": ["key"],
+      "properties": {
+        "key": {
+          "type": "string",
+          "description": "The stated subject key (FS-007-matters.1): 'gh:owner/repo#123', 'ticket:GR-73955', a store's own id such as 'rhei:panta/plan.3' or 'bead:a1f3'. Grammar: '<scheme>:<forge-stated id>'. Never synthesized from a title."
+        },
+        "kind": {
+          "enum": ["pr", "issue", "ticket", "build", "status", "topic"],
+          "description": "Matter kind (FS-007-matters lead)."
+        },
+        "title": { "type": "string" },
+        "state": {
+          "type": "string",
+          "description": "State as the source spells it ('open', 'open:needs_work', 'merged', 'In Progress')."
+        },
+        "terminal": {
+          "type": "boolean",
+          "description": "Whether the state is final as the source understands finality (closed, merged, resolved). Drives Recent (FS-003-feed-categories.2)."
+        },
+        "url": { "type": "string" },
+        "repo": { "type": "string", "description": "owner/name or the forge's slug." },
+        "number": { "type": "string" },
+        "branch": { "type": "string", "description": "Head branch name, for workspace resolution." },
+        "time": { "type": "string", "format": "date-time", "description": "Last activity." },
+        "refs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Referenced subject keys or ticket keys — link evidence (FS-007-matters.2, FS-008-attribution)."
+        },
+        "reasons": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Why this is the person's: authored, engaged, cited, review-requested, assigned (FS-001-forge-interface.1)."
+        },
+        "data": { "type": "object", "description": "Source passthrough." }
+      }
+    },
+    "discussion": {
+      "type": "object",
+      "required": ["messages"],
+      "properties": {
+        "matter": {
+          "type": "string",
+          "description": "Subject key this discussion belongs to. Omitted: the matter of this summons."
+        },
+        "channel": {
+          "type": "string",
+          "description": "Channel id this discussion lives in (e.g. 'review-threads', 'comments', 'mail'). Omitted: the source's single implicit channel."
+        },
+        "label": { "type": "string", "description": "Rendered over the thread where several exist." },
+        "url": { "type": "string" },
+        "messages": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/message" }
+        }
+      }
+    },
+    "message": {
+      "type": "object",
+      "required": ["author", "text"],
+      "properties": {
+        "author": { "type": "string" },
+        "text": { "type": "string" },
+        "when": { "type": "string", "format": "date-time" },
+        "mine": {
+          "type": "boolean",
+          "description": "Whether the configured user wrote it. Decided by the source — only it knows how the venue identifies people."
+        },
+        "task": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/task" }],
+          "description": "Present where the venue tracks this message as a task (FS-003-feed-categories.4)."
+        },
+        "reactions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/reaction" }
+        }
+      }
+    },
+    "task": {
+      "type": "object",
+      "required": ["state"],
+      "properties": {
+        "state": { "enum": ["open", "resolved"] }
+      },
+      "additionalProperties": true,
+      "description": "Task on a message. 'state' is ephor's; every other property is the source's own resolve descriptor, handed back verbatim when the person ticks the box (FS-004-quick-actions.5)."
+    },
+    "reaction": {
+      "type": "object",
+      "required": ["emoji"],
+      "properties": {
+        "emoji": { "type": "string" },
+        "users": { "type": "array", "items": { "type": "string" } },
+        "mine": { "type": "boolean" }
+      }
+    },
+    "channel": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string" },
+        "can": {
+          "type": "array",
+          "items": { "enum": ["reply", "react", "tick"] },
+          "description": "Declared write capabilities (FS-007-matters.4). Absent capability: display-only, and the surfaces offer no key."
+        }
+      }
+    },
+    "event": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "matter": {
+          "type": "string",
+          "description": "Subject key. Omitted: the matter of this summons."
+        },
+        "kind": {
+          "type": "string",
+          "description": "'gate', 'state', 'check', or a source's own kind (FS-007-matters.5)."
+        },
+        "time": { "type": "string", "format": "date-time" },
+        "gate": { "$ref": "#/$defs/gate" },
+        "state": { "type": "string", "description": "For kind 'state': the state arrived at." },
+        "summary": { "type": "string" },
+        "url": { "type": "string" },
+        "data": { "type": "object" }
+      }
+    },
+    "gate": {
+      "type": "object",
+      "properties": {
+        "repos": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["repo"],
+            "properties": {
+              "repo": { "type": "string" },
+              "passed": { "type": "integer", "minimum": 0 },
+              "failed": { "type": "integer", "minimum": 0 },
+              "running": { "type": "integer", "minimum": 0 },
+              "url": { "type": "string" }
+            }
+          },
+          "description": "Counts per repository the gate covers — one change may gate across a tree (FS-001-forge-interface.1, AR-004-forest.1)."
+        },
+        "blocked": {
+          "type": "boolean",
+          "description": "Whether the forge or gate refuses the merge regardless of counts — approvals, jobs never started (FS-001-forge-interface.1)."
+        },
+        "blockers": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "The gate's own reasons, as sentences."
+        },
+        "url": { "type": "string" }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "required": ["job"],
+      "properties": {
+        "job": { "type": "string", "description": "The job or build a reader would recognize ('build 4711', 'style-gate')." },
+        "repo": { "type": "string", "description": "Repository of the forest it failed in, where the gate spans several." },
+        "url": { "type": "string", "description": "The log where it lives." },
+        "trace": { "type": "string", "description": "The error text itself, where it can be extracted." },
+        "log": { "type": "string", "description": "Path to a log file written by this command, relative to its working directory." },
+        "jobs": { "type": "integer", "minimum": 1, "description": "How many jobs hit this identical failure, where deduplicated (FS-004-quick-actions.4)." }
+      }
+    },
+    "feature": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "description": { "type": "string" },
+        "paths": { "type": "array", "items": { "type": "string" }, "description": "Globs relating the feature to source paths, for change-driven selection." }
+      }
+    }
+  }
+}

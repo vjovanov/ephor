@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/vjovanov/ephor/schemas/forge/v1",
+  "title": "ephor out-of-process forge protocol",
+  "description": "The protocol of FS-001-forge-interface.2: an executable named 'ephor-forge-<name>', resolved on PATH, invoked as 'ephor-forge-<name> <subcommand>' with a request as JSON on stdin and the answer as JSON on stdout. Diagnostics go to stderr; a non-zero exit is a failure, never an empty answer (FS-001-forge-interface.6). Subcommands: capabilities, pull-requests, issues, failures, resolve-task, react. An implementation answers the subcommands whose capabilities it declared; ephor never calls an undeclared one. This document defines the request shape and one response shape per subcommand; message, gate, and failure shapes are the answer envelope's $defs, referenced here so the two transports cannot drift (FS-001-forge-interface.2).",
+  "$defs": {
+    "request": {
+      "type": "object",
+      "required": ["config"],
+      "properties": {
+        "config": {
+          "type": "object",
+          "description": "The provider block from the person's feed configuration, verbatim. Project keys, repository slugs, the user's address — the forge's business, opaque to ephor (FS-001-forge-interface.4)."
+        },
+        "timeout_seconds": { "type": "integer", "minimum": 1 },
+        "repo": { "type": "string", "description": "failures only: the repository whose gate is being asked." },
+        "number": { "type": "string", "description": "failures only: the pull request whose gate is being asked." },
+        "tickets": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "issues only: the ticket keys to fetch, from registry branch inference."
+        },
+        "target": {
+          "type": "object",
+          "description": "resolve-task and react: the descriptor the implementation itself put on the message (task) or the message identity it reported, handed back verbatim."
+        }
+      }
+    },
+    "capabilities_response": {
+      "type": "object",
+      "properties": {
+        "pull_requests": { "type": "boolean" },
+        "conversation": { "type": "boolean" },
+        "gate": { "type": "boolean" },
+        "failures": { "type": "boolean" },
+        "issues": { "type": "boolean" },
+        "tasks": { "type": "boolean" },
+        "reactions": { "type": "boolean" }
+      },
+      "description": "The capability set of FS-001-forge-interface.1. ephor degrades to what is declared; a probe that could not run is a failure, not an empty declaration (FS-001-forge-interface.6)."
+    },
+    "pull_request": {
+      "type": "object",
+      "required": ["id", "repo", "number", "title"],
+      "properties": {
+        "id": { "type": "string", "description": "Stable within the forge, 'repo/number' by convention. ephor keys the matter as '<provider>:<id>' (FS-007-matters.1)." },
+        "repo": { "type": "string" },
+        "number": { "type": "string" },
+        "title": { "type": "string" },
+        "url": { "type": "string" },
+        "branch": { "type": "string", "description": "Head branch, for workspace resolution (AR-004-forest.3)." },
+        "updated_at": { "type": "string", "format": "date-time" },
+        "role": { "enum": ["author", "reviewer"], "description": "Which search found it." },
+        "reasons": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "The reasons it is the user's — authored, engaged, cited, review-requested, assigned (FS-001-forge-interface.1)."
+        },
+        "state": {
+          "type": "string",
+          "description": "As the forge spells it; 'open:needs_work' and 'open:approved' refine open where reviewers have spoken."
+        },
+        "terminal": { "type": "boolean" },
+        "cited": {
+          "type": "boolean",
+          "description": "Whether the user is cited anywhere in the conversation — the forge knows its own mention syntax; whether the citation was answered is ephor's rule (FS-001-forge-interface.3)."
+        },
+        "threads": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["messages"],
+            "properties": {
+              "label": { "type": "string" },
+              "url": { "type": "string" },
+              "messages": {
+                "type": "array",
+                "items": { "$ref": "https://github.com/vjovanov/ephor/schemas/answer/v1#/$defs/message" }
+              }
+            }
+          },
+          "description": "The conversation as ordered threads (FS-001-forge-interface.1). The channel is implicitly the pull request's review threads."
+        },
+        "gate": {
+          "$ref": "https://github.com/vjovanov/ephor/schemas/answer/v1#/$defs/gate",
+          "description": "Omitted entirely where the gate has no jobs and no verdict."
+        }
+      }
+    },
+    "pull_requests_response": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/pull_request" }
+    },
+    "issue": {
+      "type": "object",
+      "required": ["key", "title"],
+      "properties": {
+        "key": { "type": "string", "description": "The ticket key as the tracker spells it ('GR-73955'). ephor keys the matter 'ticket:<key>'." },
+        "title": { "type": "string" },
+        "status": { "type": "string" },
+        "terminal": { "type": "boolean" },
+        "url": { "type": "string" },
+        "updated_at": { "type": "string", "format": "date-time" },
+        "messages": {
+          "type": "array",
+          "items": { "$ref": "https://github.com/vjovanov/ephor/schemas/answer/v1#/$defs/message" },
+          "description": "The comment tail, most recent last; bounded by the implementation."
+        }
+      }
+    },
+    "issues_response": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/issue" }
+    },
+    "failures_response": {
+      "type": "array",
+      "items": { "$ref": "https://github.com/vjovanov/ephor/schemas/answer/v1#/$defs/failure" },
+      "description": "What failed under the red gate of request.repo/request.number. The empty array is an answer — 'the gate is red and nothing failed', a gate blocked on approvals or unstarted jobs — and ephor then shows the blockers it already has. Asked on demand, never during refresh (FS-001-forge-interface.1)."
+    },
+    "resolve_task_response": {
+      "type": "object",
+      "description": "Empty object on success. A task already resolved is success: the state asked for is the state it is in."
+    },
+    "react_response": {
+      "type": "object",
+      "description": "Empty object on success."
+    }
+  }
+}
