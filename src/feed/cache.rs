@@ -65,8 +65,16 @@ fn is_false(value: &bool) -> bool {
 
 impl ProjectFeed {
     /// Everything every source reported, in provider-name order.
-    pub fn matters(&self) -> impl Iterator<Item = &Matter> {
+    pub fn reports(&self) -> impl Iterator<Item = &Matter> {
         self.providers.values().flat_map(|slot| slot.matters.iter())
+    }
+
+    /// The project's matters as the reader sees them: reports of one subject
+    /// merged into one matter (§FS-003-feed-categories.5), and matters that
+    /// reference each other linked (§FS-007-matters.2). `providers` is ordered
+    /// by name, so the merge is the same on every read.
+    pub fn matters(&self) -> Vec<Matter> {
+        crate::matter::link(crate::matter::merge(self.reports().cloned().collect()))
     }
 
     /// The project's items as the reader sees them: every source's report,
@@ -78,7 +86,10 @@ impl ProjectFeed {
     /// them (§AR-006-matters.3): the surfaces still read it while they are
     /// ported onto the model.
     pub fn items(&self) -> impl Iterator<Item = Item> {
-        crate::forge::policy::merge_reports(self.matters().map(Matter::as_item).collect())
+        self.matters()
+            .into_iter()
+            .map(|matter| matter.as_item())
+            .collect::<Vec<_>>()
             .into_iter()
     }
 
@@ -137,7 +148,67 @@ pub fn store_feed(feed: &ProjectFeed) -> Result<()> {
     )
 }
 
-pub type Seen = BTreeMap<String, DateTime<Utc>>;
+/// What the reader last saw of one matter. Older stores recorded only when it
+/// was read; a store that also remembers the fingerprint lets the row say what
+/// moved when the matter comes back (§FS-007-matters.5), so both shapes are
+/// read and the fuller one is written.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Mark {
+    Seen {
+        read_at: DateTime<Utc>,
+        #[serde(default)]
+        print: crate::matter::Fingerprint,
+    },
+    /// What a store written before fingerprints existed says.
+    At(DateTime<Utc>),
+}
+
+impl Mark {
+    pub fn of(matter: &Matter) -> Mark {
+        Mark::Seen {
+            read_at: matter.updated_at,
+            print: matter.fingerprint.clone(),
+        }
+    }
+
+    pub fn at(read_at: DateTime<Utc>) -> Mark {
+        Mark::Seen {
+            read_at,
+            print: crate::matter::Fingerprint::default(),
+        }
+    }
+
+    pub fn read_at(&self) -> DateTime<Utc> {
+        match self {
+            Mark::Seen { read_at, .. } => *read_at,
+            Mark::At(read_at) => *read_at,
+        }
+    }
+
+    /// What the matter looked like when it was read, where the store
+    /// remembered it.
+    pub fn print(&self) -> Option<&crate::matter::Fingerprint> {
+        match self {
+            Mark::Seen { print, .. } => Some(print),
+            Mark::At(_) => None,
+        }
+    }
+}
+
+pub type Seen = BTreeMap<String, Mark>;
+
+/// Why a matter is back in front of the reader, where the store remembers
+/// enough to say (§FS-007-matters.5). None when it was never read, when
+/// nothing moved, or when it was read before ephor kept fingerprints — in
+/// which case the row reappears as it always did, without inventing a reason.
+pub fn resurfacing(seen: &Seen, matter: &Matter) -> Option<String> {
+    let mark = seen.get(matter.key.as_str())?;
+    if matter.updated_at <= mark.read_at() {
+        return None;
+    }
+    matter.fingerprint.resurfacing(mark.print()?)
+}
 
 pub fn load_seen() -> Result<Seen> {
     let path = seen_path();
@@ -161,7 +232,7 @@ pub fn store_seen(seen: &Seen) -> Result<()> {
 pub fn is_unread(seen: &Seen, item: &Item) -> bool {
     match seen.get(&item.id) {
         None => true,
-        Some(read_at) => item.updated_at > *read_at,
+        Some(mark) => item.updated_at > mark.read_at(),
     }
 }
 
@@ -227,7 +298,7 @@ mod tests {
     #[test]
     fn a_store_in_an_older_model_is_rebuilt_not_migrated() {
         let current: ProjectFeed = serde_json::from_str(&feed_with(MODEL)).unwrap();
-        assert_eq!(current.matters().count(), 1);
+        assert_eq!(current.matters().len(), 1);
 
         // What `load_feed` does with an older model, without touching the
         // filesystem: the project is kept, its matters are not.
@@ -238,7 +309,7 @@ mod tests {
             ..ProjectFeed::default()
         };
         assert_eq!(rebuilt.project, "widget");
-        assert_eq!(rebuilt.matters().count(), 0);
+        assert_eq!(rebuilt.matters().len(), 0);
     }
 
     /// `seen` is the one part carried across a rebuild, keyed by matter key —
@@ -250,13 +321,41 @@ mod tests {
         let mut seen = Seen::new();
         assert!(is_unread(&seen, &matter.as_item()));
 
-        seen.insert(matter.key.as_str().to_string(), matter.updated_at);
+        seen.insert(matter.key.as_str().to_string(), Mark::of(&matter));
         assert!(!is_unread(&seen, &matter.as_item()));
 
         // The matter moves: it resurfaces, whatever the store did meanwhile.
         let mut moved = matter.clone();
         moved.updated_at = "2026-08-02T10:00:00Z".parse().unwrap();
         assert!(is_unread(&seen, &moved.as_item()));
+    }
+
+    /// A row that comes back says what moved, and one read before ephor kept
+    /// fingerprints comes back as it always did rather than inventing a reason
+    /// (§FS-007-matters.5).
+    #[test]
+    fn a_matter_that_moved_says_what_moved() {
+        let mut matter = matter("github-prs:acme/widget#42");
+        matter.state = Some("open".to_string());
+        matter.fingerprint = matter.print();
+
+        let mut seen = Seen::new();
+        seen.insert(matter.key.as_str().to_string(), Mark::of(&matter));
+        assert_eq!(resurfacing(&seen, &matter), None, "nothing moved");
+
+        let mut moved = matter.clone();
+        moved.state = Some("closed".to_string());
+        moved.updated_at = "2026-08-02T10:00:00Z".parse().unwrap();
+        moved.fingerprint = moved.print();
+        assert_eq!(
+            resurfacing(&seen, &moved).as_deref(),
+            Some("⟳ the state moved")
+        );
+
+        // A store from before fingerprints says nothing rather than guessing.
+        let mut older = Seen::new();
+        older.insert(matter.key.as_str().to_string(), Mark::At(matter.updated_at));
+        assert_eq!(resurfacing(&older, &moved), None);
     }
 
     /// A store always says which model it is in, so the next release can tell.

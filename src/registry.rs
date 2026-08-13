@@ -775,6 +775,26 @@ pub fn expand_template(template: &str, context: &HashMap<String, String>) -> Res
     Ok(result)
 }
 
+/// Every ticket key a piece of text names, in the order it names them. The
+/// same shape `extract_ticket` looks for in a branch, found anywhere: what a
+/// title or a message refers to is how one matter is related to another
+/// (§FS-007-matters.2).
+pub fn tickets_in(text: &str) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    let words: Vec<&str> = text
+        .split(|character: char| {
+            !character.is_alphanumeric() && character != '-' && character != '_'
+        })
+        .collect();
+    for word in words {
+        let ticket = extract_ticket(word);
+        if !ticket.is_empty() && !found.contains(&ticket) {
+            found.push(ticket);
+        }
+    }
+    found
+}
+
 pub fn extract_ticket(branch: &str) -> String {
     let normalized = branch.replace('/', "-");
     let parts: Vec<&str> = normalized.split('-').collect();

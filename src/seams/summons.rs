@@ -31,6 +31,27 @@ pub const PARKED: i32 = 75;
 /// The environment variable naming the file an answer may be written to.
 pub const ANSWER_VAR: &str = "EPHOR_ANSWER";
 
+/// Start a command, waiting out the one failure that is never the command's
+/// fault: a binary still open for writing somewhere reports `ETXTBSY` at exec
+/// (a script being rewritten as ephor reaches for it, a fork in another thread
+/// holding the descriptor). It clears in microseconds, so a bounded wait is
+/// the honest answer where refusing would report the world's race as the
+/// project's error.
+pub fn spawn(command: &mut Command) -> std::io::Result<std::process::Child> {
+    const BUSY: i32 = 26;
+    for attempt in 0..BUSY_RETRIES {
+        match command.spawn() {
+            Err(err) if err.raw_os_error() == Some(BUSY) && attempt + 1 < BUSY_RETRIES => {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            other => return other,
+        }
+    }
+    unreachable!("the loop returns on its last attempt")
+}
+
+const BUSY_RETRIES: u32 = 20;
+
 /// A value as one `sh` word, for building a binding out of parts. Single
 /// quotes take everything literally, so only the single quote itself has to be
 /// broken out.
@@ -310,8 +331,7 @@ fn captured(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = command
-        .spawn()
+    let mut child = spawn(&mut command)
         .map_err(|err| EphorError::Command(format!("{verb}: failed to run: {err}")))?;
 
     let drain = |stream: Option<Box<dyn Read + Send>>| {

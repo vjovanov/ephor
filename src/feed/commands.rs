@@ -367,6 +367,11 @@ pub fn mark_read(args: &MarkReadArgs, all: bool) -> Result<ExitCode> {
         let Some(feed) = cache::load_feed(project)? else {
             continue;
         };
+        let prints: std::collections::HashMap<String, cache::Mark> = feed
+            .matters()
+            .iter()
+            .map(|matter| (matter.key.as_str().to_string(), cache::Mark::of(matter)))
+            .collect();
         for item in feed.items() {
             live_ids.insert(item.id.clone());
             if let Some(id) = &args.id {
@@ -379,7 +384,15 @@ pub fn mark_read(args: &MarkReadArgs, all: bool) -> Result<ExitCode> {
                     continue;
                 }
             }
-            seen.insert(item.id.clone(), item.updated_at);
+            // What the matter looked like when it was read, so that when it
+            // comes back the row can say what moved (§FS-007-matters.5).
+            seen.insert(
+                item.id.clone(),
+                prints
+                    .get(&item.id)
+                    .cloned()
+                    .unwrap_or_else(|| cache::Mark::at(item.updated_at)),
+            );
             marked += 1;
         }
     }

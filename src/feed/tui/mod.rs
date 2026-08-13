@@ -93,6 +93,10 @@ pub(crate) struct Ctx {
     /// whenever the world may have moved, and consulted by everything that
     /// offers, gates, or refuses — nothing here runs its own check.
     pub capabilities: BTreeMap<String, CapabilitySet>,
+    /// Why a matter is back, keyed by matter key — shown on the row so a
+    /// reappearance never sends the reader to re-read everything
+    /// (§FS-007-matters.5).
+    pub resurfacing: BTreeMap<String, String>,
     /// Item actions: global, plus per-project extras.
     pub actions: Vec<ActionConfig>,
     pub project_actions: BTreeMap<String, Vec<ActionConfig>>,
@@ -158,6 +162,30 @@ impl Ctx {
             return None;
         }
         placement.forest(&workspace).staleness().total()
+    }
+
+    /// One matter by its key, across every project's feed — for the moments
+    /// that need the model rather than the row rendered from it.
+    pub fn matter(&self, key: &str) -> Option<crate::matter::Matter> {
+        self.feeds.iter().find_map(|feed| {
+            feed.matters()
+                .into_iter()
+                .find(|matter| matter.key.as_str() == key)
+        })
+    }
+
+    /// Why each matter is back in front of the reader, keyed by matter key
+    /// (§FS-007-matters.5). Recomputed with the feed.
+    pub fn recompute_resurfacing(&mut self) {
+        let mut reasons = BTreeMap::new();
+        for feed in &self.feeds {
+            for matter in feed.matters() {
+                if let Some(reason) = cache::resurfacing(&self.seen, &matter) {
+                    reasons.insert(matter.key.as_str().to_string(), reason);
+                }
+            }
+        }
+        self.resurfacing = reasons;
     }
 
     /// What a project can do. A project the registry does not describe holds
@@ -553,6 +581,7 @@ impl App {
                 placements: info.placements,
                 behind: BTreeMap::new(),
                 capabilities: BTreeMap::new(),
+                resurfacing: BTreeMap::new(),
                 actions: config.actions.clone(),
                 project_actions: config
                     .projects
@@ -607,6 +636,7 @@ impl App {
         }
         self.ctx.recompute_behind();
         self.ctx.recompute_capabilities();
+        self.ctx.recompute_resurfacing();
         self.reload_work();
         self.navigator.rebuild(&self.ctx);
         Ok(())
@@ -1175,7 +1205,15 @@ impl App {
             _ => format!("Done: {} items", marks.len()),
         };
         for (id, updated_at, _) in marks {
-            self.ctx.seen.insert(id, updated_at);
+            // Remember what it looked like, so the row can say what moved when
+            // it comes back (§FS-007-matters.5).
+            let mark = self
+                .ctx
+                .matter(&id)
+                .map(|matter| cache::Mark::of(&matter))
+                .unwrap_or_else(|| cache::Mark::at(updated_at));
+            self.ctx.resurfacing.remove(&id);
+            self.ctx.seen.insert(id, mark);
         }
         cache::store_seen(&self.ctx.seen)?;
         self.navigator.rebuild(&self.ctx);
@@ -1327,6 +1365,7 @@ mod tests {
             placements: BTreeMap::from([("widget".to_string(), placement)]),
             behind: BTreeMap::new(),
             capabilities: BTreeMap::new(),
+            resurfacing: BTreeMap::new(),
             actions: Vec::new(),
             project_actions: BTreeMap::new(),
             provider_blocks: BTreeMap::new(),

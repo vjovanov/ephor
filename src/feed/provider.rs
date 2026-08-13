@@ -112,8 +112,7 @@ pub fn run_capture_stdin(
     } else {
         command.stdin(Stdio::null());
     }
-    let mut child = command
-        .spawn()
+    let mut child = crate::seams::summons::spawn(&mut command)
         .map_err(|err| ProviderError(format!("failed to spawn {label}: {err}")))?;
 
     // Dropping the handle closes the pipe, which is the child's EOF.

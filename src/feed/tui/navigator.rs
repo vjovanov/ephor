@@ -36,6 +36,9 @@ struct Row {
     /// What has been handed to the runtime about this item, if anything
     /// (§FS-005-dispatch.4).
     work: Option<WorkBadge>,
+    /// Why it is back in front of the reader, where the store remembers what
+    /// it looked like when it was read (§FS-007-matters.5).
+    resurfacing: Option<String>,
 }
 
 /// One line in a tree view.
@@ -182,6 +185,7 @@ impl NavigatorState {
                     stale: feed.is_stale(&item.source),
                     checked_out: ctx.item_checked_out(&item),
                     work: ctx.work.get(&item.id).cloned(),
+                    resurfacing: ctx.resurfacing.get(&item.id).cloned(),
                     item,
                 })
                 .collect();
@@ -645,6 +649,7 @@ fn item_line(row: &Row, seen: &Seen, now: chrono::DateTime<Utc>) -> Line<'static
         stale,
         checked_out,
         work,
+        resurfacing: _,
     } = row;
     let (stale, checked_out) = (*stale, *checked_out);
     let marker = if item.needs_response {
@@ -671,6 +676,14 @@ fn item_line(row: &Row, seen: &Seen, now: chrono::DateTime<Utc>) -> Line<'static
         None => {}
     }
     spans.push(Span::raw(item.title.clone()));
+    // Why it is back, where ephor can say (§FS-007-matters.5): a row that
+    // reappears without a reason sends the reader to re-read everything.
+    if let Some(reason) = &row.resurfacing {
+        spans.push(Span::styled(
+            format!("  {reason}"),
+            Style::default().fg(Color::Yellow),
+        ));
+    }
     if let Some(state) = &item.state {
         spans.push(Span::styled(
             format!("  [{state}]"),

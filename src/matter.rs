@@ -267,16 +267,36 @@ pub enum Moved {
 }
 
 impl Moved {
+    /// How the row says it, as a sentence fragment after "⟳ ".
     pub fn name(self) -> &'static str {
         match self {
-            Moved::State => "state",
-            Moved::Discussions => "the conversation",
-            Moved::Events => "events",
+            Moved::State => "the state moved",
+            Moved::Discussions => "the conversation moved",
+            Moved::Events => "the gate moved",
         }
     }
 }
 
 impl Fingerprint {
+    /// Why a matter is back in front of the reader, in the words the row
+    /// shows: "⟳ the conversation moved". A row that reappears without a
+    /// reason sends the reader to re-read everything, which is the sweep this
+    /// tool exists to retire (§FS-007-matters.5).
+    pub fn resurfacing(&self, previous: &Fingerprint) -> Option<String> {
+        let moved = self.moved_since(previous);
+        if moved.is_empty() {
+            return None;
+        }
+        Some(format!(
+            "⟳ {}",
+            moved
+                .iter()
+                .map(|part| part.name())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
+    }
+
     /// What differs from an earlier print, in the order a reader cares:
     /// state first, then the conversation, then the rest.
     pub fn moved_since(&self, previous: &Fingerprint) -> Vec<Moved> {
@@ -439,6 +459,291 @@ impl Matter {
 
 /// How many events the fingerprint remembers.
 const EVENT_TAIL: usize = 8;
+
+impl Matter {
+    /// What makes two reports the same work: the subject the source named,
+    /// never the title (§FS-003-feed-categories.5). A report whose subject
+    /// cannot be identified is its own subject, so it is left alone rather
+    /// than guessed into somebody else's row.
+    pub fn subject(&self) -> String {
+        let item = self.as_item();
+        match (item.repo(), item.number()) {
+            (Some(repo), Some(number)) => format!("{:?}\u{0}{repo}#{number}", self.kind),
+            _ => format!("key\u{0}{}", self.key),
+        }
+    }
+
+    /// How much a report says, for choosing between two of the same subject.
+    /// Not a measure of which source is better — sources are not ranked — but
+    /// of which row the reader can act on without leaving ephor.
+    fn detail(&self) -> u8 {
+        u8::from(!self.discussions.is_empty())
+            + u8::from(!self.events.is_empty())
+            + u8::from(self.placement.branch().is_some())
+            + u8::from(self.role.is_some())
+            + u8::from(self.state.is_some())
+    }
+
+    /// Fold another report of the same subject into this one. What the other
+    /// one knew and this one did not comes with it — the conversation it alone
+    /// read, the gate it alone fetched, the reason it alone was given — since
+    /// that is usually the only thing explaining why the row is there at all
+    /// (§FS-003-feed-categories.5).
+    pub fn absorb(&mut self, other: Matter) {
+        let awaited = self.needs_response || other.needs_response;
+        let updated_at = self.updated_at.max(other.updated_at);
+        let (mut winner, loser) = if other.detail() > self.detail() {
+            (other, std::mem::replace(self, Matter::placeholder()))
+        } else {
+            (std::mem::replace(self, Matter::placeholder()), other)
+        };
+
+        for discussion in loser.discussions {
+            if !winner
+                .discussions
+                .iter()
+                .any(|kept| same_discussion(kept, &discussion))
+            {
+                winner.discussions.push(discussion);
+            }
+        }
+        for event in loser.events {
+            if !winner.events.contains(&event) {
+                winner.events.push(event);
+            }
+        }
+        for link in loser.links {
+            if !winner.links.contains(&link) {
+                winner.links.push(link);
+            }
+        }
+        winner.raw = merge_raw(winner.raw, loser.raw);
+        winner.needs_response = awaited;
+        winner.updated_at = updated_at;
+        winner.fingerprint = winner.print();
+        *self = winner;
+    }
+
+    /// A matter with nothing in it, for the moment inside a fold where one is
+    /// being replaced by another.
+    fn placeholder() -> Matter {
+        Matter {
+            key: SubjectKey::stated(String::new()),
+            kind: ItemKind::Status,
+            placement: Placement::Unattributed {
+                candidates: Vec::new(),
+            },
+            source: String::new(),
+            title: String::new(),
+            role: None,
+            url: None,
+            state: None,
+            needs_response: false,
+            updated_at: DateTime::<Utc>::MIN_UTC,
+            links: Vec::new(),
+            discussions: Vec::new(),
+            events: Vec::new(),
+            fingerprint: Fingerprint::default(),
+            raw: Value::Null,
+        }
+    }
+}
+
+/// Two reports of the same conversation: who said what, when. Sources that
+/// both watch a pull request report the same review threads, and a union that
+/// could not tell them apart would show every message twice.
+fn same_discussion(one: &Discussion, other: &Discussion) -> bool {
+    one.messages.len() == other.messages.len()
+        && one
+            .messages
+            .iter()
+            .zip(&other.messages)
+            .all(|(left, right)| {
+                left.author == right.author && left.time == right.time && left.text == right.text
+            })
+}
+
+/// The passthrough halves of two reports of one subject. The model's own
+/// fields have already been folded; this keeps the source's extra knowledge —
+/// including the `threads` and `gate` the not-yet-ported surfaces still read
+/// out of it — and unions the reasons a forge gave.
+fn merge_raw(winner: Value, loser: Value) -> Value {
+    let (Some(mut kept), Some(other)) = (winner.as_object().cloned(), loser.as_object().cloned())
+    else {
+        return if winner.is_null() { loser } else { winner };
+    };
+    let reasons = |raw: &serde_json::Map<String, Value>| -> Vec<String> {
+        raw.get("reasons")
+            .and_then(Value::as_array)
+            .map(|list| {
+                list.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let mut merged = reasons(&kept);
+    for reason in reasons(&other) {
+        if !merged.contains(&reason) {
+            merged.push(reason);
+        }
+    }
+    // The conversation and the gate are the two the reader would notice
+    // missing, and the winner keeping only its own would drop exactly what
+    // the merge exists to keep. They are unioned rather than replaced, in the
+    // passthrough as well as in the model, for as long as the surfaces still
+    // read them from here.
+    let threads = union_threads(kept.get("threads"), other.get("threads"));
+    for (key, value) in other {
+        // What the winner has, the winner keeps; the rest is what only the
+        // other report knew.
+        kept.entry(key).or_insert(value);
+    }
+    if !threads.is_empty() {
+        kept.insert("threads".to_string(), Value::Array(threads));
+    }
+    if !merged.is_empty() {
+        kept.insert("reasons".to_string(), serde_json::json!(merged));
+        // Merged with a fuller report, this is no longer only a notice.
+        kept.remove("notice");
+    }
+    Value::Object(kept)
+}
+
+/// The subject keys a matter refers to: ticket keys it names, in its title
+/// and in what was said on it. Referencing is not being: the pull request
+/// implementing a ticket and the ticket itself stay two matters
+/// (§FS-007-matters.2).
+fn references(matter: &Matter) -> Vec<String> {
+    let mut spoken = vec![matter.title.clone()];
+    if let Some(branch) = matter.placement.branch() {
+        spoken.push(branch.to_string());
+    }
+    for discussion in &matter.discussions {
+        for message in &discussion.messages {
+            spoken.push(message.text.clone());
+        }
+    }
+    let mut found: Vec<String> = Vec::new();
+    for text in spoken {
+        for ticket in crate::registry::tickets_in(&text) {
+            if !found.contains(&ticket) {
+                found.push(ticket);
+            }
+        }
+    }
+    found
+}
+
+/// Whether this matter *is* the thing that ticket key names — a local ticket
+/// store's matter, or one whose key carries it.
+fn names(matter: &Matter, ticket: &str) -> bool {
+    matter.key.as_str().contains(ticket)
+}
+
+/// Link matters that reference each other (§FS-007-matters.2). Merging what is
+/// one thing and linking what is related is the difference between a readable
+/// pile and a lossy one: the link is recorded on both, so either row can be
+/// read as the place the other belongs with.
+pub fn link(mut matters: Vec<Matter>) -> Vec<Matter> {
+    let referenced: Vec<(usize, Vec<String>)> = matters
+        .iter()
+        .enumerate()
+        .map(|(index, matter)| (index, references(matter)))
+        .collect();
+    let keys: Vec<SubjectKey> = matters.iter().map(|matter| matter.key.clone()).collect();
+
+    let mut pairs: Vec<(usize, usize)> = Vec::new();
+    for (index, tickets) in &referenced {
+        for ticket in tickets {
+            for (other, _) in matters.iter().enumerate() {
+                if other == *index || !names(&matters[other], ticket) {
+                    continue;
+                }
+                if !pairs.contains(&(*index, other)) {
+                    pairs.push((*index, other));
+                }
+            }
+        }
+    }
+    for (one, other) in pairs {
+        let key = keys[other].clone();
+        if !matters[one].links.contains(&key) {
+            matters[one].links.push(key);
+        }
+        let back = keys[one].clone();
+        if !matters[other].links.contains(&back) {
+            matters[other].links.push(back);
+        }
+    }
+    matters
+}
+
+/// Both reports' conversations, each thread once. Sources that both watch a
+/// pull request report the same review threads, and a union that could not
+/// tell them apart would show the reader every message twice.
+fn union_threads(winner: Option<&Value>, loser: Option<&Value>) -> Vec<Value> {
+    let list = |value: Option<&Value>| -> Vec<Value> {
+        value.and_then(Value::as_array).cloned().unwrap_or_default()
+    };
+    let key = |thread: &Value| -> String {
+        thread
+            .get("messages")
+            .and_then(Value::as_array)
+            .map(|messages| {
+                messages
+                    .iter()
+                    .map(|message| {
+                        format!(
+                            "{}\u{1}{}\u{1}{}",
+                            message.get("author").and_then(Value::as_str).unwrap_or(""),
+                            message.get("when").and_then(Value::as_str).unwrap_or(""),
+                            message.get("text").and_then(Value::as_str).unwrap_or(""),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\u{2}")
+            })
+            .unwrap_or_default()
+    };
+    let mut threads = list(winner);
+    let mut seen: Vec<String> = threads.iter().map(key).collect();
+    for thread in list(loser) {
+        let digest = key(&thread);
+        if !seen.contains(&digest) {
+            seen.push(digest);
+            threads.push(thread);
+        }
+    }
+    threads
+}
+
+/// One subject, one row (§FS-003-feed-categories.5). Sources overlap on
+/// purpose — that overlap is how the feed is exhaustive without being told
+/// where to look — so the reader is shown the fullest report of each subject,
+/// carrying over what the others knew and it did not.
+///
+/// Order is preserved from the input, and the input is in provider-name order,
+/// so the same feed always merges the same way.
+pub fn merge(reports: Vec<Matter>) -> Vec<Matter> {
+    let mut order: Vec<String> = Vec::new();
+    let mut merged: BTreeMap<String, Matter> = BTreeMap::new();
+    for report in reports {
+        let subject = report.subject();
+        match merged.get_mut(&subject) {
+            Some(kept) => kept.absorb(report),
+            None => {
+                order.push(subject.clone());
+                merged.insert(subject, report);
+            }
+        }
+    }
+    order
+        .into_iter()
+        .filter_map(|subject| merged.remove(&subject))
+        .collect()
+}
 
 /// The discussions a provider's report carries. Providers still write them as
 /// `raw.threads`; reading them here is what makes them the model's
@@ -678,6 +983,14 @@ mod tests {
             after.fingerprint.moved_since(&before.fingerprint),
             vec![Moved::Discussions]
         );
+        // And the row can say so rather than only reappearing.
+        assert_eq!(
+            after
+                .fingerprint
+                .resurfacing(&before.fingerprint)
+                .as_deref(),
+            Some("⟳ the conversation moved")
+        );
 
         // The gate goes red.
         let gated = Matter::of_item(&item(json!({
@@ -703,6 +1016,111 @@ mod tests {
             .fingerprint
             .moved_since(&before.fingerprint)
             .is_empty());
+    }
+
+    fn report(source: &str, key: &str, raw: Value) -> Matter {
+        let mut item = item(raw);
+        item.id = key.to_string();
+        item.source = source.to_string();
+        Matter::of_item(&item)
+    }
+
+    /// One subject is one row however many sources reported it, and the
+    /// fullest report is the one the reader gets (§FS-003-feed-categories.5).
+    #[test]
+    fn reports_of_one_subject_merge_and_the_thinner_one_hands_over_what_it_saw() {
+        let rich = report(
+            "github-prs",
+            "github-prs:acme/widget#42",
+            json!({ "repo": "acme/widget", "branch": "you/ABC-42", "reasons": ["authored"] }),
+        );
+        let mut thin = report(
+            "github-threads",
+            "github-threads:acme/widget#42",
+            json!({ "repo": "acme/widget", "reasons": ["team_mention"], "threads": [
+                {"messages": [{"author": "ada", "text": "why?", "when": "2026-08-01T09:00:00Z"}]}
+            ]}),
+        );
+        thin.role = None;
+        thin.state = None;
+
+        let merged = merge(vec![rich, thin]);
+        assert_eq!(merged.len(), 1);
+        let kept = &merged[0];
+        assert_eq!(kept.source, "github-prs", "the fuller report is the row");
+        // The conversation only the thinner one read came with it…
+        assert_eq!(kept.discussions.len(), 1);
+        assert_eq!(kept.discussions[0].messages[0].author, "ada");
+        // …and so did the reason only it was given.
+        let reasons = kept.raw["reasons"].as_array().unwrap();
+        assert_eq!(reasons.len(), 2, "{reasons:?}");
+    }
+
+    #[test]
+    fn the_same_conversation_from_two_sources_is_one_conversation() {
+        let thread = json!({"messages": [
+            {"author": "ada", "text": "why?", "when": "2026-08-01T09:00:00Z"}
+        ]});
+        let one = report(
+            "github-prs",
+            "github-prs:acme/widget#42",
+            json!({ "repo": "acme/widget", "threads": [thread.clone()] }),
+        );
+        let other = report(
+            "github-threads",
+            "github-threads:acme/widget#42",
+            json!({ "repo": "acme/widget", "threads": [thread] }),
+        );
+        let merged = merge(vec![one, other]);
+        assert_eq!(merged[0].discussions.len(), 1);
+    }
+
+    #[test]
+    fn a_subject_that_cannot_be_identified_is_left_alone() {
+        let one = report("custom-status", "custom-status:widget", json!({}));
+        let other = report("custom-status", "custom-status:widget:1", json!({}));
+        assert_eq!(merge(vec![one, other]).len(), 2);
+    }
+
+    /// Referencing is not being: the change implementing a ticket and the
+    /// ticket itself stay two matters, linked (§FS-007-matters.2).
+    #[test]
+    fn matters_that_reference_each_other_are_linked_rather_than_merged() {
+        let mut change = report(
+            "github-prs",
+            "github-prs:acme/widget#42",
+            json!({ "repo": "acme/widget", "branch": "you/ABC-42-retry-window" }),
+        );
+        change.title = "Retry window".to_string();
+        let mut ticket = report("rhei", "ticket:ABC-42", json!({}));
+        ticket.title = "Widen the retry window".to_string();
+
+        let linked = link(vec![change, ticket]);
+        assert_eq!(linked.len(), 2, "related is not the same as identical");
+        assert_eq!(linked[0].links, vec![SubjectKey::stated("ticket:ABC-42")]);
+        // The link is on both, so either row reads as the place the other
+        // belongs with.
+        assert_eq!(
+            linked[1].links,
+            vec![SubjectKey::stated("github-prs:acme/widget#42")]
+        );
+    }
+
+    #[test]
+    fn a_ticket_named_in_the_conversation_links_too() {
+        let mut change = report(
+            "github-prs",
+            "github-prs:acme/widget#7",
+            json!({ "repo": "acme/widget", "threads": [{"messages": [
+                {"author": "ada", "text": "this also fixes ABC-99, I think"}
+            ]}]}),
+        );
+        change.title = "Unrelated title".to_string();
+        let mut ticket = report("rhei", "ticket:ABC-99", json!({}));
+        ticket.title = "Something else".to_string();
+
+        let linked = link(vec![change, ticket]);
+        assert_eq!(linked[0].links, vec![SubjectKey::stated("ticket:ABC-99")]);
     }
 
     #[test]
