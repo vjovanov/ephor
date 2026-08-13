@@ -195,7 +195,7 @@ fn a_bash_extension_is_a_complete_forge_implementation() {
         &fs::read_to_string(tmp.path().join("state/ephor/feed/demo.json")).unwrap(),
     )
     .unwrap();
-    let items = cache["providers"]["demoforge"]["items"]
+    let items = cache["providers"]["demoforge"]["matters"]
         .as_array()
         .cloned()
         .unwrap_or_default();
@@ -207,7 +207,7 @@ fn a_bash_extension_is_a_complete_forge_implementation() {
 
     let authored = items
         .iter()
-        .find(|i| i["id"] == "demoforge:app/101")
+        .find(|i| i["key"] == "demoforge:app/101")
         .unwrap();
     // Policy ran over out-of-process data exactly as it would in process: a
     // needs_work verdict stands even though the user had the last word in the
@@ -227,7 +227,7 @@ fn a_bash_extension_is_a_complete_forge_implementation() {
     // Cited, and the last word is not the user's: unanswered.
     let reviewing = items
         .iter()
-        .find(|i| i["id"] == "demoforge:plugins/202")
+        .find(|i| i["key"] == "demoforge:plugins/202")
         .unwrap();
     assert_eq!(reviewing["role"], "reviewer");
     assert_eq!(reviewing["needs_response"], true);
@@ -239,7 +239,7 @@ fn a_bash_extension_is_a_complete_forge_implementation() {
     // item, which is what the thread screen draws and ticks from.
     let checklists = items
         .iter()
-        .find(|i| i["id"] == "demoforge:app/303")
+        .find(|i| i["key"] == "demoforge:app/303")
         .unwrap();
     assert_eq!(checklists["needs_response"], true);
     assert_eq!(
@@ -255,7 +255,7 @@ fn a_bash_extension_is_a_complete_forge_implementation() {
     // in every thread and the user never wrote a line.
     let ticked = items
         .iter()
-        .find(|i| i["id"] == "demoforge:app/404")
+        .find(|i| i["key"] == "demoforge:app/404")
         .unwrap();
     assert_eq!(ticked["needs_response"], false, "{ticked:#?}");
 
@@ -263,7 +263,7 @@ fn a_bash_extension_is_a_complete_forge_implementation() {
     // as an issue, with the same message shape as a conversation.
     let issue = items
         .iter()
-        .find(|i| i["id"] == "demoforge:ABC-42")
+        .find(|i| i["key"] == "demoforge:ABC-42")
         .unwrap();
     // Issues are their own category (§FS-003-feed-categories.1), and an
     // implementation that does not report a role is reporting the user's own.
@@ -384,9 +384,9 @@ fn a_provider_block_raises_its_own_timeout() {
     let slot = &refresh_slow_forge(tmp.path(), &path)["providers"]["slowforge"];
 
     assert_eq!(slot["ok"], true, "{slot:#?}");
-    let items = slot["items"].as_array().cloned().unwrap_or_default();
+    let items = slot["matters"].as_array().cloned().unwrap_or_default();
     assert_eq!(items.len(), 1, "{items:#?}");
-    assert_eq!(items[0]["id"], "slowforge:app/303");
+    assert_eq!(items[0]["key"], "slowforge:app/303");
 }
 
 /// The companion: without a block of its own, the same forge is held to the
@@ -572,7 +572,7 @@ fn a_partly_lost_refresh_fails_explicitly() {
     )
     .unwrap();
     assert_eq!(cache["providers"]["goodforge"]["ok"], true);
-    assert!(!cache["providers"]["goodforge"]["items"]
+    assert!(!cache["providers"]["goodforge"]["matters"]
         .as_array()
         .unwrap()
         .is_empty());

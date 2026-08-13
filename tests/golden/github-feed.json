@@ -1,13 +1,19 @@
 {
+  "model": 1,
   "project": "demo",
   "providers": {
     "custom-status": {
-      "items": [
+      "matters": [
         {
-          "id": "custom-status:demo",
+          "fingerprint": {},
+          "key": "custom-status:demo",
           "kind": "status",
           "needs_response": false,
-          "project": "demo",
+          "placement": {
+            "on": {
+              "project": "demo"
+            }
+          },
           "source": "custom-status",
           "title": "all systems go"
         }
@@ -16,15 +22,50 @@
       "stale": false
     },
     "github-ci": {
-      "items": [
+      "matters": [
         {
-          "id": "github-ci:acme/widget#42",
-          "kind": "ci",
+          "events": [
+            {
+              "kind": "gate",
+              "payload": {
+                "repos": [
+                  {
+                    "failed": 1,
+                    "passed": 1,
+                    "repo": "acme/widget",
+                    "running": 0
+                  }
+                ]
+              },
+              "time": "2026-08-01T10:00:00Z"
+            }
+          ],
+          "fingerprint": {
+            "events": "1ec37afa5ba56222"
+          },
+          "key": "github-ci:acme/widget#42",
+          "kind": "pr",
           "needs_response": true,
-          "project": "demo",
+          "placement": {
+            "on": {
+              "project": "demo"
+            }
+          },
+          "raw": {
+            "gate": {
+              "repos": [
+                {
+                  "failed": 1,
+                  "passed": 1,
+                  "repo": "acme/widget",
+                  "running": 0
+                }
+              ]
+            },
+            "repo": "acme/widget"
+          },
           "source": "github-ci",
-          "state": "failing",
-          "title": "#42 Fix condition errors: 1/2 checks passing, 1 failing",
+          "title": "Fix condition errors",
           "updated_at": "2026-08-01T10:00:00Z",
           "url": "https://github.com/acme/widget/pull/42"
         }
@@ -33,12 +74,37 @@
       "stale": false
     },
     "github-prs": {
-      "items": [
+      "matters": [
         {
-          "id": "github-prs:acme/widget#42",
+          "events": [
+            {
+              "kind": "gate",
+              "payload": {
+                "repos": [
+                  {
+                    "failed": 1,
+                    "passed": 1,
+                    "repo": "acme/widget",
+                    "running": 0
+                  }
+                ]
+              },
+              "time": "2026-08-01T10:00:00Z"
+            }
+          ],
+          "fingerprint": {
+            "events": "1ec37afa5ba56222",
+            "state": "open:changes_requested"
+          },
+          "key": "github-prs:acme/widget#42",
           "kind": "pr",
           "needs_response": true,
-          "project": "demo",
+          "placement": {
+            "on": {
+              "branch": "you/ABC-42-work",
+              "project": "demo"
+            }
+          },
           "raw": {
             "branch": "you/ABC-42-work",
             "gate": {

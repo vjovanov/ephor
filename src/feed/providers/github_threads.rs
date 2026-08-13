@@ -1,5 +1,10 @@
 //! Unresolved review threads on the user's open PRs where the last word is
 //! not theirs, via the GraphQL API.
+//!
+//! A review thread is a discussion *of* the pull request, not a subject of its
+//! own (§FS-007-matters.3): this source reports the pull request carrying its
+//! unresolved threads, so a change with three open threads is one row with
+//! three discussions rather than three rows (§FS-003-feed-categories.5).
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -64,7 +69,9 @@ impl Provider for GithubThreads {
                 "--author",
                 "@me",
                 "--json",
-                "number,title",
+                // The url too, now that the report is of the pull request:
+                // the row has to be openable.
+                "number,title,url",
             ]);
             let prs = run_json(list_cmd, ctx.timeout, false)?;
 
@@ -82,6 +89,8 @@ impl Provider for GithubThreads {
                     .cloned()
                     .unwrap_or_default();
 
+                let mut discussions: Vec<Value> = Vec::new();
+                let mut latest: Option<Value> = None;
                 for thread in threads {
                     if thread
                         .get("isResolved")
@@ -117,15 +126,6 @@ impl Provider for GithubThreads {
                     if reacted {
                         continue;
                     }
-                    let url = comment.get("url").and_then(Value::as_str).unwrap_or("");
-                    let body = comment.get("body").and_then(Value::as_str).unwrap_or("");
-                    let first_line: String = body
-                        .lines()
-                        .next()
-                        .unwrap_or("")
-                        .chars()
-                        .take(120)
-                        .collect();
                     let messages: Vec<Value> = comments
                         .iter()
                         .map(|c| {
@@ -145,22 +145,49 @@ impl Provider for GithubThreads {
                             message
                         })
                         .collect();
-                    items.push(Item {
-                        id: format!("github-threads:{url}"),
-                        project: ctx.project_id.clone(),
-                        source: "github-threads".to_string(),
-                        kind: ItemKind::Message,
-                        role: None,
-                        title: format!("#{number} {author}: {first_line}"),
-                        url: Some(url.to_string()),
-                        state: Some("unresolved".to_string()),
-                        needs_response: true,
-                        updated_at: parse_github_time(
-                            comment.get("updatedAt").unwrap_or(&Value::Null),
-                        ),
-                        raw: json!({ "threads": [{ "messages": messages }] }),
-                    });
+                    // The thread's own words label it where a pull request has
+                    // several (§FS-007-matters.3).
+                    let label: String = comment
+                        .get("body")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .lines()
+                        .next()
+                        .unwrap_or("")
+                        .chars()
+                        .take(120)
+                        .collect();
+                    discussions.push(json!({
+                        "label": format!("{author}: {label}"),
+                        "messages": messages,
+                    }));
+                    let when = comment.get("updatedAt").cloned().unwrap_or(Value::Null);
+                    if latest.is_none() {
+                        latest = Some(when);
+                    }
                 }
+                if discussions.is_empty() {
+                    continue;
+                }
+                // One report of the pull request, carrying every thread of it
+                // still waiting for an answer.
+                items.push(Item {
+                    id: format!("github-threads:{repo}#{number}"),
+                    project: ctx.project_id.clone(),
+                    source: "github-threads".to_string(),
+                    kind: ItemKind::Pr,
+                    role: None,
+                    title: pr
+                        .get("title")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                    url: pr.get("url").and_then(Value::as_str).map(String::from),
+                    state: None,
+                    needs_response: true,
+                    updated_at: parse_github_time(latest.as_ref().unwrap_or(&Value::Null)),
+                    raw: json!({ "repo": repo, "threads": discussions }),
+                });
             }
         }
         Ok(items)

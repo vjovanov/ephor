@@ -33,14 +33,19 @@ use ratatui::widgets::Paragraph;
 use ratatui::DefaultTerminal;
 use serde_json::Value;
 
+use crate::branches::{Checkout, Placement};
+use crate::capabilities::{Bindings, CapabilitySet, Rung};
 use crate::error::{EphorError, Result};
 use crate::feed::cache::{self, ProjectFeed, Seen};
 use crate::feed::config::{load_config, ActionConfig, CheckoutConfig, StatusConfig};
 use crate::feed::model::{Item, ItemKind};
 use crate::feed::react::{self, ReactTarget};
 use crate::feed::task::Task;
+use crate::forest::Staleness;
 use crate::paths;
 use crate::registry;
+use crate::seams::dossier;
+use crate::seams::summons::{self, Outcome, Place, Site};
 
 use actions::{ActionMenu, MenuOutcome};
 use gate::GateScreen;
@@ -77,20 +82,17 @@ pub(crate) struct Ctx {
     pub projects: Vec<String>,
     pub orgs: Vec<OrgInfo>,
     pub project_org: BTreeMap<String, String>,
-    pub branches: BTreeMap<String, Vec<BranchInfo>>,
-    /// Resolved checkout roots from the registry.
-    pub roots: BTreeMap<String, PathBuf>,
-    /// Per-project `branch_root_template` for branch workspaces
-    /// (`{project_root}/{branch}`-style).
-    pub branch_templates: BTreeMap<String, String>,
-    /// Per-project main branch and the project type's repo paths, for
-    /// measuring how far branches trail main. Poly-repo workspaces sum
-    /// across all their repos.
-    pub main_branches: BTreeMap<String, String>,
-    pub repo_paths: BTreeMap<String, Vec<String>>,
-    /// Commits behind main per (project, branch name); computed for
-    /// checked-out branches at load/refresh time.
-    pub behind: BTreeMap<(String, String), u64>,
+    /// Where each project is, how a branch becomes a workspace, which branches
+    /// the registry knows, and what its forest is declared to hold — the one
+    /// answer the whole program shares (§AR-004-forest.3).
+    pub placements: BTreeMap<String, Placement>,
+    /// How far each checked-out branch trails main, per repository and summed
+    /// (§AR-004-forest.1); computed at load and refresh time.
+    pub behind: BTreeMap<(String, String), Staleness>,
+    /// What each project can do (§AR-005-capabilities). Resolved at load and
+    /// whenever the world may have moved, and consulted by everything that
+    /// offers, gates, or refuses — nothing here runs its own check.
+    pub capabilities: BTreeMap<String, CapabilitySet>,
     /// Item actions: global, plus per-project extras.
     pub actions: Vec<ActionConfig>,
     pub project_actions: BTreeMap<String, Vec<ActionConfig>>,
@@ -128,7 +130,7 @@ impl Ctx {
         // ephor's own quick action, offered because of what is on disk rather
         // than because a source said something (§FS-004-quick-actions.6).
         if let (Some(main_branch), Some(behind)) = (
-            self.main_branches.get(&item.project),
+            self.main_branch(&item.project),
             self.item_behind(item).filter(|behind| *behind > 0),
         ) {
             menu.push(actions::rebase_action(main_branch, behind));
@@ -138,32 +140,60 @@ impl Ctx {
     }
 
     /// Commits the item's own checkout trails the project's main branch,
-    /// summed across its repositories (§FS-004-quick-actions.6). None where
-    /// there is nothing on disk to measure: not a pull request, no branch, or
-    /// a workspace that was never checked out.
+    /// summed across its forest (§AR-004-forest.1). None where there is
+    /// nothing on disk to measure: not a pull request, no branch, or a
+    /// workspace that was never checked out.
     pub fn item_behind(&self, item: &Item) -> Option<u64> {
         if item.kind != ItemKind::Pr {
             return None;
         }
-        let main_branch = self.main_branches.get(&item.project)?;
-        let root = self.roots.get(&item.project)?;
+        let placement = self.placements.get(&item.project)?;
+        placement.main_branch.as_ref()?;
         let (name, _) = self.effective_branch(item);
-        let workspace = match self.expand_workspace(&item.project, root, &name?) {
-            Some(workspace) => workspace,
+        let workspace = placement
+            .workspace_for(&name?)
             // A project without branch workspaces works in its root.
-            None => root.clone(),
-        };
+            .unwrap_or_else(|| placement.root.clone());
         if !workspace.is_dir() {
             return None;
         }
-        let empty = Vec::new();
-        let repo_paths = self.repo_paths.get(&item.project).unwrap_or(&empty);
-        crate::git::repos(&workspace, repo_paths)
-            .iter()
-            .filter_map(|repo| crate::git::commits_behind(repo, main_branch))
-            .fold(None, |total: Option<u64>, count| {
-                Some(total.unwrap_or(0) + count)
-            })
+        placement.forest(&workspace).staleness().total()
+    }
+
+    /// What a project can do. A project the registry does not describe holds
+    /// nothing, and says so rather than being absent.
+    pub fn can(&self, project: &str) -> CapabilitySet {
+        self.capabilities
+            .get(project)
+            .cloned()
+            .unwrap_or_else(|| CapabilitySet::unknown(project))
+    }
+
+    /// Re-resolve every project's ladder. Cheap by construction — stat calls,
+    /// config lookups, one walk of PATH (§AR-005-capabilities.1) — so it runs
+    /// again whenever a refresh or a checkout may have moved the world.
+    pub fn recompute_capabilities(&mut self) {
+        let mut table = BTreeMap::new();
+        for project in &self.projects {
+            let gate_reported = self.feed(project).is_some_and(|feed| {
+                feed.items()
+                    .any(|item| crate::feed::gate::Gate::of(&item).is_some())
+            });
+            let bindings = Bindings {
+                sources: self.provider_blocks.get(project).map(Vec::len).unwrap_or(0),
+                checkout: self
+                    .checkouts
+                    .get(project)
+                    .map(|checkout| checkout.command.as_str()),
+                runner: Some(crate::work::runner::RUNNER),
+                gate_reported,
+            };
+            table.insert(
+                project.clone(),
+                CapabilitySet::resolve(project, self.placements.get(project), &bindings),
+            );
+        }
+        self.capabilities = table;
     }
 
     /// A project's provider blocks, for a write that has to go back through
@@ -215,50 +245,45 @@ impl Ctx {
         (total, unread, respond)
     }
 
-    /// A branch name's workspace directory per the project's
-    /// `branch_root_template`, whether or not it exists. None when the
-    /// project has no branch workspaces — the root is the checkout then.
-    pub fn expand_workspace(
-        &self,
-        project: &str,
-        root: &Path,
-        branch_name: &str,
-    ) -> Option<PathBuf> {
-        let template = self.branch_templates.get(project)?;
-        Some(PathBuf::from(
-            template
-                .replace("{project_root}", &root.to_string_lossy())
-                .replace("{branch}", branch_name),
-        ))
+    /// One project's placement, or nothing where the registry does not
+    /// describe it.
+    pub fn placement(&self, project: &str) -> Option<&Placement> {
+        self.placements.get(project)
     }
 
-    pub fn branch_workspace(
-        &self,
-        project: &str,
-        root: &Path,
-        branch: &BranchInfo,
-    ) -> Option<PathBuf> {
-        self.expand_workspace(project, root, &branch.branch)
+    /// Where a project is checked out.
+    pub fn root(&self, project: &str) -> Option<&Path> {
+        self.placements
+            .get(project)
+            .map(|placement| placement.root.as_path())
+    }
+
+    /// The registry branches of a project, in registry order.
+    pub fn branches(&self, project: &str) -> &[BranchInfo] {
+        self.placements
+            .get(project)
+            .map(|placement| placement.branches.as_slice())
+            .unwrap_or_default()
+    }
+
+    /// What this project's branches are measured against.
+    pub fn main_branch(&self, project: &str) -> Option<&str> {
+        self.placements
+            .get(project)
+            .and_then(|placement| placement.main_branch.as_deref())
     }
 
     /// The item's branch name — the provider-recorded one (ground truth),
     /// or the matched registry branch's — plus the registry match itself.
+    /// One rule, shared with dispatch and the CLI (§AR-004-forest.3).
     pub fn effective_branch(&self, item: &Item) -> (Option<String>, Option<BranchInfo>) {
-        let matched = self
-            .branches
-            .get(&item.project)
-            .into_iter()
-            .flatten()
-            .find(|branch| matches_branch(item, branch))
-            .cloned();
-        let name = item
-            .raw
-            .get("branch")
-            .and_then(Value::as_str)
-            .filter(|name| !name.is_empty())
-            .map(String::from)
-            .or_else(|| matched.as_ref().map(|branch| branch.branch.clone()));
-        (name, matched)
+        let Some(placement) = self.placements.get(&item.project) else {
+            return (None, None);
+        };
+        (
+            placement.branch_name(item),
+            placement.matched(item).cloned(),
+        )
     }
 
     /// Whether a PR item's branch workspace is on disk. None when the state
@@ -267,102 +292,62 @@ impl Ctx {
         if item.kind != ItemKind::Pr {
             return None;
         }
-        let root = self.roots.get(&item.project)?;
-        let (name, _) = self.effective_branch(item);
-        let workspace = self.expand_workspace(&item.project, root, &name?)?;
+        let placement = self.placements.get(&item.project)?;
+        let workspace = placement.workspace_for(&placement.branch_name(item)?)?;
         Some(workspace.is_dir())
     }
 
-    /// Re-measure how many commits each checked-out branch trails its
-    /// project's main branch — summed over all the workspace's repos for
-    /// poly-repo layouts. Local git only (no fetch), so counts are
-    /// relative to the last-fetched origin.
+    /// Re-measure how far each checked-out branch trails its project's main
+    /// branch — a fold over the branch workspace's forest, per repository and
+    /// then summed (§AR-004-forest.1). Local refs only (no fetch), so counts
+    /// are relative to what was last fetched.
     pub fn recompute_behind(&mut self) {
         let mut behind = BTreeMap::new();
         for project in &self.projects {
-            let Some(root) = self.roots.get(project) else {
+            let Some(placement) = self.placements.get(project) else {
                 continue;
             };
-            let Some(main_branch) = self.main_branches.get(project) else {
+            if placement.main_branch.is_none() {
                 continue;
-            };
-            let default_paths = vec![".".to_string()];
-            let repo_paths = self.repo_paths.get(project).unwrap_or(&default_paths);
-            for branch in self.branches.get(project).into_iter().flatten() {
+            }
+            for branch in &placement.branches {
                 if !self.branch_checked_out(project, branch) {
                     continue;
                 }
-                let workspace = self
-                    .branch_workspace(project, root, branch)
-                    .unwrap_or_else(|| root.clone());
-                let mut total: Option<u64> = None;
-                for path in repo_paths {
-                    let repo = if path == "." {
-                        workspace.clone()
-                    } else {
-                        workspace.join(path)
-                    };
-                    if let Some(count) = crate::git::commits_behind(&repo, main_branch) {
-                        total = Some(total.unwrap_or(0) + count);
-                    }
-                }
-                if let Some(total) = total {
-                    behind.insert((project.clone(), branch.branch.clone()), total);
+                let workspace = placement
+                    .workspace_for(&branch.branch)
+                    .unwrap_or_else(|| placement.root.clone());
+                let staleness = placement.forest(&workspace).staleness();
+                if staleness.total().is_some() {
+                    behind.insert((project.clone(), branch.branch.clone()), staleness);
                 }
             }
         }
         self.behind = behind;
     }
 
+    /// How far one branch's checkout trails, per repository. None where it was
+    /// never measured — no checkout, or nothing measurable in it.
+    pub fn branch_behind(&self, project: &str, branch: &str) -> Option<&Staleness> {
+        self.behind.get(&(project.to_string(), branch.to_string()))
+    }
+
     /// Whether a registry branch has its checkout on disk.
     pub fn branch_checked_out(&self, project: &str, branch: &BranchInfo) -> bool {
-        let Some(root) = self.roots.get(project) else {
+        let Some(placement) = self.placements.get(project) else {
             return false;
         };
-        match self.branch_workspace(project, root, branch) {
+        match placement.workspace_for(&branch.branch) {
             Some(workspace) => workspace.is_dir(),
-            None => root.is_dir(),
+            None => placement.root.is_dir(),
         }
     }
 
-    /// The item's checkout context inside `root`: the registry branch it
-    /// belongs to (same matching as the tree grouping) and the directory to
-    /// run actions in — the branch workspace when it can be resolved (from
-    /// the provider-recorded or registry branch) and exists on disk,
-    /// otherwise the project root.
-    pub fn checkout_for(&self, item: &Item, root: &Path) -> (PathBuf, Option<BranchInfo>) {
-        let (name, matched) = self.effective_branch(item);
-        if let Some(name) = &name {
-            if let Some(workspace) = self.expand_workspace(&item.project, root, name) {
-                if workspace.is_dir() {
-                    return (workspace, matched);
-                }
-            }
-        }
-        (root.to_path_buf(), matched)
-    }
-
-    /// Whether the item's branch workspace is on disk, missing (with the
-    /// directory a checkout must create), or unresolvable.
-    pub fn workspace_state(&self, item: &Item, root: &Path) -> WorkspaceState {
-        if self.branch_templates.get(&item.project).is_none() {
-            // Single-checkout project: the root is the workspace.
-            return WorkspaceState::Ready;
-        }
-        let (name, _) = self.effective_branch(item);
-        match name {
-            Some(name) => {
-                let target = self
-                    .expand_workspace(&item.project, root, &name)
-                    .expect("template exists");
-                if target.is_dir() {
-                    WorkspaceState::Ready
-                } else {
-                    WorkspaceState::Missing(target)
-                }
-            }
-            None => WorkspaceState::Unmatched,
-        }
+    /// Where an item's work belongs: the branch it is on, the directory to run
+    /// commands in, and whether its workspace is on disk
+    /// (§AR-004-forest.3). The same answer dispatch and the CLI get.
+    pub fn checkout(&self, item: &Item) -> Option<Checkout> {
+        Some(self.placements.get(&item.project)?.checkout(item))
     }
 
     /// Best link for a branch row: its most urgent matching feed item.
@@ -481,20 +466,12 @@ pub fn run() -> Result<ExitCode> {
 struct RegistryInfo {
     orgs: Vec<OrgInfo>,
     project_org: BTreeMap<String, String>,
-    branches: BTreeMap<String, Vec<BranchInfo>>,
-    roots: BTreeMap<String, PathBuf>,
-    branch_templates: BTreeMap<String, String>,
-    main_branches: BTreeMap<String, String>,
-    repo_paths: BTreeMap<String, Vec<String>>,
+    placements: BTreeMap<String, Placement>,
 }
 
 fn load_registry_info(projects: &[String]) -> Result<RegistryInfo> {
     let registry_doc = crate::feed::commands::load_registry_doc()?;
 
-    let mut roots = BTreeMap::new();
-    let mut branch_templates = BTreeMap::new();
-    let mut main_branches = BTreeMap::new();
-    let mut repo_paths = BTreeMap::new();
     let mut orgs: Vec<OrgInfo> = registry::array_field(&registry_doc, "organizations")
         .iter()
         .map(|org| OrgInfo {
@@ -510,78 +487,28 @@ fn load_registry_info(projects: &[String]) -> Result<RegistryInfo> {
     });
 
     let mut project_org = BTreeMap::new();
-    let mut branches = BTreeMap::new();
+    let mut placements = BTreeMap::new();
     for project in registry::array_field(&registry_doc, "projects") {
         let project_id = registry::id_of(project).to_string();
         if !projects.contains(&project_id) {
             continue;
         }
-        let org_id = registry::str_field(project, "organization")
-            .unwrap_or("")
-            .to_string();
-        project_org.insert(project_id.clone(), org_id);
-        if let Some(root) = registry::str_field(project, "root") {
-            roots.insert(project_id.clone(), paths::resolve_path(root));
+        project_org.insert(
+            project_id.clone(),
+            registry::str_field(project, "organization")
+                .unwrap_or("")
+                .to_string(),
+        );
+        // The same reading dispatch and the CLI do — one description of where
+        // a project is, not a second copy of it (§AR-004-forest.3).
+        if let Some(placement) = Placement::load(&registry_doc, &project_id) {
+            placements.insert(project_id, placement);
         }
-        if let Some(template) = registry::str_field(project, "branch_root_template") {
-            branch_templates.insert(project_id.clone(), template.to_string());
-        }
-        if let Some(main_branch) = registry::str_field(project, "main_branch") {
-            main_branches.insert(project_id.clone(), main_branch.to_string());
-        }
-        // Branch-tracked repo paths of the project type: staleness sums
-        // across all of them (app + plugins + docs-site for a poly-repo workspace).
-        if let Some(type_id) = registry::str_field(project, "type") {
-            if let Ok(project_type) = registry::get_project_type(&registry_doc, type_id) {
-                let paths: Vec<String> = registry::array_field(project_type, "repos")
-                    .iter()
-                    .filter(|repo| repo.get("update_mode").and_then(Value::as_str) != Some("skip"))
-                    .filter_map(|repo| registry::str_field(repo, "path"))
-                    .map(String::from)
-                    .collect();
-                if !paths.is_empty() {
-                    repo_paths.insert(project_id.clone(), paths);
-                }
-            }
-        }
-
-        let mut project_branches = Vec::new();
-        for (section, is_release) in [("release_branches", true), ("branches", false)] {
-            for entry in registry::branch_entries(project, section) {
-                let branch = registry::str_field(entry, "branch")
-                    .unwrap_or("")
-                    .to_string();
-                let ticket = registry::str_field(entry, "ticket")
-                    .map(String::from)
-                    .or_else(|| {
-                        let extracted = registry::extract_ticket(&branch);
-                        if extracted.is_empty() {
-                            None
-                        } else {
-                            Some(extracted)
-                        }
-                    });
-                project_branches.push(BranchInfo {
-                    branch,
-                    ticket,
-                    active: entry
-                        .get("active")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false),
-                    is_release,
-                });
-            }
-        }
-        branches.insert(project_id, project_branches);
     }
     Ok(RegistryInfo {
         orgs,
         project_org,
-        branches,
-        roots,
-        branch_templates,
-        main_branches,
-        repo_paths,
+        placements,
     })
 }
 
@@ -623,12 +550,9 @@ impl App {
                 projects,
                 orgs: info.orgs,
                 project_org: info.project_org,
-                branches: info.branches,
-                roots: info.roots,
-                branch_templates: info.branch_templates,
-                main_branches: info.main_branches,
-                repo_paths: info.repo_paths,
+                placements: info.placements,
                 behind: BTreeMap::new(),
+                capabilities: BTreeMap::new(),
                 actions: config.actions.clone(),
                 project_actions: config
                     .projects
@@ -682,6 +606,7 @@ impl App {
             }
         }
         self.ctx.recompute_behind();
+        self.ctx.recompute_capabilities();
         self.reload_work();
         self.navigator.rebuild(&self.ctx);
         Ok(())
@@ -870,30 +795,34 @@ impl App {
                 // An empty menu is no longer empty: the last entry is always
                 // "run a command here…" (§FS-005-dispatch.10), and refusing
                 // to open would hide it exactly where nothing is configured.
-                match self.ctx.roots.get(&item.project) {
-                    Some(root) if root.is_dir() => {
-                        let (workspace, branch) = self.ctx.checkout_for(&item, root);
-                        let state = self.ctx.workspace_state(&item, root);
+                // The menu opens where the project is placed; where it is not,
+                // the ladder's own sentence says why (§AR-005-capabilities.2).
+                let refusal = self.ctx.can(&item.project).refusal(&[Rung::Placed]);
+                match self.ctx.root(&item.project).map(Path::to_path_buf) {
+                    Some(root) if refusal.is_none() => {
+                        // One resolver answers where the work is, which branch
+                        // it is on, and whether its workspace is there
+                        // (§AR-004-forest.3).
+                        let placed = self.ctx.checkout(&item).expect("the project is placed");
+                        let branch = self
+                            .ctx
+                            .placement(&item.project)
+                            .and_then(|placement| placement.matched(&item).cloned());
                         let checkout = self.ctx.checkouts.get(&item.project).cloned();
                         self.menu = Some(ActionMenu::new(
                             item,
                             root.clone(),
-                            workspace,
+                            placed.workspace,
                             branch,
-                            state,
+                            placed.state,
                             checkout,
                             applicable,
                         ));
                     }
-                    Some(root) => {
-                        self.message = format!(
-                            "{} is not checked out ({} is missing)",
-                            item.project,
-                            root.display()
-                        );
-                    }
-                    None => {
-                        self.message = format!("{} has no root in the registry", item.project);
+                    _ => {
+                        self.message = refusal.unwrap_or_else(|| {
+                            format!("{} has no root in the registry", item.project)
+                        });
                     }
                 }
             }
@@ -912,24 +841,22 @@ impl App {
                 rhei,
                 label,
             } => {
+                // The runtime is a rung: refused here in the same words the
+                // command line uses, instead of handing the terminal over to a
+                // command that cannot start (§AR-005-capabilities.2).
+                if let Some(refusal) = crate::work::runner::refusal() {
+                    self.message = refusal;
+                    return Ok(true);
+                }
+                // The checkout, not the plan directory: it is where the work
+                // is, and where the runtime falls back to when a workspace has
+                // no one repository to be found by looking.
                 self.handover(
                     terminal,
                     "▶",
                     &format!("rhei run — {label}"),
-                    &checkout,
-                    || {
-                        std::process::Command::new("rhei")
-                            .arg("run")
-                            .arg(&root)
-                            .arg("--rhei")
-                            .arg(&rhei)
-                            // The checkout, not the plan directory: it is
-                            // where the work is, and where the runtime falls
-                            // back to when a workspace has no one repository
-                            // to be found by looking.
-                            .current_dir(&checkout)
-                            .status()
-                    },
+                    &Site::root(&checkout),
+                    &crate::work::runner::summons(&root, std::slice::from_ref(&rhei), &[]),
                 )?;
                 // The runtime just advanced the plans this reads.
                 self.reload_work();
@@ -949,14 +876,17 @@ impl App {
             Action::ReadPlan(path) => {
                 let editor = std::env::var("EDITOR").unwrap_or_else(|_| "less".to_string());
                 let dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
-                self.handover(terminal, "📖", &editor, &dir, || {
-                    std::process::Command::new("sh")
-                        .arg("-c")
-                        .arg(format!("{editor} \"$1\"", editor = editor))
-                        .arg("sh")
-                        .arg(&path)
-                        .status()
-                })?;
+                let command = format!(
+                    "{editor} {}",
+                    crate::feed::providers::shell_quote(&path.to_string_lossy())
+                );
+                self.handover(
+                    terminal,
+                    "📖",
+                    &editor,
+                    &Site::root(&dir),
+                    &summons::Summons::new("read-plan", command),
+                )?;
                 self.reload_work();
             }
             Action::Refresh => {
@@ -1082,23 +1012,26 @@ impl App {
     /// Leave the interface, run something the reader watches, and come back.
     /// The runtime writes for minutes and asks questions; putting it behind a
     /// spinner would hide the only thing worth seeing.
-    fn handover<F>(
+    /// Leave the TUI, run one summons attached to the real terminal, and come
+    /// back. Handing the terminal over is this call site's property, not the
+    /// binding's (§AR-002-summons.2).
+    fn handover(
         &mut self,
         terminal: &mut DefaultTerminal,
         icon: &str,
         description: &str,
-        cwd: &Path,
-        run: F,
-    ) -> Result<()>
-    where
-        F: FnOnce() -> std::io::Result<std::process::ExitStatus>,
-    {
+        site: &Site,
+        summons: &summons::Summons,
+    ) -> Result<()> {
         ratatui::restore();
-        println!("\n{icon} {description}   ({})\n", cwd.display());
-        self.message = match run() {
-            Ok(status) if status.success() => format!("{description}: ok"),
-            Ok(status) => format!("{description}: {status}"),
-            Err(err) => format!("{description}: failed to run: {err}"),
+        match site.resolve(&Place::Workspace) {
+            Ok(place) => println!("\n{icon} {description}   ({})\n", place.display()),
+            Err(err) => println!("\n{icon} {description}   ({err})\n"),
+        }
+        self.message = match summons::run(summons, site, summons::Mode::Interactive) {
+            Ok(answer) if answer.is_done() => format!("{description}: ok"),
+            Ok(answer) => answer.refusal(description),
+            Err(err) => format!("{description}: {err}"),
         };
         println!("\n{}", self.message);
         print!("Press Enter to return to ephor… ");
@@ -1126,24 +1059,35 @@ impl App {
         }
         ratatui::restore();
 
-        let step = |command: &str, icon: &str, description: &str, cwd: &Path, workspace: &Path| {
-            println!("\n▶ {icon} {description}   ({})", cwd.display());
+        // A menu entry is a summons like every other command ephor runs
+        // (§AR-002-summons): one spawn path, one environment contract, one
+        // reading of the exit code. The terminal is handed over because that is
+        // this call site's property, not the binding's (§AR-002-summons.2).
+        let step = |command: &str, icon: &str, description: &str, site: &Site, workspace: &Path| {
+            let place = site
+                .resolve(&Place::Workspace)
+                .map_err(|err| format!("{description}: {err}"))?;
+            println!("\n▶ {icon} {description}   ({})", place.display());
             println!("  $ {command}\n");
-            let status = std::process::Command::new("sh")
-                .arg("-c")
-                .arg(command)
-                .current_dir(cwd)
-                .envs(actions::item_env(
-                    &menu.item,
-                    &menu.root,
-                    workspace,
-                    menu.branch.as_ref(),
-                ))
-                .status();
-            match status {
-                Ok(status) if status.success() => Ok(()),
-                Ok(status) => Err(format!("{description}: {status}")),
-                Err(err) => Err(format!("{description}: failed to run: {err}")),
+            // The forest of the place it runs in, so a command that folds
+            // over repositories folds over the same ones ephor does
+            // (§AR-004-forest.1).
+            let forest = self
+                .ctx
+                .placement(&menu.item.project)
+                .map(|placement| placement.forest(workspace));
+            let summons = summons::Summons::new(description, command).carrying(dossier::of_item(
+                &menu.item,
+                &menu.root,
+                workspace,
+                menu.branch.as_ref(),
+                forest.as_ref(),
+            ));
+            let answer = summons::run(&summons, site, summons::Mode::Interactive)
+                .map_err(|err| err.to_string())?;
+            match answer.outcome {
+                Outcome::Done => Ok(()),
+                _ => Err(answer.refusal(description)),
             }
         };
 
@@ -1160,7 +1104,7 @@ impl App {
                     &checkout.command,
                     &checkout.icon,
                     &checkout.description,
-                    &menu.root,
+                    &Site::root(&menu.root),
                     &target,
                 )?;
                 if !target.is_dir() {
@@ -1178,7 +1122,7 @@ impl App {
                     &action.command,
                     &action.icon,
                     &action.description,
-                    &workspace,
+                    &Site::workspace(&menu.root, &workspace),
                     &workspace,
                 )?;
                 return Ok(format!("{} {}: ok", action.icon, action.description));
@@ -1198,9 +1142,11 @@ impl App {
         terminal
             .clear()
             .map_err(|err| EphorError::Command(format!("terminal clear failed: {err}")))?;
-        // A checkout changes what the branch rows should show.
+        // A checkout changes what the branch rows show, and buys the rungs
+        // that were waiting on it (§AR-005-capabilities.1).
         if needs_checkout {
             self.ctx.recompute_behind();
+            self.ctx.recompute_capabilities();
         }
         self.navigator.rebuild(&self.ctx);
         Ok(())
@@ -1364,20 +1310,23 @@ mod tests {
             active: true,
             is_release: false,
         };
+        let placement = Placement {
+            project: "widget".to_string(),
+            root: root.to_path_buf(),
+            template: template.map(String::from),
+            branches: vec![branch],
+            main_branch: Some("master".to_string()),
+            repos: Vec::new(),
+        };
         Ctx {
             feeds: Vec::new(),
             seen: Seen::new(),
             projects: vec!["widget".to_string()],
             orgs: Vec::new(),
             project_org: BTreeMap::new(),
-            branches: BTreeMap::from([("widget".to_string(), vec![branch])]),
-            roots: BTreeMap::from([("widget".to_string(), root.to_path_buf())]),
-            branch_templates: template
-                .map(|template| BTreeMap::from([("widget".to_string(), template.to_string())]))
-                .unwrap_or_default(),
-            main_branches: BTreeMap::from([("widget".to_string(), "master".to_string())]),
-            repo_paths: BTreeMap::new(),
+            placements: BTreeMap::from([("widget".to_string(), placement)]),
             behind: BTreeMap::new(),
+            capabilities: BTreeMap::new(),
             actions: Vec::new(),
             project_actions: BTreeMap::new(),
             provider_blocks: BTreeMap::new(),
@@ -1386,6 +1335,18 @@ mod tests {
             unread_only: true,
             work: BTreeMap::new(),
         }
+    }
+
+    /// Give the fixture project a declared forest.
+    fn declare(ctx: &mut Ctx, repos: &[&str]) {
+        let placement = ctx
+            .placements
+            .get_mut("widget")
+            .expect("the fixture project");
+        placement.repos = repos
+            .iter()
+            .map(|name| crate::forest::Declaration::at(*name))
+            .collect();
     }
 
     fn ticket_item() -> Item {
@@ -1420,8 +1381,16 @@ mod tests {
         let mut ci = ticket_item();
         ci.id = "github-ci:acme/widget#42".to_string();
         ci.source = "github-ci".to_string();
-        ci.kind = ItemKind::Ci;
-        ci.state = Some("failing".to_string());
+        ci.kind = ItemKind::Pr;
+        ci.state = None;
+        // The gate rides on the pull request now, and the source's own action
+        // is offered off the gate rather than off a state word.
+        ci.raw = json!({
+            "repo": "acme/widget",
+            "gate": { "repos": [{
+                "repo": "acme/widget", "passed": 1, "failed": 2, "running": 0
+            }] }
+        });
 
         // The configured action keeps its place and the source's own goes
         // ahead of it (§FS-004-quick-actions.3) — where `gh` is installed for
@@ -1443,9 +1412,9 @@ mod tests {
         std::fs::create_dir_all(&workspace_dir).unwrap();
 
         let ctx = ctx_with_branch(root, Some("{project_root}/{branch}"));
-        let (workspace, branch) = ctx.checkout_for(&ticket_item(), root);
-        assert_eq!(workspace, workspace_dir);
-        assert_eq!(branch.unwrap().ticket.as_deref(), Some("ABC-42"));
+        let placed = ctx.checkout(&ticket_item()).unwrap();
+        assert_eq!(placed.workspace, workspace_dir);
+        assert_eq!(placed.ticket.as_deref(), Some("ABC-42"));
     }
 
     fn git(dir: &Path, args: &[&str]) {
@@ -1498,14 +1467,16 @@ mod tests {
         assert_eq!(ctx.item_checked_out(&pr), Some(false));
         std::fs::create_dir_all(root.join("someone/feature")).unwrap();
         assert_eq!(ctx.item_checked_out(&pr), Some(true));
-        let (workspace, _) = ctx.checkout_for(&pr, root);
-        assert_eq!(workspace, root.join("someone/feature"));
+        assert_eq!(
+            ctx.checkout(&pr).unwrap().workspace,
+            root.join("someone/feature")
+        );
 
         // No branch information at all: state is unknown.
         pr.raw = json!({});
         assert_eq!(ctx.item_checked_out(&pr), None);
         assert!(matches!(
-            ctx.workspace_state(&pr, root),
+            ctx.checkout(&pr).unwrap().state,
             WorkspaceState::Unmatched
         ));
     }
@@ -1519,15 +1490,17 @@ mod tests {
         repo_behind(&workspace.join("ee"), 3);
 
         let mut ctx = ctx_with_branch(root, Some("{project_root}/{branch}"));
-        ctx.repo_paths = BTreeMap::from([(
-            "widget".to_string(),
-            vec!["ce".to_string(), "ee".to_string()],
-        )]);
+        declare(&mut ctx, &["ce", "ee"]);
         ctx.recompute_behind();
+        let staleness = ctx
+            .branch_behind("widget", "you/ABC-42-retry-window")
+            .expect("both repositories were measured");
+        assert_eq!(staleness.total(), Some(5));
+        // The sum is reported, and which repository it came from survives it
+        // (§AR-004-forest.1).
         assert_eq!(
-            ctx.behind
-                .get(&("widget".to_string(), "you/ABC-42-retry-window".to_string())),
-            Some(&5)
+            staleness.summary().as_deref(),
+            Some("5 behind (ce 2, ee 3)")
         );
     }
 
@@ -1542,10 +1515,7 @@ mod tests {
         repo_behind(&workspace.join("ee"), 3);
 
         let mut ctx = ctx_with_branch(root, Some("{project_root}/{branch}"));
-        ctx.repo_paths = BTreeMap::from([(
-            "widget".to_string(),
-            vec!["ce".to_string(), "ee".to_string()],
-        )]);
+        declare(&mut ctx, &["ce", "ee"]);
         let pr = ticket_item();
         assert_eq!(ctx.item_behind(&pr), Some(5));
         let menu = ctx.actions_for(&pr);
@@ -1593,6 +1563,41 @@ mod tests {
         assert!(ctx.behind.is_empty());
     }
 
+    /// The table is what the surfaces read, and it is honest about time: a
+    /// checkout that appears buys the rungs that were waiting on it
+    /// (§AR-005-capabilities.1, §AR-005-capabilities.3).
+    #[test]
+    fn the_capability_table_is_resolved_per_project_and_again_when_the_world_moves() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("widget");
+        let mut ctx = ctx_with_branch(&root, Some("{project_root}/{branch}"));
+        ctx.recompute_capabilities();
+
+        // Nothing on disk: placed fails, and what cannot be looked in says so.
+        let can = ctx.can("widget");
+        assert!(!can.holds(Rung::Placed));
+        assert!(!can.holds(Rung::Checkable));
+        assert!(!can.holds(Rung::Ticketed));
+        assert!(can.holds(Rung::BranchAddressable));
+        assert!(can
+            .refusal(&[Rung::Placed])
+            .unwrap()
+            .contains("is not on disk"));
+
+        // The project arrives, with a check verb and a ticket store in it.
+        std::fs::create_dir_all(root.join("panta")).unwrap();
+        std::fs::write(root.join("check.sh"), "#!/bin/sh\n").unwrap();
+        ctx.recompute_capabilities();
+        let can = ctx.can("widget");
+        assert!(can.holds(Rung::Placed));
+        assert!(can.holds(Rung::Checkable));
+        assert!(can.holds(Rung::Ticketed));
+
+        // A project the registry says nothing about holds nothing, and the
+        // table answers rather than being absent.
+        assert!(ctx.can("ghost").held().is_empty());
+    }
+
     #[test]
     fn checkout_falls_back_to_root() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1600,13 +1605,12 @@ mod tests {
 
         // Branch matched but its workspace directory does not exist.
         let ctx = ctx_with_branch(root, Some("{project_root}/{branch}"));
-        let (workspace, branch) = ctx.checkout_for(&ticket_item(), root);
-        assert_eq!(workspace, root);
-        assert!(branch.is_some());
+        let placed = ctx.checkout(&ticket_item()).unwrap();
+        assert_eq!(placed.workspace, root);
+        assert!(placed.branch.is_some());
 
         // No branch template at all (plain single-checkout project).
         let ctx = ctx_with_branch(root, None);
-        let (workspace, _) = ctx.checkout_for(&ticket_item(), root);
-        assert_eq!(workspace, root);
+        assert_eq!(ctx.checkout(&ticket_item()).unwrap().workspace, root);
     }
 }

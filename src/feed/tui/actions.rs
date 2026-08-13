@@ -44,58 +44,6 @@ fn kind_matches(kind: ItemKind, name: &str) -> bool {
     name == kind.label() || (kind == ItemKind::Message && name == "message")
 }
 
-/// The item's context, exported to action commands. `branch` is the
-/// registry branch the item was matched to (org → project → branch, the
-/// same grouping the tree shows); `workspace` is the resolved checkout the
-/// command runs in.
-pub(crate) fn item_env(
-    item: &Item,
-    root: &Path,
-    workspace: &Path,
-    branch: Option<&BranchInfo>,
-) -> Vec<(String, String)> {
-    let string = |value: &Option<String>| value.clone().unwrap_or_default();
-    // The provider-recorded branch is ground truth; the matched registry
-    // branch fills in for providers that don't record one.
-    let branch_name = item
-        .raw
-        .get("branch")
-        .and_then(serde_json::Value::as_str)
-        .map(String::from)
-        .or_else(|| branch.map(|branch| branch.branch.clone()))
-        .unwrap_or_default();
-    vec![
-        ("EPHOR_PROJECT".to_string(), item.project.clone()),
-        (
-            "EPHOR_ROOT".to_string(),
-            root.to_string_lossy().into_owned(),
-        ),
-        (
-            "EPHOR_WORKSPACE".to_string(),
-            workspace.to_string_lossy().into_owned(),
-        ),
-        ("EPHOR_ITEM_ID".to_string(), item.id.clone()),
-        ("EPHOR_SOURCE".to_string(), item.source.clone()),
-        ("EPHOR_KIND".to_string(), item.kind.label().to_string()),
-        ("EPHOR_TITLE".to_string(), item.title.clone()),
-        ("EPHOR_URL".to_string(), string(&item.url)),
-        ("EPHOR_STATE".to_string(), string(&item.state)),
-        ("EPHOR_BRANCH".to_string(), branch_name),
-        (
-            "EPHOR_TICKET".to_string(),
-            branch
-                .and_then(|branch| branch.ticket.clone())
-                .unwrap_or_default(),
-        ),
-        ("EPHOR_REPO".to_string(), item.repo().unwrap_or_default()),
-        (
-            "EPHOR_NUMBER".to_string(),
-            item.number().unwrap_or_default(),
-        ),
-        ("EPHOR_RAW".to_string(), item.raw.to_string()),
-    ]
-}
-
 /// The rebase ephor offers on a pull request whose checkout trails its main
 /// branch (§FS-004-quick-actions.6). It runs `ephor rebase`, so the key and
 /// the state machine's program state are the same operation
@@ -242,8 +190,11 @@ impl ActionMenu {
                     // There is always a checkout to run first now, configured
                     // or ephor's own (§FS-004-quick-actions.7).
                     WorkspaceState::Missing(_) => Gate::NeedsCheckout,
+                    // A workspace the item cannot be resolved to is the
+                    // branch-addressable rung failing on this item
+                    // (§FS-006-project-interface.10).
                     WorkspaceState::Unmatched => Gate::Blocked(
-                        "Action needs a branch workspace, but the item's branch is unknown"
+                        "this action needs a branch workspace, and the item's branch is unknown"
                             .to_string(),
                     ),
                 }
@@ -347,8 +298,11 @@ impl ActionMenu {
                         "  (will check out first)",
                         Style::default().fg(Color::Yellow),
                     )),
-                    Gate::Blocked(_) => spans.push(Span::styled(
-                        "  (unavailable)",
+                    // The reason is rendered where the entry is, not saved for
+                    // whoever presses it: an entry marked only "unavailable"
+                    // teaches nothing (§AR-002-summons.4).
+                    Gate::Blocked(reason) => spans.push(Span::styled(
+                        format!("  (unavailable: {reason})"),
                         Style::default()
                             .fg(Color::DarkGray)
                             .add_modifier(Modifier::ITALIC),
@@ -433,71 +387,6 @@ mod tests {
         );
         assert_eq!(applicable(&[action("a", &["msg"])], &[], &message).len(), 1);
         assert_eq!(applicable(&[action("a", &["pr"])], &[], &message).len(), 0);
-    }
-
-    fn env_value(env: &[(String, String)], key: &str) -> String {
-        env.iter()
-            .find(|(name, _)| name == key)
-            .map(|(_, value)| value.clone())
-            .unwrap()
-    }
-
-    #[test]
-    fn env_extracts_github_number_and_repo() {
-        let pr = item(ItemKind::Pr, "github-prs:acme/widget#42", json!({}));
-        let env = item_env(
-            &pr,
-            Path::new("/tmp/widget"),
-            Path::new("/tmp/widget/master"),
-            None,
-        );
-        assert_eq!(env_value(&env, "EPHOR_NUMBER"), "42");
-        assert_eq!(env_value(&env, "EPHOR_REPO"), "acme/widget");
-        assert_eq!(env_value(&env, "EPHOR_ROOT"), "/tmp/widget");
-        assert_eq!(env_value(&env, "EPHOR_WORKSPACE"), "/tmp/widget/master");
-        assert_eq!(env_value(&env, "EPHOR_KIND"), "pr");
-    }
-
-    #[test]
-    fn env_extracts_bitbucket_number_and_repo() {
-        let pr = item(
-            ItemKind::Pr,
-            "bitbucket-prs:plugins/123",
-            json!({ "repo": "plugins", "branch": "you/ABC-7-fix" }),
-        );
-        let env = item_env(
-            &pr,
-            Path::new("/tmp/widget"),
-            Path::new("/tmp/widget"),
-            None,
-        );
-        assert_eq!(env_value(&env, "EPHOR_NUMBER"), "123");
-        assert_eq!(env_value(&env, "EPHOR_REPO"), "plugins");
-        assert_eq!(env_value(&env, "EPHOR_BRANCH"), "you/ABC-7-fix");
-    }
-
-    #[test]
-    fn env_fills_branch_and_ticket_from_matched_registry_branch() {
-        let branch = BranchInfo {
-            branch: "you/ABC-42-retry-window".to_string(),
-            ticket: Some("ABC-42".to_string()),
-            active: true,
-            is_release: false,
-        };
-        // A github item records no branch: the registry match fills in.
-        let pr = item(ItemKind::Pr, "github-prs:acme/widget#42", json!({}));
-        let env = item_env(&pr, Path::new("/r"), Path::new("/r/b"), Some(&branch));
-        assert_eq!(env_value(&env, "EPHOR_BRANCH"), "you/ABC-42-retry-window");
-        assert_eq!(env_value(&env, "EPHOR_TICKET"), "ABC-42");
-
-        // A provider-recorded branch wins over the registry match.
-        let pr = item(
-            ItemKind::Pr,
-            "bitbucket-prs:app/123",
-            json!({ "branch": "other" }),
-        );
-        let env = item_env(&pr, Path::new("/r"), Path::new("/r/b"), Some(&branch));
-        assert_eq!(env_value(&env, "EPHOR_BRANCH"), "other");
     }
 
     fn menu(

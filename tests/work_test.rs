@@ -123,7 +123,7 @@ fn read_feed(tmp: &Path) -> Value {
 /// refresh would.
 fn with_pr(tmp: &Path, edit: impl Fn(&mut Value)) {
     let mut feed = read_feed(tmp);
-    let items = feed["providers"]["github-prs"]["items"]
+    let items = feed["providers"]["github-prs"]["matters"]
         .as_array_mut()
         .unwrap();
     for item in items {
@@ -471,4 +471,66 @@ fn forgetting_an_entry_keeps_the_plan_it_points_at() {
         .assert()
         .success()
         .stdout(predicate::str::contains("No work dispatched"));
+}
+
+/// Running the runtime is a summons like everything else ephor asks of the
+/// world (§AR-002-summons, §FS-005-dispatch.12): one construction of the
+/// invocation, run from the checkout the work is about (§FS-005-dispatch.3),
+/// with its exit code read the one way.
+#[test]
+fn work_run_summons_the_runner_from_the_checkout() {
+    let tmp = tempfile::tempdir().unwrap();
+    fixture(tmp.path(), Value::Null);
+    ephor(tmp.path())
+        .args(["refresh", "demo"])
+        .assert()
+        .success();
+    ephor(tmp.path())
+        .args(["work", "dispatch"])
+        .assert()
+        .success();
+
+    // A stub runner that records where it ran and what it was asked for.
+    let log = tmp.path().join("runner.log");
+    make_executable(
+        &tmp.path().join("fakebin/rhei"),
+        &format!(
+            "#!/usr/bin/env bash\nprintf '%s\\n%s\\n' \"$PWD\" \"$*\" > {}\nexit \"${{FAKE_RHEI_EXIT:-0}}\"\n",
+            log.to_string_lossy()
+        ),
+    );
+
+    ephor(tmp.path())
+        .args(["work", "run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("rhei run"));
+
+    let recorded = fs::read_to_string(&log).unwrap();
+    let mut lines = recorded.lines();
+    let cwd = lines.next().unwrap();
+    let args = lines.next().unwrap();
+    assert_eq!(cwd, tmp.path().join("demo").to_string_lossy());
+    assert!(
+        args.starts_with(&format!(
+            "run {} --rhei ",
+            tmp.path().join("demo/panta").to_string_lossy()
+        )),
+        "{args}"
+    );
+    assert!(args.ends_with("--rhei github-prs-acme-widget-42"), "{args}");
+
+    // A runner that fails fails the command; a runner that parks does not.
+    ephor(tmp.path())
+        .env("FAKE_RHEI_EXIT", "2")
+        .args(["work", "run"])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("rhei run: failed (2)"));
+    ephor(tmp.path())
+        .env("FAKE_RHEI_EXIT", "75")
+        .args(["work", "run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("parked"));
 }

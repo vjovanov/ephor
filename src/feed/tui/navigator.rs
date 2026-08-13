@@ -15,6 +15,7 @@ use crate::feed::cache::{self, Seen};
 use crate::feed::gate::Gate;
 use crate::feed::model::{Item, ItemKind, ItemRole};
 use crate::feed::render::age;
+use crate::forest::Staleness;
 
 use super::{highlight_style, matches_branch, Action, BranchInfo, Ctx, WorkBadge};
 
@@ -132,7 +133,7 @@ impl NavigatorState {
         let Some(feed) = ctx.feed(project) else {
             return entries;
         };
-        let branches = ctx.branches.get(project).cloned().unwrap_or_default();
+        let branches = ctx.branches(project).to_vec();
 
         // §FS-003-feed-categories.1. Every filter but Recent's excludes
         // finished work, so an item lands in exactly one category.
@@ -149,6 +150,9 @@ impl NavigatorState {
                     && item.role == Some(ItemRole::Reviewer)
                     && !item.is_finished()
             }),
+            // Gate results ride on the matter they are about
+            // (§FS-007-matters.5); what is left for this section is the
+            // periodic build that belongs to no change of its own.
             ("CI", |item| {
                 item.kind == ItemKind::Ci && !item.is_finished()
             }),
@@ -207,9 +211,8 @@ impl NavigatorState {
                     project.to_string(),
                     branch.clone(),
                     ctx.branch_checked_out(project, branch),
-                    ctx.behind
-                        .get(&(project.to_string(), branch.branch.clone()))
-                        .copied(),
+                    ctx.branch_behind(project, &branch.branch)
+                        .and_then(Staleness::total),
                 ));
                 for index in matching {
                     consumed[index] = true;
@@ -267,7 +270,7 @@ impl NavigatorState {
         let project = ctx.projects[self.detail_project].clone();
         self.detail_entries.clear();
 
-        let branches = ctx.branches.get(&project).cloned().unwrap_or_default();
+        let branches = ctx.branches(&project).to_vec();
         if !branches.is_empty() {
             self.detail_entries.push(Entry::Header("Branches"));
             for branch in &branches {
@@ -275,9 +278,8 @@ impl NavigatorState {
                     project.clone(),
                     branch.clone(),
                     ctx.branch_checked_out(&project, branch),
-                    ctx.behind
-                        .get(&(project.clone(), branch.branch.clone()))
-                        .copied(),
+                    ctx.branch_behind(&project, &branch.branch)
+                        .and_then(Staleness::total),
                 ));
             }
         }
@@ -494,10 +496,10 @@ impl NavigatorState {
                     if summary_projects {
                         let (total, unread, respond) = ctx.unread_stats(project);
                         let branches = ctx
-                            .branches
-                            .get(project)
-                            .map(|branches| branches.iter().filter(|b| b.active).count())
-                            .unwrap_or(0);
+                            .branches(project)
+                            .iter()
+                            .filter(|branch| branch.active)
+                            .count();
                         let respond_span = if respond > 0 {
                             Span::styled(
                                 format!("{respond} need response"),

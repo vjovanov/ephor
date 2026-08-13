@@ -43,11 +43,22 @@ cd "$CHECKOUT" || { echo "no checkout at $CHECKOUT" > "$REPORT"; exit 1; }
 # Every repository under the checkout, not just the one at its root: a
 # multi-repo workspace holds several, and the fix for a pull request lands in
 # whichever one owns the code. Pushing the root alone pushes nothing.
+#
+# ephor names them in $EPHOR_REPOS, one per line, in the order the project
+# declares (§AR-004-forest.1) — folding over the same forest ephor folds over
+# means this script and the inbox cannot disagree about what the workspace
+# holds. Probing is the fallback for a run nobody dispatched.
 repos=()
-for candidate in . */; do
-  [ -e "$candidate/.git" ] || continue
-  repos+=("${candidate%/}")
-done
+if [ -n "${EPHOR_REPOS:-}" ]; then
+  while IFS= read -r repo; do
+    [ -n "$repo" ] && repos+=("$repo")
+  done <<< "$EPHOR_REPOS"
+else
+  for candidate in . */; do
+    [ -e "$candidate/.git" ] || continue
+    repos+=("${candidate%/}")
+  done
+fi
 if [ ${#repos[@]} -eq 0 ]; then
   echo "no git repository in $CHECKOUT" >> "$REPORT"
   exit 1

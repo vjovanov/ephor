@@ -12,6 +12,7 @@ pub mod dossier;
 pub mod ledger;
 pub mod plan;
 pub mod recipe;
+pub mod runner;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -20,6 +21,7 @@ use chrono::Utc;
 use serde_json::Value;
 
 use crate::branches::{Placement, WorkspaceState};
+use crate::capabilities::{CapabilitySet, Rung};
 use crate::error::{EphorError, Result};
 use crate::feed::config::StatusConfig;
 use crate::feed::model::Item;
@@ -236,9 +238,9 @@ impl Dispatcher {
         let Some(placement) = self.placement(&item.project).cloned() else {
             return recipe::Facts::default();
         };
-        let Some(main_branch) = placement.main_branch.clone() else {
+        if placement.main_branch.is_none() {
             return recipe::Facts::default();
-        };
+        }
         let checkout = placement.checkout(item);
         let Some(branch) = checkout.branch.clone() else {
             return recipe::Facts::default();
@@ -252,15 +254,10 @@ impl Dispatcher {
         if let Some(behind) = self.behind.get(&key) {
             return recipe::Facts { behind: *behind };
         }
-        let repos = placement.repos(&checkout.workspace);
-        // Summed across the workspace's repositories, like the inbox's own
-        // count: one repository trailing is the workspace trailing.
-        let behind = repos
-            .iter()
-            .filter_map(|repo| crate::git::commits_behind(repo, &main_branch))
-            .fold(None, |total: Option<u64>, count| {
-                Some(total.unwrap_or(0) + count)
-            });
+        // Summed across the workspace's forest, like the inbox's own count:
+        // one repository trailing is the workspace trailing
+        // (§AR-004-forest.1).
+        let behind = placement.forest(&checkout.workspace).staleness().total();
         self.behind.insert(key, behind);
         recipe::Facts { behind }
     }
@@ -317,11 +314,14 @@ impl Dispatcher {
     /// (§FS-005-dispatch.6).
     fn site(&mut self, item: &Item, recipe: &Recipe) -> Result<Site> {
         let template = self.root_template(&item.project);
-        let placement = self.placement(&item.project).ok_or_else(|| {
-            EphorError::Command(format!(
-                "{}: no root in the registry, so there is nowhere to put the work.",
-                item.project
-            ))
+        // A project ephor cannot place has nowhere to put the work, and the
+        // ladder owns that sentence (§AR-005-capabilities.2).
+        let placement = self.placement(&item.project).cloned().ok_or_else(|| {
+            EphorError::Command(
+                CapabilitySet::unknown(&item.project)
+                    .refusal(&[Rung::Observable])
+                    .unwrap_or_else(|| format!("{} cannot be placed", item.project)),
+            )
         })?;
         let checkout = placement.checkout(item);
         if let WorkspaceState::Missing(target) = &checkout.state {

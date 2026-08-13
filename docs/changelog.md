@@ -30,6 +30,136 @@ ships, the previous "latest" section moves verbatim to
 
 ### Added
 
+- **One subject, one row: the CI and review-thread rows dissolve into the
+  change they are about**
+  ([§FS-007-matters.3](../requirements.md#3-a-discussion-is-messages-grouped-in-a-channel),
+  [§FS-007-matters.5](../requirements.md#5-an-event-moves-state-and-resurfacing-names-its-reason)).
+  A pull request with a red gate and two unresolved review threads was four
+  rows: the pull request, a CI row for the same change, and one row per thread.
+  It is one row now. `github-ci` reports the pull request carrying its gate —
+  a gate is an observation of a change, not a subject — and `github-threads`
+  reports the pull request carrying its unresolved threads as discussions.
+  Merging keeps the fuller report as before, and now carries over what only
+  the thinner one saw: a conversation it alone read (deduplicated, so the same
+  thread reported by two sources is shown once) and a gate it alone fetched.
+  Two consequences. The **CI category** now holds what it says it holds and
+  nothing else — periodic build results, not gates that belong to a change —
+  so it is empty until something reports one. And the **Failing** column
+  counts matters whose gate is red wherever they sit, rather than rows of one
+  kind, so it means the same thing it always did.
+- **The feed is made of matters**
+  ([§FS-007-matters](../requirements.md#fs-007-matters-the-feed-is-made-of-matters-and-a-matter-knows-why-it-is-there),
+  [§AR-006-matters](architecture/AR-006-matters.md#ar-006-matters-the-core-types-of-the-watch)).
+  The store now holds the model rather than a flat row per report: a `Matter`
+  with a stated subject key, a placement (project and branch, or unattributed
+  carrying the projects that claimed it), the conversation as `Discussion`s of
+  `Message`s in channels that declare what they can carry, everything else as
+  `Event`s, the keys it references as links, and a fingerprint digesting state,
+  each discussion's last activity and message and task counts, and the event
+  tail — which is what will let a resurfacing row say *what* moved instead of
+  only that something did. A gate is an observation of a matter now, not a row
+  of its own. The surfaces still read the flat rendering while they are ported
+  onto the model, and a round-trip test keeps that rendering honest.
+  **The cache is a cache**: it carries the model it was written in, and an
+  older one is dropped rather than migrated, so the first run after upgrading
+  shows an empty feed until `ephor refresh` fills it again. What you marked
+  read is not in that store — it is keyed by matter key in `seen.json` and
+  survives the rebuild untouched.
+- **What a project can do is a ladder, computed once and consulted everywhere**
+  ([§AR-005-capabilities](architecture/AR-005-capabilities.md#ar-005-capabilities-availability-is-computed-once-and-consulted-everywhere),
+  [§FS-006-project-interface.10](../requirements.md#10-capability-rung-by-rung),
+  manual §7.5). Whether something could run was decided in a dozen places, each
+  with its own sentence or with none: a menu entry that could not run said only
+  `(unavailable)` and made you press it to find out why, the inbox's `R` key
+  handed the terminal to a runner that was not installed, and `ephor work run`
+  had the one good sentence about it. There is a `CapabilitySet` per project
+  now — eight rungs, each held or missing with the sentence saying why — and
+  offering is filtering on it while refusing is rendering it. You see the same
+  words wherever you meet the limit, and you see them where the feature would
+  have been rather than after choosing it. It is resolved at load, after every
+  refresh, and after a checkout, from `stat` calls and configuration only. And
+  because a table speaks for the moment it was resolved, the executor
+  re-checks the two things a command leans on — its directory, and its script
+  where the binding names one — at invocation, so a directory deleted since
+  then fails as the world rather than as a stale answer.
+- **A project is a forest, and every git-facing feature folds over it**
+  ([§AR-004-forest](architecture/AR-004-forest.md#ar-004-forest-git-is-the-substrate-and-a-project-is-a-forest-folded-over)).
+  Repositories were a list of relative path strings that four places rebuilt
+  and three folds collapsed into a bare number. They are a `Forest` now — an
+  ordered set under a root, declared by the registry row and probed where it
+  declares nothing — and staleness, rebase, and checkout fold over it, keeping
+  the per-repository answer: a branch row that is `5 behind` can say it was
+  `ce 2, ee 3`. Three consequences you can see. **Probing counts each
+  repository once**: a checkout with `docs/` and `src/` under a single
+  repository reported itself four times behind, because every subdirectory of
+  a working tree answers "yes" to being one; a repository is its own toplevel
+  now. **A declared repository that is not on disk is named** rather than
+  silently dropped from the fold. And **`$EPHOR_REPOS`** hands a summoned
+  command the same repository list, in the same order, so the shipped landing
+  example folds over ephor's forest instead of probing its own
+  ([§FS-005-dispatch.8](../requirements.md#8-the-ticket-carries-the-item-as-data-not-only-as-prose)).
+  Under it, one resolver answers where a branch is checked out — the inbox's
+  grouping, the action menu, dispatch, and the CLI had three implementations
+  of that question and now share one
+  ([§AR-004-forest.3](architecture/AR-004-forest.md#3-workspace-resolution)).
+- **Running work is a summons too**
+  ([§AR-002-summons](architecture/AR-002-summons.md#ar-002-summons-one-executor-runs-everything-ephor-asks-of-the-world),
+  [§FS-005-dispatch.12](../requirements.md#12-a-key-and-a-state-are-the-same-operation)).
+  `ephor work run` and the inbox's `R` key built the runner invocation twice,
+  in two places, with two ideas about what a failure was. There is one
+  construction of it now and one process path to it, still run from the
+  checkout the work is about
+  ([§FS-005-dispatch.3](../requirements.md#3-one-rhei-per-item-one-ticket-per-dispatch)),
+  and a runner that exits `75` is parked rather than failed. Reading a plan
+  in your editor goes through the same path, so the TUI has no hand-rolled
+  spawn left.
+- **The local runners now go through the one executor**
+  ([§AR-002-summons](architecture/AR-002-summons.md#ar-002-summons-one-executor-runs-everything-ephor-asks-of-the-world)).
+  Configured actions, quick actions, the one-off command, the configured
+  checkout, and `custom-status` were four spawn sites with four ideas about
+  what an exit code means; they are one now. Two things follow for anything
+  already configured: `75` means *parked* everywhere — for a status source
+  that is "nothing to report just now" rather than a failed refresh — and
+  every command may write a structured answer to `$EPHOR_ANSWER`, so
+  `custom-status` gains `format: "answer"` (manual §5.1) and speaks the same
+  envelope as every other verb, with its stdout-reading `text` and `json`
+  forms kept and marked as the legacy they are. `custom-status` is also told
+  which project it is running for now, in the same `EPHOR_*` vocabulary a menu
+  action receives ([§FS-005-dispatch.8](../requirements.md#8-the-ticket-carries-the-item-as-data-not-only-as-prose)).
+- **One executor for everything ephor asks of the world**
+  ([§AR-002-summons](architecture/AR-002-summons.md#ar-002-summons-one-executor-runs-everything-ephor-asks-of-the-world),
+  [§FS-006-project-interface.3](../requirements.md#3-a-summons-environment-in-exit-code-and-answer-out)).
+  A new `seams` layer holds the summons executor: it resolves where a command
+  runs (the branch workspace where one resolves, the forest root otherwise, or
+  a named repository of the forest) and refuses with the reason rather than
+  running somewhere surprising, exports the dossier as the one `EPHOR_*`
+  vocabulary, spawns through `sh -c`, and reads the exit code uniformly —
+  `0` done, non-zero failed, `75` *parked*, meaning not applicable now, ask
+  again later. Whether the person watches is the call site's property, not the
+  binding's. Alongside it, `$EPHOR_ANSWER`: the executor names a fresh file
+  before spawning, and a command that writes one gets it validated against the
+  published envelope schema
+  ([§FS-006-project-interface.4](../requirements.md#4-the-answer-envelope))
+  — now embedded in the binary — with its `failures` and `gate` conveniences
+  normalized into events, its `features` into facts, and its answer paths
+  resolved against where the command ran. No answer file is a complete answer:
+  the exit code stands alone, and standard output is never parsed for
+  structure.
+- **The decisions behind the boundary are on record, and the climbing rule is
+  checked.**
+  [§DA-001-runtime-bound-default](decisions/architectural/DA-001-runtime-bound-default.md#da-001-runtime-bound-default-the-runtime-is-a-bound-default-not-a-named-coupling)
+  records the runtime's reversal into a bound default, superseding the old
+  [§FS-005-dispatch](../requirements.md#fs-005-dispatch-what-ephor-watches-it-can-hand-to-an-agent-runtime)
+  lead stance;
+  [§DA-002-fetch-attribution-split](decisions/architectural/DA-002-fetch-attribution-split.md#da-002-fetch-attribution-split-fetch-normalizes-attribution-places)
+  the fetch/attribution split with its `status.json` restructuring named as
+  the accepted cost;
+  [§DF-001-manifest-offered](decisions/functional/DF-001-manifest-offered.md#df-001-manifest-offered-the-manifest-is-offered-never-required)
+  the manifest as offer, never requirement, with recipes excluded. The
+  `[citations]` ruleset in `.agents/grund.toml` turns the climbing rule into
+  checked configuration — E2E→FS gates, the rest surface as suggestions — and
+  [§REQ-001-boundary](requirements/REQ-001-boundary.md#req-001-boundary-every-capacity-ephor-lacks-crosses-a-seam-and-the-seam-has-one-anatomy)
+  is now cited from every FS and AR page it binds.
 - **Being asked is now a reason a pull request is yours**
   ([§FS-001-forge-interface.1](../requirements.md#1-capabilities)). `github-prs`
   searched `--author`, `--commenter`, and `--mentions` — all three of which

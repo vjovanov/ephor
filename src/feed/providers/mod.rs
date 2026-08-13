@@ -167,11 +167,7 @@ pub(crate) fn enabled() -> bool {
     true
 }
 
-/// A configured value as one `sh` word. Single quotes take everything
-/// literally, so only the single quote itself has to be broken out.
-pub(crate) fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', r"'\''"))
-}
+pub(crate) use crate::seams::summons::quote as shell_quote;
 
 pub(crate) fn parse_config<T: serde::de::DeserializeOwned>(
     config: &Value,
@@ -227,19 +223,26 @@ mod tests {
     use crate::feed::provider::command_exists;
     use serde_json::json;
 
+    /// A pull request whose gate is red — one row carrying its gate, which is
+    /// what the CI source reports now (§FS-007-matters.5).
     fn failing_ci_item(source: &str) -> Item {
         Item {
             id: "github-ci:acme/widget#42".to_string(),
             project: "widget".to_string(),
             source: source.to_string(),
-            kind: ItemKind::Ci,
+            kind: ItemKind::Pr,
             role: None,
-            title: "#42 Retry window: 1/3 checks passing, 2 failing".to_string(),
+            title: "Retry window".to_string(),
             url: None,
-            state: Some("failing".to_string()),
+            state: None,
             needs_response: true,
             updated_at: chrono::Utc::now(),
-            raw: Value::Null,
+            raw: json!({
+                "repo": "acme/widget",
+                "gate": { "repos": [{
+                    "repo": "acme/widget", "passed": 1, "failed": 2, "running": 0
+                }] }
+            }),
         }
     }
 

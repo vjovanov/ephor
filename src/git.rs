@@ -12,6 +12,8 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use crate::forest::{under, Forest};
+
 /// What became of one repository.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Replay {
@@ -195,63 +197,74 @@ pub fn default_base(repo: &Path) -> Option<String> {
     (!name.is_empty()).then_some(name)
 }
 
-/// The repositories a checkout holds. `repo_paths` is the project type's own
-/// list where the registry has one; without it, the root and every directory
-/// directly under it that is a git working tree — a poly-repo workspace is
-/// several repositories sharing one branch name, and rebasing only the root
-/// would rebase nothing at all.
-pub fn repos(checkout: &Path, repo_paths: &[String]) -> Vec<PathBuf> {
+/// Whether this path is a repository in its own right, rather than a
+/// directory inside one. `--is-inside-work-tree` answers `true` from every
+/// subdirectory of a checkout, so probing on it alone would report `docs/` and
+/// `src/` as repositories and then count the same repository's commits once
+/// per subdirectory. A repository is its own toplevel.
+fn is_repository_root(path: &Path) -> bool {
+    if !is_work_tree(path) {
+        return false;
+    }
+    let Some(toplevel) = git(path, &["rev-parse", "--show-toplevel"]) else {
+        return false;
+    };
+    let toplevel = PathBuf::from(toplevel.trim());
+    // Compare through the filesystem: a temporary directory reached by a
+    // symlink is one path to git and another to the caller.
+    match (toplevel.canonicalize(), path.canonicalize()) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => toplevel == path,
+    }
+}
+
+/// Every repository at or directly under a checkout, in order: the checkout
+/// itself first, then its children by name. This is the probe half of
+/// §AR-004-forest.2 — what a forest is when nothing declared one — and the
+/// only place on-disk discovery happens.
+pub fn probe(checkout: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
     let mut push = |path: PathBuf| {
-        if is_work_tree(&path) && !found.contains(&path) {
+        if is_repository_root(&path) && !found.contains(&path) {
             found.push(path);
         }
     };
-    if repo_paths.is_empty() {
-        push(checkout.to_path_buf());
-        let mut children: Vec<PathBuf> = std::fs::read_dir(checkout)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|path| path.is_dir())
-            .filter(|path| {
-                !path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(|name| name.starts_with('.'))
-            })
-            .collect();
-        children.sort();
-        for child in children {
-            push(child);
-        }
-    } else {
-        for path in repo_paths {
-            push(if path == "." {
-                checkout.to_path_buf()
-            } else {
-                checkout.join(path)
-            });
-        }
+    push(checkout.to_path_buf());
+    let mut children: Vec<PathBuf> = std::fs::read_dir(checkout)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .filter(|path| {
+            !path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with('.'))
+        })
+        .collect();
+    children.sort();
+    for child in children {
+        push(child);
     }
     found
 }
 
-/// Replay every repository under the checkout onto `base`.
-pub fn rebase(checkout: &Path, repo_paths: &[String], base: &str) -> Rebase {
-    let repos = repos(checkout, repo_paths);
-    let outcomes = repos
+/// Replay every repository of the forest onto `base` — a fold with one answer
+/// per repository (§AR-004-forest.1).
+pub fn rebase(forest: &Forest, base: &str) -> Rebase {
+    let outcomes = forest
+        .repos
         .iter()
         .map(|repo| RepoReplay {
-            repo: relative(checkout, repo),
-            branch: git(repo, &["rev-parse", "--abbrev-ref", "HEAD"])
+            repo: repo.name.clone(),
+            branch: git(&repo.path, &["rev-parse", "--abbrev-ref", "HEAD"])
                 .map(|name| name.trim().to_string()),
-            replay: replay_one(repo, base),
+            replay: replay_one(&repo.path, base),
         })
         .collect();
     Rebase {
-        checkout: checkout.to_path_buf(),
+        checkout: forest.root.clone(),
         base: base.to_string(),
         repos: outcomes,
     }
@@ -434,23 +447,11 @@ impl Creation {
 pub fn create(
     source: &Path,
     target: &Path,
-    repo_paths: &[String],
+    layout: &[String],
     branch: &str,
     base: &str,
 ) -> Creation {
-    // The project type's list where there is one, otherwise whatever the
-    // source checkout turns out to hold: the new workspace is the same shape
-    // as the one it is made from.
-    let names: Vec<String> = if repo_paths.is_empty() {
-        repos(source, &[])
-            .iter()
-            .map(|repo| relative(source, repo))
-            .collect()
-    } else {
-        repo_paths.to_vec()
-    };
-
-    let repos = names
+    let repos = layout
         .iter()
         .map(|name: &String| RepoCreated {
             repo: name.clone(),
@@ -462,14 +463,6 @@ pub fn create(
         target: target.to_path_buf(),
         branch: branch.to_string(),
         repos,
-    }
-}
-
-fn under(checkout: &Path, name: &str) -> PathBuf {
-    if name == "." {
-        checkout.to_path_buf()
-    } else {
-        checkout.join(name)
     }
 }
 
@@ -554,14 +547,6 @@ fn unmerged(repo: &Path) -> Option<Vec<String>> {
             .map(String::from)
             .collect()
     })
-}
-
-fn relative(checkout: &Path, repo: &Path) -> String {
-    repo.strip_prefix(checkout)
-        .ok()
-        .map(|path| path.to_string_lossy().into_owned())
-        .filter(|path| !path.is_empty())
-        .unwrap_or_else(|| ".".to_string())
 }
 
 /// A git command whose output is the answer; None when it fails.
@@ -661,7 +646,7 @@ mod tests {
         let checkout = checkout_with_origin(temp.path(), "app");
         advance_master(temp.path(), "app", "theirs.txt", "theirs\n");
 
-        let replayed = super::rebase(&checkout, &[], "master");
+        let replayed = super::rebase(&Forest::resolve(&checkout, None, &[]), "master");
         assert_eq!(replayed.repos.len(), 1);
         assert_eq!(replayed.repos[0].replay, Replay::Rebased(1));
         assert_eq!(replayed.repos[0].branch.as_deref(), Some("feature"));
@@ -671,7 +656,7 @@ mod tests {
 
         // Immediately again: there is nothing left to replay, and that is an
         // answer rather than a no-op (§FS-004-quick-actions.6).
-        let again = super::rebase(&checkout, &[], "master");
+        let again = super::rebase(&Forest::resolve(&checkout, None, &[]), "master");
         assert_eq!(again.repos[0].replay, Replay::Current);
         assert_eq!(again.summary(), "already on master");
     }
@@ -684,7 +669,7 @@ mod tests {
         commit(&checkout, "shared.txt", "ours\n", "ours");
         advance_master(temp.path(), "app", "shared.txt", "theirs\n");
 
-        let stopped = super::rebase(&checkout, &[], "master");
+        let stopped = super::rebase(&Forest::resolve(&checkout, None, &[]), "master");
         assert_eq!(
             stopped.repos[0].replay,
             Replay::Conflicted(vec!["shared.txt".to_string()])
@@ -699,7 +684,7 @@ mod tests {
 
         // Asked again, it reports the conflict it is standing in rather than
         // starting a second rebase over the first.
-        let again = super::rebase(&checkout, &[], "master");
+        let again = super::rebase(&Forest::resolve(&checkout, None, &[]), "master");
         assert!(matches!(again.repos[0].replay, Replay::Conflicted(_)));
     }
 
@@ -710,7 +695,7 @@ mod tests {
         advance_master(temp.path(), "app", "theirs.txt", "theirs\n");
         std::fs::write(checkout.join("mine.txt"), "half-written\n").unwrap();
 
-        let refused = super::rebase(&checkout, &[], "master");
+        let refused = super::rebase(&Forest::resolve(&checkout, None, &[]), "master");
         match &refused.repos[0].replay {
             Replay::Dirty(paths) => assert!(paths[0].contains("mine.txt")),
             other => panic!("expected Dirty, got {other:?}"),
@@ -736,14 +721,17 @@ mod tests {
         // A directory that is not a repository is not one of the answers.
         std::fs::create_dir_all(workspace.join("notes")).unwrap();
 
-        let both = super::rebase(&workspace, &[], "master");
+        let both = super::rebase(&Forest::resolve(&workspace, None, &[]), "master");
         let names: Vec<&str> = both.repos.iter().map(|r| r.repo.as_str()).collect();
         assert_eq!(names, ["ce", "ee"]);
         assert!(both.repos.iter().all(|r| r.replay == Replay::Rebased(1)));
         assert_eq!(both.summary(), "2 rebased onto master");
 
         // The registry's own repo list wins where there is one.
-        let named = super::rebase(&workspace, &["ce".to_string()], "master");
+        let named = super::rebase(
+            &Forest::resolve(&workspace, None, &[crate::forest::Declaration::at("ce")]),
+            "master",
+        );
         assert_eq!(named.repos.len(), 1);
     }
 
@@ -751,7 +739,7 @@ mod tests {
     fn a_base_branch_that_is_not_on_origin_is_refused_by_name() {
         let temp = tempfile::tempdir().unwrap();
         let checkout = checkout_with_origin(temp.path(), "app");
-        let refused = super::rebase(&checkout, &[], "trunk");
+        let refused = super::rebase(&Forest::resolve(&checkout, None, &[]), "trunk");
         match &refused.repos[0].replay {
             Replay::Refused(message) => assert!(message.contains("origin/trunk")),
             other => panic!("expected Refused, got {other:?}"),
@@ -776,7 +764,13 @@ mod tests {
         }
 
         let target = temp.path().join("ws").join("feature");
-        let made = super::create(&source, &target, &[], "feature", "master");
+        let made = super::create(
+            &source,
+            &target,
+            &Forest::resolve(&source, None, &[]).layout,
+            "feature",
+            "master",
+        );
 
         let names: Vec<&str> = made.repos.iter().map(|repo| repo.repo.as_str()).collect();
         assert_eq!(names, ["ce", "ee"]);
@@ -812,7 +806,13 @@ mod tests {
         // `feature` is checked out in the source itself, so git will not hand
         // it to a second working tree — and it is right not to.
         let target = temp.path().join("ws").join("feature");
-        let made = super::create(&source, &target, &[], "feature", "master");
+        let made = super::create(
+            &source,
+            &target,
+            &Forest::resolve(&source, None, &[]).layout,
+            "feature",
+            "master",
+        );
 
         match &made.repos[0].created {
             Created::Refused(message) => assert!(message.contains("feature")),
@@ -832,10 +832,22 @@ mod tests {
         run_in(&checkout, &["checkout", "-q", "master"]);
 
         let target = temp.path().join("ws").join("feature");
-        let first = super::create(&source, &target, &[], "feature", "master");
+        let first = super::create(
+            &source,
+            &target,
+            &Forest::resolve(&source, None, &[]).layout,
+            "feature",
+            "master",
+        );
         assert_eq!(first.repos[0].created, Created::Tracking);
 
-        let again = super::create(&source, &target, &[], "feature", "master");
+        let again = super::create(
+            &source,
+            &target,
+            &Forest::resolve(&source, None, &[]).layout,
+            "feature",
+            "master",
+        );
         assert_eq!(again.repos[0].created, Created::Present);
         assert!(again.is_ready());
         assert_eq!(again.summary(), "1 already there");
@@ -847,7 +859,13 @@ mod tests {
         let checkout = checkout_with_origin(temp.path(), "app");
         let source = checkout.parent().unwrap().to_path_buf();
         let target = temp.path().join("ws").join("nope");
-        let made = super::create(&source, &target, &[], "nope", "trunk");
+        let made = super::create(
+            &source,
+            &target,
+            &Forest::resolve(&source, None, &[]).layout,
+            "nope",
+            "trunk",
+        );
         match &made.repos[0].created {
             Created::Refused(message) => {
                 assert!(message.contains("nope") && message.contains("origin/trunk"))

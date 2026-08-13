@@ -195,6 +195,7 @@ pub fn refresh_project(
     let mut feed = ProjectFeed {
         project: project_id.to_string(),
         fetched_at: Some(now),
+        model: crate::feed::cache::MODEL,
         providers: BTreeMap::new(),
     };
     let mut failures = Vec::new();
@@ -209,7 +210,9 @@ pub fn refresh_project(
                 error: None,
                 stale: false,
                 unreachable: false,
-                items,
+                // Fetch normalization: what a source reported becomes the
+                // matter it is about, once, here (§AR-008-pipeline.1).
+                matters: items.iter().map(crate::matter::Matter::of_item).collect(),
                 cursor: previous
                     .providers
                     .get(&name)
@@ -229,11 +232,11 @@ pub fn refresh_project(
                 ok: false,
                 error: Some(message),
                 stale: previous_slot
-                    .map(|slot| !slot.items.is_empty())
+                    .map(|slot| !slot.matters.is_empty())
                     .unwrap_or(false),
                 unreachable,
-                items: previous_slot
-                    .map(|slot| slot.items.clone())
+                matters: previous_slot
+                    .map(|slot| slot.matters.clone())
                     .unwrap_or_default(),
                 cursor: previous_slot.and_then(|slot| slot.cursor.clone()),
             }

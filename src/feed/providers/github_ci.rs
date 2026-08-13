@@ -1,6 +1,10 @@
-//! CI check status for the user's open PRs via `gh pr checks`. Emits one
-//! item per PR that has failing or pending checks, and offers the failing one
-//! its log as a quick action (§FS-004-quick-actions.4).
+//! CI check status for the user's open PRs via `gh pr checks`.
+//!
+//! A gate is an observation of the pull request it is about, never a row of
+//! its own (§FS-007-matters.5): this source reports the *pull request*,
+//! carrying its gate, so a change with a red gate is one row and not two
+//! (§FS-003-feed-categories.5). It offers the failing one its log as a quick
+//! action (§FS-004-quick-actions.4).
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -23,10 +27,12 @@ struct Config {
     host: Option<String>,
 }
 
-/// The item state that says the gate is red — the condition the failing-CI
-/// quick action exists for — and its counterpart, still in flight.
-const FAILING: &str = "failing";
-const PENDING: &str = "pending";
+/// The gate is red — the condition the failing-CI quick action exists for.
+/// Read off the gate the report carries rather than off a state word, now
+/// that the report is of the pull request rather than of the gate.
+fn gate_is_red(item: &Item) -> bool {
+    gate::Gate::of(item).is_some_and(|gate| gate.is_red())
+}
 
 pub struct GithubCi {
     config: Config,
@@ -44,7 +50,7 @@ impl GithubCi {
     /// being asked for (§FS-004-quick-actions.2).
     fn failing_check_actions(&self, item: &Item) -> Vec<ActionConfig> {
         let identified = item.repo().is_some() && item.number().is_some();
-        if item.state.as_deref() != Some(FAILING) || !identified {
+        if !gate_is_red(item) || !identified {
             return Vec::new();
         }
         vec![show_failing_checks(self.config.host.as_deref())]
@@ -114,28 +120,28 @@ impl Provider for GithubCi {
                     continue;
                 }
 
-                let mut summary = format!("{passing}/{total} checks passing");
-                if failing > 0 {
-                    summary.push_str(&format!(", {failing} failing"));
-                }
-                if pending > 0 {
-                    summary.push_str(&format!(", {pending} pending"));
-                }
+                let _ = (total, passing, pending);
+                // The pull request, carrying what its gate is doing — one
+                // subject, one row (§FS-003-feed-categories.5). The counts
+                // are the gate's, and every surface reads them from there.
                 items.push(Item {
                     id: format!("github-ci:{repo}#{number}"),
                     project: ctx.project_id.clone(),
                     source: "github-ci".to_string(),
-                    kind: ItemKind::Ci,
+                    kind: ItemKind::Pr,
                     role: None,
-                    title: format!(
-                        "#{number} {}: {summary}",
-                        pr.get("title").and_then(Value::as_str).unwrap_or("")
-                    ),
+                    title: pr
+                        .get("title")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
                     url: pr.get("url").and_then(Value::as_str).map(String::from),
-                    state: Some(if failing > 0 { FAILING } else { PENDING }.to_string()),
+                    state: None,
+                    // A red gate is work waiting on the person whose change it
+                    // is; a gate still running is not.
                     needs_response: failing > 0,
                     updated_at: parse_github_time(pr.get("updatedAt").unwrap_or(&Value::Null)),
-                    raw: Value::Null,
+                    raw: serde_json::json!({ "repo": repo, "gate": gate.to_value() }),
                 });
             }
         }
@@ -158,31 +164,41 @@ mod tests {
         }
     }
 
-    fn ci_item(state: &str) -> Item {
+    /// A pull request carrying a gate — what this source reports now that a
+    /// gate is an observation rather than a row (§FS-007-matters.5).
+    fn ci_item(failed: u64, running: u64) -> Item {
         Item {
             id: "github-ci:acme/widget#42".to_string(),
             project: "widget".to_string(),
             source: "github-ci".to_string(),
-            kind: ItemKind::Ci,
+            kind: ItemKind::Pr,
             role: None,
-            title: "#42 Retry window: 1/3 checks passing, 2 failing".to_string(),
+            title: "Retry window".to_string(),
             url: None,
-            state: Some(state.to_string()),
-            needs_response: true,
+            state: None,
+            needs_response: failed > 0,
             updated_at: Utc::now(),
-            raw: Value::Null,
+            raw: serde_json::json!({
+                "repo": "acme/widget",
+                "gate": { "repos": [{
+                    "repo": "acme/widget", "passed": 1, "failed": failed, "running": running
+                }] }
+            }),
         }
     }
 
     #[test]
     fn only_a_red_gate_is_offered_its_log() {
         let provider = provider(None);
-        assert_eq!(provider.failing_check_actions(&ci_item(FAILING)).len(), 1);
+        assert_eq!(provider.failing_check_actions(&ci_item(2, 0)).len(), 1);
         // Checks still running have no failure to show yet.
-        assert!(provider.failing_check_actions(&ci_item(PENDING)).is_empty());
+        assert!(provider.failing_check_actions(&ci_item(0, 3)).is_empty());
         // An item that no longer names its pull request cannot be asked about.
-        let mut anonymous = ci_item(FAILING);
+        let mut anonymous = ci_item(2, 0);
         anonymous.id = "github-ci:widget".to_string();
+        anonymous.raw = serde_json::json!({
+            "gate": { "repos": [{ "repo": "acme/widget", "failed": 2 }] }
+        });
         assert!(provider.failing_check_actions(&anonymous).is_empty());
     }
 

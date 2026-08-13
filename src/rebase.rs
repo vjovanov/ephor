@@ -58,10 +58,12 @@ pub fn rebase(args: &RebaseArgs) -> Result<ExitCode> {
         Placement::load(&crate::feed::commands::load_registry_doc().ok()?, project)
     });
 
-    let repo_paths = placement
-        .as_ref()
-        .map(|placement| placement.repo_paths.clone())
-        .unwrap_or_default();
+    // The forest this checkout is, declared where the registry says and probed
+    // where it does not (§AR-004-forest.2).
+    let forest = match &placement {
+        Some(placement) => placement.forest(&checkout),
+        None => crate::forest::Forest::resolve(&checkout, None, &[]),
+    };
     let base = match or_env(&args.onto, "ONTO").or_else(|| {
         placement
             .as_ref()
@@ -71,9 +73,10 @@ pub fn rebase(args: &RebaseArgs) -> Result<ExitCode> {
         // No registry to ask: what origin itself calls its default is the
         // closest thing to an answer, and saying which one was chosen is what
         // makes a wrong guess visible.
-        None => git::repos(&checkout, &repo_paths)
+        None => forest
+            .repos
             .first()
-            .and_then(|repo| git::default_base(repo))
+            .and_then(|repo| git::default_base(&repo.path))
             .ok_or_else(|| {
                 EphorError::Command(format!(
                     "Nothing says what to rebase {} onto — pass --onto, or --project for a \
@@ -83,7 +86,7 @@ pub fn rebase(args: &RebaseArgs) -> Result<ExitCode> {
             })?,
     };
 
-    let outcome = git::rebase(&checkout, &repo_paths, &base);
+    let outcome = git::rebase(&forest, &base);
     print!("{}", outcome.report());
     if let Some(path) = or_env(&args.report, "REPORT") {
         write_report(&path, &outcome.report())?;

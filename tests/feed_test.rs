@@ -134,7 +134,10 @@ fn refresh_populates_cache_and_feed_lists_items() {
     cmd.args(["refresh", "demo"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("demo: 3 items"));
+        // Two rows, not three: the CI report is of the pull request it is
+        // about, so its gate lands on that row rather than beside it
+        // (§FS-007-matters.5).
+        .stdout(predicate::str::contains("demo: 2 items"));
 
     let cache_file = tmp.path().join("state/ephor/feed/demo.json");
     let cache: serde_json::Value =
@@ -142,29 +145,32 @@ fn refresh_populates_cache_and_feed_lists_items() {
     assert_eq!(cache["project"], "demo");
     assert_eq!(cache["providers"]["github-prs"]["ok"], true);
     assert_eq!(
-        cache["providers"]["github-prs"]["items"][0]["id"],
+        cache["providers"]["github-prs"]["matters"][0]["key"],
         "github-prs:acme/widget#42"
     );
     // The PR records its head branch (drives checkout state in the TUI).
     assert_eq!(
-        cache["providers"]["github-prs"]["items"][0]["raw"]["branch"],
+        cache["providers"]["github-prs"]["matters"][0]["raw"]["branch"],
         "you/ABC-42-work"
     );
     // …and its gate: one passing and one failing check on the PR's repo.
     assert_eq!(
-        cache["providers"]["github-prs"]["items"][0]["raw"]["gate"],
+        cache["providers"]["github-prs"]["matters"][0]["raw"]["gate"],
         json!({ "repos": [{ "repo": "acme/widget", "passed": 1, "failed": 1, "running": 0 }] })
     );
     assert_eq!(
-        cache["providers"]["github-prs"]["items"][0]["needs_response"],
+        cache["providers"]["github-prs"]["matters"][0]["needs_response"],
         true
     );
+    // The CI source reports the pull request, carrying its gate — one
+    // subject, one row (§FS-003-feed-categories.5).
+    let ci = &cache["providers"]["github-ci"]["matters"][0];
+    assert_eq!(ci["key"], "github-ci:acme/widget#42");
+    assert_eq!(ci["kind"], "pr");
+    assert_eq!(ci["needs_response"], true);
+    assert_eq!(ci["events"][0]["kind"], "gate");
     assert_eq!(
-        cache["providers"]["github-ci"]["items"][0]["needs_response"],
-        true
-    );
-    assert_eq!(
-        cache["providers"]["custom-status"]["items"][0]["title"],
+        cache["providers"]["custom-status"]["matters"][0]["title"],
         "all systems go"
     );
 
@@ -271,12 +277,12 @@ fn issues_arrive_by_role_from_repositories_nobody_configured() {
         &fs::read_to_string(tmp.path().join("state/ephor/feed/demo.json")).unwrap(),
     )
     .unwrap();
-    let items = cache["providers"]["github-issues"]["items"]
+    let items = cache["providers"]["github-issues"]["matters"]
         .as_array()
         .unwrap();
     let mine = items
         .iter()
-        .find(|item| item["id"] == "github-issues:other/pi#7951")
+        .find(|item| item["key"] == "github-issues:other/pi#7951")
         .expect("the issue the user opened");
     assert_eq!(mine["kind"], "issue");
     assert_eq!(mine["role"], "author");
@@ -286,7 +292,7 @@ fn issues_arrive_by_role_from_repositories_nobody_configured() {
 
     let theirs = items
         .iter()
-        .find(|item| item["id"] == "github-issues:other/lib#12")
+        .find(|item| item["key"] == "github-issues:other/lib#12")
         .expect("the issue the user only takes part in");
     assert_eq!(theirs["role"], "reviewer");
     assert_eq!(theirs["state"], "open");
@@ -385,7 +391,7 @@ fn failing_provider_keeps_previous_items_as_stale() {
     assert_eq!(cache["providers"]["github-prs"]["ok"], false);
     assert_eq!(cache["providers"]["github-prs"]["stale"], true);
     assert_eq!(
-        cache["providers"]["github-prs"]["items"][0]["id"],
+        cache["providers"]["github-prs"]["matters"][0]["key"],
         "github-prs:acme/widget#42"
     );
     // custom-status does not depend on gh and stays fresh.
@@ -499,7 +505,7 @@ fn reviewer_items_record_threads_and_pending_citation() {
         &fs::read_to_string(tmp.path().join("state/ephor/feed/demo.json")).unwrap(),
     )
     .unwrap();
-    let item = &cache["providers"]["github-prs"]["items"][0];
+    let item = &cache["providers"]["github-prs"]["matters"][0];
     assert_eq!(item["role"], "reviewer");
     assert_eq!(item["state"], "open:mentioned");
     // Cited with no reply of ours afterwards and no reaction: still pending.
@@ -554,7 +560,7 @@ fn answered_citation_stops_needing_a_response() {
         &fs::read_to_string(tmp.path().join("state/ephor/feed/demo.json")).unwrap(),
     )
     .unwrap();
-    let item = &cache["providers"]["github-prs"]["items"][0];
+    let item = &cache["providers"]["github-prs"]["matters"][0];
     assert_eq!(item["needs_response"], false);
     assert_eq!(item["raw"]["threads"][0]["messages"][1]["author"], "tester");
 }
@@ -695,4 +701,104 @@ fn status_without_config_reports_error() {
         .assert()
         .code(2)
         .stderr(predicate::str::contains("Cannot read feed config"));
+}
+
+/// custom-status is a summons like every other command ephor runs
+/// (§AR-002-summons, §FS-006-project-interface.3): it is told about the project
+/// in the one `EPHOR_*` vocabulary, it may answer in the published envelope by
+/// writing `$EPHOR_ANSWER` (§FS-006-project-interface.4), and its exit code is
+/// read the one way — `75` is parked, which for a status source is nothing to
+/// report rather than a failure.
+#[test]
+fn custom_status_runs_as_a_summons_and_may_answer_in_the_envelope() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_feed_fixture(tmp.path());
+    let project_root = tmp.path().join("demo");
+    let reporter = project_root.join("report.sh");
+    make_executable(
+        &reporter,
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+cat > "$EPHOR_ANSWER" <<JSON
+{ "v": 1,
+  "matters": [
+    { "key": "release:$EPHOR_PROJECT", "kind": "status", "title": "cut from $EPHOR_WORKSPACE",
+      "state": "warn", "url": "https://ci/release" }
+  ],
+  "needs_response": true }
+JSON
+"#,
+    );
+
+    fs::write(
+        tmp.path().join("status.json"),
+        serde_json::to_string_pretty(&json!({
+            "defaults": { "ttl_seconds": 600, "provider_timeout_seconds": 10, "github_user": "tester" },
+            "projects": {
+                "demo": {
+                    "providers": [
+                        { "provider": "custom-status", "command": reporter.to_string_lossy(),
+                          "format": "answer" }
+                    ]
+                }
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let mut cmd = ephor_cmd();
+    for (key, value) in feed_env(tmp.path()) {
+        cmd.env(key, value);
+    }
+    cmd.args(["refresh", "demo"]).assert().success();
+
+    let cache: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(tmp.path().join("state/ephor/feed/demo.json")).unwrap(),
+    )
+    .unwrap();
+    let item = &cache["providers"]["custom-status"]["matters"][0];
+    assert_eq!(item["key"], "release:demo");
+    assert_eq!(item["state"], "warn");
+    assert_eq!(item["needs_response"], true);
+    // The dossier reached the command: it wrote back where it ran.
+    assert_eq!(
+        item["title"],
+        format!("cut from {}", project_root.to_string_lossy())
+    );
+
+    // A parked source has nothing to report just now, which is not a failure.
+    fs::write(
+        tmp.path().join("status.json"),
+        serde_json::to_string_pretty(&json!({
+            "defaults": { "ttl_seconds": 600, "provider_timeout_seconds": 10, "github_user": "tester" },
+            "projects": {
+                "demo": {
+                    "providers": [
+                        { "provider": "custom-status", "command": "exit 75" }
+                    ]
+                }
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let mut cmd = ephor_cmd();
+    for (key, value) in feed_env(tmp.path()) {
+        cmd.env(key, value);
+    }
+    cmd.args(["refresh", "demo"]).assert().success();
+    let cache: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(tmp.path().join("state/ephor/feed/demo.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(cache["providers"]["custom-status"]["ok"], true);
+    assert_eq!(
+        cache["providers"]["custom-status"]["matters"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
 }

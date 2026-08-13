@@ -390,17 +390,34 @@ A provider block always has `provider`; the rest is its own.
 
 { "provider": "custom-status",
   "command": "git status --short | head -5",
-  "format": "text",             // or "json"
+  "format": "text",             // "answer", or the legacy "text" / "json"
   "cwd": "{project_root}/app" } // defaults to the project root
 ```
 
-**`custom-status`** with `format: "text"` makes one item whose title is the
-first line. With `format: "json"` the command prints an object — or an array of
-them — and each becomes an item:
+**`custom-status`** runs its command as a summons like everything else ephor
+asks of a project
+([§FS-006-project-interface.3](../requirements.md#3-a-summons-environment-in-exit-code-and-answer-out)):
+it runs in `cwd`, it is told about the project in the usual `EPHOR_*`
+variables ([§7.3](#73-the-environment)), and its exit code is read the one
+way — `0` reported, non-zero failed, `75` nothing to report just now.
+
+With `format: "answer"` the command writes the envelope to the file named by
+`$EPHOR_ANSWER`
+([§FS-006-project-interface.4](../requirements.md#4-the-answer-envelope)); each
+`matters[]` entry becomes an item, and an answer carrying only a `summary`
+becomes one status line. This is the form every other verb speaks, and the one
+to write today.
+
+The two older forms read standard output instead and stay supported: `text`
+makes one item whose title is the command's first line, and `json` reads an
+object — or an array of them — printed on stdout:
 
 ```json
 { "title": "3 flaky tests quarantined", "state": "warn", "needs_response": true }
 ```
+
+A command that writes `$EPHOR_ANSWER` is read through the envelope whatever
+its configured format says, because writing one is unambiguous.
 
 **Answered detection.** A citation or a thread stops needing a response once
 you answered it — with a message afterwards, with a reaction on the message, or
@@ -681,6 +698,12 @@ project root. The interface leaves the screen entirely while it runs — so
 | `EPHOR_TITLE`, `EPHOR_URL`, `EPHOR_STATE` | display fields, empty when absent |
 | `EPHOR_REPO`, `EPHOR_NUMBER` | best-effort `owner/name` and number |
 | `EPHOR_RAW` | the item's whole raw JSON, for `jq` |
+| `EPHOR_ANSWER` | a file to write a structured answer to, if the command has one ([§FS-006-project-interface.4](../requirements.md#4-the-answer-envelope)) |
+| `EPHOR_REPOS` | the workspace's repositories, one per line, in the order the project declares — what to fold over ([§AR-004-forest.1](architecture/AR-004-forest.md#1-folds)) |
+
+Exit codes are read the same way wherever a command is summoned from: `0`
+done, non-zero failed, and `75` **parked** — not applicable now, ask again
+later ([§FS-006-project-interface.3](../requirements.md#3-a-summons-environment-in-exit-code-and-answer-out)).
 
 ### 7.4 One-off commands
 
@@ -689,6 +712,33 @@ command and it runs exactly as a configured one does — same checkout, same
 environment, same handover of the terminal. The menu opens even when nothing is
 configured, because that is when this entry matters most
 ([§FS-005-dispatch.10](../requirements.md#10-what-ephor-offers-is-not-a-limit-on-what-can-be-asked)).
+
+### 7.5 Why something is not offered
+
+What a project can do is a ladder, and every feature names the rungs it needs
+([§FS-006-project-interface.10](../requirements.md#10-capability-rung-by-rung)).
+A rung you do not hold degrades exactly the features that named it, and the
+reason is shown where the feature would have been — never an error, never
+silence.
+
+| Rung | Held when | Buys |
+|---|---|---|
+| observable | a registry row and at least one source configured | the watch |
+| placed | the project's root is on disk | actions and update |
+| branch-addressable | the row has a `branch_root_template` | a workspace per branch |
+| checkout-able | a checkout command is bound, or a checkout is on disk to grow one from | work that edits |
+| checkable | `check.sh`, `check-style.sh`, or `smoke-test.sh` at the root | verification that means something |
+| gated | a source reports a gate | failure dossiers and the restart |
+| ticketed | a `panta/` or `.beads/` store in the checkout | local matters |
+| workable | the configured runner is on `PATH` | running the work |
+
+The ladder is resolved per project when the inbox loads, when a refresh
+finishes, and after a checkout — it costs a handful of `stat` calls and never
+runs anything. What it says is nonetheless what *was* true when it was
+resolved, so a command about to run re-checks the two things it leans on (its
+directory, and its script if it names one) and fails as the world rather than
+from the table
+([§AR-005-capabilities.3](architecture/AR-005-capabilities.md#3-the-table-is-honest-about-time)).
 
 ---
 

@@ -11,16 +11,20 @@
 
 pub mod agents;
 pub mod branches;
+pub mod capabilities;
 pub mod checkout;
 pub mod cli;
 pub mod error;
 pub mod feed;
+pub mod forest;
 pub mod forge;
 pub mod git;
 pub mod hooks;
+pub mod matter;
 pub mod paths;
 pub mod rebase;
 pub mod registry;
+pub mod seams;
 pub mod table;
 pub mod update;
 pub mod work;

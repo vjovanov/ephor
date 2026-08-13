@@ -77,12 +77,16 @@ pub fn checkout(args: &CheckoutArgs) -> Result<ExitCode> {
         ))
     })?;
 
+    // The shape of the workspace being made is the shape of the one it is made
+    // from: the declared forest where the row declares one, the source
+    // checkout's own repositories otherwise (§AR-004-forest.1).
+    let forest = placement.forest(&source);
     let base = match or_env(&args.from, "FROM").or_else(|| placement.main_branch.clone()) {
         Some(base) => base,
-        None => placement
-            .repos(&source)
+        None => forest
+            .repos
             .first()
-            .and_then(|repo| git::default_base(repo))
+            .and_then(|repo| git::default_base(&repo.path))
             .ok_or_else(|| {
                 EphorError::Command(format!(
                     "Nothing says what to grow {branch} from — pass --from, or give \
@@ -91,7 +95,7 @@ pub fn checkout(args: &CheckoutArgs) -> Result<ExitCode> {
             })?,
     };
 
-    let outcome = git::create(&source, &target, &placement.repo_paths, &branch, &base);
+    let outcome = git::create(&source, &target, &forest.layout, &branch, &base);
     print!("{}", outcome.report());
     if let Some(path) = or_env(&args.report, "REPORT") {
         write_report(&path, &outcome.report())?;

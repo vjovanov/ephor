@@ -330,6 +330,39 @@ fn subject_key(item: &Item) -> String {
     }
 }
 
+/// A thread's identity, for folding two reports of the same conversation into
+/// one: who said what, when. Sources that both watch a pull request report the
+/// same review threads, and a union that could not tell them apart would show
+/// the reader every message twice.
+fn thread_key(thread: &Value) -> String {
+    thread
+        .get("messages")
+        .and_then(Value::as_array)
+        .map(|messages| {
+            messages
+                .iter()
+                .map(|message| {
+                    format!(
+                        "{}\u{1}{}\u{1}{}",
+                        message.get("author").and_then(Value::as_str).unwrap_or(""),
+                        message.get("when").and_then(Value::as_str).unwrap_or(""),
+                        message.get("text").and_then(Value::as_str).unwrap_or(""),
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\u{2}")
+        })
+        .unwrap_or_default()
+}
+
+fn threads_of(item: &Item) -> Vec<Value> {
+    item.raw
+        .get("threads")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
 /// The reasons a report carries, as the forge worded them.
 fn reasons_of(item: &Item) -> Vec<String> {
     item.raw
@@ -384,19 +417,49 @@ pub fn merge_reports(reports: Vec<Item>) -> Vec<Item> {
                 reasons.push(reason);
             }
         }
+        // The conversation is the reader's whole reason for the row, so a
+        // thread only the losing report knew about is carried over rather than
+        // dropped (§FS-003-feed-categories.5) — this is what lets a source
+        // that only reads review threads report the pull request they are on
+        // instead of minting rows of its own (§FS-007-matters.3).
+        let mut threads = threads_of(winner);
+        let mut seen: Vec<String> = threads.iter().map(thread_key).collect();
+        for thread in threads_of(loser) {
+            let key = thread_key(&thread);
+            if !seen.contains(&key) {
+                seen.push(key);
+                threads.push(thread);
+            }
+        }
+        // Same for the gate: whichever report carries one, the row keeps it.
+        let gate = winner
+            .raw
+            .get("gate")
+            .cloned()
+            .or_else(|| loser.raw.get("gate").cloned())
+            .filter(|gate| !gate.is_null());
         if replaces {
             *kept = report;
         }
         kept.needs_response = awaited;
         kept.updated_at = updated_at;
-        if !reasons.is_empty() {
+        if !reasons.is_empty() || !threads.is_empty() || gate.is_some() {
             if kept.raw.is_null() {
                 kept.raw = json!({});
             }
             if let Some(raw) = kept.raw.as_object_mut() {
-                raw.insert("reasons".to_string(), json!(reasons));
-                // Merged with a fuller report, this is no longer only a notice.
-                raw.remove("notice");
+                if !reasons.is_empty() {
+                    raw.insert("reasons".to_string(), json!(reasons));
+                    // Merged with a fuller report, this is no longer only a
+                    // notice.
+                    raw.remove("notice");
+                }
+                if !threads.is_empty() {
+                    raw.insert("threads".to_string(), json!(threads));
+                }
+                if let Some(gate) = gate {
+                    raw.insert("gate".to_string(), gate);
+                }
             }
         }
         settle(kept);
@@ -939,5 +1002,112 @@ mod tests {
         assert_eq!(item.role, Some(crate::feed::model::ItemRole::Reviewer));
         // Closed, so it belongs under Recent rather than Participating.
         assert!(item.is_finished());
+    }
+}
+
+#[cfg(test)]
+mod dissolve_tests {
+    use super::*;
+    use crate::feed::model::{ItemKind, ItemRole};
+    use chrono::Utc;
+
+    fn report(source: &str, role: Option<ItemRole>, raw: Value) -> Item {
+        Item {
+            id: format!("{source}:acme/widget#42"),
+            project: "widget".to_string(),
+            source: source.to_string(),
+            kind: ItemKind::Pr,
+            role,
+            title: "Retry window".to_string(),
+            url: Some("https://github.com/acme/widget/pull/42".to_string()),
+            state: role.map(|_| "open".to_string()),
+            needs_response: false,
+            updated_at: Utc::now(),
+            raw,
+        }
+    }
+
+    fn thread(author: &str, text: &str) -> Value {
+        json!({ "messages": [{ "author": author, "text": text, "when": "2026-08-01T09:00:00Z" }] })
+    }
+
+    /// A source that only reads review threads reports the pull request they
+    /// are on, and the conversation it found survives the merge even though
+    /// its report is the thinner one (§FS-003-feed-categories.5,
+    /// §FS-007-matters.3).
+    #[test]
+    fn a_thinner_report_still_hands_over_the_conversation_it_alone_saw() {
+        let rich = report(
+            "github-prs",
+            Some(ItemRole::Author),
+            json!({ "repo": "acme/widget", "branch": "you/ABC-42", "reasons": ["authored"] }),
+        );
+        let threads = report(
+            "github-threads",
+            None,
+            json!({ "repo": "acme/widget", "threads": [thread("ada", "why this way?")] }),
+        );
+
+        let merged = merge_reports(vec![rich, threads]);
+        assert_eq!(merged.len(), 1, "one subject is one row");
+        let kept = &merged[0];
+        // The richer report is the row…
+        assert_eq!(kept.source, "github-prs");
+        assert_eq!(kept.role, Some(ItemRole::Author));
+        // …and the conversation only the other one saw came with it.
+        let carried = kept.raw.get("threads").and_then(Value::as_array).unwrap();
+        assert_eq!(carried.len(), 1);
+        assert_eq!(carried[0]["messages"][0]["author"], "ada");
+    }
+
+    /// Both sources watch the same pull request, so they report the same
+    /// review thread. The reader is shown it once.
+    #[test]
+    fn the_same_conversation_reported_twice_is_one_conversation() {
+        let shared = thread("ada", "why this way?");
+        let rich = report(
+            "github-prs",
+            Some(ItemRole::Author),
+            json!({ "repo": "acme/widget", "threads": [shared.clone()] }),
+        );
+        let threads = report(
+            "github-threads",
+            None,
+            json!({ "repo": "acme/widget", "threads": [shared, thread("bo", "and this?")] }),
+        );
+
+        let merged = merge_reports(vec![rich, threads]);
+        let carried = merged[0]
+            .raw
+            .get("threads")
+            .and_then(Value::as_array)
+            .unwrap();
+        assert_eq!(carried.len(), 2, "the duplicate folded, the new one kept");
+        assert_eq!(carried[0]["messages"][0]["author"], "ada");
+        assert_eq!(carried[1]["messages"][0]["author"], "bo");
+    }
+
+    /// A gate is an observation of the pull request, so the report that read
+    /// the checks lands its gate on the row whichever report wins.
+    #[test]
+    fn the_gate_reaches_the_row_from_whichever_report_read_it() {
+        let rich = report(
+            "github-prs",
+            Some(ItemRole::Author),
+            json!({ "repo": "acme/widget", "branch": "you/ABC-42" }),
+        );
+        let gate = json!({ "repos": [{ "repo": "acme/widget", "passed": 1, "failed": 2 }] });
+        let ci = report(
+            "github-ci",
+            None,
+            json!({ "repo": "acme/widget", "gate": gate }),
+        );
+
+        let merged = merge_reports(vec![rich, ci]);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].source, "github-prs");
+        let gate = crate::feed::gate::Gate::of(&merged[0]).expect("the gate came with it");
+        assert!(gate.is_red());
+        assert_eq!(gate.failed(), 2);
     }
 }

@@ -260,8 +260,11 @@ pub fn render_summary_row(
     let needs = visible()
         .filter(|item| item.needs_response && crate::feed::cache::is_unread(seen, item))
         .count();
+    // A red gate is a fact about a row, not a row of its own
+    // (§FS-007-matters.5), so this counts the matters whose gate is red
+    // wherever they sit rather than the rows of one kind.
     let failing = visible()
-        .filter(|item| item.kind == ItemKind::Ci && item.needs_response)
+        .filter(|item| crate::feed::gate::Gate::of(item).is_some_and(|gate| gate.is_red()))
         .count();
     (feed.project.clone(), unread, needs, failing)
 }

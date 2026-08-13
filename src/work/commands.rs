@@ -7,7 +7,7 @@
 //! runs.
 
 use std::collections::BTreeMap;
-use std::process::{Command, ExitCode};
+use std::process::ExitCode;
 
 use chrono::Utc;
 
@@ -17,7 +17,9 @@ use crate::feed::cache;
 use crate::feed::config::{load_config, StatusConfig};
 use crate::feed::model::{Item, ItemKind};
 use crate::feed::render::Style;
+use crate::seams::summons::Outcome as SummonsOutcome;
 use crate::work::ledger::Entry;
+use crate::work::runner;
 use crate::work::{Dispatcher, Outcome};
 
 pub fn work(args: &WorkArgs) -> Result<ExitCode> {
@@ -393,10 +395,11 @@ fn sync_work(config: &StatusConfig, args: &crate::cli::WorkSyncArgs) -> Result<E
 /// agents in one working tree are two agents editing the same files.
 fn run_work(config: &StatusConfig, args: &crate::cli::WorkRunArgs) -> Result<ExitCode> {
     let dispatcher = Dispatcher::load(config)?;
-    if !crate::feed::provider::command_exists("rhei") {
-        return Err(EphorError::Command(
-            "rhei is not on PATH; ephor writes the tickets but the runtime runs them.".to_string(),
-        ));
+    // The runtime is a rung like every other capacity ephor leans on, and the
+    // refusal is the table's sentence rather than this command's own
+    // (§AR-005-capabilities.2).
+    if let Some(refusal) = runner::refusal() {
+        return Err(EphorError::Command(refusal));
     }
     // Grouped by root, because the tickets in one root are about one checkout
     // and two agents in one working tree edit the same files — but named plan
@@ -434,21 +437,19 @@ fn run_work(config: &StatusConfig, args: &crate::cli::WorkRunArgs) -> Result<Exi
     let mut failed = 0usize;
     for (root, checkout, plans) in &roots {
         println!("\n▶ rhei run {} ({} plan(s))", root.display(), plans.len());
-        let mut command = Command::new("rhei");
-        // From the checkout, not from wherever this was typed: where the
-        // runtime puts the agent falls back to its own working directory, and
-        // a multi-repo workspace has no single repository to be found by
-        // looking (§FS-005-dispatch.3).
-        command.current_dir(checkout).arg("run").arg(root);
-        for plan in plans {
-            command.arg("--rhei").arg(plan);
-        }
-        match command.args(&args.rhei_args).status() {
-            Ok(status) if status.success() => {}
-            Ok(status) => {
-                failed += 1;
-                eprintln!("error: rhei run {}: {status}", root.display());
-            }
+        match runner::run(root, checkout, plans, &args.rhei_args) {
+            Ok(answer) => match answer.outcome {
+                SummonsOutcome::Done => {}
+                // The runtime declining for now is not a failed run
+                // (§FS-006-project-interface.3).
+                SummonsOutcome::Parked => {
+                    println!("  parked: {}", root.display());
+                }
+                SummonsOutcome::Failed => {
+                    failed += 1;
+                    eprintln!("error: {} — {}", answer.refusal("rhei run"), root.display());
+                }
+            },
             Err(err) => {
                 failed += 1;
                 eprintln!("error: rhei run {}: {err}", root.display());

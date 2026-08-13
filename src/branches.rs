@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use crate::feed::model::Item;
+use crate::forest::{Declaration, Forest};
 use crate::registry;
 
 /// A branch as the registry declares it.
@@ -52,9 +53,10 @@ pub fn expand_workspace(template: Option<&str>, root: &Path, branch: &str) -> Op
     ))
 }
 
-/// The branch-tracked repository paths of a project's type. A repository the
-/// type says to skip is not tracking the branch, so it is not one of them.
-fn repo_paths(registry_doc: &Value, project: &Value) -> Vec<String> {
+/// What the project type declares about the repositories of a checkout
+/// (§AR-004-forest.2). A repository the type says to skip is not tracking the
+/// branch, so it is not part of the forest a branch workspace folds over.
+fn declarations(registry_doc: &Value, project: &Value) -> Vec<Declaration> {
     let Some(type_id) = registry::str_field(project, "type") else {
         return Vec::new();
     };
@@ -64,8 +66,13 @@ fn repo_paths(registry_doc: &Value, project: &Value) -> Vec<String> {
     registry::array_field(project_type, "repos")
         .iter()
         .filter(|repo| repo.get("update_mode").and_then(Value::as_str) != Some("skip"))
-        .filter_map(|repo| registry::str_field(repo, "path"))
-        .map(String::from)
+        .filter_map(|repo| {
+            Some(Declaration {
+                path: registry::str_field(repo, "path")?.to_string(),
+                role: registry::str_field(repo, "role").map(String::from),
+                main: registry::str_field(repo, "default_branch").map(String::from),
+            })
+        })
         .collect()
 }
 
@@ -92,10 +99,10 @@ pub struct Placement {
     /// What branches here are measured against, and replayed onto
     /// (§FS-004-quick-actions.6).
     pub main_branch: Option<String>,
-    /// The project type's own repository paths under a checkout. Empty where
-    /// the registry does not say, which leaves the repositories to be found on
-    /// disk instead.
-    pub repo_paths: Vec<String>,
+    /// What the project type declares about the checkout's repositories. Empty
+    /// where the registry does not say, which leaves the forest to be probed
+    /// on disk instead (§AR-004-forest.2).
+    pub repos: Vec<Declaration>,
 }
 
 /// Where one item's work belongs.
@@ -152,15 +159,14 @@ impl Placement {
             template,
             branches,
             main_branch: registry::str_field(entry, "main_branch").map(String::from),
-            repo_paths: repo_paths(registry_doc, entry),
+            repos: declarations(registry_doc, entry),
         })
     }
 
-    /// Every repository of this project's checkout, as the registry describes
-    /// it — the project type's paths where there are any, otherwise whatever
-    /// is on disk (§FS-004-quick-actions.6).
-    pub fn repos(&self, checkout: &Path) -> Vec<PathBuf> {
-        crate::git::repos(checkout, &self.repo_paths)
+    /// This project's forest at `checkout` — the thing every git-facing
+    /// feature folds over (§AR-004-forest).
+    pub fn forest(&self, checkout: &Path) -> Forest {
+        Forest::resolve(checkout, self.main_branch.as_deref(), &self.repos)
     }
 
     /// The directory this project's workspace for `branch` belongs at, whether
@@ -185,7 +191,7 @@ impl Placement {
         candidates.push(self.root.clone());
         candidates
             .into_iter()
-            .find(|path| !self.repos(path).is_empty())
+            .find(|path| !self.forest(path).is_empty())
     }
 
     pub fn matched(&self, item: &Item) -> Option<&BranchInfo> {
@@ -264,7 +270,7 @@ mod tests {
                 is_release: false,
             }],
             main_branch: Some("main".to_string()),
-            repo_paths: Vec::new(),
+            repos: Vec::new(),
         }
     }
 
