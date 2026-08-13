@@ -10,6 +10,7 @@
 //! both answer the same types and the same policy runs over both.
 
 pub mod agents;
+pub mod attribution;
 pub mod branches;
 pub mod capabilities;
 pub mod checkout;

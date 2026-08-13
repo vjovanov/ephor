@@ -76,6 +76,20 @@ fn declarations(registry_doc: &Value, project: &Value) -> Vec<Declaration> {
         .collect()
 }
 
+/// A row's list-of-strings field, empty where it says nothing.
+fn strings(entry: &Value, field: &str) -> Vec<String> {
+    entry
+        .get(field)
+        .and_then(Value::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(Value::as_str)
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Where an item's branch workspace stands, for gating work on it.
 #[derive(Clone, Debug)]
 pub enum WorkspaceState {
@@ -103,6 +117,12 @@ pub struct Placement {
     /// where the registry does not say, which leaves the forest to be probed
     /// on disk instead (§AR-004-forest.2).
     pub repos: Vec<Declaration>,
+    /// Names the project answers to (§FS-008-attribution.1).
+    pub aliases: Vec<String>,
+    /// Repositories and organizations that are its business without being in
+    /// its forest — what places a mention or an issue filed in its ecosystem
+    /// (§FS-008-attribution.1).
+    pub territory: Vec<String>,
 }
 
 /// Where one item's work belongs.
@@ -160,7 +180,36 @@ impl Placement {
             branches,
             main_branch: registry::str_field(entry, "main_branch").map(String::from),
             repos: declarations(registry_doc, entry),
+            aliases: strings(entry, "aliases"),
+            territory: strings(entry, "territory"),
         })
+    }
+
+    /// The signals by which this project's matters are recognized
+    /// (§FS-008-attribution.1), compiled from the row. The row has the last
+    /// word: a checkout must not be able to claim another project's
+    /// conversations.
+    pub fn identity(&self) -> crate::attribution::Identity {
+        crate::attribution::Identity {
+            project: self.project.clone(),
+            // The prefixes its branches' ticket keys carry — what the row
+            // already says about which tickets are this project's.
+            tickets: self
+                .branches
+                .iter()
+                .filter_map(|branch| branch.ticket.as_deref())
+                .filter_map(|ticket| ticket.split_once('-').map(|(prefix, _)| prefix.to_string()))
+                .fold(Vec::new(), |mut prefixes, prefix| {
+                    if !prefixes.contains(&prefix) {
+                        prefixes.push(prefix);
+                    }
+                    prefixes
+                }),
+            repos: self.repos.iter().map(|repo| repo.path.clone()).collect(),
+            territory: self.territory.clone(),
+            aliases: self.aliases.clone(),
+            addresses: Vec::new(),
+        }
     }
 
     /// This project's forest at `checkout` — the thing every git-facing
@@ -271,6 +320,8 @@ mod tests {
             }],
             main_branch: Some("main".to_string()),
             repos: Vec::new(),
+            aliases: Vec::new(),
+            territory: Vec::new(),
         }
     }
 

@@ -1355,6 +1355,8 @@ mod tests {
             branches: vec![branch],
             main_branch: Some("master".to_string()),
             repos: Vec::new(),
+            aliases: Vec::new(),
+            territory: Vec::new(),
         };
         Ctx {
             feeds: Vec::new(),

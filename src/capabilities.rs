@@ -295,6 +295,8 @@ mod tests {
             branches: Vec::new(),
             main_branch: Some("master".to_string()),
             repos: Vec::new(),
+            aliases: Vec::new(),
+            territory: Vec::new(),
         }
     }
 

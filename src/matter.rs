@@ -14,6 +14,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::attribution::Evidence;
 use crate::feed::model::{Item, ItemKind, ItemRole};
 
 /// A matter's identity: the subject key its source stated
@@ -348,6 +349,75 @@ pub struct Matter {
     /// `EPHOR_RAW` (§AR-006-matters lead).
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub raw: Value,
+}
+
+/// What a report carries about where it belongs, extracted once at fetch
+/// normalization (§AR-003-attribution.1). It is data on the matter, so a
+/// misplacement can be debugged by looking rather than by rereading a source.
+pub fn evidence_of(item: &Item) -> Evidence {
+    let mut words = vec![item.title.clone()];
+    let mut addresses = Vec::new();
+    if let Some(threads) = item.raw.get("threads").and_then(Value::as_array) {
+        for thread in threads {
+            for message in thread
+                .get("messages")
+                .and_then(Value::as_array)
+                .unwrap_or(&Vec::new())
+            {
+                if let Some(text) = message.get("text").and_then(Value::as_str) {
+                    words.push(text.to_string());
+                }
+                if let Some(author) = message.get("author").and_then(Value::as_str) {
+                    if !author.is_empty() && !addresses.contains(&author.to_string()) {
+                        addresses.push(author.to_string());
+                    }
+                }
+            }
+        }
+    }
+    let spoken = words.join("\n");
+    Evidence {
+        venue: Some(SubjectKey::stated(&item.id)),
+        repo: item.repo(),
+        tickets: crate::registry::tickets_in(&spoken),
+        repos: repos_in(&spoken)
+            .into_iter()
+            .chain(item.url.iter().flat_map(|url| repos_in(url)))
+            .collect(),
+        addresses,
+        words: spoken,
+    }
+}
+
+/// The `owner/name` repositories a piece of text names. Deliberately plain:
+/// two slash-separated words that look like a repository, which is what a url
+/// and a sentence both spell the same way.
+fn repos_in(text: &str) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    for word in text.split(|character: char| character.is_whitespace()) {
+        let cleaned = word.trim_matches(|character: char| !character.is_alphanumeric());
+        // A url says it after the host; a sentence says it on its own.
+        let candidate = cleaned
+            .split_once("github.com/")
+            .map(|(_, rest)| rest)
+            .unwrap_or(cleaned);
+        let parts: Vec<&str> = candidate.split('/').collect();
+        if parts.len() < 2 || parts[0].is_empty() || parts[1].is_empty() {
+            continue;
+        }
+        let repo = format!("{}/{}", parts[0], parts[1]);
+        if repo.chars().all(|character| {
+            character.is_alphanumeric()
+                || character == '/'
+                || character == '-'
+                || character == '_'
+                || character == '.'
+        }) && !found.contains(&repo)
+        {
+            found.push(repo);
+        }
+    }
+    found
 }
 
 impl Matter {
@@ -1121,6 +1191,28 @@ mod tests {
 
         let linked = link(vec![change, ticket]);
         assert_eq!(linked[0].links, vec![SubjectKey::stated("ticket:ABC-99")]);
+    }
+
+    /// Evidence is extracted once, at fetch normalization, and is data on the
+    /// matter — so a misplacement is debugged by looking (§AR-003-attribution.1).
+    #[test]
+    fn what_a_report_carries_about_where_it_belongs_is_extracted_from_it() {
+        let mut report = item(json!({
+            "repo": "acme/widget",
+            "threads": [{"messages": [
+                {"author": "ada", "text": "this is the same as ABC-42, see other/plugin"}
+            ]}]
+        }));
+        report.title = "Retry window".to_string();
+        let evidence = evidence_of(&report);
+        assert_eq!(evidence.repo.as_deref(), Some("acme/widget"));
+        assert_eq!(evidence.tickets, vec!["ABC-42"]);
+        assert!(evidence.repos.contains(&"other/plugin".to_string()));
+        // The url names a repository too, which is how a notice with no
+        // configured repository still says where it is.
+        assert!(evidence.repos.contains(&"acme/widget".to_string()));
+        assert_eq!(evidence.addresses, vec!["ada"]);
+        assert!(evidence.words.contains("Retry window"));
     }
 
     #[test]

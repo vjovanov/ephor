@@ -134,6 +134,11 @@
             "items": { "type": "string", "minLength": 1 },
             "description": "Alternative names for this project (useful for polyrepos with multiple repos)"
           },
+          "territory": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 },
+            "description": "Repositories and organizations that are this project's business without being in its forest (FS-008-attribution.1): 'owner/name' for one repository, 'owner' for a whole organization. What places a mention or an issue filed in the project's ecosystem."
+          },
           "organization": { "type": "string", "minLength": 1 },
           "type": { "type": "string", "minLength": 1 },
           "display_name": { "type": "string", "minLength": 1 },
