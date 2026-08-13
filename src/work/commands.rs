@@ -19,7 +19,8 @@ use crate::feed::model::{Item, ItemKind};
 use crate::feed::render::Style;
 use crate::seams::summons::Outcome as SummonsOutcome;
 use crate::work::ledger::Entry;
-use crate::work::runner;
+use crate::work::runtime;
+
 use crate::work::{Dispatcher, Outcome};
 
 pub fn work(args: &WorkArgs) -> Result<ExitCode> {
@@ -57,7 +58,7 @@ pub fn work(args: &WorkArgs) -> Result<ExitCode> {
                         path.display()
                     )))?
                 ),
-                None => print!("{}", crate::work::plan::SHIPPED_STATES),
+                None => print!("{}", crate::work::runtime::plan::SHIPPED_STATES),
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -398,7 +399,7 @@ fn run_work(config: &StatusConfig, args: &crate::cli::WorkRunArgs) -> Result<Exi
     // The runtime is a rung like every other capacity ephor leans on, and the
     // refusal is the table's sentence rather than this command's own
     // (§AR-005-capabilities.2).
-    if let Some(refusal) = runner::refusal() {
+    if let Some(refusal) = runtime::refusal(&config.work) {
         return Err(EphorError::Command(refusal));
     }
     // Grouped by root, because the tickets in one root are about one checkout
@@ -421,11 +422,11 @@ fn run_work(config: &StatusConfig, args: &crate::cli::WorkRunArgs) -> Result<Exi
             continue;
         }
         match roots.iter_mut().find(|(root, _, _)| root == &entry.root) {
-            Some((_, _, plans)) => plans.push(entry.rhei.clone()),
+            Some((_, _, plans)) => plans.push(entry.plan_id.clone()),
             None => roots.push((
                 entry.root.clone(),
                 entry.checkout(),
-                vec![entry.rhei.clone()],
+                vec![entry.plan_id.clone()],
             )),
         }
     }
@@ -436,8 +437,13 @@ fn run_work(config: &StatusConfig, args: &crate::cli::WorkRunArgs) -> Result<Exi
 
     let mut failed = 0usize;
     for (root, checkout, plans) in &roots {
-        println!("\n▶ rhei run {} ({} plan(s))", root.display(), plans.len());
-        match runner::run(root, checkout, plans, &args.rhei_args) {
+        println!(
+            "\n▶ {} {} ({} plan(s))",
+            runtime::label(&config.work),
+            root.display(),
+            plans.len()
+        );
+        match runtime::run(&config.work, root, checkout, plans, &args.rhei_args) {
             Ok(answer) => match answer.outcome {
                 SummonsOutcome::Done => {}
                 // The runtime declining for now is not a failed run
@@ -447,12 +453,20 @@ fn run_work(config: &StatusConfig, args: &crate::cli::WorkRunArgs) -> Result<Exi
                 }
                 SummonsOutcome::Failed => {
                     failed += 1;
-                    eprintln!("error: {} — {}", answer.refusal("rhei run"), root.display());
+                    eprintln!(
+                        "error: {} — {}",
+                        answer.refusal(&runtime::label(&config.work)),
+                        root.display()
+                    );
                 }
             },
             Err(err) => {
                 failed += 1;
-                eprintln!("error: rhei run {}: {err}", root.display());
+                eprintln!(
+                    "error: {} {}: {err}",
+                    runtime::label(&config.work),
+                    root.display()
+                );
             }
         }
     }

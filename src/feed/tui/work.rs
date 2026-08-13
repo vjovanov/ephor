@@ -107,7 +107,7 @@ impl WorkScreen {
                 Some(status) => Action::RunWork {
                     root: status.root.clone(),
                     checkout: status.checkout.clone(),
-                    rhei: status.rhei.clone(),
+                    rhei: status.plan_id.clone(),
                     label: self.item.title.clone(),
                 },
                 None => Action::SetMessage("No work to run yet".to_string()),
@@ -325,7 +325,7 @@ mod tests {
         WorkStatus {
             project: "demo".to_string(),
             root: PathBuf::from("/w/demo/panta"),
-            rhei: "forge-demo-17".to_string(),
+            plan_id: "forge-demo-17".to_string(),
             checkout: PathBuf::from("/w/demo"),
             plan: PathBuf::from("/w/demo/panta/forge-demo-17.rhei.md"),
             missing: false,

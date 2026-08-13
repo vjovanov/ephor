@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use crate::error::{EphorError, Result};
 
 /// The state machine ephor installs into a work root that has none.
-pub const SHIPPED_STATES: &str = include_str!("../../assets/ephor-work.states.yaml");
+pub const SHIPPED_STATES: &str = include_str!("../../../assets/ephor-work.states.yaml");
 
 /// What surrounds the dossier, so a later sync can rewrite exactly that much
 /// and leave every `**State:**` line the runtime owns untouched.
@@ -118,8 +118,8 @@ impl WorkRoot {
         })
     }
 
-    pub fn plan_path(&self, rhei: &str) -> PathBuf {
-        self.dir.join(format!("{rhei}.rhei.md"))
+    pub fn plan_path(&self, plan_id: &str) -> PathBuf {
+        self.dir.join(format!("{plan_id}.rhei.md"))
     }
 
     /// Whether the machine in force declares a state, so a recipe pointing at
@@ -517,7 +517,7 @@ fn unfenced(text: &str) -> impl Iterator<Item = &str> {
 
 /// A rhei id for an item: its own id, reduced to what the runtime's grammar
 /// allows for a file stem, and never empty or leading with a digit.
-pub fn rhei_id(item_id: &str) -> String {
+pub fn plan_id(item_id: &str) -> String {
     let mut out = String::with_capacity(item_id.len());
     for ch in item_id.chars() {
         if ch.is_ascii_alphanumeric() {
@@ -813,11 +813,11 @@ mod tests {
     #[test]
     fn an_items_id_becomes_a_file_the_runtime_will_accept() {
         assert_eq!(
-            rhei_id("github-prs:acme/widget#42"),
+            plan_id("github-prs:acme/widget#42"),
             "github-prs-acme-widget-42"
         );
-        assert_eq!(rhei_id("forge:repo/123"), "forge-repo-123");
-        assert_eq!(rhei_id("42"), "item-42");
-        assert_eq!(rhei_id("///"), "item");
+        assert_eq!(plan_id("forge:repo/123"), "forge-repo-123");
+        assert_eq!(plan_id("42"), "item-42");
+        assert_eq!(plan_id("///"), "item");
     }
 }

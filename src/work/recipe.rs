@@ -24,6 +24,11 @@ pub struct WorkConfig {
     /// one ephor ships.
     #[serde(default)]
     pub states: Option<String>,
+    /// What runs a plan. The runtime is a binding with one shipped wired and
+    /// ready (§FS-005-dispatch lead, §DA-001-runtime-bound-default); naming
+    /// another here is how a person who works differently points work at it.
+    #[serde(default)]
+    pub runner: Option<String>,
     /// Recipes, appended to the shipped ones; one reusing a shipped id
     /// replaces it (§FS-005-dispatch.1).
     #[serde(default)]
@@ -35,6 +40,7 @@ impl Default for WorkConfig {
         WorkConfig {
             root: default_root(),
             states: None,
+            runner: None,
             recipes: Vec::new(),
         }
     }

@@ -223,7 +223,7 @@ impl Ctx {
                     .checkouts
                     .get(project)
                     .map(|checkout| checkout.command.as_str()),
-                runner: Some(crate::work::runner::RUNNER),
+                runner: Some(crate::work::runtime::RUNNER),
                 gate_reported,
                 manifest: manifest.as_ref(),
             };
@@ -891,7 +891,7 @@ impl App {
                 // The runtime is a rung: refused here in the same words the
                 // command line uses, instead of handing the terminal over to a
                 // command that cannot start (§AR-005-capabilities.2).
-                if let Some(refusal) = crate::work::runner::refusal() {
+                if let Some(refusal) = crate::work::runtime::refusal(&config.work) {
                     self.message = refusal;
                     return Ok(true);
                 }
@@ -901,9 +901,14 @@ impl App {
                 self.handover(
                     terminal,
                     "▶",
-                    &format!("rhei run — {label}"),
+                    &format!("{} — {label}", crate::work::runtime::label(&config.work)),
                     &Site::root(&checkout),
-                    &crate::work::runner::summons(&root, std::slice::from_ref(&rhei), &[]),
+                    &crate::work::runtime::summons(
+                        &config.work,
+                        &root,
+                        std::slice::from_ref(&rhei),
+                        &[],
+                    ),
                 )?;
                 // The runtime just advanced the plans this reads.
                 self.reload_work();

@@ -51,7 +51,11 @@ pub struct Entry {
     #[serde(default)]
     pub checkout: PathBuf,
     /// The plan's id there, which is also its file stem.
-    pub rhei: String,
+    /// The plan this item's work lives in. Named for the plan, not for the
+    /// runtime that runs it — the alias keeps every ledger written before this
+    /// readable (§AR-007-runtime).
+    #[serde(alias = "rhei")]
+    pub plan_id: String,
     pub plan: PathBuf,
     pub dispatches: Vec<Dispatch>,
 }
@@ -244,10 +248,10 @@ pub fn store(ledger: &Ledger) -> Result<()> {
 /// asks for it. Found by what it says rather than by where it sits: an agent
 /// asked for a document writes a document, and its first line is a heading.
 /// Absent while the work has not reached that state, which is not a failure.
-pub fn verdict(root: &Path, rhei: &str, ticket: &str) -> Option<String> {
+pub fn verdict(root: &Path, plan_id: &str, ticket: &str) -> Option<String> {
     let path = root
         .join("runtime/ephor")
-        .join(format!("{rhei}.{ticket}.verdict.md"));
+        .join(format!("{plan_id}.{ticket}.verdict.md"));
     let text = fs::read_to_string(path).ok()?;
     let line = text
         .lines()
@@ -369,5 +373,35 @@ mod tests {
             Some("blocked — the failing job needs a credential")
         );
         assert!(verdict(tmp.path(), "widget-42", "nothing-1").is_none());
+    }
+}
+
+#[cfg(test)]
+mod compat_tests {
+    use super::*;
+
+    /// A ledger written before the runtime was carved out still reads: the
+    /// field was named for the runtime and is named for the plan now, and the
+    /// alias is what keeps an upgrade from losing the record of what was
+    /// dispatched (§AR-007-runtime).
+    #[test]
+    fn a_ledger_from_before_the_carve_still_reads() {
+        let older = serde_json::json!({
+            "entries": {
+                "github-prs:acme/widget#42": {
+                    "project": "widget",
+                    "title": "Retry window",
+                    "root": "/w/panta",
+                    "checkout": "/w",
+                    "rhei": "github-prs-acme-widget-42",
+                    "plan": "/w/panta/github-prs-acme-widget-42.rhei.md",
+                    "dispatches": []
+                }
+            }
+        });
+        let ledger: Ledger = serde_json::from_value(older).expect("the alias reads it");
+        let entry = &ledger.entries["github-prs:acme/widget#42"];
+        assert_eq!(entry.plan_id, "github-prs-acme-widget-42");
+        assert_eq!(entry.project, "widget");
     }
 }

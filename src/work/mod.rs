@@ -2,7 +2,7 @@
 //! (§FS-005-dispatch).
 //!
 //! The feed says what is happening; this says what is being done about it.
-//! An item plus a recipe becomes a ticket in a rhei plan, written into the
+//! An item plus a recipe becomes a ticket in a plan, written into the
 //! checkout the item's branch resolves to, carrying the dossier of everything
 //! ephor already knew. Afterwards ephor keeps the ledger and reads the work's
 //! state back out of the plan — never out of its own memory.
@@ -10,9 +10,8 @@
 pub mod commands;
 pub mod dossier;
 pub mod ledger;
-pub mod plan;
 pub mod recipe;
-pub mod runner;
+pub mod runtime;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -28,8 +27,8 @@ use crate::feed::model::Item;
 
 use dossier::Subject;
 use ledger::{Dispatch, Entry, Ledger, Snapshot};
-use plan::{Plan, Ticket, WorkRoot};
 use recipe::{ProjectWorkConfig, Recipe, WorkConfig};
+use runtime::plan::{self, Plan, Ticket, WorkRoot};
 
 /// What one dispatch did.
 #[derive(Debug, Clone)]
@@ -115,7 +114,7 @@ pub struct WorkStatus {
     pub project: String,
     pub root: PathBuf,
     /// The plan's id inside the root, for naming it to the runtime.
-    pub rhei: String,
+    pub plan_id: String,
     /// The checkout the runtime is run from.
     pub checkout: PathBuf,
     pub plan: PathBuf,
@@ -358,12 +357,12 @@ impl Dispatcher {
     pub fn dispatch(&mut self, item: &Item, recipe: &Recipe, dry_run: bool) -> Result<Outcome> {
         let site = self.site(item, recipe)?;
         let states = self.states_yaml(&item.project)?;
-        let rhei = plan::rhei_id(&item.id);
+        let plan_id = plan::plan_id(&item.id);
 
         if dry_run {
             // Nothing is created, so the machine cannot be consulted; what a
             // dry run promises is where the ticket would go.
-            let path = site.dir.join(format!("{rhei}.rhei.md"));
+            let path = site.dir.join(format!("{plan_id}.rhei.md"));
             let existing = Plan::read(&path)?;
             let ticket = existing
                 .as_ref()
@@ -411,7 +410,7 @@ impl Dispatcher {
         if !root.declares(&recipe.state) {
             return Err(undeclared(&root));
         }
-        let path = root.plan_path(&rhei);
+        let path = root.plan_path(&plan_id);
         let brief = dossier::render(&recipe.brief, &site.values);
         let changes = self
             .ledger
@@ -487,7 +486,7 @@ impl Dispatcher {
             url: item.url.clone(),
             root: root.dir.clone(),
             checkout: site.checkout.workspace.clone(),
-            rhei: rhei.clone(),
+            plan_id: plan_id.clone(),
             plan: path.clone(),
             dispatches: Vec::new(),
         });
@@ -614,7 +613,7 @@ impl Dispatcher {
                                     .unwrap_or(false)
                             })
                             .unwrap_or(false),
-                        verdict: ledger::verdict(&entry.root, &entry.rhei, &ticket.id),
+                        verdict: ledger::verdict(&entry.root, &entry.plan_id, &ticket.id),
                         id: ticket.id,
                         title: ticket.title,
                         state: ticket.state,
@@ -625,7 +624,7 @@ impl Dispatcher {
         WorkStatus {
             project: entry.project.clone(),
             root: entry.root.clone(),
-            rhei: entry.rhei.clone(),
+            plan_id: entry.plan_id.clone(),
             checkout: entry.checkout(),
             plan: entry.plan.clone(),
             missing: plan.is_none(),

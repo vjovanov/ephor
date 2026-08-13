@@ -1162,7 +1162,7 @@ mod tests {
             json!({ "repo": "acme/widget", "branch": "you/ABC-42-retry-window" }),
         );
         change.title = "Retry window".to_string();
-        let mut ticket = report("rhei", "ticket:ABC-42", json!({}));
+        let mut ticket = report("tickets", "ticket:ABC-42", json!({}));
         ticket.title = "Widen the retry window".to_string();
 
         let linked = link(vec![change, ticket]);
@@ -1186,7 +1186,7 @@ mod tests {
             ]}]}),
         );
         change.title = "Unrelated title".to_string();
-        let mut ticket = report("rhei", "ticket:ABC-99", json!({}));
+        let mut ticket = report("tickets", "ticket:ABC-99", json!({}));
         ticket.title = "Something else".to_string();
 
         let linked = link(vec![change, ticket]);

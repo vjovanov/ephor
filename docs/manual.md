@@ -344,6 +344,24 @@ refresh. The difference it makes: declared per project, a mention lands on
 whichever project happened to fetch it; declared at site level, it lands where
 it belongs.
 
+### 4.2.0 Pointing work at a different runtime
+
+`work.runner` names the command that runs a plan. Unset, it is the runtime
+ephor ships wired and ready — choosing one is a property of how *you* work,
+which is why one comes bound rather than demanded
+([§FS-005-dispatch](../requirements.md#fs-005-dispatch-what-ephor-watches-it-can-hand-to-an-agent-runtime),
+[§DA-001-runtime-bound-default](decisions/architectural/DA-001-runtime-bound-default.md#da-001-runtime-bound-default-the-runtime-is-a-bound-default-not-a-named-coupling)):
+
+```jsonc
+{ "work": { "runner": "my-runtime" } }
+```
+
+The whole coupling is a plan file in a documented plain-text language, the
+command configured to execute it, and the verdict read back from its results.
+With nothing installed, every part of dispatch except the running still
+holds — tickets are written, read and reopened, readable and diffable on
+disk — and only running refuses, naming the runner it looked for.
+
 ### 4.2.1 What a project can say about itself — `ephor.json`
 
 A project that wants to speak places one file at its forest root

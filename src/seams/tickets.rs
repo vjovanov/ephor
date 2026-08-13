@@ -119,7 +119,7 @@ fn plans(store: &Store, project: &str) -> Vec<Item> {
 
     let mut items = Vec::new();
     for path in paths {
-        let Ok(Some(plan)) = crate::work::plan::Plan::read(&path) else {
+        let Ok(Some(plan)) = crate::work::runtime::plan::Plan::read(&path) else {
             continue;
         };
         let stem = path
