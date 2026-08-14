@@ -15,6 +15,7 @@ pub mod branches;
 pub mod capabilities;
 pub mod checkout;
 pub mod cli;
+pub mod doctor;
 pub mod error;
 pub mod feed;
 pub mod forest;

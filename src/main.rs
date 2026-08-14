@@ -75,6 +75,11 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Command::Rebase(args) => return rebase::rebase(args),
         Command::Checkout(args) => return checkout::checkout(args),
         Command::Work(args) => return work::commands::work(args),
+        // Both read the site rather than the registry alone, and the self
+        // pass reads neither — so neither loads the registry up front
+        // (§FS-010-doctor).
+        Command::Capabilities(args) => return ephor::doctor::capabilities(args),
+        Command::Doctor(args) => return ephor::doctor::doctor(args),
         Command::Tui => return feed::tui::run(),
         // The schemas are the interface's stability surface, printable without
         // a registry to read (§FS-006-project-interface.11).
@@ -180,6 +185,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
         | Command::Work(_)
         | Command::Schema(_)
         | Command::Check(_)
+        | Command::Capabilities(_)
+        | Command::Doctor(_)
         | Command::Tui => {
             unreachable!("handled above")
         }

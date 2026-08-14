@@ -437,7 +437,7 @@ mod tests {
             Some(&placement),
             &crate::capabilities::Bindings {
                 sources: 1,
-                answering: 1,
+                answering: Some(1),
                 checkout: Some("git worktree add"),
                 runner: Some("sh"),
                 gate_reported: true,

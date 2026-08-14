@@ -99,6 +99,59 @@ impl ProjectFeed {
             .map(|slot| slot.stale)
             .unwrap_or(false)
     }
+
+    /// How many sources answered at the last refresh — what the *observable*
+    /// rung asks about (§FS-006-project-interface.10). Configured and silent
+    /// is not being watched, whatever the configuration says.
+    ///
+    /// None where no refresh produced this cache: never run, or run under an
+    /// older model and dropped on load. A dropped cache has no providers in
+    /// it, and reading that as "every source failed" would send a reader to
+    /// look at credentials when the answer is `ephor refresh`. `fetched_at` is
+    /// what tells them apart — blanking clears it, and a refresh always sets
+    /// it.
+    pub fn answering(&self) -> Option<usize> {
+        self.fetched_at?;
+        Some(self.providers.values().filter(|slot| slot.ok).count())
+    }
+
+    /// How many sources were asked at all. Not the same as how many the
+    /// configuration names: a local ticket store is probed rather than
+    /// configured (§FS-006-project-interface.7), and a shared source is
+    /// declared once for the site and placed here
+    /// (§DA-002-fetch-attribution-split) — both are sources of this project's
+    /// matters and both write a slot. Counting the configured blocks instead
+    /// reported more sources answering than were asked.
+    pub fn asked(&self) -> Option<usize> {
+        self.fetched_at?;
+        Some(self.providers.len())
+    }
+
+    /// Every source that did not answer, with what it said. The refresh
+    /// reported these when they happened; this is the same fact read back out
+    /// of the cache, for a surface asking after the event
+    /// (§FS-001-forge-interface.6).
+    pub fn silent(&self) -> Vec<(&str, &str, bool)> {
+        self.providers
+            .iter()
+            .filter(|(_, slot)| !slot.ok)
+            .map(|(name, slot)| {
+                (
+                    name.as_str(),
+                    slot.error.as_deref().unwrap_or("did not answer"),
+                    slot.unreachable,
+                )
+            })
+            .collect()
+    }
+
+    /// Whether any source reported a gate for this project — what establishes
+    /// the *gated* rung until gate verbs are bound
+    /// (§FS-006-project-interface.6).
+    pub fn reports_a_gate(&self) -> bool {
+        self.items()
+            .any(|item| crate::feed::gate::Gate::of(&item).is_some())
+    }
 }
 
 pub fn feed_dir() -> PathBuf {
@@ -254,6 +307,64 @@ fn write_atomic(path: &PathBuf, content: &str) -> Result<()> {
 mod tests {
     use super::*;
     use crate::matter::{Matter, SubjectKey};
+
+    /// A cache no refresh produced is not every source having failed
+    /// (§FS-006-project-interface.10). A cache stored under an older model is
+    /// dropped on load, leaving a feed with no providers in it — reading that
+    /// as "none answered" sends a reader to look at credentials when the
+    /// answer is `ephor refresh`.
+    #[test]
+    fn a_cache_no_refresh_produced_answers_nothing_rather_than_zero() {
+        let never = ProjectFeed {
+            project: "widget".to_string(),
+            ..ProjectFeed::default()
+        };
+        assert_eq!(never.answering(), None);
+
+        // What a refresh writes: a stamp, and slots that say how they went.
+        let refreshed = ProjectFeed {
+            project: "widget".to_string(),
+            fetched_at: Some(Utc::now()),
+            model: MODEL,
+            providers: BTreeMap::from([
+                (
+                    "one".to_string(),
+                    ProviderSlot {
+                        ok: true,
+                        ..ProviderSlot::default()
+                    },
+                ),
+                (
+                    "two".to_string(),
+                    ProviderSlot {
+                        ok: false,
+                        ..ProviderSlot::default()
+                    },
+                ),
+            ]),
+        };
+        assert_eq!(refreshed.answering(), Some(1));
+
+        // And a refresh where every source failed is `Some(0)` — the other
+        // condition entirely, and the one that means the world is away.
+        let silent = ProjectFeed {
+            providers: refreshed
+                .providers
+                .iter()
+                .map(|(name, slot)| {
+                    (
+                        name.clone(),
+                        ProviderSlot {
+                            ok: false,
+                            ..slot.clone()
+                        },
+                    )
+                })
+                .collect(),
+            ..refreshed
+        };
+        assert_eq!(silent.answering(), Some(0));
+    }
 
     fn matter(key: &str) -> Matter {
         Matter {

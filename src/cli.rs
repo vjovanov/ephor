@@ -62,9 +62,50 @@ pub enum Command {
     Checkout(CheckoutArgs),
     /// Hand items to the agent runtime, and see what came of it.
     Work(WorkArgs),
+    /// What a project can do, rung by rung, and why a rung is missing.
+    #[command(visible_alias = "caps")]
+    Capabilities(CapabilitiesArgs),
+    /// Is this still working? The whole site, then ephor itself.
+    Doctor(DoctorArgs),
     /// Interactive inbox: navigate the feed, open items, mark them done.
     #[command(alias = "inbox")]
     Tui,
+}
+
+/// `ephor capabilities` (§FS-010-doctor.2): the ladder of
+/// §FS-006-project-interface.10 for one project or all of them, so that "why
+/// is this action not offered here" has a cheap answer.
+#[derive(Args, Debug)]
+pub struct CapabilitiesArgs {
+    /// The project to read. With none, every configured project.
+    pub project: Option<String>,
+
+    /// Print the ladder as JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// `ephor doctor` (§FS-010-doctor): the site pass asks the world, the self
+/// pass asks the binary, and the exit code is the answer a timer reads —
+/// `0` well, `4` degraded, `3` nothing reachable, `1` ephor itself is wrong.
+#[derive(Args, Debug)]
+pub struct DoctorArgs {
+    /// Look at one project rather than every configured one.
+    #[arg(long, value_name = "PROJECT")]
+    pub project: Option<String>,
+
+    /// Skip the self pass: ask the world and nothing else.
+    #[arg(long)]
+    pub skip_self: bool,
+
+    /// Run only the self pass. Reaches no forge and reads nothing of yours,
+    /// so it is the one half that works on a machine with no site.
+    #[arg(long, conflicts_with_all = ["skip_self", "project"])]
+    pub self_only: bool,
+
+    /// Print the diagnosis as JSON.
+    #[arg(long)]
+    pub json: bool,
 }
 
 /// `ephor work` (§FS-005-dispatch). With no subcommand: what has been

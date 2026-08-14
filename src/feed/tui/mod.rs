@@ -235,10 +235,9 @@ impl Ctx {
     pub fn recompute_capabilities(&mut self) {
         let mut table = BTreeMap::new();
         for project in &self.projects {
-            let gate_reported = self.feed(project).is_some_and(|feed| {
-                feed.items()
-                    .any(|item| crate::feed::gate::Gate::of(&item).is_some())
-            });
+            let gate_reported = self
+                .feed(project)
+                .is_some_and(crate::feed::cache::ProjectFeed::reports_a_gate);
             // What the project says about itself, read once per project here
             // rather than by each rung (§FS-006-project-interface.2).
             let manifest = self
@@ -253,8 +252,7 @@ impl Ctx {
                 // first refresh has run.
                 answering: self
                     .feed(project)
-                    .map(|feed| feed.providers.values().filter(|slot| slot.ok).count())
-                    .unwrap_or(0),
+                    .and_then(crate::feed::cache::ProjectFeed::answering),
                 checkout: self
                     .checkouts
                     .get(project)

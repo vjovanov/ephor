@@ -108,13 +108,17 @@ pub fn ticket_stores() -> Vec<&'static str> {
 pub struct Bindings<'a> {
     /// How many sources the project has configured.
     pub sources: usize,
-    /// How many of them actually answered at the last refresh. The rung is
-    /// "at least one source *answering*" (§FS-006-project-interface.10), not
-    /// "at least one configured": a project whose every source is broken is
-    /// not being watched, and saying it is observable is the empty feed
-    /// claiming to mean "nothing is waiting"
-    /// (§FS-001-forge-interface.6).
-    pub answering: usize,
+    /// How many of them actually answered at the last refresh, or None where
+    /// no refresh has run at all. The rung is "at least one source
+    /// *answering*" (§FS-006-project-interface.10), not "at least one
+    /// configured": a project whose every source is broken is not being
+    /// watched, and saying it is observable is the empty feed claiming to mean
+    /// "nothing is waiting" (§FS-001-forge-interface.6).
+    ///
+    /// None is kept apart from `Some(0)` because they ask different things of
+    /// the reader: one is a refresh nobody has run, the other is every source
+    /// failing when one was.
+    pub answering: Option<usize>,
     /// The configured checkout command, where one is bound
     /// (§FS-006-project-interface.8).
     pub checkout: Option<&'a str>,
@@ -165,18 +169,30 @@ impl CapabilitySet {
                 Rung::Observable,
                 format!("no source is configured for {project}, so there is nothing to watch"),
             );
-        } else if bindings.answering == 0 {
-            // Configured and silent is its own condition, and a different
-            // sentence: one sends the reader to their configuration, the other
-            // to whatever the failing source said in the header.
-            fails(
-                Rung::Observable,
-                format!(
-                    "none of {project}'s {} source(s) answered at the last refresh, so nothing \
-                     on screen is what the world says",
-                    bindings.sources
+        } else {
+            match bindings.answering {
+                // Configured and silent is its own condition, and its own
+                // sentence: one sends the reader to run a refresh, the next to
+                // whatever the failing source said, and neither is "you have
+                // nothing configured".
+                None => fails(
+                    Rung::Observable,
+                    format!(
+                        "no refresh has produced a cache for {project} yet, so nothing is \
+                         known about whether its source(s) answer — run `ephor refresh \
+                         {project}`"
+                    ),
                 ),
-            );
+                Some(0) => fails(
+                    Rung::Observable,
+                    format!(
+                        "none of {project}'s {} source(s) answered at the last refresh, so \
+                         nothing on screen is what the world says",
+                        bindings.sources
+                    ),
+                ),
+                Some(_) => {}
+            }
         }
 
         let root = &placement.root;
@@ -355,7 +371,7 @@ mod tests {
     fn bindings<'a>() -> Bindings<'a> {
         Bindings {
             sources: 1,
-            answering: 1,
+            answering: Some(1),
             checkout: Some("gco \"$EPHOR_BRANCH\""),
             runner: None,
             gate_reported: true,
@@ -516,7 +532,7 @@ mod tests {
             Some(&placement(tmp.path(), None)),
             &Bindings {
                 sources: 0,
-                answering: 0,
+                answering: None,
                 gate_reported: false,
                 ..bindings()
             },
@@ -541,7 +557,7 @@ mod tests {
             Some(&placement(tmp.path(), None)),
             &Bindings {
                 sources: 2,
-                answering: 0,
+                answering: Some(0),
                 ..bindings()
             },
         );
@@ -555,7 +571,7 @@ mod tests {
             Some(&placement(tmp.path(), None)),
             &Bindings {
                 sources: 2,
-                answering: 1,
+                answering: Some(1),
                 ..bindings()
             },
         );

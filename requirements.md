@@ -1078,3 +1078,78 @@ The steps live in ephor's repository and version with it: a release that
 changes a schema or a verb ships the steps that understand the change, per
 §FS-002-release. A repository pins the version it consumes, as it pins any
 dependency (§GOAL-005-costless).
+
+## FS-010-doctor: ephor can be asked whether it still works, and answers in one screen
+
+The watch is only worth having if it is believed when it says there is
+nothing to do (§GOAL-003-nothing-lost). Everything that makes that claim
+false is quiet: a credential that expired, a forge whose extension left
+`PATH`, a checkout somebody deleted, a runner that a system upgrade removed.
+None of them announces itself — each one simply makes a section of the feed
+empty, which is the one thing an empty section must never mean
+(§FS-001-forge-interface.6).
+
+So ephor can be **asked**. `doctor` answers "is this still working" for the
+whole site in one run, and it is built to be run on a timer by whoever wants
+one: it needs no argument, it prints what is wrong and what would fix it,
+and it says so in its exit code.
+
+### 1. It reports what is already judged, and judges nothing itself
+
+What a project can do is the ladder of §FS-006-project-interface.10, and why
+a rung is missing is a sentence that already exists. What a source did is
+§FS-001-forge-interface.6's answer, with its own split between a
+configuration to go and fix and a network to wait out. `doctor` composes
+those two and adds no opinion of its own.
+
+This is the whole of the design rule. A second opinion about whether a
+project is checkout-able would be a diagnosis that drifts from the one the
+menu refuses with, and a reader holding two answers has none: the sentence
+`doctor` prints and the sentence a greyed entry shows are the same sentence.
+
+### 2. The ladder is answerable on its own
+
+The same table is worth having without a sweep. **`capabilities`** prints one
+project's rungs — held, and missing with their reasons — so that "why is this
+action not offered here" is a question with a cheap answer. `doctor`'s first
+pass is this for every configured project.
+
+### 3. Two passes: the site, and ephor itself
+
+**The site pass** asks the world: the registry parses, every project's row
+resolves, each ladder is computed, and every configured source is asked —
+refreshed rather than read from cache, since a cached answer cannot say
+whether a source still answers. What it reports is per project, and a
+project that is entirely well says so in one line.
+
+**The self pass** asks the binary. It builds a throwaway project — its own
+state directory, registry, configuration and checkout, in a temporary place —
+and walks the seams end to end against it: a forge reached out of process
+(§FS-001-forge-interface.2), a refresh that categorizes what came back, a
+summons answering by exit code and by envelope (§FS-006-project-interface.3),
+a check verb bound by manifest and by probe (§FS-006-project-interface.5),
+the git operations both a key and a state machine run
+(§FS-004-quick-actions.6, §FS-004-quick-actions.7), a dispatch that writes a
+plan and reads its ledger back (§FS-005-dispatch.4), and a local ticket store
+read where it lives (§FS-006-project-interface.7).
+
+It touches nothing of the person's, reads no registry of theirs, and reaches
+no forge: it is hermetic, or it is not a diagnosis. This is what a test suite
+cannot answer — `cargo test` speaks for the tree it was run in, and the
+question here is whether the binary on *this* machine still works.
+
+### 4. Nothing of the reader's is written
+
+The site pass refreshes and reads; the self pass writes only inside the
+temporary place it made and removes it afterwards. `doctor` posts nothing,
+dispatches nothing, and changes no checkout of the reader's — a diagnostic
+that repaired things as it went would be a second thing to debug, and one
+that could not be run while unsure is one nobody runs.
+
+### 5. The answer is in the exit code
+
+A timer reads exit codes, not screens. `0` is well. `4` is degraded — a rung
+missing or a source lost, which is the condition a person acts on. `3` is
+nothing on the site reachable at all. `1` is the self pass failing, which is
+ephor itself being wrong rather than the world being away, and is the one
+answer that does not improve by waiting.

@@ -309,6 +309,8 @@ ephor mark-read PROJECT | --all | --id ITEM_ID [--kind K]
 ephor failures --project P --source S --repo R --number N
 ephor rebase [--checkout DIR] [--project P] [--onto BRANCH] [--item ID] [--dispatch] [--report PATH]
 ephor checkout [--project P] [--branch B] [--item ID] [--from BRANCH] [--report PATH]
+ephor capabilities [PROJECT] [--json]      # what a project can do, rung by rung
+ephor doctor [--project P] [--skip-self|--self-only] [--json]
 ```
 
 - **`refresh`** is the only command that fetches by default. It is what the
@@ -332,6 +334,10 @@ ephor checkout [--project P] [--branch B] [--item ID] [--from BRANCH] [--report 
   ([§7.1](#71-quick-actions)). It needs nothing but the registry: the project
   says where the workspace goes, which repositories it holds, and what a new
   branch grows from.
+- **`capabilities`** prints the ladder of §7.5 for a project — held rungs, and
+  missing ones with the reason a refused action would show ([§4.3.2](#432-what-a-project-can-do--capabilities)).
+- **`doctor`** asks whether any of this still works, and says so in its exit
+  code ([§4.3.1](#431-is-it-still-working--doctor)).
 
 ### 4.2 Shared sources
 
@@ -600,10 +606,75 @@ ephor schema answer > answer.schema.json    # validate your verb's output offlin
 | 1 | the command failed |
 | 2 | configuration or registry error |
 | 3 | every provider failed — nothing could be fetched at all |
-| 4 | some providers were lost (`refresh`), or unread needs-response items exist (`status --check`) |
+| 4 | some providers were lost (`refresh`, `doctor`), or unread needs-response items exist (`status --check`) |
 
 `status --check` is built for a shell prompt: it prints nothing and exits 4
 when something is waiting on you.
+
+### 4.3.1 Is it still working? — `doctor`
+
+Everything that makes the watch untrue is quiet
+([§FS-010-doctor](../requirements.md#fs-010-doctor-ephor-can-be-asked-whether-it-still-works-and-answers-in-one-screen)):
+a credential that expired, an extension that left `PATH`, a checkout somebody
+deleted. None of them announces itself — each one simply makes a section of
+the feed empty, which is the one thing an empty section must never mean. So
+ask:
+
+```bash
+ephor doctor                  # the site, then ephor itself
+ephor doctor --skip-self      # only ask the world
+ephor doctor --self-only      # only ask the binary; reads nothing of yours
+ephor doctor --json           # for whatever runs it on a timer
+```
+
+Two passes. **The site pass** refreshes every configured source — a cached
+answer cannot say whether a source still answers — and then reads each
+project's ladder (§7.5). It adds no opinion of its own: the sentence it
+prints for a missing rung is the same one a greyed menu entry shows.
+
+**The self pass** builds a throwaway project in a temporary place — its own
+state directory, registry, configuration and checkout — and walks the seams
+against it: a forge reached out of process, a refresh that categorizes what
+came back, a summons answering by exit code and by envelope, check verbs
+probed and declared, the checkout and the rebase, a dispatch whose ledger is
+read back out of its plan, and a local ticket store. It reaches no forge and
+reads nothing of yours, so it is the half that works on a machine with no
+site at all. Then it takes the temporary place away.
+
+The exit code is the answer, and nothing is repaired on the way:
+
+| Code | Means |
+|---|---|
+| 0 | well |
+| 1 | the self pass failed — ephor itself is wrong |
+| 3 | nothing on the site could be reached at all |
+| 4 | degraded — a rung is missing, or a source was lost |
+
+Running it on a schedule is yours to arrange; `systemd/` holds the two units
+ephor already ships as the pattern to copy.
+
+### 4.3.2 What a project can do — `capabilities`
+
+The ladder of §7.5 for one project, or every configured one, without a
+sweep and without asking any forge anything
+([§FS-010-doctor.2](../requirements.md#2-the-ladder-is-answerable-on-its-own)).
+It is the cheap answer to "why is this action not offered here".
+
+```bash
+ephor capabilities widget     # or `caps`, or with no project for all of them
+ephor capabilities --json
+```
+
+```text
+widget
+  ✓ observable, placed, branch-addressable, checkout-able, workable
+  ✗ checkable          /home/you/c/widget holds none of check.sh, check-style.sh,
+                       smoke-test.sh, and its manifest binds none
+  ✗ gated              no source reports a gate for widget, and no gate verbs are bound
+```
+
+It reads the last refresh rather than running one, so a project nobody has
+refreshed says exactly that rather than reporting its sources as silent.
 
 ### 4.4 What a failing source does
 
@@ -1016,11 +1087,13 @@ What a project can do is a ladder, and every feature names the rungs it needs
 ([§FS-006-project-interface.10](../requirements.md#10-capability-rung-by-rung)).
 A rung you do not hold degrades exactly the features that named it, and the
 reason is shown where the feature would have been — never an error, never
-silence.
+silence. `ephor capabilities` prints the whole table for a project, which is
+the cheap way to ask this question outside the inbox
+([§4.3.2](#432-what-a-project-can-do--capabilities)).
 
 | Rung | Held when | Buys |
 |---|---|---|
-| observable | a registry row and at least one source configured | the watch |
+| observable | a registry row and at least one source **answering** at the last refresh | the watch |
 | placed | the project's root is on disk | actions and update |
 | branch-addressable | the row has a `branch_root_template` | a workspace per branch |
 | checkout-able | a checkout command is bound, or a checkout is on disk to grow one from | work that edits |
