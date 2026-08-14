@@ -17,11 +17,16 @@ jobs:
     name: cargo test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
-      # Run every matrix leg even if one fails so we can see Linux + macOS +
-      # Windows results together rather than aborting after the first failure.
+      # Run every matrix leg even if one fails, so both platforms' results
+      # arrive together rather than the first failure hiding the other.
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # windows-latest is not here, and RM-004-windows says why: it carried a
+        # leg that had never once been green, because every test binary failed
+        # to compile and nothing behind that had ever run. Compiling it took one
+        # line and what came out is a port, not a fix. A leg that is always red
+        # is a leg nobody reads, which costs the two that mean something.
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v6
 

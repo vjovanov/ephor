@@ -129,3 +129,47 @@ have kept.
 dispatched ticket on an issue with no comments still opens with what the issue
 says. The dossier's budget covers it as it covers a conversation: bounded,
 and saying so where it cut.
+
+## RM-004-windows: ephor runs where there is no POSIX shell
+
+Serves [§FS-001-forge-interface.2](../requirements.md#2-two-transports-one-interface)
+and [§FS-006-project-interface.3](../requirements.md#3-a-summons-environment-in-exit-code-and-answer-out).
+The CI matrix carried `windows-latest` from the first commit and it was never
+once green: every test binary failed to compile, so nothing behind that had
+ever been looked at. Compiling it was one line, and what came out from behind
+it is a port. `windows-latest` is off the matrix until this is done, because a
+leg that is always red is a leg nobody reads
+([`## Unreleased`](changelog.md#unreleased)).
+
+### 1. What is already fixed
+
+Four defects the compile break had been hiding, all of them real off Windows
+too the moment a path or a `PATH` lookup came from somewhere unusual:
+`command_exists` ignored `PATHEXT`, so nothing on `PATH` was ever found and
+every project read as not *workable*; `missing_binding` decided what looked
+like a path by testing for a leading slash, so a drive-lettered path read as a
+bare command; the dossier handed a summoned command paths its own shell could
+not parse, losing every structured answer quietly; and the seam's own test
+helper built bindings the same way.
+
+### 2. What is left
+
+- **An out-of-process forge extension is a shell script.** §FS-001-forge-interface.2
+  says a shell script with `jq` is a complete implementation, and on Windows it
+  is not one: `CreateProcess` cannot exec a file whose executability is a
+  `#!` line. Either ephor reads the shebang and runs the extension through the
+  interpreter it names, or the promise is narrowed to say where it holds. This
+  is what `doctor_test` fails on now, 7 of 11.
+- **Everything behind it.** `cargo test` stops at the first failing binary, so
+  `work`, `feed`, `forge_extension`, `checkout`, `update` and the six e2e cases
+  have never run on Windows at all. Each may be one line or another layer;
+  nobody knows yet, and saying otherwise would be a guess wearing an estimate's
+  clothes.
+
+### 3. Measurable
+
+`windows-latest` is back in the matrix and green, or §FS-001-forge-interface.2
+and §FS-006-project-interface.3 say plainly which platforms they hold on and
+this entry is closed as decided rather than done. A port half finished, with a
+leg red and a promise that reads as universal, is the outcome this entry
+exists to avoid.
