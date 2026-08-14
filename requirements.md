@@ -841,6 +841,18 @@ Standard output and error remain the command's own, streamed to the person
 or the log; a contract that parsed them would make every honest build log a
 protocol violation.
 
+**Paths in that environment are spelled so the shell can read them.** The
+command is invoked through a shell, so `$EPHOR_ANSWER` and the rest are
+strings that shell parses before anything opens them — and where a platform's
+native spelling separates directories with the shell's own escape character, a
+path handed over verbatim stops being a path: the redirect lands somewhere
+else, or nowhere, and the answer comes back empty with nothing saying why,
+which is the silence §REQ-001-boundary.1 refuses. Path-valued variables use
+`/` between their segments on every platform. This costs nothing where the two
+spellings already agree, and a command that only passes a path on to another
+program sees no difference either way; the place the command runs in is set by
+ephor rather than spelled to the shell, so it is not involved.
+
 ### 4. The answer envelope
 
 Structured answers share one envelope, speaking the model's nouns

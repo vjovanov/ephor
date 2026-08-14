@@ -41,6 +41,25 @@ pub fn resolve_config(file: &str) -> PathBuf {
     user
 }
 
+/// A path as a summoned command should read it (§FS-006-project-interface.3).
+///
+/// The command is invoked through a shell, so this string is parsed by that
+/// shell before anything opens it. Where the native separator is the shell's
+/// own escape character, a path handed over verbatim stops being a path —
+/// `cat > "$EPHOR_ANSWER"` writes somewhere else, or nowhere, and the answer
+/// comes back empty with nothing saying why. Forward slashes are read as one
+/// path by every shell and accepted by every filesystem API involved, so they
+/// are what crosses the seam. Where the two spellings already agree this is
+/// the identity.
+pub fn for_shell(path: &Path) -> String {
+    let spelled = path.to_string_lossy();
+    if cfg!(windows) {
+        spelled.replace('\\', "/")
+    } else {
+        spelled.into_owned()
+    }
+}
+
 /// What `--registry` named, where a person named one.
 static REGISTRY_OVERRIDE: OnceLock<PathBuf> = OnceLock::new();
 
@@ -175,6 +194,17 @@ fn expand_vars(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What crosses the seam is read by a shell, so it never carries a
+    /// separator that shell would read as an escape
+    /// (§FS-006-project-interface.3). The assertion holds on every platform,
+    /// which is the point: one spelling, wherever ephor runs.
+    #[test]
+    fn a_path_crosses_the_seam_spelled_for_the_shell() {
+        let spelled = for_shell(&PathBuf::from("a").join("b").join("c"));
+        assert!(!spelled.contains('\\'), "{spelled}");
+        assert!(spelled.ends_with("a/b/c"), "{spelled}");
+    }
 
     #[test]
     fn expands_braced_and_plain_vars() {

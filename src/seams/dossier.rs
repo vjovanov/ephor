@@ -17,13 +17,12 @@ use crate::forest::Forest;
 fn place(project: &str, root: &Path, workspace: &Path) -> Vec<(String, String)> {
     vec![
         ("EPHOR_PROJECT".to_string(), project.to_string()),
-        (
-            "EPHOR_ROOT".to_string(),
-            root.to_string_lossy().into_owned(),
-        ),
+        // Spelled for the shell that will parse them, not for the platform
+        // (§FS-006-project-interface.3).
+        ("EPHOR_ROOT".to_string(), crate::paths::for_shell(root)),
         (
             "EPHOR_WORKSPACE".to_string(),
-            workspace.to_string_lossy().into_owned(),
+            crate::paths::for_shell(workspace),
         ),
     ]
 }

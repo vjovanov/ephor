@@ -257,7 +257,10 @@ pub fn run(summons: &Summons, site: &Site, mode: Mode) -> Result<Answer> {
         .arg(&summons.binding)
         .current_dir(&place)
         .envs(summons.dossier.iter().cloned())
-        .env(ANSWER_VAR, &answer_file.path);
+        // The command is about to redirect into this, so it is spelled for the
+        // shell doing the redirecting (§FS-006-project-interface.3). ephor
+        // reads the file back through its own path, which names the same file.
+        .env(ANSWER_VAR, crate::paths::for_shell(&answer_file.path));
 
     let (status, output) = match mode {
         Mode::Interactive => (interactive(command, &summons.verb)?, None),
