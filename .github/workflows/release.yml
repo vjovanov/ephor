@@ -284,11 +284,15 @@ jobs:
       - name: Restore ownership of build outputs
         run: sudo chown -R "$(id -u):$(id -g)" target
 
+      # §FS-002-release.3: self-checked means the binary did its job, not that
+      # it started. The self pass builds a project of its own and walks the
+      # seams against it (§FS-010-doctor.3); `--version` tested the argument
+      # parser.
       - name: Self-check PGO release binary
         run: |
           set -euo pipefail
           ./target/release/ephor --version
-          ./target/release/ephor --help >/dev/null
+          ./target/release/ephor doctor --self-only
 
       - name: Package binary
         id: package
@@ -387,7 +391,9 @@ jobs:
             bin="${bin}.exe"
           fi
           "$bin" --version
-          "$bin" --help >/dev/null
+          # The artifact a person will download, held to the same walk
+          # (§FS-002-release.3).
+          "$bin" doctor --self-only
 
       - name: Package binary
         id: package

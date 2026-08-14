@@ -35,10 +35,35 @@ rustc_path() {
   fi
 }
 
-# llvm-profdata ships in the active toolchain's llvm-tools-preview component.
-llvm_profdata="$(find "$(rustc --print sysroot)" -type f -name 'llvm-profdata*' | head -n1)"
+# llvm-profdata ships in the active toolchain's llvm-tools-preview component,
+# at a known path under the sysroot. Looked for there rather than searched for:
+# a distro toolchain's sysroot is `/usr`, and a `find` over it walks the whole
+# system, prints permission errors from every directory it cannot read, and
+# may return an `llvm-profdata` that does not match this compiler.
+sysroot="$(rustc --print sysroot)"
+llvm_profdata=""
+for candidate in "$sysroot"/lib/rustlib/*/bin/llvm-profdata*; do
+  if [ -x "$candidate" ]; then
+    llvm_profdata="$candidate"
+    break
+  fi
+done
+# A toolchain without the component can still be profiled where the system
+# carries an `llvm-profdata` of the same LLVM major — the profile format is
+# tied to the major release — so say what was found rather than refusing.
+if [ -z "$llvm_profdata" ] && command -v llvm-profdata >/dev/null 2>&1; then
+  rustc_llvm="$(rustc -vV | awk '/^LLVM version:/ { split($3, v, "."); print v[1] }')"
+  system_llvm="$(llvm-profdata --version | awk '/LLVM version/ { split($3, v, "."); print v[1] }')"
+  if [ -n "$rustc_llvm" ] && [ "$rustc_llvm" = "$system_llvm" ]; then
+    llvm_profdata="$(command -v llvm-profdata)"
+    echo "note: using the system llvm-profdata (LLVM $system_llvm, matching rustc)"
+  fi
+fi
 if [ -z "$llvm_profdata" ]; then
-  echo "error: llvm-profdata not found — run: rustup component add llvm-tools-preview" >&2
+  echo "error: no llvm-profdata matching this toolchain." >&2
+  echo "  rustup: rustup component add llvm-tools-preview" >&2
+  echo "  otherwise: install an llvm-profdata of the same LLVM major as rustc" >&2
+  echo "  (rustc reports LLVM $(rustc -vV | awk '/^LLVM version:/ { print $3 }'))" >&2
   exit 1
 fi
 
@@ -57,18 +82,29 @@ case "$host" in
 esac
 ephor="$repo/target/release/ephor$exe_suffix"
 
-echo "==> 2/3  training run — the hot read paths against this repo"
-# Exit codes are irrelevant here (`validate` exits 2 when a registry root is not
-# checked out on this machine); we only want the code paths exercised. State is
-# redirected into target/ so a training run never reads or writes the real cache.
+echo "==> 2/3  training run — the self pass, which is the workload"
+# `ephor doctor --self-only` is the same walk the release self-checks with
+# (§FS-002-release.3): it builds a project of its own in a temporary place and
+# runs the binary against it, so the profile is gathered from refresh, matter
+# merging, the summons executor, git, dispatch and the plan reader rather than
+# from whatever commands happened to be listed here.
+#
+# It is also the only workload that is hermetic. The commands this used to run
+# read `~/.config/ephor` — the *building* machine's own registry — which is a
+# private site on a laptop and, on a release runner, a file that is not there:
+# every command exited early and the profile was gathered from error paths
+# (§FS-001-forge-interface.5). The self pass reads nothing of anybody's.
+#
+# Each run spawns the binary many times over, and every child is instrumented
+# too: `-Cprofile-generate` writes one `.profraw` per process into the same
+# directory, so the children's profiles are part of the merge.
 set +e
 for _ in 1 2 3; do
-  EPHOR_HOME="$repo" XDG_STATE_HOME="$state_dir" "$ephor" list           >/dev/null 2>&1
-  EPHOR_HOME="$repo" XDG_STATE_HOME="$state_dir" "$ephor" validate       >/dev/null 2>&1
-  EPHOR_HOME="$repo" XDG_STATE_HOME="$state_dir" "$ephor" status --cached >/dev/null 2>&1
-  EPHOR_HOME="$repo" XDG_STATE_HOME="$state_dir" "$ephor" status --cached --json >/dev/null 2>&1
-  EPHOR_HOME="$repo" XDG_STATE_HOME="$state_dir" "$ephor" feed           >/dev/null 2>&1
-  EPHOR_HOME="$repo" XDG_STATE_HOME="$state_dir" "$ephor" feed --json    >/dev/null 2>&1
+  XDG_STATE_HOME="$state_dir" "$ephor" doctor --self-only >/dev/null 2>&1
+  # The pure-read surfaces the self pass does not reach, and a parse of the
+  # published schemas — cheap, and they need nothing on disk.
+  XDG_STATE_HOME="$state_dir" "$ephor" schema registry >/dev/null 2>&1
+  XDG_STATE_HOME="$state_dir" "$ephor" schema manifest >/dev/null 2>&1
 done
 set -e
 

@@ -227,6 +227,22 @@ each built profile-guided, archived with its `sha256`, and attached to a GitHub
 release whose notes are the changelog section for that version. Re-running a
 partially-failed release skips what already exists rather than failing.
 
+**Self-checked means the binary did its job, not that it started.** What every
+artifact is held to is `doctor`'s self pass (§FS-010-doctor.3): it builds a
+project of its own and walks the seams against it, so a binary that links,
+prints its version and cannot refresh a source is caught here rather than by
+the first person to install it. A check that only asks for `--version` tests
+the argument parser.
+
+**And it is what the profile is trained on.** A profile-guided build is only
+as good as the workload it profiled, so the training run is the same self
+pass rather than a list of commands assembled for the occasion — one workload,
+exercising the paths a reader actually waits on. It must also be hermetic: a
+training run that reads the registry of whoever is building reads a private
+site on one machine and finds nothing on a build runner
+(§FS-001-forge-interface.5), and a profile gathered from commands that all
+exited early is no profile at all.
+
 ### 4. Publication is gated on carrying nothing site-specific
 
 No artifact is published while the tree still violates

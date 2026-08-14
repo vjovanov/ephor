@@ -62,4 +62,7 @@ jobs:
         run: |
           set -euo pipefail
           ./target/release/ephor --version
-          ./target/release/ephor --help >/dev/null
+          # The same self pass a release holds every artifact to
+          # (§FS-002-release.3, §FS-010-doctor.3), so this answers the question
+          # the release will ask before the release asks it.
+          ./target/release/ephor doctor --self-only
