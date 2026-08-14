@@ -295,12 +295,17 @@ fn missing_binding(binding: &str, place: &std::path::Path) -> Option<PathBuf> {
         .split_whitespace()
         .next()?
         .trim_matches(|character| character == '\'' || character == '"');
-    let looks_like_a_path =
-        word.starts_with('/') || word.starts_with("./") || word.starts_with("../");
-    if !looks_like_a_path {
+    // What counts as absolute is the platform's answer, not a leading slash:
+    // a binding named `C:\tools\check.bat` is as much a path as `/usr/bin/check`
+    // is, and testing for the slash alone left it looking like a bare command —
+    // so a script that had been deleted was handed to the shell to fail as
+    // "command not found" rather than refused here by name.
+    let candidate = std::path::Path::new(word);
+    let absolute = candidate.is_absolute();
+    if !absolute && !word.starts_with("./") && !word.starts_with("../") {
         return None;
     }
-    let path = if word.starts_with('/') {
+    let path = if absolute {
         PathBuf::from(word)
     } else {
         place.join(word)

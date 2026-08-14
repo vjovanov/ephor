@@ -283,11 +283,34 @@ pub fn command_exists(name: &str) -> bool {
     std::env::var_os("PATH")
         .map(|paths| {
             std::env::split_paths(&paths).any(|dir| {
-                let candidate = dir.join(name);
-                candidate.is_file()
+                if dir.join(name).is_file() {
+                    return true;
+                }
+                // Where the extension is implied at invocation, a bare name is
+                // not what is on disk: `sh` on PATH is `sh.exe`, and looking
+                // only for the bare name found nothing, ever. Every rung that
+                // asks "is this runner installed" then answered no on a machine
+                // where the runner was sitting right there.
+                implied_extensions()
+                    .iter()
+                    .any(|extension| dir.join(format!("{name}{extension}")).is_file())
             })
         })
         .unwrap_or(false)
+}
+
+/// The extensions a bare command name may be wearing on disk. Empty where a
+/// name is a name — the executable bit is what decides on Unix.
+fn implied_extensions() -> Vec<String> {
+    if !cfg!(windows) {
+        return Vec::new();
+    }
+    std::env::var("PATHEXT")
+        .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string())
+        .split(';')
+        .filter(|extension| !extension.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 /// Read a secret JSON file from the ephor secrets directory
