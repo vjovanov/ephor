@@ -65,8 +65,8 @@ mod tests {
 
     #[test]
     fn a_message_without_a_task_has_no_box() {
-        assert_eq!(parse(&json!({ "author": "a" }), "gdev"), None);
-        assert_eq!(parse(&json!({ "task": null }), "gdev"), None);
+        assert_eq!(parse(&json!({ "author": "a" }), "forge"), None);
+        assert_eq!(parse(&json!({ "task": null }), "forge"), None);
     }
 
     /// Only `resolved` is ticked. A forge reporting a state ephor has not seen
@@ -76,21 +76,21 @@ mod tests {
     fn only_resolved_ticks_the_box() {
         let open = parse(
             &json!({ "task": { "state": "open", "comment": 7 } }),
-            "gdev",
+            "forge",
         )
         .unwrap();
         assert!(!open.resolved);
         assert_eq!(open.box_glyph(), "☐");
         assert_eq!(open.target, json!({ "state": "open", "comment": 7 }));
 
-        let done = parse(&json!({ "task": { "state": "RESOLVED" } }), "gdev").unwrap();
+        let done = parse(&json!({ "task": { "state": "RESOLVED" } }), "forge").unwrap();
         assert!(done.resolved);
         assert_eq!(done.box_glyph(), "☑");
 
-        let odd = parse(&json!({ "task": { "state": "pending-review" } }), "gdev").unwrap();
+        let odd = parse(&json!({ "task": { "state": "pending-review" } }), "forge").unwrap();
         assert!(!odd.resolved);
 
-        let stateless = parse(&json!({ "task": { "comment": 7 } }), "gdev").unwrap();
+        let stateless = parse(&json!({ "task": { "comment": 7 } }), "forge").unwrap();
         assert!(!stateless.resolved);
     }
 }

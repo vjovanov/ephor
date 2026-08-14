@@ -9,46 +9,99 @@ citation does not dangle.
 ## RM-001-forge-interface: put every forge behind the interface
 
 Implements [§FS-001-forge-interface](../requirements.md#fs-001-forge-interface-ephor-reaches-every-forge-and-issue-tracker-through-one-provider-interface).
-Today ephor violates it: two providers shell out to a vendor CLI from core
-source files, the committed `config/` names an employer's repositories and
-accounts, and `docs/` is a set of inherited workflow documents from the
-project this was extracted from. Nothing may be published until this lands.
+Most of it has landed — see `## Unreleased` in [docs/changelog.md](changelog.md)
+— and what remains is the last mile before anything is published.
 
 ### 1. What
 
-Give the `Provider` trait the capability set of
-[§FS-001-forge-interface.1](../requirements.md#1-capabilities) — pull requests
-by role, conversation, reactions, gate status, issues — so a provider declares
-what it answers and the feed degrades to that. Keep GitHub in the default build
-as the reference implementation
-([§FS-001-forge-interface.2](../requirements.md#2-two-transports-one-interface)).
-Move the vendor-CLI-backed pull request, issue, and gate implementations out
-of the default build
-([§FS-001-forge-interface.4](../requirements.md#4-site-specific-implementations-ship-separately)),
-with the vendor CLI name becoming a configured command rather than a literal in
-source. Replace the committed registry and feed configuration with examples,
-and add a packaging exclude so no artifact can carry the real ones
-([§FS-001-forge-interface.5](../requirements.md#5-no-site-specific-data-in-the-repository)).
-Rewrite or drop the inherited `docs/` set in the same pass.
+**Landed.** The `Forge` trait carries the capability set of
+[§FS-001-forge-interface.1](../requirements.md#1-capabilities) and both
+transports answer it: GitHub in the default build as the reference
+implementation, and anything else as an executable on `PATH`
+([§FS-001-forge-interface.2](../requirements.md#2-two-transports-one-interface)),
+with policy above both. The committed registry and feed configuration are
+examples, the packaging exclude keeps the real ones out of any artifact, the
+inherited `docs/` set is gone, and no employer or vendor identifier remains in
+source, tests, examples, or documentation
+([§FS-001-forge-interface.5](../requirements.md#5-no-site-specific-data-in-the-repository)) —
+`scripts/check-no-site-specific.sh` passes both halves today. The vendor CLI
+name is confined to its own adapter and held there by the build
+([§REQ-001-boundary.5](requirements/REQ-001-boundary.md#5-no-product-literal-outside-its-adapter)).
+
+**Owed.** The end-to-end proof: a run configured with nothing but the example
+configuration, against a public GitHub repository, producing a feed — which is
+what says the examples are a starting point rather than a shape. And the first
+release itself, which has to be tagged by hand before the bump workflows have
+anything to count from ([§FS-002-release](../requirements.md#fs-002-release-ephor-releases-from-a-tag-with-a-changelog-entry-per-change)).
+
+The boundary half of the same law — the seams a capability is reached across,
+rather than the forges reached through them — is
+[§RM-003-boundary](#rm-003-boundary-the-seams-the-law-still-owes).
 
 ### 2. Why now
 
-It blocks distribution outright. The crate as it stands packages an employer's
-internal repository layout, build commands, Bitbucket project keys, and a work
-email address; a crates.io version can never be withdrawn once published. It is
-also what makes ephor a tool rather than one person's script — the capability
-set is the same for GitHub, GitLab, Bitbucket, Forgejo, Jira, and Linear, and
-only the transport differs.
+It is the last thing between the tree and a first release. It is also what
+makes ephor a tool rather than one person's script — the capability set is the
+same for GitHub, GitLab, Bitbucket, Forgejo, Jira, and Linear, and only the
+transport differs.
 
 ### 3. Measurable
 
-A default build contains no occurrence of any employer or vendor identifier,
-nor any host name, in source, tests, or packaged files — checked by
-`scripts/check-private-words.sh` against a local word list, and by
-`cargo package --list`. The GitHub implementation answers every capability in
-[§FS-001-forge-interface.1](../requirements.md#1-capabilities). A run configured
-with only example configuration produces a working feed against a public
-GitHub repository.
+`scripts/check-no-site-specific.sh` passes on a clean tree (it does today), the
+GitHub implementation answers every capability in
+[§FS-001-forge-interface.1](../requirements.md#1-capabilities), and a run
+configured with only example configuration produces a working feed against a
+public GitHub repository.
+
+## RM-003-boundary: the seams the law still owes
+
+Serves [§REQ-001-boundary](requirements/REQ-001-boundary.md#req-001-boundary-every-capacity-ephor-does-not-embody-is-reached-across-a-seam).
+The law landed with the interface it describes — the summons executor, the
+capability table, the verb seams, the runtime binding, the manifest, and a
+literal-confinement check that fails the build
+([`## Unreleased`](changelog.md#unreleased)). Four things it names are not
+finished, and each is small enough to say exactly.
+[§RM-001-forge-interface](#rm-001-forge-interface-put-every-forge-behind-the-interface)
+is the forge half of the same law.
+
+### 1. What
+
+- **`defaults.github_user` is a vendor name in the configuration schema.** Four
+  pinned entries on the boundary check's migration ledger carry it
+  ([§REQ-001-boundary.5](requirements/REQ-001-boundary.md#5-no-product-literal-outside-its-adapter)).
+  Moving the key into the source's own block is a schema change with a
+  migration, which is why it was not done in passing.
+- **`forest` is core by the layering and not by structure.** It asks the git
+  prober what is on disk, so it is not on the enforced list; it joins when the
+  prober moves to sources
+  ([§AR-001-layers.3](architecture/AR-001-layers.md#3-from-todays-tree)).
+- **The gate seam has no surface.** `status`, `failures`, and `restart` resolve
+  and run, and the capability table counts a bound verb — but `ephor failures`
+  and the inbox's failures view still ask the provider that reported the item,
+  so a project with an internal gate is not yet indistinguishable from a
+  forge-hosted one where a person actually looks
+  ([§FS-006-project-interface.6](../requirements.md#6-the-gate-is-the-projects-in-three-verbs),
+  [§E2E-003-gate-verbs](../e2e/cases/E2E-003-gate-verbs.rs)).
+- **One ticket store is recognized and unread.** `beads` is probed and reports
+  nothing rather than pretending
+  ([§FS-006-project-interface.7](../requirements.md#7-local-ticket-stores-are-read-where-they-live)).
+  That is an honest degrade and still a reader nobody wrote.
+
+### 2. Why now
+
+Each is a place where the law is observed by intention rather than by
+construction, and that is the failure mode the law exists to prevent: a
+boundary held by everyone remembering it has already moved. The gate one is
+also the visible one — it is the difference between a project's own CI being a
+first-class gate and being a fact the capability table knows and nothing shows.
+
+### 3. Measurable
+
+`defaults.github_user` leaves the migration ledger with a schema change and a
+migration; `forest` is on the enforced core list in `scripts/check_boundary.py`;
+a manifest-bound gate draws the failures view and the restart on a row, with
+an e2e scenario that opens it through a surface rather than through the seam;
+and a `.beads` store in a checkout produces matters in the feed.
 
 ## RM-002-dossier-description: an item's own words belong in its dossier
 

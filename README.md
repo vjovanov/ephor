@@ -51,8 +51,12 @@ Scripts that wrap ephor — your own checkout and update commands — reach it
 through `PROJECTS_BIN`, and `EPHOR_HOME` says where its configuration lives;
 both are ordinary environment variables, set wherever you set the rest.
 
-`cargo install ephor` is not available yet: nothing is published while the tree
-still carries site-specific configuration — see
+`cargo install ephor` is not available yet: nothing has been published, and the
+first release has to be tagged by hand before the bump workflows have anything
+to count from. The site-specific blocker is cleared —
+`scripts/check-no-site-specific.sh` passes on this tree, so no employer or
+vendor identifier and no real registry reaches an artifact — and what is left
+before a first release is in
 [§RM-001-forge-interface](docs/roadmap.md#rm-001-forge-interface-put-every-forge-behind-the-interface).
 
 ## Requirements and releases

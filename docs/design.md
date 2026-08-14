@@ -56,8 +56,9 @@ revisited.
   matching is this engine scoped to one project; it is promoted, not
   duplicated.
 - **Forest** — git is assumed; other version control is out of scope. A
-  project's place is a forest of git repositories under a root — the GraalVM
-  shape (ce + ee + a thin workspace repo composing them) is the model, a
+  project's place is a forest of git repositories under a root — the
+  multi-repository shape (ce + ee + a thin workspace repo composing them) is
+  the model, a
   single repo is a forest of one. Staleness, rebase, landing, and gate counts
   are folds over the forest. Because git is assumed, branches, checkouts,
   ticket keys, and behind-counts are *derived by probing*, and the registry
@@ -101,7 +102,7 @@ One law, stated once, cited from every edge:
 ## 3. Matters in detail
 
 **Identity.** A matter's subject key is forge-stated (`gh:owner/repo#123`),
-ticket-stated (`ticket:GR-73955`), store-stated (`rhei:panta/boundary.3`,
+ticket-stated (`ticket:ABC-42`), store-stated (`rhei:panta/boundary.3`,
 `bead:…`), or synthesized for topics (`topic:<digest>` — a discussion that
 matched a project but no known matter). Identity is the subject the source
 stated, never the title.
@@ -167,7 +168,7 @@ Design notes on three of them:
 
 **Checks are a verb set, and every script is self-contained.** If the smoke
 test needs a build, `smoke-test.sh` builds — ephor never learns project build
-sequencing; that was the lesson of the GraalVM smoke-test build. Feature
+sequencing; that was the lesson of the smoke test that needed a build. Feature
 enumeration is a discovery contract: `smoke-test.sh --list` (or a static
 `features` list in the manifest) yields per-feature smoke as verify steps and
 quick actions; without it, smoke is one opaque verb. Verb *composition* (style
@@ -175,7 +176,7 @@ quick actions; without it, smoke is one opaque verb. Verb *composition* (style
 verb is one Summons, orchestration stays downstream. Exit semantics are shared
 across all verbs: `0` pass, nonzero fail, `75` park/not-applicable.
 
-**CI verbs are project truth.** How to ask GraalVM's gate what failed is the
+**CI verbs are project truth.** How to ask a project's gate what failed is the
 same for every developer of the project, so the binding's home is the
 manifest, with site override for credentials or variants. The existing
 `ci-failures.example.sh` and `restart-gate.example.sh` are the seam's embryo;
@@ -199,20 +200,20 @@ The one genuinely new architectural element. Offered, never required: an empty
 manifest is valid, a missing one costs nothing that site configuration cannot
 restore. It is how a project *chooses to speak* — declaring what probes would
 have guessed and offering what probes cannot find. It lives at the forest
-root; for GraalVM-shaped projects that is the thin workspace repo, for a
+root; for a multi-repository project that is the thin workspace repo, for a
 single repo it is the repo root.
 
 ```json
 {
   "v": 1,
   "identity": {
-    "name": "graal",
-    "aliases": ["graalvm", "native-image"],
-    "ticket_patterns": ["GR-\\d+"],
-    "repos": ["oracle/graal", "oracle/graal-enterprise"]
+    "name": "widget",
+    "aliases": ["widget-ce", "widget-ee"],
+    "ticket_patterns": ["ABC-\\d+"],
+    "repos": ["acme/widget", "acme/widget-enterprise"]
   },
   "forest": [
-    { "name": "ce", "path": "ce", "remote": "git@github.com:oracle/graal.git", "main": "master" }
+    { "name": "ce", "path": "ce", "remote": "git@github.com:acme/widget.git", "main": "master" }
   ],
   "checks": {
     "check": "./check.sh",
@@ -227,7 +228,7 @@ single repo it is the repo root.
   "tickets": [ { "kind": "rhei", "path": "panta" }, { "kind": "beads", "path": ".beads" } ],
   "actions": [
     { "id": "gate", "icon": "🧪", "description": "run the gate",
-      "command": "mx gate --tags style", "cwd": "repo:ce",
+      "command": "./gate.sh --tags style", "cwd": "repo:ce",
       "when": { "kinds": ["pr", "ci"] }, "requires": ["checkout"] }
   ]
 }
@@ -258,10 +259,10 @@ option. The envelope speaks the model's nouns:
   "summary": "style clean, 2 smoke failures",
   "url": "https://ci.example.com/build/4711",
   "needs_response": false,
-  "matters": [ { "kind": "ticket", "key": "bead:a1f3", "title": "…", "state": "open", "refs": ["GR-73955"] } ],
+  "matters": [ { "kind": "ticket", "key": "bead:a1f3", "title": "…", "state": "open", "refs": ["ABC-42"] } ],
   "discussions": [ { "matter": "bead:a1f3", "channel": "beads", "messages": [ { "author": "…", "time": "…", "text": "…" } ] } ],
-  "events": [ { "matter": "gh:oracle/graal#18774", "kind": "gate", "gate": [ { "repo": "ce", "passed": 72, "failed": 1, "running": 3 } ] } ],
-  "failures": [ { "id": "svm-hello", "repo": "ce", "summary": "image build OOM", "log": "runtime/logs/svm-hello.log" } ],
+  "events": [ { "matter": "gh:acme/widget#18774", "kind": "gate", "gate": [ { "repo": "ce", "passed": 72, "failed": 1, "running": 3 } ] } ],
+  "failures": [ { "id": "image-hello", "repo": "ce", "summary": "image build OOM", "log": "runtime/logs/image-hello.log" } ],
   "features": [ { "id": "reflection", "description": "reflection metadata" } ],
   "data": { }
 }

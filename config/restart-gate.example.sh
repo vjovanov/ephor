@@ -48,10 +48,10 @@
 #     EPHOR_GATE_NUMBER    the pull request number
 #     EPHOR_GATE_ITEM      the item id
 #
-# in its environment. For a Bitbucket-hosted gate driven through gdev-cli:
+# in its environment. For a gate driven through a vendor's own CLI:
 #
-#     GATE_RESTART: 'gdev-cli casablanca review --platform bitbucket
-#                      --project G --repo "$EPHOR_GATE_REPO"
+#     GATE_RESTART: 'your-ci-cli review restart
+#                      --project "$EPHOR_GATE_PROJECT" --repo "$EPHOR_GATE_REPO"
 #                      --pr "$EPHOR_GATE_NUMBER"'
 #
 # Left unset, this exits 2 and says so in the report rather than pretending the

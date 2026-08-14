@@ -90,9 +90,9 @@ mod tests {
     fn an_unrecognized_descriptor_goes_back_to_its_forge() {
         let thread = json!({ "reply": { "kind": "review-thread", "id": "t-9" } });
         assert_eq!(
-            parse_target(&thread, "gdev"),
+            parse_target(&thread, "forge"),
             Some(ReplyTarget::Forge {
-                source: "gdev".to_string(),
+                source: "forge".to_string(),
                 target: json!({ "kind": "review-thread", "id": "t-9" }),
             })
         );
@@ -103,10 +103,10 @@ mod tests {
     #[test]
     fn a_channel_that_declares_no_reply_has_no_target() {
         assert_eq!(
-            parse_target(&json!({ "messages": [{ "author": "ada" }] }), "gdev"),
+            parse_target(&json!({ "messages": [{ "author": "ada" }] }), "forge"),
             None
         );
-        assert_eq!(parse_target(&json!({ "reply": null }), "gdev"), None);
+        assert_eq!(parse_target(&json!({ "reply": null }), "forge"), None);
     }
 
     /// Nothing is posted for an empty reply — a proposal edited down to
@@ -114,7 +114,7 @@ mod tests {
     #[test]
     fn an_empty_reply_is_refused_before_any_provider_is_asked() {
         let target = ReplyTarget::Forge {
-            source: "gdev".to_string(),
+            source: "forge".to_string(),
             target: json!({ "id": "t-9" }),
         };
         let err = post(&target, "  \n\n", &[], "widget", &Defaults::default()).unwrap_err();
