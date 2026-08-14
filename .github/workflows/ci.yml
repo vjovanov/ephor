@@ -151,10 +151,15 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: ${{ runner.os }}-cargo-grund-0.7.0
+          key: ${{ runner.os }}-cargo-grund-0.9.0
 
+      # Pinned, and the pin is part of the tree's meaning: the version decides
+      # which `grund init` block the entrypoints may carry, so a checkout whose
+      # CLAUDE.md says v7 needs a grund that speaks v7. Bumping the block
+      # without bumping this is a gate that fails on the documentation rather
+      # than on anything a change did.
       - name: Install grund
-        run: cargo install grund --version 0.7.0 --locked
+        run: cargo install grund --version 0.9.0 --locked
 
       - name: grund check
         run: grund check

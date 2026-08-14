@@ -131,7 +131,7 @@ fn ephor(tmp: &Path) -> assert_cmd::Command {
 /// `checkout` command in anybody's configuration.
 #[test]
 fn a_missing_workspace_is_made_from_the_registry_alone() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     let root = fixture(tmp.path());
     let ce = repo(tmp.path(), "ce");
     let _ee = repo(tmp.path(), "ee");
@@ -164,7 +164,7 @@ fn a_missing_workspace_is_made_from_the_registry_alone() {
 /// Asked again it is not an error, and nothing is remade.
 #[test]
 fn a_workspace_that_is_already_there_says_so_and_succeeds() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     let root = fixture(tmp.path());
     let _ce = repo(tmp.path(), "ce");
     let _ee = repo(tmp.path(), "ee");
@@ -196,7 +196,7 @@ fn a_workspace_that_is_already_there_says_so_and_succeeds() {
 /// handover `ephor rebase` takes (§FS-005-dispatch.12).
 #[test]
 fn the_environment_a_program_state_sets_is_read_as_arguments() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     let root = fixture(tmp.path());
     let _ce = repo(tmp.path(), "ce");
     let _ee = repo(tmp.path(), "ee");
@@ -218,7 +218,7 @@ fn the_environment_a_program_state_sets_is_read_as_arguments() {
 /// that rather than being handed an empty directory.
 #[test]
 fn a_project_without_branch_workspaces_is_refused_by_name() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     let template = write_template(tmp.path());
     let project_root = tmp.path().join("solo");
     fs::create_dir_all(&project_root).unwrap();
@@ -252,7 +252,7 @@ fn a_project_without_branch_workspaces_is_refused_by_name() {
 /// rather than a half-made directory.
 #[test]
 fn a_project_with_no_checkout_yet_is_refused_by_name() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     fixture(tmp.path());
 
     ephor(tmp.path())

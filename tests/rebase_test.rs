@@ -57,7 +57,7 @@ fn advance_master(root: &Path, file: &str, contents: &str) {
 
 #[test]
 fn a_trailing_branch_is_replayed_and_says_so() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     let checkout = workspace(tmp.path());
     commit(&checkout, "mine.txt", "mine\n", "mine");
     advance_master(tmp.path(), "theirs.txt", "theirs\n");
@@ -76,7 +76,7 @@ fn a_trailing_branch_is_replayed_and_says_so() {
 /// model" — and the report it writes is what that model is handed.
 #[test]
 fn a_conflict_exits_three_and_writes_the_report_a_state_hands_on() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     let checkout = workspace(tmp.path());
     commit(&checkout, "shared.txt", "ours\n", "ours");
     advance_master(tmp.path(), "shared.txt", "theirs\n");
@@ -103,7 +103,7 @@ fn a_conflict_exits_three_and_writes_the_report_a_state_hands_on() {
 /// machine passes `{meta.*}` to a program (the manual's §8.5).
 #[test]
 fn the_environment_a_program_state_sets_is_read_as_arguments() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     let checkout = workspace(tmp.path());
     advance_master(tmp.path(), "theirs.txt", "theirs\n");
     let report = tmp.path().join("runtime/rebase.md");
@@ -122,7 +122,7 @@ fn the_environment_a_program_state_sets_is_read_as_arguments() {
 
 #[test]
 fn uncommitted_work_stops_it_rather_than_being_stashed() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     let checkout = workspace(tmp.path());
     commit(&checkout, "mine.txt", "mine\n", "mine");
     advance_master(tmp.path(), "theirs.txt", "theirs\n");
@@ -142,7 +142,7 @@ fn uncommitted_work_stops_it_rather_than_being_stashed() {
 
 #[test]
 fn a_directory_that_is_not_a_checkout_is_refused_by_name() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     ephor_cmd()
         .args(["rebase", "--onto", "master", "--checkout"])
         .arg(tmp.path())

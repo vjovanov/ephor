@@ -32,7 +32,7 @@ fn manifest(root: &Path, value: serde_json::Value) {
 /// no manifest, no registry, no configuration (§REQ-001-boundary.2).
 #[test]
 fn a_well_known_script_is_the_whole_declaration() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     script(tmp.path(), "check.sh", "echo 'the aggregate ran'");
 
     ephor_cmd()
@@ -46,7 +46,7 @@ fn a_well_known_script_is_the_whole_declaration() {
 /// first for what broke.
 #[test]
 fn a_failing_verb_fails_the_step_and_is_named() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     script(tmp.path(), "check.sh", "echo 'boom' >&2\nexit 3");
 
     ephor_cmd()
@@ -61,7 +61,7 @@ fn a_failing_verb_fails_the_step_and_is_named() {
 /// alone (§FS-006-project-interface.4).
 #[test]
 fn what_a_verb_says_in_the_envelope_is_what_is_reported() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     script(
         tmp.path(),
         "check.sh",
@@ -82,7 +82,7 @@ fn what_a_verb_says_in_the_envelope_is_what_is_reported() {
 /// exit code the way this contract exists to stop.
 #[test]
 fn a_verb_that_parks_has_not_failed() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     script(tmp.path(), "check.sh", "exit 75");
 
     ephor_cmd()
@@ -97,7 +97,7 @@ fn a_verb_that_parks_has_not_failed() {
 /// §AR-002-summons.1).
 #[test]
 fn the_manifest_outranks_the_probe_and_places_the_verb() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     script(tmp.path(), "check.sh", "echo 'the probed one'");
     fs::create_dir_all(tmp.path().join("ce")).unwrap();
     manifest(
@@ -118,7 +118,7 @@ fn the_manifest_outranks_the_probe_and_places_the_verb() {
 /// alone; a project that declares no aggregate runs what it does declare.
 #[test]
 fn the_aggregate_runs_alone_and_the_rest_run_where_there_is_none() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     script(tmp.path(), "check.sh", "echo 'aggregate'");
     script(tmp.path(), "check-style.sh", "echo 'style'");
     ephor_cmd()
@@ -142,7 +142,7 @@ fn the_aggregate_runs_alone_and_the_rest_run_where_there_is_none() {
 /// nobody ran that nobody was told about is worse than a red step.
 #[test]
 fn a_verb_that_was_asked_for_and_is_not_there_is_refused() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     script(tmp.path(), "check.sh", "true");
 
     ephor_cmd()
@@ -171,7 +171,7 @@ fn a_verb_that_was_asked_for_and_is_not_there_is_refused() {
 
     // And a project that declares nothing at all says so, naming both ways to
     // declare one.
-    let empty = tempfile::tempdir().unwrap();
+    let empty = tempdir();
     ephor_cmd()
         .args(["check", "--root", &empty.path().to_string_lossy()])
         .assert()
@@ -185,7 +185,7 @@ fn a_verb_that_was_asked_for_and_is_not_there_is_refused() {
 /// which is a complete answer and prints an empty list.
 #[test]
 fn features_enumerate_for_a_matrix_or_answer_the_empty_list() {
-    let listed = tempfile::tempdir().unwrap();
+    let listed = tempdir();
     manifest(
         listed.path(),
         json!({ "checks": { "smoke": { "command": "./smoke-test.sh",
@@ -207,7 +207,7 @@ fn features_enumerate_for_a_matrix_or_answer_the_empty_list() {
 
     // Asked: the command prints one id per line, which is a complete answer
     // and needs no artifact.
-    let asked = tempfile::tempdir().unwrap();
+    let asked = tempdir();
     script(asked.path(), "smoke-test.sh", "printf 'jfr\\nheap\\n'");
     manifest(
         asked.path(),
@@ -240,7 +240,7 @@ fn features_enumerate_for_a_matrix_or_answer_the_empty_list() {
         .success();
 
     // A smoke that is one opaque verb enumerates nothing.
-    let opaque = tempfile::tempdir().unwrap();
+    let opaque = tempdir();
     script(opaque.path(), "smoke-test.sh", "true");
     ephor_cmd()
         .args([
@@ -260,7 +260,7 @@ fn features_enumerate_for_a_matrix_or_answer_the_empty_list() {
 /// (§FS-009-shipped-actions.1).
 #[test]
 fn a_committed_registry_is_held_to_the_schema_without_its_checkouts() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     let template = write_template(tmp.path());
     let registry = tmp.path().join("workspaces.json");
     write_registry(

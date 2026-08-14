@@ -19,7 +19,6 @@
 #![allow(dead_code)]
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
@@ -36,7 +35,22 @@ impl World {
     /// A world with a forest on disk, an empty registry row for it, and a
     /// configuration that watches nothing yet. A case adds what it is about.
     pub fn new() -> World {
-        let dir = tempfile::tempdir().expect("a temporary world");
+        // The world is built inside a base directory the operating system has
+        // already resolved. macOS hands out `/var/folders/…` temporary
+        // directories that are really `/private/var/…`, and a summoned shell
+        // prints the second spelling as its `$PWD` — so a case asserting that
+        // a runtime ran from the checkout compared two spellings of the same
+        // directory and failed on macOS alone, which says nothing about the
+        // behaviour it was written to pin down.
+        let mut base = std::env::temp_dir();
+        if !cfg!(windows) {
+            if let Ok(resolved) = base.canonicalize() {
+                base = resolved;
+            }
+        }
+        let dir = tempfile::Builder::new()
+            .tempdir_in(base)
+            .expect("a temporary world");
         let world = World { dir };
         fs::create_dir_all(world.forest()).expect("the forest root");
         fs::create_dir_all(world.path().join("fakebin")).expect("a PATH of stubs");
@@ -269,9 +283,16 @@ fn executable(path: &Path, body: &str) {
 }
 
 fn set_executable(path: &Path) {
-    let mut permissions = fs::metadata(path).expect("stat the script").permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(path, permissions).expect("make it runnable");
+    #[cfg(not(unix))]
+    let _ = path;
+    // The exec bit is a Unix thing, and so is the type that sets it.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(path).expect("stat the script").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions).expect("make it runnable");
+    }
 }
 
 /// Deep-merge `overlay` into `base`, so a case states only the fields its

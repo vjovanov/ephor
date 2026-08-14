@@ -4,13 +4,35 @@
 #![allow(dead_code)]
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
 pub const TEMPLATE: &str =
     "# AGENTS.md\n\n{summary}\n\n{structure_intro}\n\n{structure_bullets}{validation_section}\n";
+
+/// A temporary world whose path is the one the operating system will hand back.
+///
+/// macOS hands out `/var/folders/…` temporary directories that are really
+/// `/private/var/…`, and a summoned shell prints the second spelling as its
+/// `$PWD`. A test that compares what a stub recorded against the path it built
+/// the world at then fails on macOS and nowhere else — which is the least
+/// useful kind of red, because it says nothing about the behaviour under test.
+/// Resolving the base directory once, here, means both sides are the same
+/// spelling for every test that asks. Windows is left alone: resolving there
+/// produces a `\\?\` verbatim path, which would be a new spelling problem
+/// rather than the end of this one.
+pub fn tempdir() -> tempfile::TempDir {
+    let mut base = std::env::temp_dir();
+    if !cfg!(windows) {
+        if let Ok(resolved) = base.canonicalize() {
+            base = resolved;
+        }
+    }
+    tempfile::Builder::new()
+        .tempdir_in(base)
+        .expect("a temporary directory")
+}
 
 pub fn ephor_cmd() -> assert_cmd::Command {
     assert_cmd::Command::cargo_bin("ephor").expect("ephor binary")
@@ -81,9 +103,16 @@ pub fn write_registry(path: &Path, data: &Value) {
 
 pub fn make_executable(path: &Path, contents: &str) {
     fs::write(path, contents).expect("write script");
-    let mut perms = fs::metadata(path).expect("stat script").permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(path, perms).expect("chmod script");
+    // The exec bit is a Unix thing, and so is the type that sets it: importing
+    // `PermissionsExt` unconditionally is what stopped every test binary in
+    // this tree from compiling on Windows. Same shape as the seam's own tests.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(path).expect("stat script").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(path, perms).expect("chmod script");
+    }
 }
 
 pub fn base_project_types(template_path: &Path) -> Value {

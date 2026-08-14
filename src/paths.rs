@@ -1,5 +1,6 @@
 use std::env;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 pub fn home_dir() -> PathBuf {
     env::var_os("HOME")
@@ -40,7 +41,34 @@ pub fn resolve_config(file: &str) -> PathBuf {
     user
 }
 
+/// What `--registry` named, where a person named one.
+static REGISTRY_OVERRIDE: OnceLock<PathBuf> = OnceLock::new();
+
+/// Record what `--registry` named, once, before any command runs.
+///
+/// The flag is global, but most subcommands never reach the code that read it:
+/// they resolve the registry through [`default_registry_path`] from wherever
+/// they happen to be, several calls deep. So the flag was parsed and dropped —
+/// `ephor capabilities --registry <other>` answered from the real registry and
+/// looked exactly like an answer about the file that was named. A flag nobody
+/// honours is worse than one nobody offers, because the wrong answer arrives
+/// wearing the right label.
+///
+/// Recording it here rather than threading it through every call site keeps one
+/// answer to "which registry is this process reading", which is the same reason
+/// `EPHOR_REGISTRY` exists.
+pub fn set_registry_override(path: PathBuf) {
+    let _ = REGISTRY_OVERRIDE.set(path);
+}
+
+/// The registry this process reads: what `--registry` named, else what
+/// `EPHOR_REGISTRY` names, else the configured one. The flag outranks the
+/// environment because it is the more specific statement — a person who typed
+/// a path meant that path.
 pub fn default_registry_path() -> PathBuf {
+    if let Some(path) = REGISTRY_OVERRIDE.get() {
+        return path.clone();
+    }
     env::var_os("EPHOR_REGISTRY")
         .map(PathBuf::from)
         .unwrap_or_else(|| resolve_config("workspaces.json"))

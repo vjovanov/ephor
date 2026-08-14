@@ -66,6 +66,14 @@ fn validate_manifest(path: &str) -> Result<ExitCode> {
 }
 
 fn run(cli: Cli) -> Result<ExitCode> {
+    // Before anything dispatches: the subcommands below return early and
+    // resolve the registry for themselves, several calls deep, so the flag has
+    // to be recorded where they will look rather than handed to the one branch
+    // that used to read it (§FS-001-forge-interface.5).
+    if let Some(path) = cli.registry.as_deref() {
+        paths::set_registry_override(PathBuf::from(path));
+    }
+
     match &cli.command {
         Command::Status(args) => return feed::commands::status(args),
         Command::Feed(args) => return feed::commands::feed(args),
@@ -95,11 +103,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
         _ => {}
     }
 
-    let registry_path = cli
-        .registry
-        .as_ref()
-        .map(PathBuf::from)
-        .unwrap_or_else(paths::default_registry_path);
+    // Which already accounts for `--registry`, recorded at the top of `run`.
+    let registry_path = paths::default_registry_path();
     let schema = load_schema(cli.schema.as_deref())?;
     let registry = registry::load_registry(&registry_path, &schema)?;
 

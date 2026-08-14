@@ -93,7 +93,7 @@ fn fixture(tmp: &Path, providers: Value) {
 /// forge anything (§FS-010-doctor.2).
 #[test]
 fn capabilities_prints_one_projects_rungs_and_why_the_missing_ones_are_missing() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     fixture(tmp.path(), json!([{ "provider": "demo" }]));
 
     ephor(tmp.path())
@@ -118,12 +118,77 @@ fn capabilities_prints_one_projects_rungs_and_why_the_missing_ones_are_missing()
         .stderr(predicate::str::contains("nonesuch"));
 }
 
+/// `--registry` names the registry the answer is about, on every subcommand
+/// that offers it (§FS-001-forge-interface.5).
+///
+/// It is a global flag, but the subcommands that resolve the registry for
+/// themselves used to read the configured one regardless — so the answer came
+/// back about a file the reader had not named, wearing the label of the one
+/// they had. Every test in this tree drives ephor through `EPHOR_REGISTRY`,
+/// which is exactly why nobody caught it; this one uses the flag, and points
+/// the environment somewhere else so that agreeing by accident is not
+/// available.
+#[test]
+fn the_registry_flag_names_the_registry_the_answer_is_about() {
+    let tmp = tempdir();
+    fixture(tmp.path(), json!([{ "provider": "demo" }]));
+
+    // A second registry, differing in one visible rung: `widget` here has the
+    // branch workspaces it does not have in the first.
+    let template = write_template(tmp.path());
+    let other = tmp.path().join("other.json");
+    write_registry(
+        &other,
+        &json!({
+            "project_types": base_project_types(&template),
+            "hook_sets": [],
+            "projects": [
+                {
+                    "id": "widget",
+                    "type": "monorepo",
+                    "display_name": "Widget",
+                    "root": tmp.path().join("project").to_string_lossy(),
+                    "branch_root_template": "{project_root}/{branch}",
+                    "main_branch": "main"
+                }
+            ]
+        }),
+    );
+
+    // The environment still names the first registry, where the rung is
+    // missing; the flag names the second, where it is held. The reason
+    // sentence is what tells them apart — it is printed only when the rung is
+    // missing, so its absence is the answer coming from the file that was
+    // named.
+    let named = other.to_string_lossy().into_owned();
+    ephor(tmp.path())
+        .args(["capabilities", "widget", "--registry", &named])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("branch-addressable"))
+        .stdout(predicate::str::contains("branch_root_template").not());
+
+    // Before the subcommand is the same statement, and clap accepts both.
+    ephor(tmp.path())
+        .args(["--registry", &named, "capabilities", "widget"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("branch_root_template").not());
+
+    // And with no flag, the configured registry is still what answers.
+    ephor(tmp.path())
+        .args(["capabilities", "widget"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("branch_root_template"));
+}
+
 /// The rung reasons `capabilities` prints are the capability table's own —
 /// doctor composes and never judges (§FS-010-doctor.1). If these two ever
 /// disagree, a reader holding both has neither.
 #[test]
 fn the_ladder_and_the_diagnosis_give_the_same_sentence() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     fixture(tmp.path(), json!([{ "provider": "demo" }]));
     // Against the same world: `doctor` refreshes and `capabilities` reads the
     // cache, so a project nobody has refreshed is a different world rather
@@ -155,7 +220,7 @@ fn the_ladder_and_the_diagnosis_give_the_same_sentence() {
 /// (§FS-006-project-interface.10).
 #[test]
 fn a_project_nobody_has_refreshed_says_so_rather_than_claiming_silence() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     fixture(tmp.path(), json!([{ "provider": "demo" }]));
 
     let out = ephor(tmp.path())
@@ -200,7 +265,7 @@ fn a_project_nobody_has_refreshed_says_so_rather_than_claiming_silence() {
 /// §FS-010-doctor.5).
 #[test]
 fn a_lost_source_is_named_with_its_kind_and_the_run_exits_degraded() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     fixture(
         tmp.path(),
         json!([{ "provider": "demo" }, { "provider": "dead" }]),
@@ -235,7 +300,7 @@ fn a_lost_source_is_named_with_its_kind_and_the_run_exits_degraded() {
 /// (§FS-010-doctor.5).
 #[test]
 fn losing_every_source_is_unreachable_rather_than_degraded() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     fixture(tmp.path(), json!([{ "provider": "dead" }]));
 
     ephor(tmp.path())
@@ -250,7 +315,7 @@ fn losing_every_source_is_unreachable_rather_than_degraded() {
 /// quiet rot a weekly run exists to find (§FS-010-doctor).
 #[test]
 fn a_root_that_is_not_on_disk_is_a_fault_and_leads_the_reasons() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     fixture(tmp.path(), json!([{ "provider": "demo" }]));
 
     ephor(tmp.path())
@@ -318,7 +383,7 @@ fn the_self_pass_walks_the_seams_against_a_site_it_made_up() {
 /// a temporary place and takes it away again.
 #[test]
 fn the_self_pass_leaves_nothing_behind() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     fixture(tmp.path(), json!([{ "provider": "demo" }]));
     let state = tmp.path().join("state");
     // The scratch site goes wherever temporary things go, so this run gets a

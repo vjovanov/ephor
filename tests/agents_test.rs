@@ -9,7 +9,7 @@ use common::*;
 
 #[test]
 fn ensure_agents_supports_ad_hoc_workspace() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     let template = write_template(tmp.path());
     let registry_path = tmp.path().join("workspaces.json");
     write_registry(
@@ -52,7 +52,7 @@ fn ensure_agents_supports_ad_hoc_workspace() {
 
 #[test]
 fn ensure_agents_without_ticket_uses_branch_summary() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     let template = write_template(tmp.path());
     let registry_path = tmp.path().join("workspaces.json");
     write_registry(
@@ -91,7 +91,7 @@ fn ensure_agents_without_ticket_uses_branch_summary() {
 
 #[test]
 fn ensure_agents_requires_root_for_ad_hoc_type() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     let template = write_template(tmp.path());
     let registry_path = tmp.path().join("workspaces.json");
     write_registry(

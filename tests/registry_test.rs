@@ -9,7 +9,7 @@ use common::*;
 
 #[test]
 fn validate_fails_for_missing_active_root() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     let template = write_template(tmp.path());
     let registry_path = tmp.path().join("workspaces.json");
     let graal_root = tmp.path().join("g");
@@ -49,7 +49,7 @@ fn validate_fails_for_missing_active_root() {
 
 #[test]
 fn validate_fails_when_required_branch_is_missing() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     let template = write_template(tmp.path());
     let registry_path = tmp.path().join("workspaces.json");
 
@@ -88,7 +88,7 @@ fn validate_fails_when_required_branch_is_missing() {
 
 #[test]
 fn list_prints_project_table() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     let template = write_template(tmp.path());
     let registry_path = tmp.path().join("workspaces.json");
 
@@ -137,7 +137,7 @@ fn list_prints_project_table() {
 
 #[test]
 fn unknown_workspace_id_is_reported() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     let template = write_template(tmp.path());
     let registry_path = tmp.path().join("workspaces.json");
     write_registry(

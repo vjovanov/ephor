@@ -187,7 +187,7 @@ fn path_with_extension(tmp: &Path) -> String {
 
 #[test]
 fn a_bash_extension_is_a_complete_forge_implementation() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     write_fixture(tmp.path());
     let path = path_with_extension(tmp.path());
 
@@ -296,7 +296,7 @@ fn a_bash_extension_is_a_complete_forge_implementation() {
 /// to a provider warning — never take the refresh down.
 #[test]
 fn a_broken_extension_degrades_to_a_provider_warning() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     write_fixture(tmp.path());
     let fake_bin = tmp.path().join("fakebin");
     fs::create_dir_all(&fake_bin).unwrap();
@@ -386,7 +386,7 @@ fn refresh_slow_forge(tmp: &Path, path: &str) -> Value {
 /// shared default for it would delay every other provider's failure.
 #[test]
 fn a_provider_block_raises_its_own_timeout() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     let path = slow_forge_fixture(tmp.path(), Some(30));
     let slot = &refresh_slow_forge(tmp.path(), &path)["providers"]["slowforge"];
 
@@ -401,7 +401,7 @@ fn a_provider_block_raises_its_own_timeout() {
 /// override rather than a ceiling that was generous all along.
 #[test]
 fn without_an_override_the_default_timeout_still_applies() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     let path = slow_forge_fixture(tmp.path(), None);
     let slot = &refresh_slow_forge(tmp.path(), &path)["providers"]["slowforge"];
 
@@ -416,7 +416,7 @@ fn without_an_override_the_default_timeout_still_applies() {
 /// provider block names the *forge*, and ephor derives the command from it.
 #[test]
 fn an_uninstalled_extension_names_the_executable_it_wanted() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     write_fixture(tmp.path());
     // An empty directory: nothing named `ephor-forge-demoforge` anywhere.
     let empty_bin = tmp.path().join("emptybin");
@@ -445,7 +445,7 @@ fn an_uninstalled_extension_names_the_executable_it_wanted() {
 /// Install a forge that fails a given way, and return its refreshed cache
 /// slot plus the exit code and stderr of the refresh that produced it.
 fn refresh_with_forge(script: &str) -> (Value, i32, String) {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     write_fixture(tmp.path());
     let fake_bin = tmp.path().join("failbin");
     fs::create_dir_all(&fake_bin).unwrap();
@@ -525,7 +525,7 @@ fn losing_every_provider_still_exits_three() {
 /// the feed it should have filled just looks like a quiet week.
 #[test]
 fn a_partly_lost_refresh_fails_explicitly() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     write_fixture(tmp.path());
     let fake_bin = tmp.path().join("mixedbin");
     fs::create_dir_all(&fake_bin).unwrap();
@@ -592,7 +592,7 @@ fn a_partly_lost_refresh_fails_explicitly() {
 /// refresh on a timer sees success and nobody is told.
 #[test]
 fn a_lost_shared_source_makes_the_run_fail_even_when_every_project_answered() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     write_fixture(tmp.path());
     let fake_bin = tmp.path().join("sharedbin");
     fs::create_dir_all(&fake_bin).unwrap();
@@ -677,7 +677,7 @@ fn ticking_a_task_reaches_the_extension_verbatim() {
     use ephor::forge::external::ExternalForge;
     use ephor::forge::{Forge, Request};
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     let extension = tmp.path().join("ephor-forge-demoforge");
     make_executable(&extension, FAKE_FORGE);
     let log = tmp.path().join("resolved.json");
@@ -715,7 +715,7 @@ fn a_reply_reaches_the_extension_with_the_words_and_the_thread() {
     use ephor::forge::external::ExternalForge;
     use ephor::forge::{Forge, Request};
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     let extension = tmp.path().join("ephor-forge-demoforge");
     make_executable(&extension, FAKE_FORGE);
     let log = tmp.path().join("replied.json");
@@ -757,7 +757,7 @@ fn an_extension_that_cannot_tick_says_so() {
     use ephor::forge::external::ExternalForge;
     use ephor::forge::{Forge, Request};
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     let extension = tmp.path().join("ephor-forge-readonly");
     make_executable(
         &extension,

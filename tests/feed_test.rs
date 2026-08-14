@@ -122,7 +122,7 @@ fn path_with_fake_gh(tmp: &Path) -> String {
 
 #[test]
 fn refresh_populates_cache_and_feed_lists_items() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     write_feed_fixture(tmp.path());
     let path = path_with_fake_gh(tmp.path());
 
@@ -210,7 +210,7 @@ fn refresh_populates_cache_and_feed_lists_items() {
 /// must not change any observable value.
 #[test]
 fn github_providers_produce_the_recorded_feed() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     write_feed_fixture(tmp.path());
     let path = path_with_fake_gh(tmp.path());
 
@@ -257,7 +257,7 @@ fn write_issues_fixture(tmp: &Path, recent_days: u64) {
 /// configured, closed ones included.
 #[test]
 fn issues_arrive_by_role_from_repositories_nobody_configured() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     write_issues_fixture(tmp.path(), 3650);
     let path = path_with_fake_gh(tmp.path());
 
@@ -331,7 +331,7 @@ fn issues_arrive_by_role_from_repositories_nobody_configured() {
 /// leaves the feed the moment it finishes; unfinished work is untouched.
 #[test]
 fn a_zero_recency_window_drops_finished_work_from_the_feed() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     write_issues_fixture(tmp.path(), 0);
     let path = path_with_fake_gh(tmp.path());
 
@@ -356,7 +356,7 @@ fn a_zero_recency_window_drops_finished_work_from_the_feed() {
 
 #[test]
 fn failing_provider_keeps_previous_items_as_stale() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     write_feed_fixture(tmp.path());
     let path = path_with_fake_gh(tmp.path());
 
@@ -400,7 +400,7 @@ fn failing_provider_keeps_previous_items_as_stale() {
 
 #[test]
 fn status_check_exits_4_on_unread_needs_response() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     write_feed_fixture(tmp.path());
     let path = path_with_fake_gh(tmp.path());
 
@@ -466,7 +466,7 @@ esac
 
 #[test]
 fn reviewer_items_record_threads_and_pending_citation() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     write_feed_fixture(tmp.path());
     let fake_bin = tmp.path().join("fakebin");
     fs::create_dir_all(&fake_bin).unwrap();
@@ -517,7 +517,7 @@ fn reviewer_items_record_threads_and_pending_citation() {
 
 #[test]
 fn answered_citation_stops_needing_a_response() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     write_feed_fixture(tmp.path());
     let fake_bin = tmp.path().join("fakebin");
     fs::create_dir_all(&fake_bin).unwrap();
@@ -597,7 +597,7 @@ esac
 /// costing the reader a duplicate for every pull request they already had.
 #[test]
 fn the_notice_list_catches_what_the_role_searches_cannot() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     write_feed_fixture(tmp.path());
     let fake_bin = tmp.path().join("fakebin");
     fs::create_dir_all(&fake_bin).unwrap();
@@ -694,7 +694,7 @@ fn the_notice_list_catches_what_the_role_searches_cannot() {
 
 #[test]
 fn status_without_config_reports_error() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     let mut cmd = ephor_cmd();
     cmd.env("EPHOR_STATUS_CONFIG", tmp.path().join("missing.json"));
     cmd.args(["status"])
@@ -711,7 +711,7 @@ fn status_without_config_reports_error() {
 /// report rather than a failure.
 #[test]
 fn custom_status_runs_as_a_summons_and_may_answer_in_the_envelope() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     write_feed_fixture(tmp.path());
     let project_root = tmp.path().join("demo");
     let reporter = project_root.join("report.sh");
@@ -811,7 +811,7 @@ JSON
 /// looked at (§FS-008-attribution.4).
 #[test]
 fn a_shared_source_is_placed_by_the_engine_rather_than_by_itself() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     write_feed_fixture(tmp.path());
     let fake_bin = tmp.path().join("fakebin");
     fs::create_dir_all(&fake_bin).unwrap();

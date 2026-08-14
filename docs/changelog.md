@@ -663,6 +663,18 @@ ships, the previous "latest" section moves verbatim to
   writes in those threads, so the last word was never the reader's and never
   would be, and a pull request whose boxes were all ticked weeks ago still read
   as work.
+- **ephor binds its own gate, so it holds every rung of its own ladder**
+  ([§FS-006-project-interface.6](../requirements.md#6-the-gate-is-the-projects-in-three-verbs)).
+  `scripts/gate-status.sh`, `scripts/gate-failures.sh` and
+  `scripts/gate-restart.sh` ask GitHub Actions what the gate is doing, what
+  failed, and to run the failures again; `ephor.json` binds them as the three
+  gate verbs. The shipped forge default would have answered too, but only for a
+  matter it has cached — which is a pull request, and this project is worked by
+  pushing to a branch as often as by opening one. The verbs ask about a commit
+  instead, so the question is answerable from the checkout alone, on a branch
+  with no pull request on it. A forge that cannot be reached is refused rather
+  than reported green: silence and a clean gate have the same shape, and only
+  the forge's exit code tells them apart.
 
 ### Removed
 
@@ -673,6 +685,33 @@ ships, the previous "latest" section moves verbatim to
 
 ### Fixed
 
+- **`--registry` was parsed and dropped by most of the commands that offer
+  it.** The manual has always spelled the resolution `--registry` →
+  `$EPHOR_REGISTRY` → the configured file, and one branch of `main` did that;
+  every subcommand that returns early and resolves the registry for itself —
+  `status`, `feed`, `refresh`, `checkout`, `rebase`, `work`, `capabilities`,
+  `doctor`, `tui` — went to the configured one regardless. So
+  `ephor capabilities --registry <other>` answered about a file the reader had
+  not named while wearing the label of the one they had, which is worse than
+  not offering the flag: it makes "try the change against a copy first"
+  quietly impossible. The flag is recorded once, before anything dispatches,
+  where all of them already look. Every test in the tree drives ephor through
+  `EPHOR_REGISTRY`, which is why nothing caught it; the new one uses the flag
+  and points the environment elsewhere.
+- **The test tree could not compile on Windows, and failed on macOS.** Two
+  helpers imported `std::os::unix::fs::PermissionsExt` unconditionally, so
+  every integration and scenario binary failed to build on `windows-latest` —
+  including the ones that summon no shell at all. The exec bit is set under
+  `#[cfg(unix)]` now, the shape the seam's own tests already used. On macOS the
+  temporary directories are `/var/folders/…` and really `/private/var/…`, and a
+  summoned shell prints the second spelling as its `$PWD`: three tests compared
+  two spellings of one directory and failed there and nowhere else. The world
+  is built inside a base directory the operating system has already resolved,
+  so both sides are one spelling.
+- **CI installed a `grund` that could not read this tree.** The pin was 0.7.0,
+  which speaks init block v4, while the entrypoints carry v7 — so the gate
+  failed on the documentation rather than on anything a change did. Pinned to
+  0.9.0, and the pin now says what it is for.
 - **A finished matter could still be counted as awaiting an answer**
   ([§FS-003-feed-categories.2](../requirements.md#2-recent)). `forge::policy`
   settles each report it builds, but a merge folds two of them: a notice's

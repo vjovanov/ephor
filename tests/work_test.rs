@@ -152,7 +152,7 @@ fn with_pr(tmp: &Path, edit: impl Fn(&mut Value)) {
 
 #[test]
 fn a_red_gate_becomes_a_ticket_that_carries_what_ephor_knew() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     fixture(tmp.path(), Value::Null);
     ephor(tmp.path())
         .args(["refresh", "demo"])
@@ -239,7 +239,7 @@ fn a_red_gate_becomes_a_ticket_that_carries_what_ephor_knew() {
 
 #[test]
 fn an_item_that_moved_reopens_its_own_work_in_the_same_plan() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     fixture(tmp.path(), Value::Null);
     ephor(tmp.path())
         .args(["refresh", "demo"])
@@ -292,7 +292,7 @@ fn an_item_that_moved_reopens_its_own_work_in_the_same_plan() {
 
 #[test]
 fn finished_work_is_never_dispatched_and_a_configured_recipe_wins() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     fixture(
         tmp.path(),
         json!({
@@ -336,7 +336,7 @@ fn finished_work_is_never_dispatched_and_a_configured_recipe_wins() {
 
 #[test]
 fn a_recipe_naming_a_state_the_machine_does_not_have_is_refused() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     fixture(
         tmp.path(),
         json!({
@@ -366,7 +366,7 @@ fn a_recipe_naming_a_state_the_machine_does_not_have_is_refused() {
 /// unrunnable.
 #[test]
 fn an_item_can_be_asked_for_anything_including_what_no_recipe_matches() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     fixture(tmp.path(), Value::Null);
     ephor(tmp.path())
         .args(["refresh", "demo"])
@@ -493,7 +493,7 @@ fn trailing_checkout(tmp: &Path, conflicting: bool) -> std::path::PathBuf {
 /// rather than a ticket.
 #[test]
 fn a_clean_rebase_is_a_done_thing_and_not_a_ticket() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     let checkout = trailing_checkout(tmp.path(), false);
     fixture_on(tmp.path(), &checkout, "master");
     ephor(tmp.path())
@@ -525,7 +525,7 @@ fn a_clean_rebase_is_a_done_thing_and_not_a_ticket() {
 /// (§FS-005-dispatch.12).
 #[test]
 fn a_rebase_that_stopped_is_the_ticket_and_carries_where_it_got_to() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     let checkout = trailing_checkout(tmp.path(), true);
     fixture_on(tmp.path(), &checkout, "master");
     ephor(tmp.path())
@@ -560,7 +560,7 @@ fn a_rebase_that_stopped_is_the_ticket_and_carries_where_it_got_to() {
 /// asks for is a file ephor names and reads back.
 #[test]
 fn an_answer_is_dispatched_without_a_checkout_and_its_reply_comes_back() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     fixture(tmp.path(), Value::Null);
     // The project resolves branches to workspaces of their own, and this
     // branch has none on disk: nothing that edits the change can run here.
@@ -648,7 +648,7 @@ fn an_answer_is_dispatched_without_a_checkout_and_its_reply_comes_back() {
 /// (§FS-005-dispatch.3).
 #[test]
 fn the_ledger_records_the_checkout_the_runtime_runs_from() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     fixture(tmp.path(), Value::Null);
     ephor(tmp.path())
         .args(["refresh", "demo"])
@@ -675,7 +675,7 @@ fn the_ledger_records_the_checkout_the_runtime_runs_from() {
 
 #[test]
 fn forgetting_an_entry_keeps_the_plan_it_points_at() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     fixture(tmp.path(), Value::Null);
     ephor(tmp.path())
         .args(["refresh", "demo"])
@@ -708,7 +708,7 @@ fn forgetting_an_entry_keeps_the_plan_it_points_at() {
 /// with its exit code read the one way.
 #[test]
 fn work_run_summons_the_runner_from_the_checkout() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     fixture(tmp.path(), Value::Null);
     ephor(tmp.path())
         .args(["refresh", "demo"])

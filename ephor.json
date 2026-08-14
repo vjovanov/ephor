@@ -7,5 +7,10 @@
   "checks": {
     "check": "just check",
     "style": "cargo fmt --all -- --check"
+  },
+  "ci": {
+    "status": "./scripts/gate-status.sh",
+    "failures": "./scripts/gate-failures.sh",
+    "restart": "./scripts/gate-restart.sh"
   }
 }

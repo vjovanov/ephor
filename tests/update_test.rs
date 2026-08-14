@@ -11,7 +11,7 @@ const FAKE_GIT: &str =
 
 #[test]
 fn update_defaults_to_release_branches_plus_active_project_branches() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     let template = write_template(tmp.path());
     let fake_bin = tmp.path().join("bin");
     fs::create_dir_all(&fake_bin).unwrap();
@@ -81,7 +81,7 @@ fn update_defaults_to_release_branches_plus_active_project_branches() {
 
 #[test]
 fn update_skip_agents_does_not_regenerate_agents_file() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     let template = write_template(tmp.path());
     let fake_bin = tmp.path().join("bin");
     fs::create_dir_all(&fake_bin).unwrap();
@@ -137,7 +137,7 @@ fn update_skip_agents_does_not_regenerate_agents_file() {
 
 #[test]
 fn update_runs_data_driven_hooks() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempdir();
     let template = write_template(tmp.path());
     let fake_bin = tmp.path().join("bin");
     fs::create_dir_all(&fake_bin).unwrap();
