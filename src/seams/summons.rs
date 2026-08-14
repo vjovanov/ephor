@@ -458,7 +458,12 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
-        format!("{} ", path.display())
+        // A binding is a command line, so the path in it is spelled for the
+        // shell that will parse it, exactly as the dossier's paths are
+        // (§FS-006-project-interface.3). A native path with a separator the
+        // shell reads as an escape is not a binding a project would ever
+        // write, and testing against one tests the wrong thing.
+        format!("{} ", crate::paths::for_shell(&path))
     }
 
     fn site(dir: &Path) -> Site {
