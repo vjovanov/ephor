@@ -585,6 +585,66 @@ fn a_partly_lost_refresh_fails_explicitly() {
         .is_empty());
 }
 
+/// A shared source is a lost provider like any other
+/// (§FS-001-forge-interface.6). It is the leg that reads the forge's own
+/// notice list — the completeness capability — so a run that lost it and still
+/// exited 0 is exactly how a source stays dark indefinitely: whatever runs the
+/// refresh on a timer sees success and nobody is told.
+#[test]
+fn a_lost_shared_source_makes_the_run_fail_even_when_every_project_answered() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_fixture(tmp.path());
+    let fake_bin = tmp.path().join("sharedbin");
+    fs::create_dir_all(&fake_bin).unwrap();
+    make_executable(&fake_bin.join("ephor-forge-goodforge"), FAKE_FORGE);
+    fs::write(
+        tmp.path().join("status.json"),
+        serde_json::to_string_pretty(&json!({
+            "defaults": { "ttl_seconds": 600, "provider_timeout_seconds": 10 },
+            // A site-level source that asks nothing about any one project.
+            // `email` has no secret here, so it declines to answer.
+            "sources": [{ "provider": "email" }],
+            "projects": { "demo": { "providers": [
+                { "provider": "goodforge", "user": "dev", "repos": ["app"] }
+            ] } }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let mut cmd = ephor_cmd();
+    cmd.env(
+        "PATH",
+        format!(
+            "{}:{}",
+            fake_bin.to_string_lossy(),
+            std::env::var("PATH").unwrap_or_default()
+        ),
+    );
+    for (key, value) in extension_env(tmp.path()) {
+        cmd.env(key, value);
+    }
+    let output = cmd.args(["refresh", "demo"]).output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert_eq!(
+        output.status.code(),
+        Some(4),
+        "losing the shared leg must not report success: {stderr}"
+    );
+    assert!(
+        stderr.contains("sources:"),
+        "the lost shared source must be named: {stderr}"
+    );
+
+    // The project's own source still delivered.
+    let cache: Value = serde_json::from_str(
+        &fs::read_to_string(tmp.path().join("state/ephor/feed/demo.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(cache["providers"]["goodforge"]["ok"], true);
+}
+
 /// The `capabilities` probe is the forge's first call, so it is where an
 /// unreachable host shows up. Its error must be reported as itself — it used
 /// to be replaced with "declared no capabilities", which describes a working

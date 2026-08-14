@@ -72,21 +72,37 @@ fn ephor(tmp: &Path) -> assert_cmd::Command {
 }
 
 fn fixture(tmp: &Path, work: Value) {
-    let template = write_template(tmp);
     let project_root = tmp.join("demo");
     fs::create_dir_all(&project_root).unwrap();
+    fixture_with(tmp, &project_root, "main", work);
+}
+
+/// The same fixture rooted at a checkout that already exists, on the main
+/// branch that checkout was grown from — for the recipes whose opening move is
+/// measured in git rather than reported by a forge.
+fn fixture_on(tmp: &Path, project_root: &Path, main_branch: &str) {
+    fixture_with(tmp, project_root, main_branch, Value::Null);
+}
+
+fn fixture_with(tmp: &Path, project_root: &Path, main_branch: &str, work: Value) {
+    let template = write_template(tmp);
+    let mut types = base_project_types(&template);
+    // The shared fixture's monorepo type leaves `default_branch` as the
+    // `{branch}` template, which no test expands. A project whose staleness is
+    // actually measured needs the branch its repository is replayed against.
+    types[0]["repos"][0]["default_branch"] = json!(main_branch);
 
     write_registry(
         &tmp.join("workspaces.json"),
         &json!({
-            "project_types": base_project_types(&template),
+            "project_types": types,
             "hook_sets": [],
             "projects": [{
                 "id": "demo",
                 "type": "monorepo",
                 "display_name": "Demo",
                 "root": project_root.to_string_lossy(),
-                "main_branch": "main",
+                "main_branch": main_branch,
                 "branches": [
                     { "id": "demo-ticket", "branch": "you/ABC-42-work", "active": true, "ticket": "ABC-42" }
                 ]
@@ -412,6 +428,129 @@ fn an_item_can_be_asked_for_anything_including_what_no_recipe_matches() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("Nothing was asked for"));
+}
+
+fn git(dir: &Path, args: &[&str]) {
+    let status = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .unwrap();
+    assert!(status.success(), "git {args:?} in {}", dir.display());
+}
+
+fn commit(dir: &Path, file: &str, contents: &str, message: &str) {
+    fs::write(dir.join(file), contents).unwrap();
+    git(dir, &["add", file]);
+    git(dir, &["commit", "-m", message]);
+}
+
+/// A real checkout on the fixture's branch, trailing `master` by one commit.
+/// The project root *is* the checkout, so the item resolves to it without a
+/// workspace template.
+fn trailing_checkout(tmp: &Path, conflicting: bool) -> std::path::PathBuf {
+    let origin = tmp.join("origin.git");
+    fs::create_dir_all(&origin).unwrap();
+    git(&origin, &["init", "--initial-branch=master", "-q"]);
+    git(&origin, &["config", "user.email", "t@example.com"]);
+    git(&origin, &["config", "user.name", "t"]);
+    commit(&origin, "shared.txt", "one\n", "one");
+
+    let checkout = tmp.join("demo");
+    let status = std::process::Command::new("git")
+        .args(["clone", "-q"])
+        .arg(&origin)
+        .arg(&checkout)
+        .stderr(std::process::Stdio::null())
+        .status()
+        .unwrap();
+    assert!(status.success());
+    git(&checkout, &["config", "user.email", "t@example.com"]);
+    git(&checkout, &["config", "user.name", "t"]);
+    git(&checkout, &["checkout", "-q", "-b", "you/ABC-42-work"]);
+
+    // What the branch did, and what master did after it.
+    if conflicting {
+        commit(&checkout, "shared.txt", "ours\n", "ours");
+        commit(&origin, "shared.txt", "theirs\n", "master moves");
+    } else {
+        commit(&checkout, "mine.txt", "mine\n", "mine");
+        commit(&origin, "theirs.txt", "theirs\n", "master moves");
+    }
+    // How far a branch trails is measured against the remote ref the checkout
+    // holds, so the fixture has to have seen master move — the same thing a
+    // reader's `git fetch` or a previous refresh would have done.
+    git(&checkout, &["fetch", "-q", "origin"]);
+    checkout
+}
+
+/// §FS-005-dispatch.12: the deterministic move runs first, and where it
+/// finished nothing is dispatched at all. Handing `ephor rebase` to a model
+/// pays a pass to have two commands typed, and a clean replay is a done thing
+/// rather than a ticket.
+#[test]
+fn a_clean_rebase_is_a_done_thing_and_not_a_ticket() {
+    let tmp = tempfile::tempdir().unwrap();
+    let checkout = trailing_checkout(tmp.path(), false);
+    fixture_on(tmp.path(), &checkout, "master");
+    ephor(tmp.path())
+        .args(["refresh", "demo"])
+        .assert()
+        .success();
+
+    ephor(tmp.path())
+        .args(["work", "dispatch", "--recipe", "rebase"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("0 ticket(s) opened"))
+        .stdout(predicate::str::contains("1 item(s) finished without one"))
+        .stdout(predicate::str::contains("rebase finished"));
+
+    // The replay actually happened, and no plan was written for it.
+    assert!(
+        checkout.join("theirs.txt").exists(),
+        "the branch was replayed"
+    );
+    assert!(
+        !checkout.join("panta").exists(),
+        "a clean rebase is no ticket"
+    );
+}
+
+/// And where it stopped, that is the ticket: what is handed over is the
+/// situation, with the repository left standing in the conflict
+/// (§FS-005-dispatch.12).
+#[test]
+fn a_rebase_that_stopped_is_the_ticket_and_carries_where_it_got_to() {
+    let tmp = tempfile::tempdir().unwrap();
+    let checkout = trailing_checkout(tmp.path(), true);
+    fixture_on(tmp.path(), &checkout, "master");
+    ephor(tmp.path())
+        .args(["refresh", "demo"])
+        .assert()
+        .success();
+
+    ephor(tmp.path())
+        .args(["work", "dispatch", "--recipe", "rebase"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1 ticket(s) opened"));
+
+    let plan =
+        fs::read_to_string(checkout.join("panta/github-prs-acme-widget-42.rhei.md")).unwrap();
+    assert!(plan.contains("### Task rebase-1:"), "{plan}");
+    // The situation, not the request to reproduce it.
+    assert!(plan.contains("stopped in a conflict"), "{plan}");
+    assert!(plan.contains("shared.txt"), "{plan}");
+    // And the brief no longer asks a model to run the replay itself.
+    assert!(!plan.contains("Run `ephor rebase"), "{plan}");
+    // Left mid-rebase, which is the state resolving it needs.
+    assert!(
+        checkout.join(".git/rebase-merge").exists() || checkout.join(".git/rebase-apply").exists()
+    );
 }
 
 /// §FS-005-dispatch.13: work about a conversation needs no checkout — the

@@ -632,6 +632,82 @@ ships, the previous "latest" section moves verbatim to
 
 ### Fixed
 
+- **A finished matter could still be counted as awaiting an answer**
+  ([§FS-003-feed-categories.2](../requirements.md#2-recent)). `forge::policy`
+  settles each report it builds, but a merge folds two of them: a notice's
+  state is the reason the forge sent it, never a terminal state, so nothing
+  settled the thin report before it reached `absorb`, and a merged pull
+  request the notice list also mentioned came back `finished` *and*
+  `needs_response`. The model settles now — on the way in and after a merge —
+  so the summary's Respond column, the unread counts and `status --check`
+  stop counting work that is over.
+- **A finished status line appeared under both Status and Recent**
+  ([§FS-003-feed-categories.1](../requirements.md#1-the-categories)). Every
+  interactive section but Recent's excluded finished work; Status did not, so
+  a project answering `"status": "done"` was double counted in exactly the
+  pile the categories exist to make readable. The plain renderer had it right.
+- **A lost shared source let the whole run report success**
+  ([§FS-001-forge-interface.6](../requirements.md#6-a-source-that-did-not-answer-says-so-and-says-which-kind-of-not)).
+  `ephor refresh` counted per-project failures and printed the shared ones
+  without counting them, so losing the leg that reads the forge's own notice
+  list — the completeness capability — exited `0`. It is a refreshed unit like
+  a project now, and its failure is exit `4`.
+- **The dossier's message budget was a total that could be exceeded**
+  ([§FS-005-dispatch.2](../requirements.md#2-the-ticket-carries-what-ephor-knows-not-a-link-to-it)).
+  Two messages were reserved per thread *before* the total was applied, so
+  twenty threads quoted forty messages against a budget of twenty-four. The
+  reservation is spent out of the total now, and a thread the budget cannot
+  reach is counted as dropped rather than silently omitted from the tally.
+- **The `rebase` recipe asked a model to run the rebase**
+  ([§FS-005-dispatch.12](../requirements.md#12-work-an-algorithm-can-finish-does-not-start-with-a-model)).
+  Only `ephor rebase --dispatch` made the deterministic move first; the inbox
+  key, `work dispatch --recipe rebase` and `work sync` wrote a ticket whose
+  brief said "run `ephor rebase` first" — a pass paid to have two commands
+  typed, and a ticket even where the replay would have been clean. A recipe
+  may now declare its deterministic opening move, `dispatch` makes it before
+  anything is written, a clean replay opens no plan at all, and a conflict is
+  handed over as the situation it stopped in.
+- **Declared territory tied with references instead of settling it**
+  ([§FS-008-attribution.3](../requirements.md#3-venue-beats-reference-beats-resemblance)).
+  A subject on a repository the project claims is that project's "before any
+  reference or alias is consulted", but territory scored as a reference — so a
+  mention on the project's own ecosystem that happened to name another
+  project's ticket key tied and went to the unattributed bucket. Territory is
+  a venue now, as the forest is.
+- **Resemblance could amend a subject some source had stated**
+  ([§FS-008-attribution.3](../requirements.md#3-venue-beats-reference-beats-resemblance)).
+  The strength a placement was reached by was computed and dropped, so nothing
+  downstream could hold "resemblance may start a new row, it may not amend
+  one". It rides on the placement now, and a matter placed by nothing firmer
+  than the project's name is its own subject in the merge.
+- **A ticket store that could not be read answered as an empty store**
+  ([§FS-006-project-interface.7](../requirements.md#7-local-ticket-stores-are-read-where-they-live),
+  [§FS-001-forge-interface.6](../requirements.md#6-a-source-that-did-not-answer-says-so-and-says-which-kind-of-not)).
+  An unreadable plan directory, and a plan the reader could not parse, both
+  became "no tickets" — the one thing an empty section must never mean. A
+  store is now reported like any other source that did not answer.
+- **A gate verb could never run where it said it did**
+  ([§FS-006-project-interface.3](../requirements.md#3-a-summons-environment-in-exit-code-and-answer-out)).
+  `seams::gate::run` built a rootless site, so a verb declaring
+  `"cwd": "workspace"` silently ran at the forest root instead of in the
+  branch workspace the change resolves to. It takes the caller's site now.
+- **The `observable` rung counted sources that were merely configured**
+  ([§FS-006-project-interface.10](../requirements.md#10-capability-rung-by-rung)).
+  The ladder calls it "at least one source *answering*"; a project whose every
+  source was broken still held the rung, which is the empty feed claiming to
+  mean "nothing is waiting". Configured-and-silent is its own reason now.
+- **The shipped CI workflows could not run for anyone but ephor**
+  ([§FS-009-shipped-actions.1](../requirements.md#1-the-set)). Inside a
+  reusable workflow a relative `uses: ./.github/actions/…` resolves against
+  the *caller's* checkout, so `ephor-check.yml` and `ephor-validate.yml`
+  failed for every repository that wired them in. They fetch their own steps
+  at the version the caller pinned. The composite-action form was unaffected.
+- Five sites cited `§FS-005-dispatch.10` for work that stops for a person,
+  which is `§FS-005-dispatch.9`. They resolved, so nothing failed — they
+  pointed a reader at the wrong law.
+- The manual's CI examples pinned `v0.4.1`, a version that has never existed;
+  they name this tree's version, and say why `version` and the `@ref` have to
+  agree ([§FS-002-release](../requirements.md#fs-002-release-ephor-releases-from-a-tag-with-a-changelog-entry-per-change)).
 - A provider block's `timeout_seconds` was read from the configuration and
   then ignored: every provider ran under the shared
   `defaults.provider_timeout_seconds`. A forge behind a VPN, configured with

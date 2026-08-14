@@ -12,7 +12,6 @@
 //! capability is the shipped default binding, and nothing above the seam can
 //! tell the difference between that and a project that binds three commands.
 
-use std::path::Path;
 use std::time::Duration;
 
 use crate::error::Result;
@@ -188,18 +187,23 @@ pub fn may_restart(already: usize) -> bool {
     already < RESTART_LIMIT
 }
 
-/// Ask one gate verb at a project's root.
+/// Ask one gate verb.
+///
+/// The site is the caller's, not the project root flattened: a gate is asked
+/// about one change, and a verb that says `cwd: workspace` means the branch
+/// workspace that change resolves to (§FS-006-project-interface.3). Passing a
+/// rootless site here silently ran every such verb at the forest root instead.
 pub fn run(
     bound: &Bound,
     verb: Verb,
-    root: &Path,
+    site: &Site,
     dossier: Vec<(String, String)>,
     timeout: Duration,
 ) -> Result<Option<Answer>> {
     let Some(summons) = bound.summons(verb, dossier)? else {
         return Ok(None);
     };
-    crate::seams::summons::run(&summons, &Site::root(root), Mode::Captured(timeout)).map(Some)
+    crate::seams::summons::run(&summons, site, Mode::Captured(timeout)).map(Some)
 }
 
 #[cfg(test)]
@@ -285,12 +289,37 @@ mod tests {
         run(
             &bound,
             Verb::Status,
-            tmp.path(),
+            &Site::root(tmp.path()),
             Vec::new(),
             Duration::from_secs(10),
         )
         .unwrap()
         .unwrap()
+    }
+
+    /// A verb that says where it runs is run there: a gate asked about one
+    /// change resolves the workspace that change is in, exactly as any other
+    /// summons does (§FS-006-project-interface.3).
+    #[test]
+    fn a_gate_verb_runs_in_the_matters_workspace_where_it_asks_for_one() {
+        let tmp = tempfile::tempdir().unwrap();
+        let workspace = tmp.path().join("you-ABC-42");
+        std::fs::create_dir(&workspace).unwrap();
+        let bound = Bound::Command {
+            command: "pwd".to_string(),
+            cwd: Some("workspace".to_string()),
+        };
+        let answer = run(
+            &bound,
+            Verb::Status,
+            &Site::workspace(tmp.path(), &workspace),
+            Vec::new(),
+            Duration::from_secs(10),
+        )
+        .unwrap()
+        .unwrap();
+        let printed = answer.output.unwrap();
+        assert!(printed.trim().ends_with("you-ABC-42"), "{printed}");
     }
 
     /// One change may gate across a tree, so what comes back is per

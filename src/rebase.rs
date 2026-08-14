@@ -137,9 +137,13 @@ fn hand_over(item: &Item, outcome: &git::Rebase) -> Result<()> {
             EphorError::Command("No recipe named 'rebase' is configured.".to_string())
         })?;
     // The brief carries the situation, not the request to reproduce it: the
-    // repository is standing in the conflict this text describes.
+    // repository is standing in the conflict this text describes. The replay
+    // has already happened — this is what it stopped at — so the recipe's own
+    // opening move is cleared rather than run a second time over a working
+    // tree that is mid-rebase (§FS-005-dispatch.12).
     let recipe = crate::work::recipe::Recipe {
         brief: format!("{}\n\n{}", recipe.brief, outcome.report()),
+        opens_with: None,
         ..recipe
     };
     let opened = dispatcher.dispatch(item, &recipe, false)?;

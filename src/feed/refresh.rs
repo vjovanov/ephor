@@ -200,15 +200,23 @@ pub fn refresh_project(
         let manifest = placement.manifest();
         let stores = crate::seams::tickets::find(&placement.root, manifest.as_ref());
         for store in stores {
-            let items = crate::seams::tickets::read(&store, project_id);
-            if items.is_empty() {
-                continue;
+            let name = store.kind.name().to_string();
+            match crate::seams::tickets::read(&store, project_id) {
+                // A store that answered lands its matters, empty answer
+                // included: a store with no open tickets has said so, and its
+                // slot saying so is what tells last refresh's tickets to go.
+                Ok(items) => {
+                    let slot = results.entry(name).or_insert((true, None, Vec::new()));
+                    slot.0 = true;
+                    slot.2.extend(items);
+                }
+                // A store ephor could not read is reported like any other
+                // source that did not answer, rather than read as a store with
+                // nothing in it (§FS-001-forge-interface.6).
+                Err(why) => {
+                    results.insert(name, (false, Some(why), Vec::new()));
+                }
             }
-            results
-                .entry(store.kind.name().to_string())
-                .or_insert((true, None, Vec::new()))
-                .2
-                .extend(items);
         }
     }
 
@@ -368,8 +376,11 @@ pub fn refresh_shared(registry_doc: &Value, config: &StatusConfig) -> Result<Ref
             let mut matter = crate::matter::Matter::of_item(&item);
             let evidence = crate::matter::evidence_of(&item);
             matter.placement = match crate::attribution::place(&evidence, &identities) {
-                crate::attribution::Placed::On { project, .. } => {
-                    crate::matter::Placement::on(project)
+                // How firmly it was claimed travels with it: what may be done
+                // with a placement depends on how it was reached
+                // (§FS-008-attribution.3).
+                crate::attribution::Placed::On { project, how } => {
+                    crate::matter::Placement::claimed(project, how)
                 }
                 crate::attribution::Placed::Ambiguous { candidates } => {
                     crate::matter::Placement::Unattributed { candidates }

@@ -40,6 +40,15 @@ impl ItemKind {
 /// them differently and compose them (`open:changes_requested`, `CLOSED`).
 const TERMINAL_STATES: [&str; 5] = ["closed", "merged", "done", "resolved", "declined"];
 
+/// Whether a state means the work is over (§FS-003-feed-categories.2). Free of
+/// [`Item`] so the model can ask it of a matter without building a report to
+/// ask it about — the two must answer the same way or a row lands in one
+/// category and settles by another.
+pub fn is_terminal(state: Option<&str>) -> bool {
+    let state = state.unwrap_or("").to_lowercase();
+    TERMINAL_STATES.iter().any(|needle| state.contains(needle))
+}
+
 /// Whether an item is the user's own work or something they are reviewing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -75,8 +84,7 @@ impl Item {
     /// The work is over: the item belongs under Recent rather than in its own
     /// category (§FS-003-feed-categories.2).
     pub fn is_finished(&self) -> bool {
-        let state = self.state.as_deref().unwrap_or("").to_lowercase();
-        TERMINAL_STATES.iter().any(|needle| state.contains(needle))
+        is_terminal(self.state.as_deref())
     }
 
     /// Whether a finished item is recent enough to still be shown, against a

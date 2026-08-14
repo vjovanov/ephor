@@ -1735,24 +1735,30 @@ As whole jobs:
 ```yaml
 jobs:
   materials:
-    uses: vjovanov/ephor/.github/workflows/ephor-validate.yml@v0.4.1
+    uses: vjovanov/ephor/.github/workflows/ephor-validate.yml@v0.1.0
     with:
-      version: "0.4.1"
+      version: "0.1.0"
       registry: infra/workspaces.json   # omit where you keep none
 
   gate:
-    uses: vjovanov/ephor/.github/workflows/ephor-check.yml@v0.4.1
+    uses: vjovanov/ephor/.github/workflows/ephor-check.yml@v0.1.0
     with:
-      version: "0.4.1"
+      version: "0.1.0"
       per-feature: true                 # one job per feature your smoke lists
 ```
+
+Pin `version` to the same release you pinned the workflow at. The jobs fetch
+their own steps at `v<version>` — a reusable workflow's relative `uses:`
+resolves against *your* checkout, not against ephor's — so a `version` that
+disagrees with the `@ref` runs one release's steps against another's, and a
+tag that does not exist fails at the fetch rather than three steps later.
 
 Or as steps, when you are composing something of your own:
 
 ```yaml
-      - uses: vjovanov/ephor/.github/actions/setup@v0.4.1
-        with: { version: "0.4.1" }
-      - uses: vjovanov/ephor/.github/actions/check@v0.4.1
+      - uses: vjovanov/ephor/.github/actions/setup@v0.1.0
+        with: { version: "0.1.0" }
+      - uses: vjovanov/ephor/.github/actions/check@v0.1.0
         with: { verbs: "style smoke" }
 ```
 

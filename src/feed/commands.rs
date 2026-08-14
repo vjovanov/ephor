@@ -91,6 +91,19 @@ fn refresh_projects(
     for failure in &shared.failures {
         eprintln!("error: sources: {}", failure.describe());
     }
+    // The shared sources are a refreshed unit like a project, and their
+    // failures count like one: this is the leg that reads the forge's own
+    // notice list, so losing it silently is how the completeness capability
+    // stays dark while whatever runs the timer sees exit 0
+    // (§FS-001-forge-interface.6).
+    if !config.sources.is_empty() {
+        refreshed += 1;
+        if shared.total_failure {
+            total_failures += 1;
+        } else if !shared.failures.is_empty() {
+            degraded += 1;
+        }
+    }
     if !quiet && shared.item_count > 0 {
         println!("sources: {} items placed", shared.item_count);
     }

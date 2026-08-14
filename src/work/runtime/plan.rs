@@ -46,7 +46,7 @@ pub struct StateInfo {
     pub name: String,
     pub is_final: bool,
     /// The runtime will not leave this state on its own: it is where work
-    /// waits for a person (§FS-005-dispatch.10).
+    /// waits for a person (§FS-005-dispatch.9).
     pub is_gating: bool,
 }
 
@@ -142,7 +142,7 @@ impl WorkRoot {
     }
 
     /// Whether a state is one the runtime will not leave on its own — work
-    /// parked there is waiting for a person (§FS-005-dispatch.10).
+    /// parked there is waiting for a person (§FS-005-dispatch.9).
     pub fn is_gating(&self, state: &str) -> bool {
         self.flag(state, |info| info.is_gating)
     }
@@ -620,7 +620,7 @@ mod tests {
         assert!(!root.is_final("nonexistent"));
 
         // A machine with a state the runtime will not leave on its own: work
-        // parked there is waiting for a person (§FS-005-dispatch.10).
+        // parked there is waiting for a person (§FS-005-dispatch.9).
         let tmp = tempfile::tempdir().unwrap();
         fs::write(
             tmp.path().join("states.yaml"),

@@ -57,7 +57,15 @@ pub struct Identity {
 /// How firmly the evidence points at a project (§FS-008-attribution.3). An
 /// explicit venue wins outright; a reference places on the named matter; only
 /// resemblance may be argued with.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+///
+/// It is kept on the placement rather than consumed and dropped: what may be
+/// done with a placement depends on how it was reached — resemblance may start
+/// a new row and may not amend one — and a misplacement is debugged by looking
+/// at the strength rather than by rereading a source (§AR-003-attribution.1).
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "lowercase")]
 pub enum Strength {
     Resemblance,
     Reference,
@@ -82,12 +90,15 @@ impl Identity {
     pub fn claim(&self, evidence: &Evidence) -> Option<Strength> {
         // An explicit venue wins outright: the source said which repository
         // this is on, and a repository of the forest is not a resemblance.
+        // Declared territory is a venue on the same terms — a subject sitting
+        // on a repository the project claims "is that project's before any
+        // reference or alias is consulted" (§FS-008-attribution.3), and
+        // ranking it with references left a mention on the project's own
+        // ecosystem tying with somebody else's ticket key and going to the
+        // bucket.
         if let Some(repo) = &evidence.repo {
-            if self.repos.iter().any(|own| own == repo) {
+            if self.repos.iter().any(|own| own == repo) || self.claims_territory(repo) {
                 return Some(Strength::Venue);
-            }
-            if self.claims_territory(repo) {
-                return Some(Strength::Reference);
             }
         }
         // A reference places on the named matter: a ticket key this project
@@ -260,21 +271,23 @@ mod tests {
 
     /// Territory is what places the general case: a mention on some repository
     /// of the project's ecosystem, in no forest at all
-    /// (§FS-008-attribution.1).
+    /// (§FS-008-attribution.1). The venue is the explicit signal wherever the
+    /// project claims the repository, forest or territory
+    /// (§FS-008-attribution.3).
     #[test]
     fn a_repository_beyond_the_forest_is_claimed_where_the_territory_says_so() {
         let named = Evidence {
             repo: Some("other/plugin".to_string()),
             ..Evidence::default()
         };
-        assert_eq!(widget().claim(&named), Some(Strength::Reference));
+        assert_eq!(widget().claim(&named), Some(Strength::Venue));
 
         // A whole organization is claimed by naming it without a repository.
         let anywhere = Evidence {
             repo: Some("acme-labs/anything".to_string()),
             ..Evidence::default()
         };
-        assert_eq!(widget().claim(&anywhere), Some(Strength::Reference));
+        assert_eq!(widget().claim(&anywhere), Some(Strength::Venue));
 
         // And one nobody claimed stays unplaced.
         let stranger = Evidence {
@@ -282,6 +295,25 @@ mod tests {
             ..Evidence::default()
         };
         assert_eq!(place(&stranger, &[widget(), gadget()]), Placed::Nothing);
+    }
+
+    /// Territory settles it before a reference is consulted: a discussion on a
+    /// repository widget claims, naming a ticket of gadget's, is widget's
+    /// rather than a tie sent to the bucket (§FS-008-attribution.3).
+    #[test]
+    fn territory_outranks_a_reference_rather_than_tying_with_it() {
+        let evidence = Evidence {
+            repo: Some("acme-labs/anything".to_string()),
+            tickets: vec!["XYZ-9".to_string()],
+            ..Evidence::default()
+        };
+        assert_eq!(
+            place(&evidence, &[widget(), gadget()]),
+            Placed::On {
+                project: "widget".to_string(),
+                how: Strength::Venue
+            }
+        );
     }
 
     #[test]

@@ -93,7 +93,7 @@ impl Subject<'_> {
             out.push_str(&render_gate(&gate));
         }
         let threads = threads_of(self.item);
-        if !threads.is_empty() {
+        if threads.iter().any(|thread| !thread.messages.is_empty()) {
             out.push('\n');
             out.push_str(&render_threads(&threads, self.item.url.as_deref()));
         } else if expects_conversation(self.item.kind) {
@@ -251,11 +251,19 @@ fn threads_of(item: &Item) -> Vec<Thread> {
     // A pull request opens with a bot posting the review policy and the
     // benchmark policy; spending the whole allowance there would drop the
     // human thread underneath it, which is the only one anyone was answering.
-    let mut keep: Vec<usize> = lengths
-        .iter()
-        .map(|length| (*length).min(RESERVED_PER_THREAD))
-        .collect();
-    let mut budget = TOTAL_MESSAGES.saturating_sub(keep.iter().sum::<usize>());
+    //
+    // The reservation is itself spent out of the total rather than added on
+    // top of it: a matter with more threads than the budget has room for is
+    // still bounded in total (§FS-005-dispatch.2), and the threads that fit
+    // are the earlier ones rather than an unbounded tail of two-line
+    // fragments.
+    let mut budget = TOTAL_MESSAGES;
+    let mut keep: Vec<usize> = Vec::with_capacity(lengths.len());
+    for length in &lengths {
+        let reserved = (*length).min(RESERVED_PER_THREAD).min(budget);
+        budget -= reserved;
+        keep.push(reserved);
+    }
     for (index, length) in lengths.iter().enumerate() {
         let more = (length - keep[index])
             .min(MESSAGES_PER_THREAD - keep[index])
@@ -264,10 +272,13 @@ fn threads_of(item: &Item) -> Vec<Thread> {
         budget -= more;
     }
 
+    // A thread the budget could not reach at all is still carried, empty: it
+    // is not rendered, but its messages count as dropped, so the ticket says
+    // what it left out instead of quietly stopping at the budget
+    // (§FS-005-dispatch.2, §FS-001-forge-interface.6).
     threads
         .iter()
         .zip(keep)
-        .filter(|(_, keep)| *keep > 0)
         .filter_map(|(thread, keep)| {
             let messages = thread.get("messages").and_then(Value::as_array)?;
             // The end of a thread is what is being answered, so a thread that
@@ -309,8 +320,10 @@ fn render_threads(threads: &[Thread], url: Option<&str>) -> String {
         .iter()
         .map(|thread| thread.total - thread.messages.len())
         .sum();
-    for (index, thread) in threads.iter().enumerate() {
-        if threads.len() > 1 {
+    let shown = threads.iter().filter(|thread| !thread.messages.is_empty());
+    let labelled = shown.clone().count() > 1;
+    for (index, thread) in shown.enumerate() {
+        if labelled {
             out.push_str(&format!("**Thread {}**\n\n", index + 1));
         }
         for message in &thread.messages {
@@ -500,6 +513,34 @@ mod tests {
         // Still bounded: nothing like eighty messages went in.
         assert!(text.matches("**bot**").count() <= 16, "{text}");
         assert!(text.contains("earlier messages not quoted"), "{text}");
+    }
+
+    /// The bound is a total, not a per-thread allowance repeated (
+    /// §FS-005-dispatch.2). Reserving two messages for each of twenty threads
+    /// quoted forty against a budget of twenty-four, and a transcript is what
+    /// the budget exists to stop being.
+    #[test]
+    fn more_threads_than_the_budget_is_still_bounded_in_total() {
+        let threads: Vec<Value> = (0..20)
+            .map(|thread| {
+                json!({ "messages": (0..3).map(|message| json!({
+                    "author": format!("a{thread}"),
+                    "text": format!("msg {thread}.{message}"),
+                    "when": "2026-08-01T09:00:00Z"
+                })).collect::<Vec<_>>() })
+            })
+            .collect();
+        let text = dossier(json!({ "threads": threads }));
+        let quoted = text.matches("**a").count();
+        assert!(quoted <= TOTAL_MESSAGES, "quoted {quoted} messages");
+        // And it says what it left out, including the threads it could not
+        // reach at all — sixty messages exist and the budget took some.
+        assert!(text.contains("earlier messages not quoted"), "{text}");
+        let dropped = 60 - quoted;
+        assert!(
+            text.contains(&format!("_{dropped} earlier messages not quoted")),
+            "{text}"
+        );
     }
 
     /// An empty section reads as "nobody said anything", which is the one

@@ -201,6 +201,9 @@ fn dispatch_work(config: &StatusConfig, args: &crate::cli::WorkDispatchArgs) -> 
     let now = Utc::now();
     let mut opened = 0usize;
     let mut refused = 0usize;
+    // Items whose deterministic opening move finished, so there was nothing to
+    // dispatch (§FS-005-dispatch.12).
+    let mut settled = 0usize;
     let mut asked_for_one = false;
     for item in &items {
         if let Some(id) = &args.item {
@@ -257,6 +260,17 @@ fn dispatch_work(config: &StatusConfig, args: &crate::cli::WorkDispatchArgs) -> 
             continue;
         }
         match dispatcher.dispatch(item, &recipe, args.dry_run) {
+            // A deterministic opening move that finished is not a ticket
+            // (§FS-005-dispatch.12) — it is reported as what it was, and
+            // nothing was handed over.
+            Ok(outcome @ Outcome::Settled { .. }) => {
+                settled += 1;
+                println!(
+                    "{}\n  {}",
+                    title(&item.title),
+                    style.dim(&outcome.describe())
+                );
+            }
             Ok(outcome) => {
                 opened += 1;
                 println!(
@@ -283,11 +297,16 @@ fn dispatch_work(config: &StatusConfig, args: &crate::cli::WorkDispatchArgs) -> 
         )));
     }
     println!(
-        "\n{opened} ticket(s){}{}",
+        "\n{opened} ticket(s){}{}{}",
         if args.dry_run {
             " would be opened"
         } else {
             " opened"
+        },
+        if settled > 0 {
+            format!(", {settled} item(s) finished without one")
+        } else {
+            String::new()
         },
         if refused > 0 {
             format!(", {refused} item(s) could not be (see above)")
@@ -296,8 +315,10 @@ fn dispatch_work(config: &StatusConfig, args: &crate::cli::WorkDispatchArgs) -> 
         }
     );
     // Asking for exactly one item and being refused is a failure; a sweep that
-    // steps over what it cannot reach is not.
-    if asked_for_one && opened == 0 {
+    // steps over what it cannot reach is not. An item the deterministic move
+    // finished is not a refusal — it is the work being over
+    // (§FS-005-dispatch.12).
+    if asked_for_one && opened == 0 && settled == 0 {
         return Ok(ExitCode::from(1));
     }
     Ok(ExitCode::SUCCESS)

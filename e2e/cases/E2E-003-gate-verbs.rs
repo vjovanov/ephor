@@ -22,6 +22,7 @@ use std::time::Duration;
 use ephor::capabilities::{Bindings, CapabilitySet, Rung};
 use ephor::manifest::{Manifest, Trust};
 use ephor::seams::gate::{self, Bound, Restarted, Verb};
+use ephor::seams::summons::Site;
 
 use support::*;
 
@@ -92,9 +93,15 @@ fn a_project_with_an_internal_gate_answers_all_three_verbs_from_its_own_commands
     let status = gate::bind(Verb::Status, Some(&manifest), None, true).expect("status is bound");
     assert!(matches!(status, Bound::Command { .. }));
 
-    let answer = gate::run(&status, Verb::Status, &root, Vec::new(), TIMEOUT)
-        .expect("the status verb runs")
-        .expect("a command answers by running");
+    let answer = gate::run(
+        &status,
+        Verb::Status,
+        &Site::root(&root),
+        Vec::new(),
+        TIMEOUT,
+    )
+    .expect("the status verb runs")
+    .expect("a command answers by running");
     let reported = gate::status_of(&answer).expect("the answer carried a gate");
     assert_eq!(reported.repos.len(), 2);
     assert_eq!(reported.repos[0].repo, "app");
@@ -113,7 +120,7 @@ fn a_project_with_an_internal_gate_answers_all_three_verbs_from_its_own_commands
     let answer = gate::run(
         &failures,
         Verb::Failures,
-        &root,
+        &Site::root(&root),
         vec![("EPHOR_NUMBER".to_string(), "101".to_string())],
         TIMEOUT,
     )
@@ -145,7 +152,7 @@ fn a_restart_is_asked_for_parked_or_refused_and_never_endless() {
         gate::run(
             &restart,
             Verb::Restart,
-            &root,
+            &Site::root(&root),
             vec![("GATE_RESTART_EXIT".to_string(), exit.to_string())],
             TIMEOUT,
         )

@@ -142,7 +142,9 @@ impl NavigatorState {
         // finished work, so an item lands in exactly one category.
         type SectionFilter = fn(&Item) -> bool;
         let sections: [(&'static str, SectionFilter); 8] = [
-            ("Status", |item| item.kind == ItemKind::Status),
+            ("Status", |item| {
+                item.kind == ItemKind::Status && !item.is_finished()
+            }),
             ("My Pull Requests", |item| {
                 item.kind == ItemKind::Pr
                     && item.role != Some(ItemRole::Reviewer)

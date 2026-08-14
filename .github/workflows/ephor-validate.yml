@@ -5,9 +5,9 @@
 #
 #     jobs:
 #       ephor:
-#         uses: vjovanov/ephor/.github/workflows/ephor-validate.yml@v0.4.1
+#         uses: vjovanov/ephor/.github/workflows/ephor-validate.yml@v0.1.0
 #         with:
-#           version: "0.4.1"
+#           version: "0.1.0"
 name: ephor validate
 
 on:
@@ -40,14 +40,24 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      # Relative, so the steps a caller gets are the ones from the ref they
-      # pinned this workflow at — the actions and the workflow ship together
-      # and version together (§FS-009-shipped-actions.2).
-      - uses: ./.github/actions/setup
+      # A relative `uses:` inside a reusable workflow resolves against the
+      # *caller's* checkout, not against the repository this file lives in — so
+      # the steps have to be fetched, and `uses:` takes no expressions to
+      # fetch them with. Checking ephor out at the version the caller pinned is
+      # what makes the actions and the workflow version together
+      # (§FS-009-shipped-actions.2). It lands beside the caller's tree rather
+      # than in it, and after their own checkout, which cleans the workspace.
+      - uses: actions/checkout@v6
+        with:
+          repository: vjovanov/ephor
+          ref: v${{ inputs.version }}
+          path: .ephor-steps
+
+      - uses: ./.ephor-steps/.github/actions/setup
         with:
           version: ${{ inputs.version }}
 
-      - uses: ./.github/actions/validate
+      - uses: ./.ephor-steps/.github/actions/validate
         with:
           manifest: ${{ inputs.manifest }}
           registry: ${{ inputs.registry }}

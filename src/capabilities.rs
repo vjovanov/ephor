@@ -108,6 +108,13 @@ pub fn ticket_stores() -> Vec<&'static str> {
 pub struct Bindings<'a> {
     /// How many sources the project has configured.
     pub sources: usize,
+    /// How many of them actually answered at the last refresh. The rung is
+    /// "at least one source *answering*" (§FS-006-project-interface.10), not
+    /// "at least one configured": a project whose every source is broken is
+    /// not being watched, and saying it is observable is the empty feed
+    /// claiming to mean "nothing is waiting"
+    /// (§FS-001-forge-interface.6).
+    pub answering: usize,
     /// The configured checkout command, where one is bound
     /// (§FS-006-project-interface.8).
     pub checkout: Option<&'a str>,
@@ -157,6 +164,18 @@ impl CapabilitySet {
             fails(
                 Rung::Observable,
                 format!("no source is configured for {project}, so there is nothing to watch"),
+            );
+        } else if bindings.answering == 0 {
+            // Configured and silent is its own condition, and a different
+            // sentence: one sends the reader to their configuration, the other
+            // to whatever the failing source said in the header.
+            fails(
+                Rung::Observable,
+                format!(
+                    "none of {project}'s {} source(s) answered at the last refresh, so nothing \
+                     on screen is what the world says",
+                    bindings.sources
+                ),
             );
         }
 
@@ -336,6 +355,7 @@ mod tests {
     fn bindings<'a>() -> Bindings<'a> {
         Bindings {
             sources: 1,
+            answering: 1,
             checkout: Some("gco \"$EPHOR_BRANCH\""),
             runner: None,
             gate_reported: true,
@@ -496,6 +516,7 @@ mod tests {
             Some(&placement(tmp.path(), None)),
             &Bindings {
                 sources: 0,
+                answering: 0,
                 gate_reported: false,
                 ..bindings()
             },
@@ -506,6 +527,39 @@ mod tests {
             .reason(Rung::Gated)
             .unwrap()
             .contains("no gate verbs are bound"));
+    }
+
+    /// The rung is a source *answering* (§FS-006-project-interface.10). A
+    /// project whose every source is broken is not being watched, and a table
+    /// that called it observable would be the empty feed claiming to mean
+    /// "nothing is waiting" (§FS-001-forge-interface.6).
+    #[test]
+    fn configured_but_silent_is_not_observable_and_says_which_it_is() {
+        let tmp = tempfile::tempdir().unwrap();
+        let silent = CapabilitySet::resolve(
+            "widget",
+            Some(&placement(tmp.path(), None)),
+            &Bindings {
+                sources: 2,
+                answering: 0,
+                ..bindings()
+            },
+        );
+        assert!(!silent.holds(Rung::Observable));
+        let reason = silent.reason(Rung::Observable).unwrap();
+        assert!(reason.contains("2 source(s) answered"), "{reason}");
+
+        // One that answered is enough — ephor degrades to what was answered.
+        let partly = CapabilitySet::resolve(
+            "widget",
+            Some(&placement(tmp.path(), None)),
+            &Bindings {
+                sources: 2,
+                answering: 1,
+                ..bindings()
+            },
+        );
+        assert!(partly.holds(Rung::Observable));
     }
 
     #[test]

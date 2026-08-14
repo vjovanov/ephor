@@ -89,6 +89,12 @@ pub enum Placement {
         project: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         branch: Option<String>,
+        /// How firmly the project claimed it (§FS-008-attribution.3). Absent
+        /// where the matter was never placed by the engine at all — a source
+        /// configured under one project reports about that project, and there
+        /// is no evidence to weigh.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        how: Option<crate::attribution::Strength>,
     },
     /// Nothing could be placed, and these are the projects that claimed it.
     Unattributed {
@@ -102,7 +108,31 @@ impl Placement {
         Placement::On {
             project: project.into(),
             branch: None,
+            how: None,
         }
+    }
+
+    /// Placed by the attribution engine, carrying how firmly
+    /// (§FS-008-attribution.3).
+    pub fn claimed(project: impl Into<String>, how: crate::attribution::Strength) -> Placement {
+        Placement::On {
+            project: project.into(),
+            branch: None,
+            how: Some(how),
+        }
+    }
+
+    /// Whether nothing firmer than the project's own name placed this. Such a
+    /// matter may start a row of its own and may never be folded onto a
+    /// subject some source actually named (§FS-008-attribution.3).
+    pub fn by_resemblance(&self) -> bool {
+        matches!(
+            self,
+            Placement::On {
+                how: Some(crate::attribution::Strength::Resemblance),
+                ..
+            }
+        )
     }
 
     /// The project this is placed on, or None while it is unattributed.
@@ -449,6 +479,10 @@ impl Matter {
                     .and_then(Value::as_str)
                     .filter(|branch| !branch.is_empty())
                     .map(String::from),
+                // Nothing was weighed: a report arrives under the project its
+                // source was configured for, and the engine only speaks for
+                // the shared sources it places (§DA-002-fetch-attribution-split).
+                how: None,
             },
             source: item.source.clone(),
             title: item.title.clone(),
@@ -463,6 +497,11 @@ impl Matter {
             fingerprint: Fingerprint::default(),
             raw: item.raw.clone(),
         };
+        // A source that reported a finished subject as still awaiting an answer
+        // is settled here rather than trusted: `forge::policy` settles what it
+        // builds, and a source that answers the envelope directly does not go
+        // through it (§FS-003-feed-categories.2).
+        matter.settle();
         matter.fingerprint = matter.print();
         matter
     }
@@ -532,12 +571,35 @@ impl Matter {
 
     /// Whether this matter awaits its reader: any of its discussions does, or
     /// the source said so (§FS-007-matters.3).
+    ///
+    /// Finished work never does, whatever any of them said
+    /// (§FS-003-feed-categories.2): a merged pull request asks nothing of
+    /// anyone, however its conversation ended.
     pub fn awaits(&self) -> bool {
-        self.needs_response
-            || self
-                .discussions
-                .iter()
-                .any(|discussion| discussion.needs_response)
+        !self.is_finished()
+            && (self.needs_response
+                || self
+                    .discussions
+                    .iter()
+                    .any(|discussion| discussion.needs_response))
+    }
+
+    /// The work is over (§FS-003-feed-categories.2) — the same question the
+    /// row's own renderer asks, asked of the model.
+    pub fn is_finished(&self) -> bool {
+        crate::feed::model::is_terminal(self.state.as_deref())
+    }
+
+    /// Finished work is news, not a task (§FS-003-feed-categories.2). Applied
+    /// wherever a matter's state or its `needs_response` is set, because the
+    /// two arrive from different reports and the row is the pair of them.
+    fn settle(&mut self) {
+        if self.is_finished() {
+            self.needs_response = false;
+            for discussion in &mut self.discussions {
+                discussion.needs_response = false;
+            }
+        }
     }
 }
 
@@ -551,8 +613,14 @@ impl Matter {
     /// than guessed into somebody else's row.
     pub fn subject(&self) -> String {
         let item = self.as_item();
+        // Resemblance may start a new row, it may not amend one
+        // (§FS-008-attribution.3): a conversation placed by nothing firmer
+        // than the project's name is its own subject, so it can never be
+        // folded onto one a source actually stated.
         match (item.repo(), item.number()) {
-            (Some(repo), Some(number)) => format!("{:?}\u{0}{repo}#{number}", self.kind),
+            (Some(repo), Some(number)) if !self.placement.by_resemblance() => {
+                format!("{:?}\u{0}{repo}#{number}", self.kind)
+            }
             _ => format!("key\u{0}{}", self.key),
         }
     }
@@ -604,6 +672,11 @@ impl Matter {
         winner.raw = merge_raw(winner.raw, loser.raw);
         winner.needs_response = awaited;
         winner.updated_at = updated_at;
+        // The thin report that knew somebody was waiting may be the one that
+        // did not know the subject had finished — a notice's state is the
+        // reason it was sent, never a terminal state, so nothing settled it
+        // before it got here (§FS-003-feed-categories.2).
+        winner.settle();
         winner.fingerprint = winner.print();
         *self = winner;
     }
@@ -1194,6 +1267,86 @@ mod tests {
         // …and so did the reason only it was given.
         let reasons = kept.raw["reasons"].as_array().unwrap();
         assert_eq!(reasons.len(), 2, "{reasons:?}");
+    }
+
+    /// A merged row is settled by the state it ends up with, not by what each
+    /// report believed on its own (§FS-003-feed-categories.2). The thin report
+    /// that knew somebody was waiting is exactly the one that does not know
+    /// the subject has finished: a notice's state is the reason it was sent,
+    /// never a terminal state, so nothing settles it before the merge.
+    #[test]
+    fn a_finished_subject_never_awaits_however_the_thin_report_arrived() {
+        let mut merged_pr = report(
+            "github-prs",
+            "github-prs:acme/widget#42",
+            json!({ "repo": "acme/widget", "branch": "you/ABC-42" }),
+        );
+        merged_pr.state = Some("merged".to_string());
+        merged_pr.needs_response = false;
+
+        let mut notice = report(
+            "github-notifications",
+            "github-notifications:acme/widget#42",
+            json!({ "repo": "acme/widget", "reasons": ["mentioned"], "notice": true }),
+        );
+        notice.state = Some("mentioned".to_string());
+        notice.needs_response = true;
+        notice.role = None;
+
+        let rows = merge(vec![merged_pr, notice]);
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].is_finished());
+        assert!(!rows[0].needs_response, "a merged change asks nothing");
+        assert!(!rows[0].awaits());
+    }
+
+    /// A source that answers the envelope directly does not pass through
+    /// `forge::policy`, so the model settles what it is handed
+    /// (§FS-003-feed-categories.2).
+    #[test]
+    fn a_report_that_arrived_finished_and_awaiting_is_settled_on_the_way_in() {
+        let mut item = item(json!({}));
+        item.state = Some("resolved".to_string());
+        item.needs_response = true;
+        let matter = Matter::of_item(&item);
+        assert!(matter.is_finished());
+        assert!(!matter.needs_response);
+    }
+
+    /// Resemblance may start a new row, it may not amend one
+    /// (§FS-008-attribution.3): a conversation placed by nothing firmer than
+    /// the project's name cannot be folded onto a subject a source stated.
+    #[test]
+    fn a_matter_placed_by_resemblance_never_merges_onto_a_stated_subject() {
+        let stated = report(
+            "github-prs",
+            "github-prs:acme/widget#42",
+            json!({ "repo": "acme/widget" }),
+        );
+        let mut guessed = report(
+            "email",
+            "email:acme/widget#42",
+            json!({ "repo": "acme/widget" }),
+        );
+        // Placed on the same project, but only because the words named it.
+        guessed.placement = Placement::claimed("widget", crate::attribution::Strength::Resemblance);
+
+        assert_eq!(merge(vec![stated, guessed]).len(), 2);
+
+        // Placed by the venue, the same pair is one row: the merge rule is
+        // about how firmly it was claimed, not about which source spoke.
+        let stated = report(
+            "github-prs",
+            "github-prs:acme/widget#42",
+            json!({ "repo": "acme/widget" }),
+        );
+        let mut named = report(
+            "email",
+            "email:acme/widget#42",
+            json!({ "repo": "acme/widget" }),
+        );
+        named.placement = Placement::claimed("widget", crate::attribution::Strength::Venue);
+        assert_eq!(merge(vec![stated, named]).len(), 1);
     }
 
     #[test]

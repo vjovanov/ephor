@@ -8,9 +8,9 @@
 #
 #     jobs:
 #       ephor:
-#         uses: vjovanov/ephor/.github/workflows/ephor-check.yml@v0.4.1
+#         uses: vjovanov/ephor/.github/workflows/ephor-check.yml@v0.1.0
 #         with:
-#           version: "0.4.1"
+#           version: "0.1.0"
 name: ephor check
 
 on:
@@ -59,7 +59,16 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: ./.github/actions/setup
+      # A relative `uses:` inside a reusable workflow resolves against the
+      # caller's checkout, so the steps are fetched at the version the caller
+      # pinned (§FS-009-shipped-actions.2). See `ephor-validate.yml`.
+      - uses: actions/checkout@v6
+        with:
+          repository: vjovanov/ephor
+          ref: v${{ inputs.version }}
+          path: .ephor-steps
+
+      - uses: ./.ephor-steps/.github/actions/setup
         with:
           version: ${{ inputs.version }}
 
@@ -94,11 +103,17 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: ./.github/actions/setup
+      - uses: actions/checkout@v6
+        with:
+          repository: vjovanov/ephor
+          ref: v${{ inputs.version }}
+          path: .ephor-steps
+
+      - uses: ./.ephor-steps/.github/actions/setup
         with:
           version: ${{ inputs.version }}
 
-      - uses: ./.github/actions/check
+      - uses: ./.ephor-steps/.github/actions/check
         with:
           root: ${{ inputs.root }}
           verbs: ${{ inputs.verbs }}

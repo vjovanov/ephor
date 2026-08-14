@@ -90,22 +90,26 @@ pub fn find(root: &Path, manifest: Option<&Manifest>) -> Vec<Store> {
 /// Read one store's tickets as items of the project the checkout belongs to
 /// (§FS-006-project-interface.7). Attribution is the checkout's project: a
 /// store in a checkout is about that checkout, and nothing has to guess.
-pub fn read(store: &Store, project: &str) -> Vec<Item> {
+///
+/// A store that could not be read is an error and not an empty answer: it is a
+/// source like any other, and "no tickets" has to mean there are none rather
+/// than that nobody could look (§FS-001-forge-interface.6).
+pub fn read(store: &Store, project: &str) -> Result<Vec<Item>, String> {
     match store.kind {
         Kind::Plans => plans(store, project),
         // The beads reader is the second one; a store ephor recognizes but
-        // cannot read yet reports nothing rather than pretending.
-        Kind::Beads => Vec::new(),
+        // cannot read yet reports nothing rather than pretending
+        // (§RM-003-boundary).
+        Kind::Beads => Ok(Vec::new()),
     }
 }
 
 /// The plan reader. Every plan in the directory is one matter per open ticket,
 /// keyed by the store's own id — `rhei:<plan>.<ticket>` — because the store
 /// named it and ephor does not get to rename it (§FS-007-matters.1).
-fn plans(store: &Store, project: &str) -> Vec<Item> {
-    let Ok(entries) = std::fs::read_dir(&store.path) else {
-        return Vec::new();
-    };
+fn plans(store: &Store, project: &str) -> Result<Vec<Item>, String> {
+    let entries = std::fs::read_dir(&store.path)
+        .map_err(|err| format!("cannot read {}: {err}", store.path.display()))?;
     let mut paths: Vec<PathBuf> = entries
         .flatten()
         .map(|entry| entry.path())
@@ -119,7 +123,11 @@ fn plans(store: &Store, project: &str) -> Vec<Item> {
 
     let mut items = Vec::new();
     for path in paths {
-        let Ok(Some(plan)) = crate::work::runtime::plan::Plan::read(&path) else {
+        // A plan the store holds and ephor cannot read is the store failing to
+        // answer, not a plan with no tickets in it.
+        let plan = crate::work::runtime::plan::Plan::read(&path)
+            .map_err(|err| format!("cannot read {}: {err}", path.display()))?;
+        let Some(plan) = plan else {
             continue;
         };
         let stem = path
@@ -149,7 +157,7 @@ fn plans(store: &Store, project: &str) -> Vec<Item> {
             });
         }
     }
-    items
+    Ok(items)
 }
 
 /// When the store last changed, which is the closest thing a file-backed
@@ -234,7 +242,7 @@ mod tests {
             kind: Kind::Plans,
             path: dir,
         };
-        let items = read(&store, "widget");
+        let items = read(&store, "widget").expect("the store answered");
         assert_eq!(items.len(), 2, "{items:#?}");
         assert_eq!(items[0].id, "rhei:work.1");
         assert_eq!(items[0].title, "Widen the retry window");
@@ -251,6 +259,22 @@ mod tests {
         std::fs::create_dir_all(tmp.path().join(".beads")).unwrap();
         let found = find(tmp.path(), None);
         assert_eq!(found[0].kind, Kind::Beads);
-        assert!(read(&found[0], "widget").is_empty());
+        assert!(read(&found[0], "widget")
+            .expect("declining to read is not failing to read")
+            .is_empty());
+    }
+
+    /// A store that is there and cannot be read is a source that did not
+    /// answer, never a store with nothing in it
+    /// (§FS-001-forge-interface.6): an empty section has to mean "no tickets".
+    #[test]
+    fn a_store_that_cannot_be_read_says_so_rather_than_answering_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Store {
+            kind: Kind::Plans,
+            path: tmp.path().join("gone"),
+        };
+        let err = read(&store, "widget").expect_err("the directory is not there");
+        assert!(err.contains("gone"), "{err}");
     }
 }

@@ -9,7 +9,7 @@ description: Install a pinned ephor release and put it on PATH.
 inputs:
   version:
     description: >-
-      The release to install, as `0.4.1` or `v0.4.1`. Pin it as you pin any
+      The release to install, as `0.1.0` or `v0.1.0`. Pin it as you pin any
       dependency: a release that changes a schema or a verb ships the steps
       that understand the change (§FS-009-shipped-actions.2).
     required: true

@@ -87,12 +87,26 @@ pub struct Recipe {
     /// ephor reads back and offers beside the conversation
     /// (§FS-005-dispatch.13).
     pub brief: String,
+    /// A deterministic opening move ephor makes itself, before the ticket
+    /// costs a model (§FS-005-dispatch.12). Where the move finishes, nothing
+    /// is dispatched at all; where it stops, what it reached is written into
+    /// the brief and that is the ticket. `rebase` is the one ephor knows —
+    /// the same operation the reader presses a key for
+    /// (§FS-004-quick-actions.6), so two of them cannot disagree about what a
+    /// clean rebase is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opens_with: Option<String>,
     /// Pin the runtime's execution identity for this ticket.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
 }
+
+/// The deterministic moves ephor can make on its own behalf
+/// (§FS-005-dispatch.12). The rebase is the first of these, not the shape of
+/// the only one.
+pub const OPENING_REBASE: &str = "rebase";
 
 fn default_icon() -> String {
     "◆".to_string()
@@ -238,6 +252,7 @@ pub fn shipped() -> Vec<Recipe> {
         when,
         needs_checkout,
         brief: brief.to_string(),
+        opens_with: None,
         target: None,
         model: None,
     };
@@ -335,36 +350,42 @@ pub fn shipped() -> Vec<Recipe> {
              Where the issue is under-specified in a way that changes what the code\n\
              should do, do not guess: write the question in the report and stop.",
         ),
-        recipe(
-            "rebase",
-            "⤴",
-            "rebase onto the main branch",
-            // Replaying a branch happens where the branch is.
-            true,
-            Selector {
-                kinds: vec!["pr".to_string()],
-                roles: vec!["author".to_string()],
-                // Only where the branch has actually fallen behind: a recipe
-                // offered on a change that is already current is a ticket to
-                // do nothing (§FS-004-quick-actions.6). It is last of the
-                // shipped recipes because a red gate or an owed answer is the
-                // more urgent thing about the same pull request.
-                behind: Some(true),
-                ..Selector::default()
-            },
-            "{title} is on {branch}, which has fallen behind its main branch.\n\n\
-             Run `ephor rebase --checkout {workspace}` first — it fetches and replays every\n\
-             repository in the checkout, and it is not a judgment call\n\
-             (§FS-005-dispatch.12). Where a conflict is already standing in the working\n\
-             tree, that is what this ticket is about and the report above says which files.\n\n\
-             Resolve each conflict as the change itself would have been written against\n\
-             the new base — take neither side on principle, work out what the two commits\n\
-             were each trying to do, and where that is not decidable from the code, stop\n\
-             and say so rather than guessing. `git add` what you resolved and\n\
-             `git rebase --continue` until the replay finishes.\n\n\
-             Then check the result: build or test what the conflicting files belong to, so\n\
-             that \"it rebased\" is not the same claim as \"it still works\". Do not push.",
-        ),
+        Recipe {
+            // The replay itself is ephor's, made before this ticket exists
+            // (§FS-005-dispatch.12): a clean rebase is a done thing and never
+            // reaches a model, and what is dispatched is the conflict the
+            // algorithm stopped at.
+            opens_with: Some(OPENING_REBASE.to_string()),
+            ..recipe(
+                "rebase",
+                "⤴",
+                "rebase onto the main branch",
+                // Replaying a branch happens where the branch is.
+                true,
+                Selector {
+                    kinds: vec!["pr".to_string()],
+                    roles: vec!["author".to_string()],
+                    // Only where the branch has actually fallen behind: a
+                    // recipe offered on a change that is already current is a
+                    // ticket to do nothing (§FS-004-quick-actions.6). It is
+                    // last of the shipped recipes because a red gate or an
+                    // owed answer is the more urgent thing about the same
+                    // pull request.
+                    behind: Some(true),
+                    ..Selector::default()
+                },
+                "{title} is on {branch}, which has fallen behind its main branch, and the\n\
+                 replay has already been run — the report above says where it stopped.\n\n\
+                 A conflict is standing in the working tree of the repository it names.\n\
+                 Resolve each conflict as the change itself would have been written against\n\
+                 the new base — take neither side on principle, work out what the two commits\n\
+                 were each trying to do, and where that is not decidable from the code, stop\n\
+                 and say so rather than guessing. `git add` what you resolved and\n\
+                 `git rebase --continue` until the replay finishes.\n\n\
+                 Then check the result: build or test what the conflicting files belong to, so\n\
+                 that \"it rebased\" is not the same claim as \"it still works\". Do not push.",
+            )
+        },
     ]
 }
 

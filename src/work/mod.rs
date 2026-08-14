@@ -49,6 +49,10 @@ pub enum Outcome {
     },
     /// The work still answers the item as it is.
     Current,
+    /// A recipe's deterministic opening move finished, so there was nothing
+    /// left to hand over (§FS-005-dispatch.12): a clean rebase is a done
+    /// thing, not a ticket.
+    Settled { move_name: String, report: String },
     /// The item moved, but nothing applies to it any more — it was merged,
     /// closed, or answered. The work is over; the ledger keeps saying so.
     Dormant { changes: Vec<String> },
@@ -85,6 +89,9 @@ impl Outcome {
                 changes.join("; ")
             ),
             Outcome::Current => "already current".to_string(),
+            Outcome::Settled { move_name, .. } => {
+                format!("{move_name} finished — nothing to hand over")
+            }
             Outcome::Dormant { changes } => {
                 format!("{} — no recipe applies to it now", changes.join("; "))
             }
@@ -101,7 +108,7 @@ pub struct TicketStatus {
     pub state: Option<String>,
     pub finished: bool,
     /// The runtime has stopped on this ticket and a person has to answer it
-    /// (§FS-005-dispatch.10).
+    /// (§FS-005-dispatch.9).
     pub waiting: bool,
     /// What the review left behind, where the work reached one.
     pub verdict: Option<String>,
@@ -139,7 +146,7 @@ impl WorkStatus {
     }
 
     /// Work that has stopped and is waiting on a person. The one thing in here
-    /// that is nobody else's to move (§FS-005-dispatch.10).
+    /// that is nobody else's to move (§FS-005-dispatch.9).
     pub fn waiting(&self) -> Option<&TicketStatus> {
         self.tickets.iter().find(|ticket| ticket.waiting)
     }
@@ -370,6 +377,55 @@ impl Dispatcher {
         })
     }
 
+    /// The deterministic opening move a recipe declares, made before the
+    /// ticket costs a model (§FS-005-dispatch.12).
+    ///
+    /// It is the same implementation the reader's key runs
+    /// (§FS-004-quick-actions.6) — two of them would eventually disagree about
+    /// what a clean rebase is. Where it finishes there is nothing to dispatch;
+    /// where it stops, the repository is left standing in the conflict and the
+    /// report of where it got to becomes the ticket's opening.
+    fn opening(&mut self, item: &Item, recipe: &Recipe) -> Result<Opening> {
+        let Some(name) = recipe.opens_with.as_deref() else {
+            return Ok(Opening::None);
+        };
+        if name != recipe::OPENING_REBASE {
+            return Err(EphorError::Command(format!(
+                "recipe '{}' opens with '{name}', which ephor does not know (it knows: {}).",
+                recipe.id,
+                recipe::OPENING_REBASE
+            )));
+        }
+        let placement = self
+            .placement(&item.project)
+            .cloned()
+            .ok_or_else(|| EphorError::Command(format!("{} cannot be placed", item.project)))?;
+        let checkout = placement.checkout(item);
+        // Nothing on disk to replay, or nothing to replay onto: the move does
+        // not apply, and the ticket is written as it would have been.
+        if !matches!(checkout.state, WorkspaceState::Ready) {
+            return Ok(Opening::None);
+        }
+        let Some(base) = placement.main_branch.clone() else {
+            return Ok(Opening::None);
+        };
+        let forest = placement.forest(&checkout.workspace);
+        if forest.repos.is_empty() {
+            return Ok(Opening::None);
+        }
+        let outcome = crate::git::rebase(&forest, &base);
+        // What the replay measured is now stale: the branch it was offered for
+        // has moved under the cached answer.
+        if let Some(branch) = checkout.branch.clone() {
+            self.behind.remove(&(item.project.clone(), branch));
+        }
+        let report = outcome.report();
+        if outcome.conflicted().is_empty() && outcome.stuck().is_empty() {
+            return Ok(Opening::Finished(report));
+        }
+        Ok(Opening::Stopped(report))
+    }
+
     /// Hand an item to the runtime under one recipe. Opens the plan when the
     /// item has none, and appends to it when it has.
     pub fn dispatch(&mut self, item: &Item, recipe: &Recipe, dry_run: bool) -> Result<Outcome> {
@@ -406,6 +462,20 @@ impl Dispatcher {
             });
         }
 
+        // The deterministic move first, and the work starts where it stopped
+        // (§FS-005-dispatch.12). Before the machine is consulted and before
+        // anything is written, so a clean move leaves no plan behind either.
+        let opening = self.opening(item, recipe)?;
+        if let Opening::Finished(report) = opening {
+            return Ok(Outcome::Settled {
+                move_name: recipe
+                    .opens_with
+                    .clone()
+                    .unwrap_or_else(|| recipe.id.clone()),
+                report,
+            });
+        }
+
         // Where a machine is already in force, it answers before anything is
         // written: a recipe naming a state it does not have is refused, and a
         // refusal should leave nothing behind.
@@ -429,7 +499,13 @@ impl Dispatcher {
             return Err(undeclared(&root));
         }
         let path = root.plan_path(&plan_id);
-        let brief = dossier::render(&recipe.brief, &site.values);
+        let mut brief = dossier::render(&recipe.brief, &site.values);
+        // What is handed over is the situation rather than the request to
+        // reproduce it: the repository is standing in what this report
+        // describes (§FS-005-dispatch.12).
+        if let Opening::Stopped(report) = &opening {
+            brief = format!("{brief}\n\n{report}");
+        }
         let changes = self
             .ledger
             .entries
@@ -549,6 +625,9 @@ impl Dispatcher {
             // reason to refuse the reader.
             needs_checkout: false,
             brief: words.to_string(),
+            // What was asked for is what is written down: ephor does not make
+            // a move of its own in front of somebody's own words.
+            opens_with: None,
             target: None,
             model: None,
         };
@@ -708,6 +787,17 @@ fn clamp(text: &str, limit: usize) -> String {
         return text.to_string();
     }
     text.chars().take(limit - 1).collect::<String>() + "…"
+}
+
+/// What a recipe's deterministic opening move reached
+/// (§FS-005-dispatch.12).
+enum Opening {
+    /// The recipe declares none, or there was nothing here for it to do.
+    None,
+    /// It finished: there is nothing left to hand over.
+    Finished(String),
+    /// It stopped, and this is the situation the ticket is about.
+    Stopped(String),
 }
 
 /// Where one item's work goes, and what the ticket will say.

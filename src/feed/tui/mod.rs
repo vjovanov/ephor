@@ -247,6 +247,14 @@ impl Ctx {
                 .and_then(crate::branches::Placement::manifest);
             let bindings = Bindings {
                 sources: self.provider_blocks.get(project).map(Vec::len).unwrap_or(0),
+                // What answered at the last refresh, out of the cache the
+                // refresh wrote (§FS-006-project-interface.10). No cache yet
+                // is nothing answered, which is the honest reading before the
+                // first refresh has run.
+                answering: self
+                    .feed(project)
+                    .map(|feed| feed.providers.values().filter(|slot| slot.ok).count())
+                    .unwrap_or(0),
                 checkout: self
                     .checkouts
                     .get(project)
