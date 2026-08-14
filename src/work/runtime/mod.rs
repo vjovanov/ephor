@@ -41,6 +41,20 @@ pub fn label(config: &crate::work::recipe::WorkConfig) -> String {
     format!("{} run", runner(config))
 }
 
+/// How a person moves a ticket the runtime parked on by hand, in the bound
+/// runner's own words (§FS-005-dispatch.10). Part of the coupling, and so part
+/// of this module — a surface shows the line, it does not compose it.
+pub fn advance_command(
+    config: &crate::work::recipe::WorkConfig,
+    ticket: &str,
+    state: &str,
+) -> String {
+    format!(
+        "{} transition {ticket} --from {state} --to <state>",
+        runner(config)
+    )
+}
+
 /// The verb this seam fills, for messages.
 pub const VERB: &str = "work.run";
 
@@ -62,6 +76,33 @@ pub fn invocation_with(runner: &str, root: &Path, plans: &[String], extra: &[Str
 /// How the runner is told which plan to run. Part of the coupling, and so
 /// part of this module (§AR-007-runtime).
 const PLAN_FLAG: &str = "--rhei";
+
+/// A work ledger written before the plan's field was named for the plan spells
+/// it for the runtime instead. The word is this module's, so the migration
+/// that still reads it is this module's too (§REQ-001-boundary.5): the ledger
+/// hands its parsed document over on the way in and gets back one the current
+/// field names read.
+pub fn migrate_ledger(document: &mut serde_json::Value) {
+    const WAS: &str = "rhei";
+    const NOW: &str = "plan_id";
+    let Some(entries) = document
+        .get_mut("entries")
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return;
+    };
+    for entry in entries.values_mut() {
+        let Some(fields) = entry.as_object_mut() else {
+            continue;
+        };
+        if fields.contains_key(NOW) {
+            continue;
+        }
+        if let Some(value) = fields.remove(WAS) {
+            fields.insert(NOW.to_string(), value);
+        }
+    }
+}
 
 /// The invocation with the shipped default runner.
 pub fn invocation(root: &Path, plans: &[String], extra: &[String]) -> String {

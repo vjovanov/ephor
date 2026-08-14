@@ -107,7 +107,7 @@ impl WorkScreen {
                 Some(status) => Action::RunWork {
                     root: status.root.clone(),
                     checkout: status.checkout.clone(),
-                    rhei: status.plan_id.clone(),
+                    plan_id: status.plan_id.clone(),
                     label: self.item.title.clone(),
                 },
                 None => Action::SetMessage("No work to run yet".to_string()),
@@ -208,14 +208,9 @@ impl WorkScreen {
                         "    answer it in the ticket (e), then move it on:".to_string(),
                         dim,
                     )));
-                    lines.push(Line::from(Span::styled(
-                        format!(
-                            "    rhei transition {} --from {} --to <state>",
-                            waiting.id,
-                            waiting.state.as_deref().unwrap_or("?")
-                        ),
-                        dim,
-                    )));
+                    if let Some(advance) = &status.advance {
+                        lines.push(Line::from(Span::styled(format!("    {advance}"), dim)));
+                    }
                 }
                 if status.stale() {
                     lines.push(Line::from(""));
@@ -343,6 +338,7 @@ mod tests {
             } else {
                 Vec::new()
             },
+            advance: None,
         }
     }
 

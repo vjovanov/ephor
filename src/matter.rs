@@ -175,6 +175,15 @@ pub struct MessageTask {
     pub target: Value,
 }
 
+/// A task is done or it is not, whatever the forge calls the states it uses
+/// (§FS-001-forge-interface.1): anything but `resolved` is work left, so a
+/// spelling ephor has not seen reads as unfinished rather than as finished.
+pub fn task_resolved(task: &Value) -> bool {
+    task.get("state")
+        .and_then(Value::as_str)
+        .is_some_and(|state| state.eq_ignore_ascii_case("resolved"))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Message {
     pub author: String,
@@ -379,7 +388,7 @@ pub fn evidence_of(item: &Item) -> Evidence {
     Evidence {
         venue: Some(SubjectKey::stated(&item.id)),
         repo: item.repo(),
-        tickets: crate::registry::tickets_in(&spoken),
+        tickets: crate::ticket_ids::tickets_in(&spoken),
         repos: repos_in(&spoken)
             .into_iter()
             .chain(item.url.iter().flat_map(|url| repos_in(url)))
@@ -396,11 +405,16 @@ fn repos_in(text: &str) -> Vec<String> {
     let mut found: Vec<String> = Vec::new();
     for word in text.split(|character: char| character.is_whitespace()) {
         let cleaned = word.trim_matches(|character: char| !character.is_alphanumeric());
-        // A url says it after the host; a sentence says it on its own.
-        let candidate = cleaned
-            .split_once("github.com/")
-            .map(|(_, rest)| rest)
-            .unwrap_or(cleaned);
+        // A url says it after the host; a sentence says it on its own. Which
+        // host is not this layer's business — every forge spells a repository
+        // the same way once the host is off the front (§REQ-001-boundary.5).
+        let candidate = cleaned.split_once("://").map_or(cleaned, |(_, rest)| rest);
+        let candidate = match candidate.split_once('/') {
+            // A host is the leading segment with a dot in it, and it is only a
+            // host when a whole repository still follows it.
+            Some((host, rest)) if host.contains('.') && rest.contains('/') => rest,
+            _ => candidate,
+        };
         let parts: Vec<&str> = candidate.split('/').collect();
         if parts.len() < 2 || parts[0].is_empty() || parts[1].is_empty() {
             continue;
@@ -697,7 +711,7 @@ fn references(matter: &Matter) -> Vec<String> {
     }
     let mut found: Vec<String> = Vec::new();
     for text in spoken {
-        for ticket in crate::registry::tickets_in(&text) {
+        for ticket in crate::ticket_ids::tickets_in(&text) {
             if !found.contains(&ticket) {
                 found.push(ticket);
             }
@@ -936,7 +950,7 @@ fn message_of(message: &Value) -> Message {
             .get("task")
             .filter(|task| !task.is_null())
             .map(|task| MessageTask {
-                resolved: crate::forge::task_resolved(task),
+                resolved: task_resolved(task),
                 target: task.clone(),
             }),
         react: message.get("react").cloned().unwrap_or(Value::Null),

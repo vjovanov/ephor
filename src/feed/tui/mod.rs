@@ -501,7 +501,7 @@ pub(crate) enum Action {
         root: PathBuf,
         /// Where to run it from — the checkout the work is about.
         checkout: PathBuf,
-        rhei: String,
+        plan_id: String,
         label: String,
     },
     /// Open a plan in the reader's editor.
@@ -976,7 +976,7 @@ impl App {
             Action::RunWork {
                 root,
                 checkout,
-                rhei,
+                plan_id,
                 label,
             } => {
                 // The runtime is a rung: refused here in the same words the
@@ -997,7 +997,7 @@ impl App {
                     &crate::work::runtime::summons(
                         &config.work,
                         &root,
-                        std::slice::from_ref(&rhei),
+                        std::slice::from_ref(&plan_id),
                         &[],
                     ),
                 )?;

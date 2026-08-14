@@ -42,7 +42,7 @@ pub fn matches(item: &Item, branch: &BranchInfo) -> bool {
     // else, and it is evidence like any other.
     evidence
         .tickets
-        .extend(crate::registry::tickets_in(&item.id));
+        .extend(crate::ticket_ids::tickets_in(&item.id));
     crate::attribution::branch(&evidence, &[(branch.branch.clone(), branch.ticket.clone())])
         .is_some()
 }
@@ -167,7 +167,7 @@ impl Placement {
                 let ticket = registry::str_field(branch_entry, "ticket")
                     .map(String::from)
                     .or_else(|| {
-                        let extracted = registry::extract_ticket(&branch);
+                        let extracted = crate::ticket_ids::extract_ticket(&branch);
                         (!extracted.is_empty()).then_some(extracted)
                     });
                 branches.push(BranchInfo {
@@ -322,7 +322,7 @@ impl Placement {
         let ticket = self
             .matched(item)
             .and_then(|matched| matched.ticket.clone())
-            .or_else(|| branch.as_deref().map(registry::extract_ticket))
+            .or_else(|| branch.as_deref().map(crate::ticket_ids::extract_ticket))
             .filter(|ticket| !ticket.is_empty());
         let expanded = branch
             .as_deref()

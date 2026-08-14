@@ -5,14 +5,13 @@ mod custom_status;
 mod discord;
 mod email;
 pub mod forge;
+pub(crate) mod github;
 mod github_ci;
 mod github_issues;
 mod github_notifications;
 mod github_prs;
 mod github_threads;
 mod slack;
-
-use std::process::Command;
 
 use serde_json::Value;
 
@@ -45,6 +44,42 @@ pub fn build_provider(config: &Value) -> Result<Box<dyn Provider>, ProviderError
         // on PATH, or an explicit "command".
         _ => Ok(Box::new(forge::ForgeProvider::external(config)?)),
     }
+}
+
+/// A write one of ephor's own providers performs itself rather than through
+/// the forge interface (§FS-001-forge-interface.1). Which provider it is
+/// belongs down here with the providers; above this module a write is a
+/// write, and the descriptor it came from is opaque (§REQ-001-boundary.5).
+#[derive(Debug, Clone, PartialEq)]
+pub struct NativeWrite(github::Target);
+
+/// Whether a `react` or `reply` descriptor is one of ephor's own providers' to
+/// carry out. A descriptor that is claimed and unusable is no target at all,
+/// which is why claiming and reading are two questions.
+pub fn claims_write(descriptor: &Value) -> bool {
+    github::claims(descriptor)
+}
+
+/// The descriptor read back into a write, where it carries what one needs.
+pub fn native_write(descriptor: &Value) -> Option<NativeWrite> {
+    github::parse_target(descriptor).map(NativeWrite)
+}
+
+/// Post a reaction through the provider that claimed the descriptor.
+pub fn post_reaction(write: &NativeWrite, content: &str) -> crate::error::Result<()> {
+    github::react(&write.0, content)
+}
+
+/// Send a reply through the provider that claimed the descriptor.
+pub fn post_reply(write: &NativeWrite, text: &str) -> crate::error::Result<()> {
+    github::reply(&write.0, text)
+}
+
+/// Whether a provider fetches unscoped — asking nothing about any one project
+/// and answering about all of them (§DA-002-fetch-attribution-split). A
+/// property of the provider, so it is answered where the providers are.
+pub fn is_shared(name: &str) -> bool {
+    matches!(name, "github-notifications" | "slack" | "discord" | "email")
 }
 
 /// Whether a provider name is one ephor implements itself. The complement of
@@ -119,49 +154,6 @@ pub fn quick_actions(provider_blocks: &[Value], item: &Item) -> Vec<ActionConfig
         .collect()
 }
 
-/// What a red gate is asking, answered in one screen (§FS-004-quick-actions.4):
-/// the check list as GitHub reports it, then the log of every failed job, one
-/// copy per underlying run. `gh pr checks` signals check state through its
-/// exit code, so a non-zero status here is the failure being reported and not
-/// a broken command; the run id is read back out of each failing check's link,
-/// which is the only place `gh` hands it over.
-const SHOW_FAILING_CHECKS: &str = r##"{
-  gh pr checks "$EPHOR_NUMBER" --repo "$EPHOR_REPO" || true
-  gh pr checks "$EPHOR_NUMBER" --repo "$EPHOR_REPO" --json state,link --jq '
-        .[] | select(.state as $state
-          | ["FAILURE", "FAILED", "ERROR", "TIMED_OUT", "CANCELLED", "CANCELED"]
-          | index($state)) | .link' \
-    | sed -n 's#.*/runs/\([0-9][0-9]*\)/.*#\1#p' \
-    | sort -u \
-    | while read -r run; do
-        printf '\n===== failed jobs of run %s =====\n\n' "$run"
-        gh run view "$run" --repo "$EPHOR_REPO" --log-failed
-      done
-} 2>&1 | ${PAGER:-less -R}
-"##;
-
-/// The failing-CI quick action, pointed at the host the checks live on: the
-/// enterprise host is configuration, so it is exported rather than named in
-/// the script. Shared by both GitHub sources — the same red gate reached
-/// through the pull request or through its checks asks the same question, and
-/// two copies of this script would drift.
-pub(crate) fn show_failing_checks(host: Option<&str>) -> ActionConfig {
-    let command = match host {
-        Some(host) => format!(
-            "export GH_HOST={}\n{SHOW_FAILING_CHECKS}",
-            shell_quote(host)
-        ),
-        None => SHOW_FAILING_CHECKS.to_string(),
-    };
-    ActionConfig {
-        id: "ci-failures".to_string(),
-        icon: "✗".to_string(),
-        description: "see the CI failures".to_string(),
-        command,
-        ..ActionConfig::default()
-    }
-}
-
 /// `serde(default)` for provider flags that are on unless switched off.
 pub(crate) fn enabled() -> bool {
     true
@@ -169,51 +161,13 @@ pub(crate) fn enabled() -> bool {
 
 pub(crate) use crate::seams::summons::quote as shell_quote;
 
+pub(crate) use github::{gh_command, github_login, parse_github_time, show_failing_checks};
+
 pub(crate) fn parse_config<T: serde::de::DeserializeOwned>(
     config: &Value,
 ) -> Result<T, ProviderError> {
     serde_json::from_value(config.clone())
         .map_err(|err| ProviderError(format!("invalid provider config: {err}")))
-}
-
-/// `gh` invocation with optional GitHub Enterprise host.
-pub(crate) fn gh_command(host: Option<&str>) -> Command {
-    let mut command = Command::new("gh");
-    command
-        .env("GH_PROMPT_DISABLED", "1")
-        .env("GH_NO_UPDATE_NOTIFIER", "1");
-    if let Some(host) = host {
-        command.env("GH_HOST", host);
-    }
-    command
-}
-
-/// The authenticated GitHub login: config override or `gh api user`.
-pub(crate) fn github_login(
-    ctx: &crate::feed::provider::ProviderContext,
-    host: Option<&str>,
-) -> Result<String, ProviderError> {
-    if let Some(user) = &ctx.github_user {
-        return Ok(user.clone());
-    }
-    let mut command = gh_command(host);
-    command.args(["api", "user", "-q", ".login"]);
-    let out = crate::feed::provider::run_capture(command, ctx.timeout, false)?;
-    let login = out.trim().to_string();
-    if login.is_empty() {
-        return Err(ProviderError(
-            "could not determine GitHub login".to_string(),
-        ));
-    }
-    Ok(login)
-}
-
-pub(crate) fn parse_github_time(value: &Value) -> chrono::DateTime<chrono::Utc> {
-    value
-        .as_str()
-        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-        .map(|dt| dt.with_timezone(&chrono::Utc))
-        .unwrap_or_else(chrono::Utc::now)
 }
 
 #[cfg(test)]

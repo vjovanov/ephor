@@ -142,24 +142,15 @@ pub struct Message {
     pub mine: bool,
 }
 
-/// A task is done or it is not, whatever the forge calls the states it uses
-/// (§FS-001-forge-interface.1): anything but `resolved` is work left, so a
-/// spelling ephor has not seen reads as unfinished rather than as finished.
-pub fn task_resolved(task: &Value) -> bool {
-    task.get("state")
-        .and_then(Value::as_str)
-        .is_some_and(|state| state.eq_ignore_ascii_case("resolved"))
-}
-
 impl Message {
     /// A task still to be done — what makes a thread await the reader
     /// (§FS-003-feed-categories.4) and what the tick key acts on.
     pub fn open_task(&self) -> bool {
-        !self.task.is_null() && !task_resolved(&self.task)
+        !self.task.is_null() && !crate::matter::task_resolved(&self.task)
     }
 
     pub fn resolved_task(&self) -> bool {
-        !self.task.is_null() && task_resolved(&self.task)
+        !self.task.is_null() && crate::matter::task_resolved(&self.task)
     }
 }
 

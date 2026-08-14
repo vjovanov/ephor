@@ -775,45 +775,6 @@ pub fn expand_template(template: &str, context: &HashMap<String, String>) -> Res
     Ok(result)
 }
 
-/// Every ticket key a piece of text names, in the order it names them. The
-/// same shape `extract_ticket` looks for in a branch, found anywhere: what a
-/// title or a message refers to is how one matter is related to another
-/// (§FS-007-matters.2).
-pub fn tickets_in(text: &str) -> Vec<String> {
-    let mut found: Vec<String> = Vec::new();
-    let words: Vec<&str> = text
-        .split(|character: char| {
-            !character.is_alphanumeric() && character != '-' && character != '_'
-        })
-        .collect();
-    for word in words {
-        let ticket = extract_ticket(word);
-        if !ticket.is_empty() && !found.contains(&ticket) {
-            found.push(ticket);
-        }
-    }
-    found
-}
-
-pub fn extract_ticket(branch: &str) -> String {
-    let normalized = branch.replace('/', "-");
-    let parts: Vec<&str> = normalized.split('-').collect();
-    for window in parts.windows(2) {
-        let (part, next) = (window[0], window[1]);
-        let is_upper = !part.is_empty()
-            && part.chars().any(|c| c.is_alphabetic())
-            && part
-                .chars()
-                .filter(|c| c.is_alphabetic())
-                .all(|c| c.is_uppercase());
-        let is_digit = !next.is_empty() && next.chars().all(|c| c.is_ascii_digit());
-        if is_upper && is_digit {
-            return format!("{part}-{next}");
-        }
-    }
-    String::new()
-}
-
 /// Python `str(value)` semantics for the JSON scalar types used in `vars`.
 pub fn value_to_string(value: &Value) -> String {
     match value {
@@ -905,13 +866,6 @@ fn valid_tag_list(value: Option<&Value>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn extract_ticket_finds_jira_keys() {
-        assert_eq!(extract_ticket("you/ABC-42-retry-window"), "ABC-42");
-        assert_eq!(extract_ticket("feature/no-ticket"), "");
-        assert_eq!(extract_ticket(""), "");
-    }
 
     #[test]
     fn expand_template_reports_missing_keys() {

@@ -82,6 +82,13 @@ jobs:
       - name: cargo test
         run: cargo test --all-targets --locked
 
+      # §REQ-001-boundary.5: a product name only in its own adapter, and a core
+      # layer that reaches nothing above it. Alongside the site-word check the
+      # release gate runs, and for the same reason: a boundary observed as a
+      # convention is a boundary that has already moved.
+      - name: boundary check
+        run: python scripts/check_boundary.py
+
   # ephor is a project ephor watches, so it consumes what it ships
   # (§FS-009-shipped-actions): its own `ephor.json` is validated against the
   # published schema, and its own style verb runs through the shipped check

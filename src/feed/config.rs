@@ -41,8 +41,10 @@ pub struct StatusConfig {
 /// Whether a source fetches unscoped — asking nothing about any one project,
 /// and answering about all of them. These belong at site level; declared under
 /// a project they still work, and say so once (§DA-002-fetch-attribution-split).
+/// Which sources those are is the providers' own fact, not configuration's
+/// (§REQ-001-boundary.5).
 pub fn is_shared_source(name: &str) -> bool {
-    matches!(name, "github-notifications" | "slack" | "discord" | "email")
+    crate::feed::providers::is_shared(name)
 }
 
 impl StatusConfig {

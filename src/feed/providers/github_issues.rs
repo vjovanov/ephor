@@ -21,7 +21,6 @@ use crate::feed::provider::{
     command_exists, run_json, Provider, ProviderContext, ProviderError, ProviderResult,
 };
 use crate::feed::providers::{gh_command, github_login, parse_config, parse_github_time};
-use crate::feed::react;
 use crate::forge::{policy, Issue, Message, Role};
 
 #[derive(Debug, Deserialize)]
@@ -201,7 +200,7 @@ fn message(node: &Value, login: &str, host: Option<&str>) -> Message {
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string();
-    let reactions = react::github_reactions_json(node.pointer("/reactions/nodes"));
+    let reactions = super::github::reactions_json(node.pointer("/reactions/nodes"));
     Message {
         mine: author == login,
         author,
@@ -228,7 +227,7 @@ fn message(node: &Value, login: &str, host: Option<&str>) -> Message {
         react: node
             .get("id")
             .and_then(Value::as_str)
-            .map(|id| react::github_target_json(host, id))
+            .map(|id| super::github::target_json(host, id))
             .unwrap_or(Value::Null),
         // GitHub tracks no task on an issue comment; a checklist there is
         // prose in the body, not something the forge holds a state for.

@@ -50,11 +50,11 @@ pub struct Entry {
     /// recorded; the work root's parent stands in.
     #[serde(default)]
     pub checkout: PathBuf,
-    /// The plan's id there, which is also its file stem.
-    /// The plan this item's work lives in. Named for the plan, not for the
-    /// runtime that runs it — the alias keeps every ledger written before this
-    /// readable (§AR-007-runtime).
-    #[serde(alias = "rhei")]
+    /// The plan this item's work lives in — its id inside the root, which is
+    /// also its file stem. Named for the plan, not for the runtime that runs
+    /// it; a ledger written before that is migrated on the way in by the
+    /// module whose word the old name was
+    /// (§AR-007-runtime, §REQ-001-boundary.5).
     pub plan_id: String,
     pub plan: PathBuf,
     pub dispatches: Vec<Dispatch>,
@@ -225,9 +225,12 @@ pub fn load() -> Result<Ledger> {
     }
     let text = fs::read_to_string(&path)
         .map_err(|err| EphorError::Command(format!("Cannot read {}: {err}", path.display())))?;
-    serde_json::from_str(&text).map_err(|err| {
+    let corrupt = |err: serde_json::Error| {
         EphorError::Command(format!("Corrupt work ledger {}: {err}", path.display()))
-    })
+    };
+    let mut document: serde_json::Value = serde_json::from_str(&text).map_err(corrupt)?;
+    crate::work::runtime::migrate_ledger(&mut document);
+    serde_json::from_value(document).map_err(corrupt)
 }
 
 pub fn store(ledger: &Ledger) -> Result<()> {
@@ -344,11 +347,11 @@ mod compat_tests {
 
     /// A ledger written before the runtime was carved out still reads: the
     /// field was named for the runtime and is named for the plan now, and the
-    /// alias is what keeps an upgrade from losing the record of what was
+    /// migration is what keeps an upgrade from losing the record of what was
     /// dispatched (§AR-007-runtime).
     #[test]
     fn a_ledger_from_before_the_carve_still_reads() {
-        let older = serde_json::json!({
+        let mut older = serde_json::json!({
             "entries": {
                 "github-prs:acme/widget#42": {
                     "project": "widget",
@@ -361,7 +364,8 @@ mod compat_tests {
                 }
             }
         });
-        let ledger: Ledger = serde_json::from_value(older).expect("the alias reads it");
+        crate::work::runtime::migrate_ledger(&mut older);
+        let ledger: Ledger = serde_json::from_value(older).expect("the migration reads it");
         let entry = &ledger.entries["github-prs:acme/widget#42"];
         assert_eq!(entry.plan_id, "github-prs-acme-widget-42");
         assert_eq!(entry.project, "widget");

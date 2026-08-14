@@ -1,21 +1,20 @@
-//! Reactions on thread messages: the shared emoji palette, normalization of
-//! provider reaction data into the thread display shape, and posting a
-//! reaction back through the provider that owns the message.
+//! Reactions on thread messages: the emoji palette every source's reactions
+//! are shown in, and posting one back through the source that owns the
+//! message.
 //!
-//! A message that supports posting carries a `react` descriptor in its
-//! thread JSON, e.g. `{"provider": "github", "host": null, "subject_id":
-//! "<node id>"}`. A forge that does not declare the `reactions`
+//! A message that supports posting carries a `react` descriptor in its thread
+//! JSON. Whose descriptor it is, and how a reaction is posted to it, belongs
+//! to the source that wrote it — either one of ephor's own providers, which
+//! carries the write out itself, or the forge the descriptor came back from
+//! (§REQ-001-boundary.5). A forge that does not declare the `reactions`
 //! capability omits it; its reactions are display-only — which is also what
 //! tells the reader's screen not to offer the key (§FS-004-quick-actions.2).
 
-use std::time::Duration;
-
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use crate::error::{EphorError, Result};
 use crate::feed::config::Defaults;
-use crate::feed::provider::run_json;
-use crate::feed::providers::{forge_call, gh_command};
+use crate::feed::providers::{self, forge_call, NativeWrite};
 
 /// The palette offered by the TUI picker: (emoji, GitHub content name).
 /// These are exactly GitHub's eight reaction contents; other providers map
@@ -41,44 +40,11 @@ pub fn emoji_for_content(content: &str) -> String {
         .unwrap_or_else(|| format!(":{}:", content.to_lowercase()))
 }
 
-/// Group GraphQL reaction nodes (`[{content, user{login}}]`) into the thread
-/// display shape `[{"emoji": "👍", "users": ["alice", ...]}]`.
-pub fn github_reactions_json(nodes: Option<&Value>) -> Value {
-    let mut grouped: Vec<(String, Vec<Value>)> = Vec::new();
-    for node in nodes.and_then(Value::as_array).into_iter().flatten() {
-        let Some(content) = node.get("content").and_then(Value::as_str) else {
-            continue;
-        };
-        let emoji = emoji_for_content(content);
-        let user = node
-            .pointer("/user/login")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        match grouped.iter_mut().find(|(existing, _)| *existing == emoji) {
-            Some((_, users)) => users.push(json!(user)),
-            None => grouped.push((emoji, vec![json!(user)])),
-        }
-    }
-    Value::Array(
-        grouped
-            .into_iter()
-            .map(|(emoji, users)| json!({ "emoji": emoji, "users": users }))
-            .collect(),
-    )
-}
-
-/// The `react` descriptor for a GitHub comment node.
-pub fn github_target_json(host: Option<&str>, subject_id: &str) -> Value {
-    json!({ "provider": "github", "host": host, "subject_id": subject_id })
-}
-
 /// Where a posted reaction goes. Parsed from a message's `react` descriptor.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ReactTarget {
-    Github {
-        host: Option<String>,
-        subject_id: String,
-    },
+    /// A source ephor implements itself, which posts the reaction directly.
+    Native(NativeWrite),
     /// Any source reached through the forge interface: the descriptor is that
     /// implementation's own and goes back to it verbatim
     /// (§FS-001-forge-interface.1). Without this arm the `react` subcommand
@@ -91,20 +57,14 @@ pub enum ReactTarget {
 /// not recognize back to.
 pub fn parse_target(message: &Value, source: &str) -> Option<ReactTarget> {
     let react = message.get("react").filter(|react| !react.is_null())?;
-    match react.get("provider").and_then(Value::as_str) {
-        Some("github") => Some(ReactTarget::Github {
-            host: react.get("host").and_then(Value::as_str).map(String::from),
-            subject_id: react.get("subject_id").and_then(Value::as_str)?.to_string(),
-        }),
-        _ => Some(ReactTarget::Forge {
-            source: source.to_string(),
-            target: react.clone(),
-        }),
+    if providers::claims_write(react) {
+        return providers::native_write(react).map(ReactTarget::Native);
     }
+    Some(ReactTarget::Forge {
+        source: source.to_string(),
+        target: react.clone(),
+    })
 }
-
-const ADD_REACTION: &str = "mutation($subject:ID!,$content:ReactionContent!){\
-addReaction(input:{subjectId:$subject,content:$content}){reaction{content}}}";
 
 /// Post a reaction. `content` is the palette content name (e.g. THUMBS_UP),
 /// `emoji` the same reaction as the interface spells it — a forge is asked in
@@ -118,16 +78,7 @@ pub fn post(
     defaults: &Defaults,
 ) -> Result<()> {
     match target {
-        ReactTarget::Github { host, subject_id } => {
-            let mut command = gh_command(host.as_deref());
-            command
-                .args(["api", "graphql", "-f", &format!("query={ADD_REACTION}")])
-                .args(["-f", &format!("subject={subject_id}")])
-                .args(["-f", &format!("content={content}")]);
-            run_json(command, Duration::from_secs(15), false)
-                .map_err(|err| EphorError::Command(format!("reaction failed: {err}")))?;
-            Ok(())
-        }
+        ReactTarget::Native(write) => providers::post_reaction(write, content),
         ReactTarget::Forge { source, target } => {
             let (forge, request) = forge_call(blocks, source, project, defaults)
                 .map_err(|err| EphorError::Command(err.to_string()))?;
@@ -141,6 +92,7 @@ pub fn post(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn content_names_map_to_emoji() {
@@ -149,35 +101,16 @@ mod tests {
         assert_eq!(emoji_for_content("SOMETHING_NEW"), ":something_new:");
     }
 
+    /// A descriptor one of ephor's own providers wrote is carried out by that
+    /// provider, and the engine holds it without knowing whose it is.
     #[test]
-    fn github_nodes_group_by_emoji() {
-        let nodes = json!([
-            { "content": "THUMBS_UP", "user": { "login": "alice" } },
-            { "content": "THUMBS_UP", "user": { "login": "bob" } },
-            { "content": "ROCKET", "user": { "login": "carol" } },
-        ]);
-        let grouped = github_reactions_json(Some(&nodes));
-        assert_eq!(
-            grouped,
-            json!([
-                { "emoji": "👍", "users": ["alice", "bob"] },
-                { "emoji": "🚀", "users": ["carol"] },
-            ])
-        );
-    }
-
-    #[test]
-    fn parse_target_reads_github_descriptor() {
-        let message = json!({
-            "author": "a",
-            "react": { "provider": "github", "host": "github.example.com", "subject_id": "MDEy" },
-        });
+    fn parse_target_reads_a_native_descriptor() {
+        let descriptor = providers::github::target_json(Some("github.example.com"), "MDEy");
+        let write = providers::native_write(&descriptor).expect("a usable descriptor");
+        let message = json!({ "author": "a", "react": descriptor });
         assert_eq!(
             parse_target(&message, "github-prs"),
-            Some(ReactTarget::Github {
-                host: Some("github.example.com".to_string()),
-                subject_id: "MDEy".to_string(),
-            })
+            Some(ReactTarget::Native(write))
         );
         assert_eq!(parse_target(&json!({ "author": "a" }), "github-prs"), None);
         assert_eq!(parse_target(&json!({ "react": null }), "forge"), None);

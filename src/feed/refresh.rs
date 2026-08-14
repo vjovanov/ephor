@@ -118,7 +118,7 @@ fn workspace_ticket(workspace: &Workspace) -> Option<String> {
         .get("branch")
         .and_then(Value::as_str)
         .unwrap_or("");
-    let extracted = registry::extract_ticket(branch);
+    let extracted = crate::ticket_ids::extract_ticket(branch);
     if extracted.is_empty() {
         None
     } else {

@@ -1196,12 +1196,13 @@ mod tests {
                 project,
                 ..
             } => {
+                let descriptor = crate::feed::providers::github::target_json(None, "PR_1");
                 assert_eq!(
                     target,
-                    ReplyTarget::Github {
-                        host: None,
-                        subject_id: "PR_1".to_string()
-                    }
+                    ReplyTarget::Native(
+                        crate::feed::providers::native_write(&descriptor)
+                            .expect("a usable descriptor")
+                    )
                 );
                 assert_eq!(text, "Yes — it resets per attempt.");
                 assert_eq!(project, "widget");

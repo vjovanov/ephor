@@ -443,7 +443,7 @@ fn run_work(config: &StatusConfig, args: &crate::cli::WorkRunArgs) -> Result<Exi
             root.display(),
             plans.len()
         );
-        match runtime::run(&config.work, root, checkout, plans, &args.rhei_args) {
+        match runtime::run(&config.work, root, checkout, plans, &args.runner_args) {
             Ok(answer) => match answer.outcome {
                 SummonsOutcome::Done => {}
                 // The runtime declining for now is not a failed run

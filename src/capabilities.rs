@@ -85,10 +85,17 @@ impl Rung {
 /// once there is a manifest to read (§FS-006-project-interface.2).
 pub const CHECK_SCRIPTS: [&str; 3] = ["check.sh", "check-style.sh", "smoke-test.sh"];
 
-/// The ticket stores probed by convention (§FS-006-project-interface.7). Each
-/// is a project-native thing that exists without ephor; finding one is a rung,
-/// never an obligation.
-pub const TICKET_STORES: [&str; 2] = ["panta", ".beads"];
+/// The directories the ticket stores are probed under
+/// (§FS-006-project-interface.7). Each is a project-native thing that exists
+/// without ephor; finding one is a rung, never an obligation. The names are
+/// the stores' own, so they are asked of the store adapter rather than
+/// spelled here (§REQ-001-boundary.5).
+pub fn ticket_stores() -> Vec<&'static str> {
+    crate::seams::tickets::Kind::all()
+        .iter()
+        .map(|kind| kind.probed())
+        .collect()
+}
 
 /// What the caller knows that the checkout cannot be asked: the bindings a
 /// person configured and what the sources last answered.
@@ -194,13 +201,14 @@ impl CapabilitySet {
             // A manifest may keep its store somewhere else entirely
             // (§FS-006-project-interface.7).
             let declared = !crate::seams::tickets::find(root, bindings.manifest).is_empty();
-            if !declared && !TICKET_STORES.iter().any(|name| root.join(name).is_dir()) {
+            let probed = ticket_stores();
+            if !declared && !probed.iter().any(|name| root.join(name).is_dir()) {
                 fails(
                     Rung::Ticketed,
                     format!(
                         "{} holds no ticket store ({})",
                         root.display(),
-                        TICKET_STORES.join(", ")
+                        probed.join(", ")
                     ),
                 );
             }

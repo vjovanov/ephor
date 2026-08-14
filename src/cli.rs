@@ -182,7 +182,7 @@ pub struct WorkRunArgs {
 
     /// Arguments passed through to the runtime, after `--`.
     #[arg(last = true)]
-    pub rhei_args: Vec<String>,
+    pub runner_args: Vec<String>,
 }
 
 #[derive(Args, Debug)]

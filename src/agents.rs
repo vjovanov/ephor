@@ -10,8 +10,7 @@ use serde_json::{Map, Value};
 use crate::error::{registry_error, Result};
 use crate::paths;
 use crate::registry::{
-    expand_template, extract_ticket, get_project_type, merge_objects, str_field, value_to_string,
-    Workspace,
+    expand_template, get_project_type, merge_objects, str_field, value_to_string, Workspace,
 };
 
 pub fn write_agents_file(
@@ -243,7 +242,10 @@ pub fn build_context(workspace: &Workspace, root: &Path) -> HashMap<String, Stri
     context.entry("branch".to_string()).or_default();
     if !context.contains_key("ticket") {
         let branch = context.get("branch").cloned().unwrap_or_default();
-        context.insert("ticket".to_string(), extract_ticket(&branch));
+        context.insert(
+            "ticket".to_string(),
+            crate::ticket_ids::extract_ticket(&branch),
+        );
     }
     context
 }

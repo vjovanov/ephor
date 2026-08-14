@@ -26,6 +26,11 @@ format:
 format-check:
     cargo fmt --all -- --check
 
+# Hold the source to the boundary law: no product literal outside its adapter,
+# and a core layer that reaches nothing above it (§REQ-001-boundary.5)
+boundary:
+    python3 scripts/check_boundary.py
+
 # Validate the grund tree (citations resolve, canonical formatting)
 grund:
     grund check
@@ -39,8 +44,8 @@ lint:
 manual-page out="target/manual.html":
     python3 scripts/manual-page.py {{out}}
 
-# Full gate, matching CI: format + build + tests + grund
-check: format-check build test test-python grund
+# Full gate, matching CI: format + build + tests + boundary + grund
+check: format-check build test test-python boundary grund
 
 # Everything a release verifies, without publishing anything
 pre-release:

@@ -4,39 +4,27 @@
 //!
 //! A channel that can carry a reply says so by putting a `reply` descriptor on
 //! its thread, in the pattern a message uses for `react`
-//! (§FS-007-matters.4) — e.g. `{"provider": "github", "host": null,
-//! "subject_id": "<node id>"}`. A channel that omits it is display-only: the
-//! surfaces offer no key, and a drafted answer is what the reader copies
-//! (§FS-005-dispatch.13), which is a stated degrade rather than a failure
-//! (§REQ-001-boundary.1).
+//! (§FS-007-matters.4). Whose descriptor it is, and how a reply is sent to it,
+//! belongs to the source that wrote it (§REQ-001-boundary.5). A channel that
+//! omits it is display-only: the surfaces offer no key, and a drafted answer
+//! is what the reader copies (§FS-005-dispatch.13), which is a stated degrade
+//! rather than a failure (§REQ-001-boundary.1).
 
-use std::time::Duration;
-
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use crate::error::{EphorError, Result};
 use crate::feed::config::Defaults;
-use crate::feed::provider::run_json;
-use crate::feed::providers::{forge_call, gh_command};
+use crate::feed::providers::{self, forge_call, NativeWrite};
 
 /// Where a posted reply goes. Parsed from a thread's `reply` descriptor.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ReplyTarget {
-    Github {
-        host: Option<String>,
-        /// The node the comment is added to — the pull request or issue, not
-        /// one of its comments.
-        subject_id: String,
-    },
+    /// A source ephor implements itself, which sends the reply directly.
+    Native(NativeWrite),
     /// Any source reached through the forge interface: the descriptor is that
     /// implementation's own and goes back to it verbatim
     /// (§FS-001-forge-interface.1).
     Forge { source: String, target: Value },
-}
-
-/// The `reply` descriptor for a GitHub subject that takes comments.
-pub fn github_target_json(host: Option<&str>, subject_id: &str) -> Value {
-    json!({ "provider": "github", "host": host, "subject_id": subject_id })
 }
 
 /// Parse a thread's `reply` descriptor, if it has a usable one. `source` is
@@ -44,20 +32,14 @@ pub fn github_target_json(host: Option<&str>, subject_id: &str) -> Value {
 /// recognize back to.
 pub fn parse_target(thread: &Value, source: &str) -> Option<ReplyTarget> {
     let reply = thread.get("reply").filter(|reply| !reply.is_null())?;
-    match reply.get("provider").and_then(Value::as_str) {
-        Some("github") => Some(ReplyTarget::Github {
-            host: reply.get("host").and_then(Value::as_str).map(String::from),
-            subject_id: reply.get("subject_id").and_then(Value::as_str)?.to_string(),
-        }),
-        _ => Some(ReplyTarget::Forge {
-            source: source.to_string(),
-            target: reply.clone(),
-        }),
+    if providers::claims_write(reply) {
+        return providers::native_write(reply).map(ReplyTarget::Native);
     }
+    Some(ReplyTarget::Forge {
+        source: source.to_string(),
+        target: reply.clone(),
+    })
 }
-
-const ADD_COMMENT: &str = "mutation($subject:ID!,$body:String!){\
-addComment(input:{subjectId:$subject,body:$body}){clientMutationId}}";
 
 /// Send the reply. The text is the reader's — edited or as it was drafted —
 /// and it goes out exactly as it stands (§FS-005-dispatch.13).
@@ -73,16 +55,7 @@ pub fn post(
         return Err(EphorError::Command("There is nothing to post".to_string()));
     }
     match target {
-        ReplyTarget::Github { host, subject_id } => {
-            let mut command = gh_command(host.as_deref());
-            command
-                .args(["api", "graphql", "-f", &format!("query={ADD_COMMENT}")])
-                .args(["-f", &format!("subject={subject_id}")])
-                .args(["-f", &format!("body={text}")]);
-            run_json(command, Duration::from_secs(30), false)
-                .map_err(|err| EphorError::Command(format!("reply failed: {err}")))?;
-            Ok(())
-        }
+        ReplyTarget::Native(write) => providers::post_reply(write, text),
         ReplyTarget::Forge { source, target } => {
             let (forge, request) = forge_call(blocks, source, project, defaults)
                 .map_err(|err| EphorError::Command(err.to_string()))?;
@@ -96,19 +69,18 @@ pub fn post(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
+    /// A descriptor one of ephor's own providers wrote is carried out by that
+    /// provider, and the engine holds it without knowing whose it is.
     #[test]
-    fn parse_target_reads_a_github_descriptor() {
-        let thread = json!({
-            "messages": [],
-            "reply": { "provider": "github", "host": "github.example.com", "subject_id": "PR_1" },
-        });
+    fn parse_target_reads_a_native_descriptor() {
+        let descriptor = providers::github::target_json(Some("github.example.com"), "PR_1");
+        let write = providers::native_write(&descriptor).expect("a usable descriptor");
+        let thread = json!({ "messages": [], "reply": descriptor });
         assert_eq!(
             parse_target(&thread, "github-prs"),
-            Some(ReplyTarget::Github {
-                host: Some("github.example.com".to_string()),
-                subject_id: "PR_1".to_string(),
-            })
+            Some(ReplyTarget::Native(write))
         );
     }
 

@@ -22,6 +22,14 @@ const DOSSIER_CLOSE: &str = "<!-- /ephor:dossier -->";
 
 const TASKS_HEADING: &str = "## Tasks";
 
+/// The directory a runtime project lives in, under the work root template
+/// (§DA-001-runtime-bound-default). Part of the coupling, and so part of this
+/// module (§REQ-001-boundary.5).
+pub const PROJECT_DIR: &str = "panta";
+
+/// What a plan file is called: `<plan id>` and this.
+const PLAN_SUFFIX: &str = ".rhei.md";
+
 /// A directory holding an item's plans: a rhei project, with the state machine
 /// its tickets run under.
 pub struct WorkRoot {
@@ -119,7 +127,7 @@ impl WorkRoot {
     }
 
     pub fn plan_path(&self, plan_id: &str) -> PathBuf {
-        self.dir.join(format!("{plan_id}.rhei.md"))
+        plan_path_in(&self.dir, plan_id)
     }
 
     /// Whether the machine in force declares a state, so a recipe pointing at
@@ -152,6 +160,14 @@ impl WorkRoot {
     }
 }
 
+/// The plan file for an id inside a work root. The same path
+/// [`WorkRoot::plan_path`] resolves, for callers that have the directory
+/// before they have the root — a dry run promising where work would go
+/// (§FS-005-dispatch.5).
+pub fn plan_path_in(dir: &Path, plan_id: &str) -> PathBuf {
+    dir.join(format!("{plan_id}{PLAN_SUFFIX}"))
+}
+
 /// Whether a runtime project has any plans in it: a `*.rhei.md` file, or a
 /// directory workspace, among its direct non-hidden children — which is where
 /// the runtime looks for them.
@@ -164,7 +180,7 @@ fn holds_plans(dir: &Path) -> bool {
         if name.starts_with('.') || name == "runtime" {
             return false;
         }
-        name.ends_with(".rhei.md") || entry.path().join("index.rhei.md").is_file()
+        name.ends_with(PLAN_SUFFIX) || entry.path().join(format!("index{PLAN_SUFFIX}")).is_file()
     })
 }
 

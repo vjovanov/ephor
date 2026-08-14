@@ -28,5 +28,6 @@ pub mod rebase;
 pub mod registry;
 pub mod seams;
 pub mod table;
+pub mod ticket_ids;
 pub mod update;
 pub mod work;

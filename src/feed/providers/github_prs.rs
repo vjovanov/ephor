@@ -38,8 +38,6 @@ use crate::feed::provider::{
 use crate::feed::providers::{
     gh_command, github_login, parse_config, parse_github_time, show_failing_checks,
 };
-use crate::feed::react;
-use crate::feed::reply;
 use crate::forge::{policy, Message, PullRequest, Reason, Role, Thread};
 
 #[derive(Debug, Deserialize)]
@@ -263,7 +261,7 @@ impl GithubPrs {
                 reply: pull
                     .and_then(|pull| pull.get("id"))
                     .and_then(Value::as_str)
-                    .map(|id| reply::github_target_json(host, id))
+                    .map(|id| super::github::target_json(host, id))
                     .unwrap_or(Value::Null),
             });
         }
@@ -318,7 +316,7 @@ fn message(node: &Value, login: &str, host: Option<&str>) -> Message {
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string();
-    let reactions = react::github_reactions_json(node.pointer("/reactions/nodes"));
+    let reactions = super::github::reactions_json(node.pointer("/reactions/nodes"));
     Message {
         mine: author == login,
         author,
@@ -345,7 +343,7 @@ fn message(node: &Value, login: &str, host: Option<&str>) -> Message {
         react: node
             .get("id")
             .and_then(Value::as_str)
-            .map(|id| react::github_target_json(host, id))
+            .map(|id| super::github::target_json(host, id))
             .unwrap_or(Value::Null),
         // GitHub tracks no task on a pull request comment; a checklist there
         // is prose in the body, not something the forge holds a state for.

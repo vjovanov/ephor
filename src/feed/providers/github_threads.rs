@@ -14,7 +14,6 @@ use crate::feed::provider::{
     command_exists, run_json, Provider, ProviderContext, ProviderError, ProviderResult,
 };
 use crate::feed::providers::{gh_command, github_login, parse_config, parse_github_time};
-use crate::feed::react;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -134,13 +133,13 @@ impl Provider for GithubThreads {
                                 "text": c.get("body").and_then(Value::as_str).unwrap_or(""),
                                 "when": c.get("updatedAt").and_then(Value::as_str).unwrap_or(""),
                             });
-                            let reactions = react::github_reactions_json(c.pointer("/reactions/nodes"));
+                            let reactions = super::github::reactions_json(c.pointer("/reactions/nodes"));
                             if reactions.as_array().is_some_and(|list| !list.is_empty()) {
                                 message["reactions"] = reactions;
                             }
                             if let Some(id) = c.get("id").and_then(Value::as_str) {
                                 message["react"] =
-                                    react::github_target_json(self.config.host.as_deref(), id);
+                                    super::github::target_json(self.config.host.as_deref(), id);
                             }
                             message
                         })

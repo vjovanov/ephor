@@ -15,7 +15,7 @@ use serde_json::Value;
 use crate::error::{EphorError, Result};
 use crate::feed::config::Defaults;
 use crate::feed::providers::forge_call;
-use crate::forge::task_resolved;
+use crate::matter::task_resolved;
 
 /// A task on a message: its state, and who to send a transition to.
 #[derive(Debug, Clone, PartialEq)]

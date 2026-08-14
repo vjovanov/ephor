@@ -47,7 +47,7 @@ impl Default for WorkConfig {
 }
 
 fn default_root() -> String {
-    "{workspace}/panta".to_string()
+    format!("{{workspace}}/{}", crate::work::runtime::plan::PROJECT_DIR)
 }
 
 /// Work per project: extra recipes, and a work root of its own.

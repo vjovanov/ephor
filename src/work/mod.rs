@@ -123,6 +123,10 @@ pub struct WorkStatus {
     pub tickets: Vec<TicketStatus>,
     /// What has happened to the item since the last dispatch.
     pub changes: Vec<String>,
+    /// How to move the waiting ticket on by hand, where one is waiting. Built
+    /// by the runtime module, since the words are the runner's
+    /// (§REQ-001-boundary.5).
+    pub advance: Option<String>,
 }
 
 impl WorkStatus {
@@ -376,7 +380,7 @@ impl Dispatcher {
         if dry_run {
             // Nothing is created, so the machine cannot be consulted; what a
             // dry run promises is where the ticket would go.
-            let path = site.dir.join(format!("{plan_id}.rhei.md"));
+            let path = plan::plan_path_in(&site.dir, &plan_id);
             let existing = Plan::read(&path)?;
             let ticket = existing
                 .as_ref()
@@ -616,7 +620,7 @@ impl Dispatcher {
             .collect();
         let root = WorkRoot::open(&entry.root).ok().flatten();
         let plan = Plan::read(&entry.plan).ok().flatten();
-        let tickets = plan
+        let tickets: Vec<TicketStatus> = plan
             .as_ref()
             .map(|plan| {
                 plan.tickets()
@@ -654,6 +658,13 @@ impl Dispatcher {
                     .collect()
             })
             .unwrap_or_default();
+        let advance = tickets.iter().find(|ticket| ticket.waiting).map(|ticket| {
+            runtime::advance_command(
+                &self.global,
+                &ticket.id,
+                ticket.state.as_deref().unwrap_or("?"),
+            )
+        });
         WorkStatus {
             project: entry.project.clone(),
             root: entry.root.clone(),
@@ -662,6 +673,7 @@ impl Dispatcher {
             plan: entry.plan.clone(),
             missing: plan.is_none(),
             tickets,
+            advance,
             changes: item
                 .map(|item| entry.changes_since(item))
                 .unwrap_or_default(),
