@@ -36,6 +36,17 @@ grund:
     grund check
     grund fmt --check
 
+# Run the end-to-end scenarios alone (`just check` runs them too, with
+# everything else — they are ordinary cargo test targets)
+e2e:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    targets=()
+    for case in e2e/cases/E2E-*.rs; do
+        targets+=(--test "$(basename "$case" .rs | tr 'A-Z-' 'a-z_')")
+    done
+    cargo test --locked "${targets[@]}"
+
 # Lint with clippy, warnings are errors (not part of the CI gate)
 lint:
     cargo clippy --all-targets -- -D warnings

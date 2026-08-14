@@ -20,6 +20,35 @@ path = "src/lib.rs"
 name = "ephor"
 path = "src/main.rs"
 
+# The end-to-end scenarios (§E2E, `e2e/cases`). They are declared by path
+# because a scenario lives with its grund declaration in the kind home rather
+# than in `tests/`; cargo drops a target whose path is excluded from the
+# package, so the published crate carries neither the cases nor a dangling
+# reference to them.
+[[test]]
+name = "e2e_001_forge_extension"
+path = "e2e/cases/E2E-001-forge-extension.rs"
+
+[[test]]
+name = "e2e_002_check_verbs"
+path = "e2e/cases/E2E-002-check-verbs.rs"
+
+[[test]]
+name = "e2e_003_gate_verbs"
+path = "e2e/cases/E2E-003-gate-verbs.rs"
+
+[[test]]
+name = "e2e_004_ticket_store"
+path = "e2e/cases/E2E-004-ticket-store.rs"
+
+[[test]]
+name = "e2e_005_dispatch"
+path = "e2e/cases/E2E-005-dispatch.rs"
+
+[[test]]
+name = "e2e_006_offers"
+path = "e2e/cases/E2E-006-offers.rs"
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
