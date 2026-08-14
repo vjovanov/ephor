@@ -7,7 +7,7 @@
 
 use serde_json::{json, Value};
 
-use super::{Issue, Message, Notice, PullRequest, Reason, Role, SubjectKind, Thread};
+use super::{Issue, Message, Notice, PullRequest, Reason, Review, Role, SubjectKind, Thread};
 use crate::feed::model::{Item, ItemKind, ItemRole};
 
 /// Review states that mean the author has work to do. Matched as substrings
@@ -96,37 +96,61 @@ fn cited(pr: &PullRequest) -> bool {
     pr.cited || pr.reasons.contains(&Reason::Mentioned)
 }
 
-/// The reason a row leads with, most demanding first: what was asked of the
-/// reader outranks what they happen to be near. The author's own pull request
+/// What a reviewing row leads with, most demanding first: what was asked of
+/// the reader outranks what they have already done about it, which in turn
+/// outranks what they merely happen to be near. The author's own pull request
 /// leads with its review state instead, which is the thing they are waiting on.
-fn leading_reason(pr: &PullRequest) -> Option<Reason> {
+///
+/// A review asked for *now* outranks a verdict given before, because a
+/// re-request is the forge saying the old verdict is no longer the answer
+/// (§FS-001-forge-interface.1). Below that the user's own verdict leads: "I
+/// approved this" answers the question a reviewing row asks, where being in a
+/// thread on it only restates that the row is there.
+fn leading_note(pr: &PullRequest) -> Option<String> {
     if role_of(pr) == Role::Author {
         return None;
     }
-    [
-        Reason::ReviewRequested,
-        Reason::Mentioned,
-        Reason::Assigned,
-        Reason::InThread,
-    ]
-    .into_iter()
-    .find(|reason| pr.reasons.contains(reason))
+    if pr.reasons.contains(&Reason::ReviewRequested) {
+        return Some(Reason::ReviewRequested.label().to_string());
+    }
+    if let Some(review) = pr.review {
+        return Some(review.label().to_string());
+    }
+    [Reason::Mentioned, Reason::Assigned, Reason::InThread]
+        .into_iter()
+        .find(|reason| pr.reasons.contains(reason))
+        .map(|reason| reason.label().to_string())
+}
+
+/// Whether the forge's own state already says what the lead would say. Spelling
+/// is not the question: a forge writes `changes_requested` or `needs_work`
+/// where ephor writes `changes-requested`, and a row carrying two spellings of
+/// one fact reads as two facts (§FS-001-forge-interface.3).
+fn already_says(state: &str, note: &str) -> bool {
+    let flatten = |text: &str| text.to_lowercase().replace('_', "-");
+    let (state, note) = (flatten(state), flatten(note));
+    if state.contains(&note) {
+        return true;
+    }
+    note == Review::ChangesRequested.label()
+        && AUTHOR_MUST_ACT
+            .iter()
+            .any(|needle| state.contains(&flatten(needle)))
 }
 
 /// The state a row shows: what the forge reported, and — where the user is not
-/// the author — why the pull request is theirs, which is the question a
-/// reviewing row has to answer first. Composed here rather than in an
+/// the author — what they have already done about it, or failing that why the
+/// pull request is theirs at all, which is the question a reviewing row has to
+/// answer first (§FS-001-forge-interface.1). Composed here rather than in an
 /// implementation, so every forge spells it the same way
 /// (§FS-001-forge-interface.3). An implementation that already said it in its
 /// own state is not made to say it twice.
 fn compose_state(pr: &PullRequest) -> Option<String> {
-    let lead = leading_reason(pr);
-    match (pr.state.as_deref(), lead) {
-        (Some(state), Some(reason)) if !state.contains(reason.label()) => {
-            Some(format!("{state}:{}", reason.label()))
-        }
+    let lead = leading_note(pr);
+    match (pr.state.as_deref(), lead.as_deref()) {
+        (Some(state), Some(note)) if !already_says(state, note) => Some(format!("{state}:{note}")),
         (Some(state), _) => Some(state.to_string()),
-        (None, Some(reason)) => Some(reason.label().to_string()),
+        (None, Some(note)) => Some(note.to_string()),
         (None, None) => None,
     }
 }
@@ -213,6 +237,13 @@ pub fn pull_request_item(forge: &str, project: &str, pr: &PullRequest) -> Item {
     // Every reason, not just the one the state leads with: the row shows one,
     // and a reader asking why a pull request is in their feed at all deserves
     // the whole answer (§FS-001-forge-interface.1).
+    // The reader's own verdict travels with the row, not only in the state it
+    // leads with: it is what a surface asking "have I dealt with this" reads,
+    // and a state string composed for display is the wrong thing to parse
+    // (§FS-001-forge-interface.1).
+    if let Some(review) = pr.review {
+        raw.insert("review".to_string(), json!(review.label()));
+    }
     if !pr.reasons.is_empty() {
         let mut reasons: Vec<Reason> = pr.reasons.clone();
         reasons.sort_unstable();
@@ -418,8 +449,17 @@ mod tests {
             state: Some(state.to_string()),
             reasons: Vec::new(),
             cited,
+            review: None,
             threads,
             gate: None,
+        }
+    }
+
+    fn reviewed(review: Review, reasons: Vec<Reason>, state: &str) -> PullRequest {
+        PullRequest {
+            reasons,
+            review: Some(review),
+            ..pr(Vec::new(), false, state, Role::Reviewer)
         }
     }
 
@@ -618,6 +658,101 @@ mod tests {
             json!(["in-thread", "review-requested"])
         );
         assert_eq!(item.role, Some(ItemRole::Reviewer));
+    }
+
+    /// §FS-001-forge-interface.1: what the reader did about a change is the
+    /// answer to the question a reviewing row asks, so it leads the row — and
+    /// it reaches the item as a fact of its own, not only inside a string
+    /// composed for display.
+    #[test]
+    fn a_reviewing_row_leads_with_the_readers_own_verdict() {
+        let approved = reviewed(Review::Approved, vec![Reason::InThread], "open");
+        assert_eq!(compose_state(&approved).as_deref(), Some("open:approved"));
+
+        let item = pull_request_item("forge", "widget", &approved);
+        assert_eq!(item.raw["review"], json!("approved"));
+        assert_eq!(item.state.as_deref(), Some("open:approved"));
+
+        // Being asked again outranks having answered before: a re-request is
+        // the forge saying the old verdict is no longer the answer.
+        let asked_again = reviewed(
+            Review::Approved,
+            vec![Reason::InThread, Reason::ReviewRequested],
+            "open",
+        );
+        assert_eq!(
+            compose_state(&asked_again).as_deref(),
+            Some("open:review-requested")
+        );
+
+        // An author does not review their own change, so nothing leads there
+        // even if an implementation reports one.
+        let mine = PullRequest {
+            reasons: vec![Reason::Authored],
+            review: Some(Review::Approved),
+            ..pr(Vec::new(), false, "open", Role::Author)
+        };
+        assert_eq!(compose_state(&mine).as_deref(), Some("open"));
+    }
+
+    /// One fact, one place on the row. A forge that already said it — in its
+    /// own spelling — is not made to say it twice
+    /// (§FS-001-forge-interface.3).
+    #[test]
+    fn a_verdict_the_state_already_carries_is_not_repeated() {
+        // The same word, verbatim.
+        let all_approved = reviewed(Review::Approved, Vec::new(), "open:approved");
+        assert_eq!(
+            compose_state(&all_approved).as_deref(),
+            Some("open:approved")
+        );
+
+        // The same fact in each forge's own spelling: `needs_work` and
+        // `changes_requested` are "not accepted", which is what the reader's
+        // own `changes-requested` says.
+        for state in ["open:needs_work", "open:changes_requested", "OPEN:REJECTED"] {
+            let blocked = reviewed(Review::ChangesRequested, Vec::new(), state);
+            assert_eq!(compose_state(&blocked).as_deref(), Some(state), "{state}");
+        }
+
+        // A different fact still lands: approving a change somebody else asked
+        // changes on is two verdicts, and the row says both.
+        let split = reviewed(Review::Approved, Vec::new(), "open:needs_work");
+        assert_eq!(
+            compose_state(&split).as_deref(),
+            Some("open:needs_work:approved")
+        );
+    }
+
+    /// Reading the verdict says what the reader did; it does not decide what
+    /// is left. A review already given does not answer a review asked for
+    /// again, and it does not answer a question somebody put to them
+    /// (§FS-001-forge-interface.1).
+    #[test]
+    fn a_verdict_given_settles_nothing_by_itself() {
+        let asked_again = reviewed(
+            Review::Approved,
+            vec![Reason::InThread, Reason::ReviewRequested],
+            "open",
+        );
+        assert!(needs_response(&asked_again));
+
+        let answered_after = PullRequest {
+            review: Some(Review::Approved),
+            threads: vec![Thread {
+                messages: vec![message("me", true), message("them", false)],
+                ..Thread::default()
+            }],
+            ..pr(Vec::new(), false, "open", Role::Reviewer)
+        };
+        assert!(needs_response(&answered_after));
+
+        // And a verdict on a quiet change is not itself work owed.
+        assert!(!needs_response(&reviewed(
+            Review::Approved,
+            vec![Reason::InThread],
+            "open"
+        )));
     }
 
     /// §FS-003-feed-categories.5: the fuller report is the row, and what the

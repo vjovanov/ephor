@@ -35,6 +35,12 @@ pub struct Capabilities {
     pub conversation: bool,
     /// Embeds `gate` in the pull requests it returns.
     pub gate: bool,
+    /// Embeds `review` in the pull requests it returns — the user's own
+    /// verdict on a change they were asked to look at
+    /// (§FS-001-forge-interface.1). Kept apart from `pull_requests` because it
+    /// is a second question of the forge: the reviewer list says who was
+    /// asked, this says who answered.
+    pub review: bool,
     /// Answers [`Forge::failures`] — what went wrong under a red gate. Kept
     /// apart from `gate` because it is the expensive question: a gate is read
     /// for every pull request on every refresh, a failure list only when
@@ -184,6 +190,37 @@ pub struct Thread {
 /// exhaustively matched, so a forge may report a state ephor has not seen.
 pub type ReviewState = String;
 
+/// The review the user themselves gave on a pull request
+/// (§FS-001-forge-interface.1).
+///
+/// Closed where [`ReviewState`] is free-form, and deliberately: that one is the
+/// forge's summary of everybody's review and is quoted, this one is the single
+/// fact a reviewing row turns on, so each forge's spelling is mapped into these
+/// three words rather than passed through. A verdict ephor has no word for — an
+/// approval the forge dismissed, a review still in draft — is reported as no
+/// review at all, which is what it means to the reader.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Review {
+    /// The user approved the change.
+    Approved,
+    /// The user asked for changes.
+    ChangesRequested,
+    /// The user reviewed it without deciding either way.
+    Commented,
+}
+
+impl Review {
+    /// How the verdict reads on a row, in the vocabulary the reasons use.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Review::Approved => "approved",
+            Review::ChangesRequested => "changes-requested",
+            Review::Commented => "commented",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PullRequest {
     /// Stable within the forge — `<repo>/<number>` or `<owner>/<repo>#<number>`.
@@ -214,6 +251,12 @@ pub struct PullRequest {
     /// conversation shows they gave one. Deciding that is policy's job.
     #[serde(default)]
     pub cited: bool,
+    /// The user's own review, from an implementation declaring `review`
+    /// (§FS-001-forge-interface.1). `None` is "they have not reviewed it",
+    /// which is also all an implementation that does not declare the
+    /// capability ever says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review: Option<Review>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub threads: Vec<Thread>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -440,9 +483,10 @@ mod tests {
             "url": "https://forge.example/pr/101",
             "branch": "you/ABC-42-retry",
             "updated_at": "2026-07-30T12:00:00Z",
-            "role": "author",
+            "role": "reviewer",
             "state": "needs_work",
             "cited": true,
+            "review": "changes-requested",
             "threads": [{ "messages": [{
                 "author": "Other Dev",
                 "text": "Please widen it further.",
@@ -456,8 +500,9 @@ mod tests {
 
         let pr: PullRequest = serde_json::from_value(wire.clone()).expect("parses");
         assert_eq!(pr.id, "app/101");
-        assert_eq!(pr.role, Role::Author);
+        assert_eq!(pr.role, Role::Reviewer);
         assert!(pr.cited);
+        assert_eq!(pr.review, Some(Review::ChangesRequested));
         assert_eq!(pr.threads[0].messages[0].reactions[0].emoji, "👍");
         assert_eq!(pr.gate.as_ref().unwrap().passed(), 5);
         // Round-trips: what Rust emits is what a script may send back.
@@ -473,6 +518,8 @@ mod tests {
         let pr: PullRequest = serde_json::from_value(minimal).expect("parses");
         assert_eq!(pr.role, Role::Reviewer);
         assert!(pr.url.is_none() && pr.threads.is_empty() && pr.gate.is_none() && !pr.cited);
+        // No review reported is "they have not reviewed it", never an error.
+        assert_eq!(pr.review, None);
     }
 
     #[test]
@@ -480,7 +527,9 @@ mod tests {
         let none: Capabilities = serde_json::from_value(json!({})).unwrap();
         assert_eq!(none, Capabilities::default());
         let some: Capabilities =
-            serde_json::from_value(json!({ "pull_requests": true, "gate": true })).unwrap();
-        assert!(some.pull_requests && some.gate && !some.issues && !some.reactions);
+            serde_json::from_value(json!({ "pull_requests": true, "gate": true, "review": true }))
+                .unwrap();
+        assert!(some.pull_requests && some.gate && some.review);
+        assert!(!some.issues && !some.reactions);
     }
 }

@@ -20,8 +20,8 @@
 //! about them, since a merged pull request asks nothing of anyone.
 //!
 //! What the pull requests *mean* is not decided here: this provider reports
-//! roles, reasons, conversation, and gate, and `policy` turns them into feed
-//! items (§FS-001-forge-interface.3).
+//! roles, reasons, conversation, gate, and the review the user themselves left,
+//! and `policy` turns them into feed items (§FS-001-forge-interface.3).
 
 use std::collections::BTreeMap;
 
@@ -38,7 +38,7 @@ use crate::feed::provider::{
 use crate::feed::providers::{
     gh_command, github_login, parse_config, parse_github_time, show_failing_checks,
 };
-use crate::forge::{policy, Message, PullRequest, Reason, Role, Thread};
+use crate::forge::{policy, Message, PullRequest, Reason, Review, Role, Thread};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -81,13 +81,19 @@ pub struct GithubPrs {
     config: Config,
 }
 
-/// Head branch, conversation, and review threads in one call. The review
-/// threads are here and not only in `github-threads` because a citation is
-/// answered wherever the answer was written: a reply left on a line of the diff
-/// is an answer, and a rule reading only the conversation tab would go on
-/// reporting the citation as unanswered forever.
+/// Head branch, conversation, review threads, and the user's own verdict in one
+/// call. The review threads are here and not only in `github-threads` because a
+/// citation is answered wherever the answer was written: a reply left on a line
+/// of the diff is an answer, and a rule reading only the conversation tab would
+/// go on reporting the citation as unanswered forever.
+///
+/// `latestReviews` is the last review from each reviewer, which is the only
+/// form of the question worth asking (§FS-001-forge-interface.1): a reviewer's
+/// history is not the fact, their current verdict is. It rides on the call that
+/// was being made anyway, so reading it costs nothing.
 const CONVERSATION_QUERY: &str = "query($owner:String!,$repo:String!,$number:Int!){\
 repository(owner:$owner,name:$repo){pullRequest(number:$number){id headRefName \
+latestReviews(first:30){nodes{state author{login}}} \
 comments(last:30){nodes{id author{login} body createdAt reactions(first:50){nodes{content user{login}}}}} \
 reviewThreads(first:50){nodes{comments(last:20){nodes{\
 id author{login} body createdAt reactions(first:50){nodes{content user{login}}}}}}}}}}";
@@ -201,19 +207,19 @@ impl GithubPrs {
         )
     }
 
-    /// The pull request's head branch and every thread on it — the
-    /// conversation, then each review thread — as interface messages. Failure
-    /// yields none: a conversation we could not read is not a reason to lose
-    /// the pull request.
+    /// The pull request's head branch, every thread on it — the conversation,
+    /// then each review thread — as interface messages, and the review the user
+    /// themselves left (§FS-001-forge-interface.1). Failure yields none: a
+    /// conversation we could not read is not a reason to lose the pull request.
     fn conversation(
         &self,
         ctx: &ProviderContext,
         repo: &str,
         number: u64,
         login: &str,
-    ) -> (Option<String>, Vec<Thread>) {
+    ) -> (Option<String>, Vec<Thread>, Option<Review>) {
         let Some((owner, name)) = repo.split_once('/') else {
-            return (None, Vec::new());
+            return (None, Vec::new(), None);
         };
         let mut gql = gh_command(self.config.host.as_deref());
         gql.args([
@@ -226,7 +232,7 @@ impl GithubPrs {
         .args(["-F", &format!("repo={name}")])
         .args(["-F", &format!("number={number}")]);
         let Ok(response) = run_json(gql, ctx.timeout, false) else {
-            return (None, Vec::new());
+            return (None, Vec::new(), None);
         };
         let pull = response.pointer("/data/repository/pullRequest");
         let branch = pull
@@ -234,6 +240,10 @@ impl GithubPrs {
             .and_then(Value::as_str)
             .filter(|branch| !branch.is_empty())
             .map(String::from);
+        let review = own_review(
+            pull.and_then(|pull| pull.pointer("/latestReviews/nodes")),
+            login,
+        );
 
         let host = self.config.host.as_deref();
         let messages = |nodes: Option<&Value>| -> Vec<Message> {
@@ -279,7 +289,7 @@ impl GithubPrs {
                 });
             }
         }
-        (branch, threads)
+        (branch, threads, review)
     }
 
     /// The handles a mention of the user can be written as: their login, and
@@ -305,6 +315,30 @@ impl GithubPrs {
         }
         handles
     }
+}
+
+/// The user's own verdict, out of GitHub's latest review per reviewer
+/// (§FS-001-forge-interface.1). Matched on the login the rest of this provider
+/// reads `mine` with, so one identity decides every "is this me" question here.
+///
+/// `DISMISSED` and `PENDING` are deliberately no verdict: a dismissed approval
+/// has been taken back by the forge, and a pending review is a draft nobody but
+/// its author can see. Reporting either as a review would tell the reader they
+/// have answered when they have not.
+fn own_review(nodes: Option<&Value>, login: &str) -> Option<Review> {
+    nodes
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|node| node.pointer("/author/login").and_then(Value::as_str) == Some(login))
+        .and_then(|node| node.get("state"))
+        .and_then(Value::as_str)
+        .and_then(|state| match state.to_ascii_uppercase().as_str() {
+            "APPROVED" => Some(Review::Approved),
+            "CHANGES_REQUESTED" => Some(Review::ChangesRequested),
+            "COMMENTED" => Some(Review::Commented),
+            _ => None,
+        })
 }
 
 /// One GraphQL comment node as an interface message. Whether it is the user's
@@ -506,6 +540,7 @@ impl Provider for GithubPrs {
 
             let mut branch = None;
             let mut threads = Vec::new();
+            let mut review = None;
             let mut state = pull
                 .get("state")
                 .and_then(Value::as_str)
@@ -526,9 +561,14 @@ impl Provider for GithubPrs {
                         });
                     }
                 } else {
-                    let (head, found_threads) = self.conversation(ctx, &repo, number, &login);
+                    // The reviewer's own verdict comes back with the
+                    // conversation, on the call being made anyway; an author
+                    // does not review their own change, so it is not asked for
+                    // there (§FS-001-forge-interface.1).
+                    let (head, found_threads, own) = self.conversation(ctx, &repo, number, &login);
                     branch = head;
                     threads = found_threads;
+                    review = own;
                     // A team named in the conversation is a citation of the
                     // user that no search qualifier can return.
                     if !reasons.contains(&Reason::Mentioned) && cited_in(&threads, &handles) {
@@ -557,6 +597,7 @@ impl Provider for GithubPrs {
                 state,
                 reasons,
                 cited: false,
+                review,
                 threads,
                 gate,
             };
@@ -647,6 +688,38 @@ mod tests {
         // nothing to show.
         assert!(provider.quick_actions(&pr(Some(gate(3, 0)))).is_empty());
         assert!(provider.quick_actions(&pr(None)).is_empty());
+    }
+
+    /// §FS-001-forge-interface.1: the review the reader gave, picked out of
+    /// everybody's by the one login this provider decides `mine` with — and
+    /// nothing reported where the forge has taken the verdict back.
+    #[test]
+    fn the_readers_own_verdict_is_the_one_read_back() {
+        let reviews = |mine: &str| {
+            json!([
+                { "state": "CHANGES_REQUESTED", "author": { "login": "ada" } },
+                { "state": mine, "author": { "login": "me" } },
+                { "state": "APPROVED", "author": { "login": "grace" } },
+            ])
+        };
+        let read = |mine: &str| own_review(Some(&reviews(mine)), "me");
+
+        assert_eq!(read("APPROVED"), Some(Review::Approved));
+        assert_eq!(read("CHANGES_REQUESTED"), Some(Review::ChangesRequested));
+        assert_eq!(read("COMMENTED"), Some(Review::Commented));
+
+        // An approval the forge dismissed is no approval, and a draft review is
+        // not one the reader has given: both would tell them they answered.
+        assert_eq!(read("DISMISSED"), None);
+        assert_eq!(read("PENDING"), None);
+        // A state ephor has never seen is no verdict rather than a wrong one.
+        assert_eq!(read("SOMETHING_ELSE"), None);
+
+        // Somebody else's review is never the reader's, and a pull request
+        // nobody reviewed says nothing.
+        assert_eq!(own_review(Some(&reviews("APPROVED")), "someone"), None);
+        assert_eq!(own_review(Some(&json!([])), "me"), None);
+        assert_eq!(own_review(None, "me"), None);
     }
 
     /// Every role is searched by default, and the whole forge is searched when

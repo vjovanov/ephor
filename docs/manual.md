@@ -895,6 +895,17 @@ past the window. Finished work never awaits a response: it is news, not a task.
 Branch rows say whether they are checked out and how far they trail the main
 branch, summed across every repository in the workspace.
 
+**On a reviewing row the state also says where you stand.** Before the colon is
+the forge's word; after it is yours — `[open:approved]` is a change you have
+approved, `[open:changes-requested]` one you sent back, `[open:review-requested]`
+one still waiting on you. Being asked again outranks having answered, so a
+re-requested review reads `review-requested` however you voted before. Where
+your forge reports no verdict of yours — or where you have not reviewed — the
+colon carries the reason the row is yours instead: `mentioned`, `assigned`,
+`in-thread`. A verdict of your own is a capability an implementation declares
+([§10.1](#101-a-forge-out-of-process)); `github-prs` reads it, and a forge that
+does not report one simply never shows it.
+
 ### 6.3 Keys
 
 **Navigator** — Stream (everything), Projects (one row per project), Detail
@@ -1876,7 +1887,15 @@ ephor-forge-<name> reply          <<< '{"config":…,"target":…,"text":…}'
 The whole provider block is passed through as `config`, so an extension takes
 its own options. `capabilities` declares what the rest will answer, and ephor
 degrades to that — but a capability probe that *fails* is a broken forge, not a
-forge that does very little. `failures` is the one call a refresh never makes:
+forge that does very little.
+
+A pull request the user is reviewing may carry `review`, the verdict *they*
+gave (`approved`, `changes-requested`, `commented`), declared as `"review":
+true`. Only the forge knows it: a reviewer list says who was asked, a
+conversation says who spoke, and neither says who answered — an approval leaves
+no message behind. Report it and a reviewing row can tell a change the reader
+has dealt with from one they have not ([§6.2](#62-reading-a-row)); leave it out
+and nothing else changes. `failures` is the one call a refresh never makes:
 it is asked when a reader opens a red gate, so it may take as long as it needs.
 
 `react`, `resolve-task` and `reply` receive back, verbatim, the `react` and

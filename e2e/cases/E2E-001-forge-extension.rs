@@ -28,7 +28,7 @@ set -euo pipefail
 cat > /dev/null
 case "${1:?subcommand}" in
   capabilities)
-    printf '{"pull_requests":true,"conversation":true,"gate":true,"issues":true,"failures":true}'
+    printf '{"pull_requests":true,"conversation":true,"gate":true,"issues":true,"failures":true,"review":true}'
     ;;
   pull-requests)
     printf '%s' '[
@@ -41,7 +41,15 @@ case "${1:?subcommand}" in
         "threads": [ { "messages": [
           { "author": "Ada", "text": "does the window reset per attempt?",
             "when": "2026-07-30T11:00:00Z", "mine": false } ] } ],
-        "gate": { "repos": [ { "repo": "app", "passed": 5, "failed": 1, "running": 0 } ] } }
+        "gate": { "repos": [ { "repo": "app", "passed": 5, "failed": 1, "running": 0 } ] } },
+      { "id": "app/102", "repo": "app", "number": "102",
+        "title": "Drop the legacy shim",
+        "url": "https://acme.example/pr/102",
+        "updated_at": "2026-07-30T09:00:00Z",
+        "role": "reviewer", "state": "open", "cited": false,
+        "review": "approved",
+        "threads": [ { "messages": [
+          { "author": "You", "text": "looks right to me", "mine": true } ] } ] }
     ]'
     ;;
   failures)
@@ -83,6 +91,17 @@ fn a_script_on_path_is_a_forge_ephor_watches_like_its_own() {
     assert_eq!(matter["needs_response"], true);
     assert_eq!(matter["raw"]["branch"], "you/ABC-42-retry");
 
+    // A review the extension reported is the reader's own verdict, and it
+    // leads the row it is on (§FS-001-forge-interface.1): the question a
+    // reviewing row has to answer first is what the reader already did about
+    // it. Having answered is not the same as owing nothing else, so the
+    // verdict arrives as a fact of its own rather than only inside the state.
+    let reviewed = world.matter("acmeforge:app/102");
+    assert_eq!(reviewed["role"], "reviewer");
+    assert_eq!(reviewed["state"], "open:approved");
+    assert_eq!(reviewed["raw"]["review"], "approved");
+    assert_eq!(reviewed["needs_response"], false);
+
     // And the gate the extension reported renders on the row like any forge's.
     world
         .ephor()
@@ -90,7 +109,10 @@ fn a_script_on_path_is_a_forge_ephor_watches_like_its_own() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Widen the retry window"))
-        .stdout(predicate::str::contains("✓5 ✗1"));
+        .stdout(predicate::str::contains("✓5 ✗1"))
+        .stdout(predicate::str::contains(
+            "Drop the legacy shim  [open:approved]",
+        ));
 
     // The expensive question, asked on demand rather than on every refresh
     // (§FS-001-forge-interface.1): the same script, a different subcommand.

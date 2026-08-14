@@ -30,6 +30,23 @@ ephor degrades to what is answered rather than failing.
   of repositories, on the same terms as issues below. State is reported
   whatever it is, closed and merged included: a question asked of the user does
   not stop being asked when the branch lands.
+- **Own review** — on a pull request the user is on as a reviewer, the review
+  *they* gave: approved, changes requested, or reviewed with no verdict either
+  way. Nothing else reported here implies it. A reviewer list says who was
+  asked, a conversation says who spoke, and neither says who answered: an
+  approval leaves no message behind, and a reviewer who commented at length has
+  still not approved — so a reviewing row that shows only `open` cannot tell a
+  change the reader has dealt with from one they have not, which is the same
+  gap the reasons above exist to close, seen from the other side. Absent where
+  the user has not reviewed, and absent for their own pull requests, since an
+  author does not review their own change. A verdict this vocabulary has no
+  word for — an approval the forge dismissed, a review still in draft — is
+  reported as no review, which is what it means to the reader. What a verdict
+  *retires* is policy's
+  ([§3](#3-policy-lives-above-the-interface-never-in-an-implementation)): an
+  implementation says what the user did, never what is left of it. It is what a
+  reviewing row leads with, except where a review is being asked for again —
+  a re-request is the forge saying the old verdict is no longer the answer.
 - **Conversation** — a PR's threads as ordered messages (author, text, time),
   each with its reactions, and enough identity for a reaction to be posted back
   to it. A message the forge tracks as a task carries that too: its state, and
