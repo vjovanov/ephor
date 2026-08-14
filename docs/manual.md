@@ -68,6 +68,23 @@ Both are yours and neither belongs in a repository — they name your employer's
 hosts and accounts ([§FS-001-forge-interface.5](../requirements.md#5-no-site-specific-data-in-the-repository)).
 The repository carries `config/*.example.json` only.
 
+There is a third place facts can live, and it is not yours: the **checkout**
+itself — an `ephor.json` a project chose to write (§4.2.1) and the well-known
+names it carries anyway. Every fact the interface uses lives in exactly one of
+the three, and one order resolves them all
+([§FS-006-project-interface.1](../requirements.md#1-the-three-homes)):
+
+| Home | Holds | Example |
+|---|---|---|
+| the **registry row** | description and identity: where the forest is, how a branch becomes a workspace, what the project's matters are recognized by | `root`, `branch_root_template`, `territory` |
+| **site configuration** | operational bindings: which command fills which verb, which runtime runs work, your actions and recipes | `providers`, `checkout`, `work.runner` |
+| the **checkout** | what the project says (`ephor.json`) and the conventions it carries for its own sake | `checks`, `ci`, `./check.sh`, `panta/` |
+
+**Site configuration over manifest over probe**
+([§REQ-001-boundary.2](requirements/REQ-001-boundary.md#2-three-homes-one-resolution-order)):
+a probe is a default, a manifest is the project declaring what probing would
+have guessed, and you always have the last word.
+
 ### 1.2 Resolution order
 
 | What | Order |
@@ -102,7 +119,7 @@ the plans themselves stay where they are.
 
 ## 2. The vocabulary
 
-Ten words, and the rest of the manual is about them.
+Eleven words, and the rest of the manual is about them.
 
 **Organization** — a group of projects with a folder of checkouts, e.g.
 *Foundation — `~/f`*. Only for grouping and for the inbox's top level.
@@ -139,7 +156,11 @@ something failed **or** the forge refuses.
 **Category** — where an item lands in the inbox. Ephor's, never a provider's,
 so every forge sorts the same way ([§FS-003-feed-categories](../requirements.md#fs-003-feed-categories-the-feed-sorts-itself-into-categories-and-finished-work-lands-in-recent)).
 
-**Recipe** — which items deserve work, and what the ticket asks for. Four ship;
+**Manifest** — the `ephor.json` a project may place at its forest root, saying
+what it is called, how it is checked, how its gate is asked, where its tickets
+are, and what it offers your menu. Offered, never required (§4.2.1).
+
+**Recipe** — which items deserve work, and what the ticket asks for. Five ship;
 you can add or replace any.
 
 **Ticket** — one dispatch: a task inside a rhei plan, carrying the item's
@@ -374,16 +395,39 @@ verbs, ticket stores, and offers — menu entries you invoke.
 ```jsonc
 { "identity": { "aliases": ["widget"], "territory": ["acme-labs"] },
   "forest":   [{ "name": "ce", "path": "ce" }],
-  "checks":   { "check": "./check.sh" },
+  "checks":   { "check": "./check.sh",
+                "smoke": { "command": "./ci/smoke.sh", "features": "list" } },
+  "ci":       { "status": "./ci/gate.sh", "failures": "./ci/gate-failures.sh" },
+  "tickets":  [{ "kind": "rhei", "path": "docs/plans" }],
   "actions":  [{ "id": "rebuild", "description": "rebuild it",
                  "command": "./build.sh", "cwd": "repo:ce",
                  "when": { "kinds": ["pr"] },
                  "requires": ["checkout-able"], "confirm": true }] }
 ```
 
+| Block | Says | Where it is documented |
+|---|---|---|
+| `identity` | names, aliases, ticket patterns, repositories, territory, addresses — hints your row adopts or overrides ([§FS-008-attribution.1](../requirements.md#1-identity-is-declared-and-the-row-has-the-last-word)) | §4.2.2, [the registry](registry.md#identity-and-territory) |
+| `forest` | the repositories under the root, as the project declares them ([§AR-004-forest.1](architecture/AR-004-forest.md#1-folds)) | §5.1, `EPHOR_REPOS` |
+| `checks` | what fills `check`, `style`, `smoke` ([§FS-006-project-interface.5](../requirements.md#5-checks-are-verbs-and-every-script-is-self-contained)) | §4.2.3 |
+| `ci` | what answers `status`, `failures`, `restart` ([§FS-006-project-interface.6](../requirements.md#6-the-gate-is-the-projects-in-three-verbs)) | §4.2.4 |
+| `tickets` | ticket stores kept somewhere other than the probed names ([§FS-006-project-interface.7](../requirements.md#7-local-ticket-stores-are-read-where-they-live)) | §4.2.5 |
+| `actions` | menu entries the project offers ([§FS-006-project-interface.9](../requirements.md#9-offers-the-projects-actions)) | §7.6 |
+
 An offer is a menu entry in the same shape yours have (§7.2), selected by the
 same `when` language and gated by the same rungs — it sits between the shipped
 entries and your own, and yours wins on a shared `id` (§7.6).
+
+Every command a block binds is a **summons**: it runs with `sh -c` in the place
+the binding names (`cwd` is `root` — the default — or `repo:<name>`), it is
+told whatever the caller knows in the usual `EPHOR_*` variables
+([§7.3](#73-the-environment)) — a gate verb asked about a pull request gets
+`EPHOR_REPO`, `EPHOR_NUMBER` and `EPHOR_BRANCH`, while `ephor check` in a bare
+checkout has no matter to carry and passes none — and it answers with an exit
+code and, optionally, the envelope it writes to `$EPHOR_ANSWER` (§4.2.6). `0`
+is done, `75` is parked — not applicable now, ask again later — and anything
+else failed
+([§FS-006-project-interface.3](../requirements.md#3-a-summons-environment-in-exit-code-and-answer-out)).
 
 Two rules make it safe to read. **The row is authoritative**: identity fields
 are hints your registry adopts where it says nothing of its own and overrides
@@ -414,6 +458,139 @@ the project's business without being in its forest — `"acme/plugin"` for one,
 `"acme"` for a whole organization. It is what places the general case: a
 mention of you on some repository of the project's ecosystem, an issue filed
 there, none of it in any checkout.
+
+A manifest may hint the same things — `identity.aliases`, `identity.repos`,
+`identity.ticket_patterns`, `identity.territory`, `identity.addresses` — and
+the row adopts a hint where it says nothing of its own and overrides it where
+it does. The row has the last word because a checkout must not be able to claim
+another project's conversations
+([§FS-008-attribution.1](../requirements.md#1-identity-is-declared-and-the-row-has-the-last-word)).
+
+### 4.2.3 Check verbs — how a project says whether it is well
+
+Three verbs, and a project fills the ones it has
+([§FS-006-project-interface.5](../requirements.md#5-checks-are-verbs-and-every-script-is-self-contained)):
+
+| Verb | Probed at the root | Is |
+|---|---|---|
+| `check` | `./check.sh` | the aggregate: everything the project considers a check |
+| `style` | `./check-style.sh` | the fast style pass |
+| `smoke` | `./smoke-test.sh` | the smoke, which may enumerate features |
+
+A manifest's `checks` binds the same three under whatever paths the project
+prefers, and your site configuration overrides both. **Each is
+self-contained**: a smoke test that needs a build performs its build, because
+how a project builds is the project's knowledge and stays there.
+
+Smoke may enumerate **features** — `"features": "list"` runs the command with
+`--list` (one id per line, or a `features[]` envelope), or the manifest lists
+them outright. A feature id given as an argument runs that feature's smoke
+alone; a smoke that enumerates nothing is one opaque verb, and that is a
+complete implementation.
+
+```bash
+ephor check                          # the aggregate, or whatever else is declared
+ephor check --verb style --verb smoke
+ephor check --feature retry          # one feature's smoke
+ephor check --list-features --json   # what a CI matrix fans out over
+```
+
+`ephor check` takes a checkout and nothing else — no registry, no site
+configuration, no credentials — which is what lets the shipped CI step stand on
+it ([§9.3](#93-ci-steps-ephor-ships)). Which verbs run and in what order is
+policy above the interface: with none named it runs the aggregate where the
+project declares one, and whatever else it declares where it does not, because
+the aggregate is defined as everything the project considers a check and
+running all three would run the style pass twice. A verb named and not there is
+refused rather than skipped — a check nobody ran that nobody was told about is
+what that rule exists to prevent.
+
+### 4.2.4 Gate verbs — how a project's CI is asked what it is doing
+
+How to ask a project's CI is project truth, the same for everyone who works on
+it, so its home is the manifest's `ci` block, with your configuration
+overriding where credentials or variants demand
+([§FS-006-project-interface.6](../requirements.md#6-the-gate-is-the-projects-in-three-verbs)):
+
+| Verb | Answers |
+|---|---|
+| `status` | what the gate is doing, per repository of the forest — the `gate` of an envelope |
+| `failures` | what actually failed: the job, its log, the error where it can be had — the expensive question, asked on demand |
+| `restart` | re-run the failing gate and everything downstream of it, committing nothing; `75` means "still running, ask again later" ([§FS-005-dispatch.11](../requirements.md#11-a-failure-that-is-not-the-changes-fault-is-restarted-not-fixed)) |
+
+**A forge-hosted gate needs no manifest at all**: the provider's own gate
+capability is the shipped default binding, which is why a pull request on
+GitHub arrives with its counts and its failures without anybody writing
+anything down. A project with an internal gate binds these three commands
+instead, and the seam answers the same three questions from them.
+
+Either way the *gated* rung holds ([§7.5](#75-why-something-is-not-offered)),
+and that is what buys failure dossiers and the restart.
+
+Today the row and the `✗ see the CI failures` entry are still drawn from what
+the **source** reported: `ephor failures` asks the provider that reported the
+item ([§4.1](#41-commands)), so a manifest-bound gate is what a state machine's
+program state and the capability table read, and the inbox's own failures view
+follows the forge. Binding these verbs is therefore worth doing where a script
+in front of the agent asks them ([§8.5](#85-a-script-in-front-of-the-agent));
+where your gate is the forge's, there is nothing to write.
+
+### 4.2.5 Local ticket stores
+
+A project may keep its tickets in its own checkout — a plan directory, a
+git-backed issue store — and ephor reads a store it recognizes through the
+store's own files, into the same feed under the same rules as anything a forge
+reported ([§FS-006-project-interface.7](../requirements.md#7-local-ticket-stores-are-read-where-they-live)):
+
+| Store | Probed | Read as |
+|---|---|---|
+| `rhei` | `panta/` | every task heading in every plan, keyed `rhei:<plan>.<ticket>` |
+| `beads` | `.beads/` | recognized; the reader is not written yet, so it reports nothing rather than pretending |
+
+A manifest's `tickets` adds a store the project keeps elsewhere, and declaring
+one does not hide a probed one — a project may keep two, and both are read.
+Attribution needs no configuration: a store in a checkout is about that
+checkout's project. The tickets arrive as issues under the source name the
+store carries (`rhei`, `beads`), so they sit in **My Issues** beside anything
+else nobody else opened, carrying the state the store gave them. Nothing is
+ever written back — the store is the project's, and ephor only reads it.
+
+Finding a store is a capability, never an obligation: it buys the *ticketed*
+rung and nothing about a project without one degrades
+([§7.5](#75-why-something-is-not-offered)).
+
+### 4.2.6 What a verb may answer — the envelope
+
+Every command ephor summons may write a JSON **envelope** to the file named by
+`$EPHOR_ANSWER`, and that is the only structured channel: standard output is
+never parsed for structure
+([§FS-006-project-interface.4](../requirements.md#4-the-answer-envelope)).
+
+```json
+{ "v": 1,
+  "summary": "12 passed, 1 failed",
+  "gate": { "repos": [{ "repo": "app", "passed": 12, "failed": 1, "running": 0 }],
+            "blocked": false },
+  "failures": [{ "job": "unit / retry", "repo": "app",
+                 "trace": "expected 3 attempts, saw 1", "log": "logs/unit.txt" }],
+  "features": [{ "id": "retry", "description": "the retry window" }],
+  "matters":  [{ "key": "acme/widget#42", "title": "…", "state": "open" }],
+  "discussions": [{ "matter": "acme/widget#42", "messages": [{ "author": "Ada", "text": "…" }] }] }
+```
+
+Everything but `v` is optional, and a verb answers only what it has: a check
+verb that writes `summary` and `failures` is complete, and one that writes
+nothing at all still answered — with its exit code. Unknown fields are ignored,
+which is what lets the envelope grow by addition, and relative paths in it
+(`failures[].log`) resolve against the directory the command ran in.
+
+The envelope is validated against the published schema before anything reads a
+field of it, so a mistyped field is an error rather than a value that quietly
+never arrives:
+
+```bash
+ephor schema answer > answer.schema.json    # validate your verb's output offline
+```
 
 ### 4.3 Exit codes
 
@@ -459,6 +636,11 @@ A provider block always has `provider`; the rest is its own.
 | `custom-status` | any shell command in the workspace | the JSON says so |
 | `<anything else>` | an external forge executable (§10.1) | ephor's policy, over what it answered |
 | `slack`, `discord`, `email` | stubs; activate by adding secrets | mentions and DMs (planned) |
+
+Two more sources need no provider block at all: a **ticket store** in the
+checkout is read on every refresh where one is there, and reports under its own
+name — `rhei`, `beads` (§4.2.5). Nothing configures them; finding one is what
+makes them a source.
 
 ### 5.1 Options
 
@@ -789,7 +971,8 @@ action can be offered exactly where a recipe would be.
 
 **The checkout dependency.** A project may define one `checkout` command whose
 contract is to make `$EPHOR_WORKSPACE` exist — ephor verifies the directory
-afterwards rather than trusting it. Actions marked `requires_checkout` are
+afterwards rather than trusting it
+([§FS-006-project-interface.8](../requirements.md#8-the-checkout-contract)). Actions marked `requires_checkout` are
 gated on it: when the workspace is missing the menu annotates them *(will check
 out first)* and running one chains checkout → action. Without a configured
 checkout command, or on an item linked to no branch, they show *(unavailable)*
@@ -841,9 +1024,9 @@ silence.
 | placed | the project's root is on disk | actions and update |
 | branch-addressable | the row has a `branch_root_template` | a workspace per branch |
 | checkout-able | a checkout command is bound, or a checkout is on disk to grow one from | work that edits |
-| checkable | `check.sh`, `check-style.sh`, or `smoke-test.sh` at the root | verification that means something |
-| gated | a source reports a gate | failure dossiers and the restart |
-| ticketed | a `panta/` or `.beads/` store in the checkout | local matters |
+| checkable | `check.sh`, `check-style.sh`, or `smoke-test.sh` at the root, **or** a manifest `checks` block (§4.2.3) | verification that means something |
+| gated | a source reports a gate, **or** a manifest `ci` block binds one (§4.2.4) | failure dossiers and the restart |
+| ticketed | a `panta/` or `.beads/` store in the checkout, or one a manifest declares (§4.2.5) | local matters |
 | workable | the configured runner is on `PATH` | running the work |
 
 The ladder is resolved per project when the inbox loads, when a refresh
@@ -1022,13 +1205,27 @@ offered blind.
 
 **The brief** takes `{title}`, `{url}`, `{repo}`, `{number}`, `{branch}`,
 `{ticket}`, `{state}`, `{gate}`, `{workspace}`, `{root}`, `{project}`,
-`{source}`, `{kind}`, `{id}`. An unknown name is left as written, so a typo is
-visible in the ticket instead of becoming a blank.
+`{source}`, `{kind}`, `{id}`, and `{reply}` — the file a drafted answer belongs
+in, named absolutely ([§8.12](#812-an-answer-comes-back-as-a-proposal)). An
+unknown name is left as written, so a typo is visible in the ticket instead of
+becoming a blank.
 
 ### 8.4 Where work goes, and what runs it
 
 `work.root` — default `{workspace}/panta` — is a rhei project directory in the
 item's checkout, one plan per item, named for the item.
+
+`work.runner` is what runs a plan there. It comes bound: unset, it is the
+runtime ephor ships wired and ready, and naming another is how somebody who
+works differently points work at theirs
+([§4.2.0](#420-pointing-work-at-a-different-runtime),
+[§DA-001-runtime-bound-default](decisions/architectural/DA-001-runtime-bound-default.md#da-001-runtime-bound-default-the-runtime-is-a-bound-default-not-a-named-coupling)).
+`ephor work run` invokes it as a summons from the checkout the work is about —
+`<runner> run <work root> --rhei <plan>…` — and reads its exit code the one way
+(`75` is parked, not failed). With nothing on `PATH` under that name, every
+part of dispatch except the running still holds: tickets are written, read and
+reopened, and only running refuses, naming the runner it looked for
+([§7.5](#75-why-something-is-not-offered)).
 
 ephor creates it when it is missing: the manifest, a `.gitignore` that ignores
 the directory itself so your repository stays clean, and the shipped state
@@ -1658,10 +1855,16 @@ stalled on *"required outputs are missing"* no matter how well it reasons.
 ```
 ephor list | validate | ensure-agents | update            # the registry
 ephor refresh | status | feed | mark-read | failures      # the feed
-ephor rebase                                              # the checkout
+ephor rebase | checkout                                   # the checkout
+ephor check | validate --manifest | schema                # the project interface
 ephor work list | dispatch | ask | sync | run | forget | states
 ephor tui                                                 # alias: inbox
 ```
+
+`check`, `validate --manifest` and `schema` are the three that need no site at
+all — a checkout is enough, which is why CI can run them
+([§FS-006-project-interface.11](../requirements.md#11-the-interface-is-versioned),
+[§9.3](#93-ci-steps-ephor-ships)).
 
 ### 11.2 Environment
 
@@ -1685,7 +1888,9 @@ ephor tui                                                 # alias: inbox
 | `~/.local/state/ephor/seen.json` | unread tracking |
 | `~/.local/state/ephor/work.json` | the work ledger |
 | `~/config/secrets/ephor/*.json` | provider secrets |
+| `<forest root>/ephor.json` | the project's own manifest, if it wrote one (§4.2.1) |
 | `<checkout>/panta/` | work roots: plans, state machine, runtime artifacts |
+| `<work root>/runtime/ephor/<plan>.reply.md` | a drafted answer, until you post it (§8.12) |
 
 ---
 

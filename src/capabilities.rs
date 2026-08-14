@@ -13,7 +13,6 @@
 //! world may have moved.
 
 use std::collections::BTreeMap;
-use std::path::Path;
 
 use crate::branches::Placement;
 
@@ -82,8 +81,14 @@ impl Rung {
 
 /// The well-known check names probed at a forest root
 /// (§FS-006-project-interface.5). A manifest may declare others in their place
-/// once there is a manifest to read (§FS-006-project-interface.2).
-pub const CHECK_SCRIPTS: [&str; 3] = ["check.sh", "check-style.sh", "smoke-test.sh"];
+/// once there is a manifest to read (§FS-006-project-interface.2). The names
+/// are the verbs' own, so they are asked of the seam rather than spelled here.
+pub fn check_scripts() -> Vec<&'static str> {
+    crate::seams::checks::Verb::all()
+        .iter()
+        .map(|verb| verb.probed())
+        .collect()
+}
 
 /// The directories the ticket stores are probed under
 /// (§FS-006-project-interface.7). Each is a project-native thing that exists
@@ -185,16 +190,21 @@ impl CapabilitySet {
         }
 
         if placed {
-            if !CHECK_SCRIPTS
-                .iter()
-                .any(|name| is_runnable(&root.join(name)))
-            {
+            // A manifest may bind the verbs to paths of its own, which is the
+            // project declaring what probing would have guessed
+            // (§FS-006-project-interface.5) — so the rung asks the seam rather
+            // than only the well-known names.
+            let declared = crate::seams::checks::Verb::all().into_iter().any(|verb| {
+                crate::seams::checks::bind(verb, root, bindings.manifest, None).is_some()
+            });
+            if !declared {
                 fails(
                     Rung::Checkable,
                     format!(
-                        "{} holds none of {}, so there is nothing to verify with",
+                        "{} holds none of {}, and its manifest binds none, so there is nothing \
+                         to verify with",
                         root.display(),
-                        CHECK_SCRIPTS.join(", ")
+                        check_scripts().join(", ")
                     ),
                 );
             }
@@ -303,18 +313,11 @@ pub fn workable(runner: Option<&str>) -> Option<String> {
     }
 }
 
-/// A check verb is a file that can be run. Executability is not read: a script
-/// a project keeps without the bit set is still the project's answer to
-/// "how do I check this", and refusing to see it would be ephor deciding.
-fn is_runnable(path: &Path) -> bool {
-    path.is_file()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::branches::Placement;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     fn placement(root: &Path, template: Option<&str>) -> Placement {
         Placement {
@@ -372,6 +375,40 @@ mod tests {
         let set = CapabilitySet::resolve("widget", Some(&placement(tmp.path(), None)), &bindings());
         assert!(set.holds(Rung::Checkable));
         assert!(set.holds(Rung::Ticketed));
+    }
+
+    /// A project may keep its verbs and its store anywhere and say so
+    /// (§FS-006-project-interface.5, §FS-006-project-interface.7): a declared
+    /// binding buys the rung exactly as a probed one does, since what the rung
+    /// answers is "can this be verified", not "is the well-known name there".
+    #[test]
+    fn a_manifest_that_declares_the_verbs_elsewhere_buys_the_rung_too() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("ci")).unwrap();
+        std::fs::write(tmp.path().join("ci/aggregate.sh"), "#!/bin/sh\n").unwrap();
+        let manifest = crate::manifest::parse(
+            r#"{"checks": {"check": "./ci/aggregate.sh"}}"#,
+            "ephor.json",
+        )
+        .unwrap();
+
+        let probed_only =
+            CapabilitySet::resolve("widget", Some(&placement(tmp.path(), None)), &bindings());
+        assert!(!probed_only.holds(Rung::Checkable));
+        assert!(probed_only
+            .reason(Rung::Checkable)
+            .unwrap()
+            .contains("its manifest binds none"));
+
+        let declared = CapabilitySet::resolve(
+            "widget",
+            Some(&placement(tmp.path(), None)),
+            &Bindings {
+                manifest: Some(&manifest),
+                ..bindings()
+            },
+        );
+        assert!(declared.holds(Rung::Checkable));
     }
 
     #[test]

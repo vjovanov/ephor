@@ -99,6 +99,14 @@
       "tags": [
         "work"
       ],
+      "aliases": [
+        "widget-ce"
+      ],
+      "territory": [
+        "acme/widget-plugins",
+        "acme-labs"
+      ],
+      "manifest_trust": "full",
       "release_branches": [
         {
           "id": "widget-main",

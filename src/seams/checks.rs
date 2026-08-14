@@ -103,6 +103,9 @@ pub fn bind(
             command: binding.command().to_string(),
             cwd: binding.cwd().map(String::from),
         });
+    // A file that is there is the project's answer. Executability is not read:
+    // a script a project keeps without the bit set is still its answer to "how
+    // do I check this", and refusing to see it would be ephor deciding.
     let probed = root.join(verb.probed()).is_file().then(|| Bound {
         verb,
         command: format!("./{}", verb.probed()),

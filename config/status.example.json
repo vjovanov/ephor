@@ -5,6 +5,11 @@
     "github_user": "you",
     "recent_days": 7
   },
+  "sources": [
+    {
+      "provider": "github-notifications"
+    }
+  ],
   "actions": [
     {
       "icon": "⎇",
@@ -66,8 +71,8 @@
         { "provider": "github-issues", "repos": ["acme/widget"] },
         {
           "provider": "custom-status",
-          "command": "git -C app status --short | head -5",
-          "format": "text"
+          "format": "answer",
+          "command": "printf '{\"v\":1,\"summary\":\"%s uncommitted file(s)\"}' \"$(git -C app status --short | wc -l)\" > \"$EPHOR_ANSWER\""
         }
       ]
     },

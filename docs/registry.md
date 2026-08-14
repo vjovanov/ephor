@@ -61,6 +61,48 @@ branch workspace is created.
 `repo_overrides`, `agents_overrides`, `vars`, and `aliases` let one project
 depart from its type without forking the type.
 
+## Identity and territory
+
+A row does not only say where a project is; it says what the project *is*, and
+that is what places a conversation nobody addressed to a repository
+([§FS-008-attribution.1](../requirements.md#1-identity-is-declared-and-the-row-has-the-last-word)).
+
+- `aliases[]` — other names the project answers to. A polyrepo whose
+  repositories have their own names lists them here.
+- `branches[].ticket`, and the key inferred from a branch name — the ticket
+  patterns the project's matters carry.
+- The repositories of its forest, which come from the type's `repos[]` and any
+  `repo_overrides`.
+- `territory[]` — repositories and organizations that are the project's
+  business **without being in its forest**: `"acme/plugin"` for one repository,
+  `"acme"` for a whole organization. It is what places the general case — a
+  mention of you on some repository of the project's ecosystem, an issue filed
+  there, a discussion opened there, none of it in any checkout.
+
+Attribution weighs these against what a conversation carries: an explicit venue
+wins outright, a reference places next, and resemblance only argues. Two
+projects claiming the same thing equally is not settled by order — it goes to
+the unattributed bucket carrying both, because a guess that lands wrong amends
+someone else's row silently.
+
+## What the row believes about a checkout
+
+A project may describe itself in an `ephor.json` at its forest root
+([§FS-006-project-interface.2](../requirements.md#2-the-manifest-is-offered-never-required)),
+and the row decides what that is worth:
+
+- Identity fields in a manifest are **hints**. The row adopts one where it says
+  nothing of its own and overrides it where it does — a checkout must not be
+  able to claim another project's conversations.
+- `manifest_trust` says how much of the rest to believe: `full` (the default —
+  its commands run with the trust you extend to running the project's own
+  build), `descriptions` (read what it says about itself, run none of it), or
+  `ignore` (do not read it).
+
+Nothing in a manifest can gate a capability that probing or your own
+configuration could not establish alone, so a row that ignores one loses
+nothing but the project's own convenience.
+
 ## Hook sets
 
 Named lists of commands run around `ephor update`. An entry is either the

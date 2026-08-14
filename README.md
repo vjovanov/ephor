@@ -23,7 +23,12 @@ action menu for when watching is not enough.
   your own live in `~/.config/ephor/` and are never committed
   ([§FS-001-forge-interface.5](requirements.md#5-no-site-specific-data-in-the-repository))
 - `config/templates/` — AGENTS.md templates referenced by the registry
-- `assets/workspaces.schema.json` — registry JSON Schema (embedded in the binary)
+- `assets/*.schema.json` — the published schemas, embedded in the binary and
+  printable with `ephor schema`: the registry, a project's `ephor.json`, the
+  answer envelope, and the forge interface
+  ([§FS-006-project-interface.11](requirements.md#11-the-interface-is-versioned))
+- `e2e/cases/` — one executable scenario per seam, each citing the `§FS` point
+  it holds ephor to
 - `ai/skills/` — canonical agent skills (`track-project`); `ai/link-global-skills.sh` links them into `~/.claude/skills` etc.
 - `systemd/` — user units for periodic feed refresh and work sync
 - `docs/manual.md` — **the manual**: every command, key, and configuration
@@ -207,7 +212,7 @@ gate is red — the check list as GitHub reports it, then `gh run view
 would work: the gate is failing, the item still names its pull request,
 and `gh` is installed.
 
-ephor offers one of its own, from what is on disk rather than from a source:
+ephor offers two of its own, from what is on disk rather than from a source.
 `⤴ rebase onto <main> (N behind)` on a pull request whose branch workspace has
 fallen behind the project's main branch
 ([§FS-004-quick-actions.6](requirements.md#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase)).
@@ -216,11 +221,20 @@ checkout, nothing stashed, nothing pushed — and where the replay stops in a
 conflict it opens the ticket about it, because that part is a question about
 the code and the rest never was
 ([§FS-005-dispatch.12](requirements.md#12-work-an-algorithm-can-finish-does-not-start-with-a-model)).
+And `⇣ check out <dir>` on an item whose branch workspace is not there yet
+([§FS-004-quick-actions.7](requirements.md#7-a-workspace-that-is-not-there-is-offered-the-checkout)):
+`ephor checkout` needs nothing configured — the registry says where the
+workspace goes, which repositories it holds, and what a new branch grows from —
+and it is also the step that runs before any other action on a missing
+workspace.
 
-**Configured actions** follow, from `status.json`: top-level `actions`
-apply to every project, `projects.<id>.actions` are appended for that
+**What the project offers** comes next, where it wrote an `ephor.json` of its
+own (below), and **configured actions** follow, from `status.json`: top-level
+`actions` apply to every project, `projects.<id>.actions` are appended for that
 project, and an optional `kinds` list restricts an action to `pr` / `ci` /
-`message` / `status` items.
+`message` / `status` items. Where two entries share an `id`, yours beats the
+project's beats the shipped one, in the place the earlier one held
+([§FS-006-project-interface.9](requirements.md#9-offers-the-projects-actions)).
 
 ```json
 {
@@ -272,6 +286,51 @@ returns after Enter. The item's context is exported to the script:
 | `EPHOR_TITLE`, `EPHOR_URL`, `EPHOR_STATE` | display fields (empty when absent) |
 | `EPHOR_REPO`, `EPHOR_NUMBER` | best-effort `owner/name` and PR number from the item |
 | `EPHOR_RAW` | the item's full raw JSON, for `jq` |
+
+## What a project can say about itself
+
+Tracking a project costs minutes and touches nothing in it: ephor requires
+*capabilities* of a project, never artifacts in it
+([§FS-006-project-interface](requirements.md#fs-006-project-interface-a-project-and-ephor-meet-over-one-interface-in-three-homes)).
+A project that wants to say more places one optional file at its forest root:
+
+```jsonc
+// ephor.json — every field optional, an empty {} is valid
+{ "identity": { "aliases": ["widget"], "territory": ["acme-labs"] },
+  "checks":   { "check": "./check.sh", "smoke": { "command": "./ci/smoke.sh", "features": "list" } },
+  "ci":       { "status": "./ci/gate.sh", "failures": "./ci/gate-failures.sh" },
+  "tickets":  [{ "kind": "rhei", "path": "docs/plans" }],
+  "actions":  [{ "id": "rebuild", "description": "rebuild the docs site",
+                 "command": "./tools/rebuild.sh", "requires": ["checkout-able"] }] }
+```
+
+- **Checks are verbs** — `check`, `style`, `smoke`, probed as `./check.sh`,
+  `./check-style.sh`, `./smoke-test.sh` or declared here, each self-contained,
+  smoke optionally enumerating features. `ephor check` runs them from the
+  checkout alone.
+- **The gate is the project's, in three verbs** — `status`, `failures`,
+  `restart`. A forge-hosted gate needs none of this: the provider's own gate
+  capability is the shipped default.
+- **Ticket stores are read where they live** — `panta/`, `.beads/`, or wherever
+  the manifest says.
+- **Offers** are menu entries the project ships with itself, gated by the same
+  capability rungs your own actions use.
+- **What crosses the interface is validated**: `ephor validate --manifest .`,
+  and `ephor schema manifest|answer|registry|forge` prints the published
+  schemas, which are what a release may not break silently.
+
+Your registry row is authoritative over all of it — identity fields are hints
+it adopts or overrides, and `manifest_trust` narrows a checkout you trust less
+to `descriptions` or `ignore`. What a project can do is resolved into a ladder
+of rungs, and a feature that needs a rung you do not hold says so where it
+would have appeared rather than vanishing
+([§FS-006-project-interface.10](requirements.md#10-capability-rung-by-rung)).
+
+Three CI steps ship for the repository half of this — `setup`, `validate`,
+`check` — and each runs from repository-committed material and workflow inputs
+alone, never from anybody's site
+([§FS-009-shipped-actions](requirements.md#fs-009-shipped-actions-what-ephor-ships-for-ci-runs-from-the-repository-alone),
+[§9.3](docs/manual.md#93-ci-steps-ephor-ships)).
 
 ## Work: handing an item to an agent runtime
 
@@ -382,10 +441,21 @@ A selector asks about `kinds`, `roles` (`author`/`reviewer`), `gate`
 `green`, `any`), `needs_response`, and `sources`. Every field set must hold;
 finished work never matches. The brief takes `{title}`, `{url}`, `{repo}`,
 `{number}`, `{branch}`, `{ticket}`, `{state}`, `{gate}`, `{workspace}`,
-`{root}`, `{project}`, `{source}`, `{kind}`, `{id}`. A recipe may also pin the
-runtime's execution identity with `"target"` or `"model"`.
+`{root}`, `{project}`, `{source}`, `{kind}`, `{id}`, and `{reply}` — the file a
+drafted answer belongs in. A recipe may also pin the runtime's execution
+identity with `"target"` or `"model"`.
 
-### Where the work goes
+**An answer comes back as a proposal.** The shipped `answer` recipe asks for
+the reply as a file of its own, and nothing posts it: the run writes it, ephor
+reads it back, and the thread screen shows it under the conversation it answers
+— `p` posts it through the same provider a reaction goes through, `e` edits it
+first, and where the channel cannot carry a reply the card still names the file
+you copy from
+([§FS-005-dispatch.13](requirements.md#13-a-communication-is-work-too-and-its-answer-comes-back-as-a-proposal)).
+It needs no checkout, so a conversation is answerable on a project whose branch
+is not on this machine.
+
+### Where the work goes, and what runs it
 
 `work.root` (default `{workspace}/panta`) is a rhei project directory in the
 item's checkout. ephor creates it when it is missing — the manifest, a
@@ -407,6 +477,14 @@ report, `review` reads that against the ticket and writes a verdict whose first
 line is `VERDICT: done | partial | blocked`. ephor reads that line back onto
 the row.
 
+**What runs a plan is bound, not fused.** `work.runner` names the command;
+unset, it is the runtime ephor ships wired and ready, and naming another is how
+somebody who works differently points work at theirs
+([§DA-001-runtime-bound-default](docs/decisions/architectural/DA-001-runtime-bound-default.md#da-001-runtime-bound-default-the-runtime-is-a-bound-default-not-a-named-coupling)).
+With nothing installed under that name, everything except the running still
+holds — tickets are written, read and reopened on disk — and only `ephor work
+run` refuses, naming the runner it looked for.
+
 **Scripts, before the agent.** Every ticket also carries the item as structured
 metadata, so a state machine can hand a program `{meta.repo}`, `{meta.number}`,
 `{meta.workspace}` and the rest, name its output with `{output.<name>.path}`,
@@ -425,6 +503,17 @@ deliberately.
 | provider | source | needs response when |
 |---|---|---|
 | `github-prs` | `gh search prs`: authored, plus with `reviews: true` PRs you are engaged with (`--commenter` / `--mentions`); gate from `gh pr checks` | authored: changes requested; reviewing: an unanswered citation |
+| `github-ci` | `gh pr list` + `gh pr checks` per open PR | a check is failing |
+| `github-issues` | `gh search issues` by role, plus comments | a comment awaits your reply |
+| `github-notifications` | `GET /notifications` — GitHub's own list, the completeness net behind the searches you composed | the reason is a mention, a review request, an assignment, a broken gate, or an advisory |
+| `github-threads` | GraphQL unresolved review threads | last comment is not yours |
+| `custom-status` | any shell command in the workspace (`format: answer`, or the legacy `text` / `json`) | the answer says so |
+| `<anything else>` | a forge extension: `ephor-forge-<name>` on `PATH` ([§FS-001-forge-interface.2](requirements.md#2-two-transports-one-interface)) | ephor's policy, over what it answered |
+| `slack`/`discord`/`email` | stubs; activate by adding secrets under `~/config/secrets/ephor/` | mentions/DMs (planned) |
+
+A ticket store in the checkout — `panta/`, `.beads/` — is read on every refresh
+without any provider block, and reports under its own name
+([§FS-006-project-interface.7](requirements.md#7-local-ticket-stores-are-read-where-they-live)).
 
 **Answered detection**: a citation or thread stops needing a response once
 you answered it — with a message afterwards, with a reaction on the
@@ -432,10 +521,6 @@ message, or by ticking the task it was waiting on. Task state outranks the
 last word in both directions. Applies to github-prs mentions,
 github-threads (unresolved threads), and to any forge extension's threads
 and citations.
-| `github-ci` | `gh pr list` + `gh pr checks` per open PR | a check is failing |
-| `github-threads` | GraphQL unresolved review threads | last comment is not yours |
-| `custom-status` | any shell command in the workspace (`format: text|json`) | the JSON sets `needs_response` |
-| `slack`/`discord`/`email` | stubs; activate by adding secrets under `~/config/secrets/ephor/` | mentions/DMs (planned) |
 
 GitHub Enterprise: add `"host": "github.example.com"` to a github provider
 block (sets `GH_HOST`).
@@ -460,6 +545,9 @@ and runs nothing — spawning agents stays a thing you ask for.
 ## Development
 
 ```bash
-just check     # fmt --check + clippy -D warnings + cargo test
-just test
+just check     # the CI gate: fmt --check, build -D warnings, cargo + python
+               # tests, the boundary check, grund
+just test      # the Rust suite alone
+just e2e       # the end-to-end scenarios alone (e2e/cases)
+just lint      # clippy -D warnings, deliberately not part of the gate
 ```
