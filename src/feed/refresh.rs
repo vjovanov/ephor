@@ -2,13 +2,15 @@
 //! projects in parallel, isolate failures, merge into the cache.
 
 use std::collections::BTreeMap;
+use std::sync::mpsc::{self, Receiver};
 use std::sync::Mutex;
+use std::thread::JoinHandle;
 use std::time::Duration;
 
 use chrono::Utc;
 use serde_json::Value;
 
-use crate::error::{registry_error, Result};
+use crate::error::{registry_error, EphorError, Result};
 use crate::feed::cache::{load_feed, store_feed, ProjectFeed, ProviderSlot};
 use crate::feed::config::{Defaults, ProjectFeedConfig, StatusConfig};
 use crate::feed::provider::ProviderContext;
@@ -289,6 +291,229 @@ pub fn refresh_project(
     })
 }
 
+/// One project's refresh, as it lands.
+pub struct Landed {
+    pub project: String,
+    /// Providers of this project that did not deliver, each already qualified
+    /// by the project, since the reader's screen holds several
+    /// (§FS-001-forge-interface.6).
+    pub lost: Vec<String>,
+    pub unreachable: usize,
+    /// Why the project could not be asked at all — a registry that does not
+    /// describe it, a context that would not build. None of its providers ran.
+    pub failed: Option<String>,
+}
+
+/// A refresh running beneath the interface (§FS-001-forge-interface.7).
+///
+/// The fetch is the slowest thing ephor does — a source is entitled to a
+/// ceiling of its own (§FS-001-forge-interface.2), and minutes is a legitimate
+/// answer — while the reader's screen is not the fetch's to hold. So the run
+/// lives on a thread of its own and reports one project at a time through a
+/// channel the interface drains between key reads.
+///
+/// Projects are still asked one after another, exactly as a foreground refresh
+/// asked them: what moved off the reader's screen is the waiting, not the load
+/// on the forge (§GOAL-005-costless).
+pub struct BackgroundRefresh {
+    landed: Receiver<Landed>,
+    /// Held so the thread is reaped when the run ends. Dropping it detaches,
+    /// which is what a reader quitting mid-run should do: nothing on their
+    /// way out waits for a forge, and every feed is written whole
+    /// (§AR-008-pipeline.1) so a half-finished run leaves no torn cache.
+    worker: Option<JoinHandle<()>>,
+    /// The projects this run asks for, in the order it asks them — so the one
+    /// in flight is the one after those that have reported.
+    queue: Vec<String>,
+    finished: usize,
+    lost: Vec<String>,
+    unreachable: usize,
+    /// The first project that could not be asked at all, and why. Kept apart
+    /// from the lost providers: it is a sentence about configuration, and a
+    /// name on its own does not say what to go and fix.
+    failed: Option<String>,
+}
+
+impl BackgroundRefresh {
+    /// Start a run and give the screen straight back. `only` narrows it to a
+    /// single project, as the detail view does.
+    ///
+    /// The registry is read here, on the caller's thread: it is a local file,
+    /// and a registry that will not parse is an answer the keystroke can have
+    /// rather than one that arrives later looking like a refresh that lost
+    /// everything.
+    pub fn start(config: &StatusConfig, only: Option<&str>) -> Result<Self> {
+        let registry_doc = crate::feed::commands::load_registry_doc()?;
+        let defaults = config.defaults.clone();
+        let jobs: Vec<(String, ProjectFeedConfig)> = config
+            .projects
+            .iter()
+            .filter(|(project, _)| match only {
+                Some(one) => project.as_str() == one,
+                None => true,
+            })
+            .map(|(project, project_config)| (project.clone(), project_config.clone()))
+            .collect();
+        let queue: Vec<String> = jobs.iter().map(|(project, _)| project.clone()).collect();
+
+        let (sender, landed) = mpsc::channel();
+        let worker = std::thread::Builder::new()
+            .name("ephor-refresh".to_string())
+            .spawn(move || {
+                for (project, project_config) in jobs {
+                    let report = match refresh_project(
+                        &registry_doc,
+                        &project,
+                        &project_config,
+                        &defaults,
+                    ) {
+                        Ok(outcome) => Landed {
+                            lost: outcome
+                                .failures
+                                .iter()
+                                .map(|failure| format!("{project}/{}", failure.provider))
+                                .collect(),
+                            unreachable: outcome.unreachable_count(),
+                            failed: None,
+                            project,
+                        },
+                        Err(err) => Landed {
+                            lost: vec![project.clone()],
+                            unreachable: 0,
+                            failed: Some(err.to_string()),
+                            project,
+                        },
+                    };
+                    // A reader who left took the receiver with them. There is
+                    // nobody to report to, and the rest of the run is work
+                    // nobody asked for any more.
+                    if sender.send(report).is_err() {
+                        return;
+                    }
+                }
+            })
+            .map_err(|err| EphorError::Command(format!("Could not start the refresh: {err}")))?;
+
+        Ok(BackgroundRefresh {
+            landed,
+            worker: Some(worker),
+            queue,
+            finished: 0,
+            lost: Vec::new(),
+            unreachable: 0,
+            failed: None,
+        })
+    }
+
+    /// Everything that has landed since the last call, folded into the run's
+    /// tally on the way past. Never blocks: a project still being asked is
+    /// simply not in the answer yet.
+    pub fn collect(&mut self) -> Vec<Landed> {
+        let mut arrived = Vec::new();
+        loop {
+            match self.landed.try_recv() {
+                Ok(report) => {
+                    self.finished += 1;
+                    self.unreachable += report.unreachable;
+                    self.lost.extend(report.lost.iter().cloned());
+                    if let (None, Some(why)) = (&self.failed, &report.failed) {
+                        self.failed = Some(format!("{}: {why}", report.project));
+                    }
+                    arrived.push(report);
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                // The thread the run was on is gone with projects left to
+                // ask. Nothing more is coming, so the run is over — and what
+                // never reported is named as lost rather than left as a
+                // progress line that never moves again
+                // (§FS-001-forge-interface.6).
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    let unasked: Vec<String> = self.queue[self.finished..].to_vec();
+                    if !unasked.is_empty() {
+                        self.lost.extend(unasked);
+                        if self.failed.is_none() {
+                            self.failed = Some("the refresh stopped early".to_string());
+                        }
+                        self.finished = self.queue.len();
+                    }
+                    break;
+                }
+            }
+        }
+        arrived
+    }
+
+    /// Whether every project the run asked for has reported.
+    pub fn done(&self) -> bool {
+        self.finished >= self.queue.len()
+    }
+
+    /// What the header says while the run is in flight: the project being
+    /// asked now, and how far through the run it is
+    /// (§FS-001-forge-interface.7).
+    pub fn progress(&self) -> String {
+        match self.queue.get(self.finished) {
+            Some(project) => format!(
+                "Refreshing {project} ({}/{})…",
+                self.finished + 1,
+                self.queue.len()
+            ),
+            None => "Refreshing…".to_string(),
+        }
+    }
+
+    /// The one line a finished run leaves behind.
+    pub fn summary(&self) -> String {
+        summarize(&self.lost, self.unreachable, self.failed.as_deref())
+    }
+
+    /// Reap the worker once the run is done. It has already sent everything it
+    /// will send, so this only collects the thread.
+    pub fn finish(&mut self) {
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+/// What a finished run tells the reader it lost (§FS-001-forge-interface.6).
+///
+/// Named, not counted. "6 provider warnings" is the same sentence whether a
+/// forge has been uninstalled for months or a laptop is off the VPN for a
+/// minute, and in both cases the sections those providers fill just look
+/// empty.
+pub fn summarize(lost: &[String], unreachable: usize, failed: Option<&str>) -> String {
+    if lost.is_empty() {
+        return "Refreshed".to_string();
+    }
+    // Enough names to act on, then a count for the rest.
+    const NAMED: usize = 3;
+    let mut shown = lost
+        .iter()
+        .take(NAMED)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    if lost.len() > NAMED {
+        shown = format!("{shown} +{} more", lost.len() - NAMED);
+    }
+    let network = if unreachable > 0 {
+        format!(" ({unreachable} unreachable — check the network/VPN)")
+    } else {
+        String::new()
+    };
+    // A project that could not be asked at all is a configuration to go and
+    // fix, and its name on its own does not say what.
+    let why = match failed {
+        Some(failed) => format!(" — {failed}"),
+        None => String::new(),
+    };
+    format!(
+        "Refreshed — NO DATA from {}: {shown}{network}{why}",
+        lost.len()
+    )
+}
+
 /// The reserved feed a matter lands in when nothing claimed it, or when two
 /// projects claimed it equally (§FS-008-attribution.4). The bucket is part of
 /// the store rather than a log line: a conversation ephor could not place is
@@ -510,5 +735,46 @@ fn fetch_one(
                 .to_string(),
             (false, Some(err.0), Vec::new()),
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_clean_run_says_only_that_it_refreshed() {
+        assert_eq!(summarize(&[], 0, None), "Refreshed");
+    }
+
+    #[test]
+    fn what_was_lost_is_named_and_the_rest_is_counted() {
+        let lost: Vec<String> = ["a/one", "b/two", "c/three", "d/four", "e/five"]
+            .iter()
+            .map(|name| name.to_string())
+            .collect();
+        assert_eq!(
+            summarize(&lost, 0, None),
+            "Refreshed — NO DATA from 5: a/one, b/two, c/three +2 more"
+        );
+    }
+
+    /// A network condition asks nothing of the reader but a working network,
+    /// so it is said in those words (§FS-001-forge-interface.6).
+    #[test]
+    fn unreachable_is_its_own_sentence() {
+        let lost = vec!["graal/gdev".to_string()];
+        assert!(summarize(&lost, 1, None).ends_with("(1 unreachable — check the network/VPN)"));
+    }
+
+    /// A project that could not be asked at all carries its reason: the name
+    /// alone does not say what to go and fix.
+    #[test]
+    fn a_project_that_could_not_be_asked_says_why() {
+        let lost = vec!["widget".to_string()];
+        assert_eq!(
+            summarize(&lost, 0, Some("widget: not in the registry")),
+            "Refreshed — NO DATA from 1: widget — widget: not in the registry"
+        );
     }
 }

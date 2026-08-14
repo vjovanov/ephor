@@ -766,6 +766,31 @@ ships, the previous "latest" section moves verbatim to
 
 ### Fixed
 
+- **A branch you had checked out was still "not linked to a branch"**
+  ([§FS-008-attribution.2](../requirements.md#2-two-stages-one-engine)).
+  The inbox measured whether an item's workspace was on disk by expanding the
+  project's template and looking, and then grouped that same item under the
+  branches the registry row happened to name — two answers to one question,
+  from two sources. So a row could read `✓` for "checked out" while sitting
+  under the heading that says it belongs to no branch, and a workspace
+  `ephor checkout` had just made stayed invisible to the grouping the moment
+  after it was made, because nothing writes a branch back into the row. On a
+  project with fourteen trees on disk and three branches written down, eleven
+  branches' worth of pull requests fell into one undifferentiated pile. A
+  project's branches are now the row's plus every workspace found under the
+  workspace base — a bounded filesystem walk, no git process per directory —
+  each named for the directory it was found in so that
+  [§AR-004-forest.3](architecture/AR-004-forest.md#3-workspace-resolution)
+  keeps one answer. The row still has the last word on a branch it also names,
+  and a branch only the disk knows cannot widen what the project claims:
+  identity is the row's alone (§FS-008-attribution.1).
+- **An item could be filed under a branch that merely resembled its own.** The
+  inbox asked each branch in turn which rows matched it, so a pull request on
+  `you/ABC-42-retry` was taken by `you/ABC-42` if that branch came first — both
+  carry the ticket key, and near-miss names are common once branches are found
+  on disk rather than written down. Each item is now placed once against the
+  whole branch list, with the branch the forge recorded winning over any that
+  only resembles it, and the count on a branch row is the group beneath it.
 - **A summoned command was handed paths its own shell could not read**
   ([§FS-006-project-interface.3](../requirements.md#3-a-summons-environment-in-exit-code-and-answer-out)).
   A summons runs through a shell, so `$EPHOR_ANSWER` and the rest are strings
@@ -925,6 +950,30 @@ ships, the previous "latest" section moves verbatim to
 
 ### Changed
 
+- **A refresh no longer takes the screen**
+  ([§FS-001-forge-interface.7](../requirements.md#7-a-fetch-runs-beneath-the-reading-never-in-front-of-it)).
+  `r` ran the whole fetch on the thread that draws and reads keys, so the
+  interface froze until the last provider answered — nothing repainted, no key
+  was read, and `^C` is a key event in raw mode, so there was no way out
+  either. Projects are asked one after another and a provider may set its own
+  ceiling, so a site with one forge allowed ten minutes could hold the screen
+  for the length of a coffee break. The run now lives on a thread of its own:
+  the screen stays yours for all of it, each project takes its place in the
+  feed as its sources answer rather than the whole run landing at the pace of
+  the slowest one, and the header carries `Refreshing <project> (3/7)…` so a
+  live screen is not read as a finished one. Pressing `r` during a run says so
+  instead of starting a second. What a refresh costs the forge is unchanged —
+  the projects are still asked one at a time, and it is the waiting that moved,
+  not the load.
+- **The cursor follows the row it was on across a rebuild**, rather than the
+  line number that row happened to occupy
+  ([§FS-001-forge-interface.7](../requirements.md#7-a-fetch-runs-beneath-the-reading-never-in-front-of-it)).
+  Selection was kept by index, which was harmless while the tree only changed
+  when you asked it to; with answers arriving underneath a reader who is still
+  moving, an index is the wrong thing to keep — rows sort in above the cursor
+  and `x` opens the menu for a matter you were not looking at. A row that is
+  gone still leaves the index standing, so marking a pile done walks down it as
+  before.
 - **CI no longer runs a Windows leg, and [§RM-004-windows](roadmap.md#rm-004-windows-ephor-runs-where-there-is-no-posix-shell)
   says what a port would take.** `windows-latest` was in the matrix from the
   first commit and was never once green: every test binary failed to compile,

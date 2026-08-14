@@ -244,6 +244,7 @@ mod tests {
             ticket: Some("ABC-42".to_string()),
             active: true,
             is_release: false,
+            declared: true,
         };
         // A github item records no branch: the registry match fills in.
         let pr = item(ItemKind::Pr, "github-prs:acme/widget#42", json!({}));

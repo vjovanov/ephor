@@ -857,8 +857,16 @@ ephor tui        # alias: ephor inbox
 ```
 
 Everything is organized per organization → project → category → branch. Items
-nest under the registry branch they belong to, matched by ticket key or branch
-name, with a *(not linked to a branch)* group for the rest.
+nest under the branch they belong to, matched by branch name first and by
+ticket key after, with a *(not linked to a branch)* group for the rest.
+
+A project's branches are the ones its registry row names **and** the ones it
+has a workspace for on disk. You do not have to write a branch down to see its
+work gathered under it: check it out — with `ephor checkout` or by hand — and
+the next read picks it up, named for the directory it sits in. A branch the row
+names keeps the row's word on it (its ticket, whether it is `active`); a branch
+only the disk knows is shown as inactive and cannot widen what the project
+claims as its own (§FS-008-attribution.2).
 
 ### 6.1 The categories
 
@@ -927,8 +935,20 @@ does not report one simply never shows it.
 | `u` | unread-only ↔ everything |
 | `[` `]` | previous / next project (Detail) |
 | `Esc` `h` | back |
-| `r` | refresh (in Detail, only that project) |
+| `r` | refresh underneath the screen (in Detail, only that project) |
 | `q`, `^C` | quit |
+
+`r` does not take the terminal. The fetch runs on a thread of its own, so
+every other key still answers while it is in flight — read, act, mark done,
+or quit, and a run you walk out on is abandoned rather than waited for. Each
+project takes its place in the feed as its own sources answer, rather than
+the whole run landing at the pace of the slowest forge, and the header carries
+`Refreshing graal (3/7)…` for as long as it is running: a screen that stays
+live is also a screen that looks finished, and a half-filled feed read as the
+whole answer is the same lie as an empty section that only means "not asked
+yet". The projects are still asked one at a time, so the refresh costs your
+forges exactly what it did before. Pressing `r` again during a run says
+`Already refreshing` rather than starting a second one.
 
 **Thread screen** — the recorded conversation in full, each message a card with
 its author, age, text and reactions:

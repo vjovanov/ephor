@@ -198,6 +198,43 @@ an empty or partial answer for a failure:
    says only that something was attempted, and that no reader can act on.
    The line reported is the one that reads as a diagnosis.
 
+### 7. A fetch runs beneath the reading, never in front of it
+
+Asking every source takes as long as the slowest of them, and that is not a
+number ephor controls: an out-of-process forge reached over a VPN is allowed a
+ceiling of its own (§2) precisely because the shared default is too short for
+it. So the fetch is the slowest thing ephor does — minutes, where a source is
+entitled to them — and the reader is doing something else while it runs:
+scanning, opening a thread, marking work done.
+
+An interactive refresh therefore runs **beneath** the interface. The screen
+stays the reader's for the whole of it: every key still answers, and they may
+read, act on a matter, and leave while sources are still being asked. A screen
+frozen on a fetch is the failure §FS-010-doctor.3 names in the diagnostic — a
+tool that shows nothing until it is finished is one a person kills half way
+through and reports as hung — except that here they cannot kill it either,
+since the key that would quit is the one not being read.
+
+Three things follow:
+
+1. **Answers land as they arrive.** A project whose sources have answered
+   takes its place in the feed then, not when the last project is done. One
+   slow forge otherwise holds back every fast one's news, and the reader waits
+   on the worst source for all of them.
+2. **A run in flight says so, and says where it has got to.** A screen that
+   stays live is also a screen that looks finished, and a reader who cannot
+   tell a running refresh from a completed one reads a half-filled feed as the
+   whole answer — §6's failure arriving by another road, an empty section that
+   means "not asked yet". So the header names the run and its progress while
+   it is in flight, and the reader is told what it lost when it ends.
+3. **The reader's place is kept.** Rows arriving under a moving cursor must
+   not change what the next key would act on: a selection follows the matter
+   it was on rather than the position that matter happened to occupy.
+
+None of this changes what a refresh costs the forge (§GOAL-005-costless):
+moving the waiting off the reader's screen is not licence to ask more sources
+at once than were being asked before it.
+
 ## FS-002-release: ephor releases from a tag, with a changelog entry per change
 
 Versions are semver, and a version exists exactly when a `vX.Y.Z` tag does. The
@@ -1122,8 +1159,26 @@ none of it in any forest, all of it the project's business
 
 Attribution runs discussion → matter, then matter → project and branch. It
 is one matching engine at two scopes: the branch matching that already
-places items under registry branches is this engine confined to one
+places items under a project's branches is this engine confined to one
 project, and it is promoted, not duplicated.
+
+**A project's branches are the row's and the disk's together.** The row names
+the branches somebody wrote down; the workspaces are wherever branches were
+actually checked out, and the two are not the same list — the same gap local
+ticket stores are read across (§FS-006-project-interface.7). A branch whose
+workspace is on disk is one ephor can place work on, so it is one items are
+placed under, whether or not the row names it. Anything else is ephor
+contradicting itself about a fact it measured: a row reading `✓ checked out`
+under a heading that says the item is linked to no branch, and — worse — a
+checkout ephor made itself (§FS-004-quick-actions.7) staying invisible to the
+grouping the moment after it was made.
+
+A branch found this way is named by the directory it was found in, never by
+what its checkout has at `HEAD`, so the directory a branch resolves to and
+the directory it was found in are always the same one. The row keeps the last
+word on everything else about a branch — its ticket, whether it is active,
+whether it is a release branch — and on identity, which no checkout may widen
+([§1](#1-identity-is-declared-and-the-row-has-the-last-word)).
 
 ### 3. Venue beats reference beats resemblance
 

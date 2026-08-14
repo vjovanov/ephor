@@ -2,8 +2,9 @@
 //!
 //! Three modes: Stream (full tree across organizations, unread-only by
 //! default), Projects (org-grouped summary rows), and Detail (one project
-//! plus all its registry branches). Tab toggles Stream/Projects; Enter on a
-//! project row drills into Detail.
+//! plus all its branches — the row's and the ones found checked out,
+//! §FS-008-attribution.2). Tab toggles Stream/Projects; Enter on a project row
+//! drills into Detail.
 
 use chrono::Utc;
 use ratatui::crossterm::event::KeyCode;
@@ -17,7 +18,7 @@ use crate::feed::model::{Item, ItemKind, ItemRole};
 use crate::feed::render::age;
 use crate::forest::Staleness;
 
-use super::{highlight_style, matches_branch, Action, BranchInfo, Ctx, WorkBadge};
+use super::{highlight_style, Action, BranchInfo, Ctx, WorkBadge};
 
 #[derive(Clone, Copy, PartialEq)]
 enum Mode {
@@ -54,7 +55,8 @@ enum Entry {
     /// workspace is checked out on disk, and how many commits it trails
     /// main (summed over the workspace's repos).
     Branch(String, BranchInfo, bool, Option<u64>),
-    /// Group header for items not linked to any registry branch.
+    /// Group header for items linked to none of the project's branches —
+    /// neither one the row names nor one with a workspace on disk.
     Unassigned,
     Item(Row),
 }
@@ -130,7 +132,8 @@ impl NavigatorState {
     }
 
     /// Type sections for one project: per kind a header, then per-branch
-    /// groups in registry order, then items not linked to any branch.
+    /// groups — the row's branches first, then the ones found checked out —
+    /// then items linked to none of them.
     fn type_section_entries(&self, ctx: &Ctx, project: &str) -> Vec<Entry> {
         let mut entries = Vec::new();
         let Some(feed) = ctx.feed(project) else {
@@ -202,13 +205,17 @@ impl NavigatorState {
             });
             entries.push(Entry::Header(header));
 
-            let mut consumed = vec![false; rows.len()];
-            for branch in &branches {
-                let matching: Vec<usize> = rows
-                    .iter()
-                    .enumerate()
-                    .filter(|(index, row)| !consumed[*index] && matches_branch(&row.item, branch))
-                    .map(|(index, _)| index)
+            // Each row is placed once, against the whole branch list, before
+            // any group is drawn: asking branch by branch would file a row
+            // under the first branch that resembles it rather than the one it
+            // is on (§FS-008-attribution.2).
+            let placed: Vec<Option<usize>> = rows
+                .iter()
+                .map(|row| crate::branches::place(&row.item, &branches))
+                .collect();
+            for (position, branch) in branches.iter().enumerate() {
+                let matching: Vec<usize> = (0..rows.len())
+                    .filter(|index| placed[*index] == Some(position))
                     .collect();
                 if matching.is_empty() {
                     continue;
@@ -221,12 +228,12 @@ impl NavigatorState {
                         .and_then(Staleness::total),
                 ));
                 for index in matching {
-                    consumed[index] = true;
                     entries.push(Entry::Item(rows[index].clone()));
                 }
             }
-            let unassigned: Vec<usize> =
-                (0..rows.len()).filter(|index| !consumed[*index]).collect();
+            let unassigned: Vec<usize> = (0..rows.len())
+                .filter(|index| placed[*index].is_none())
+                .collect();
             if !unassigned.is_empty() {
                 entries.push(Entry::Unassigned);
                 for index in unassigned {
@@ -238,6 +245,7 @@ impl NavigatorState {
     }
 
     fn rebuild_stream(&mut self, ctx: &Ctx) {
+        let was = selected_identity(&self.stream_entries, &self.stream_state);
         self.stream_entries.clear();
         for org in &ctx.orgs {
             let mut org_entries = Vec::new();
@@ -286,10 +294,11 @@ impl NavigatorState {
             self.stream_entries
                 .extend(orphans.into_iter().map(Entry::Item));
         }
-        fix_selection(&self.stream_entries, &mut self.stream_state);
+        fix_selection(&self.stream_entries, &mut self.stream_state, was);
     }
 
     fn rebuild_projects(&mut self, ctx: &Ctx) {
+        let was = selected_identity(&self.project_entries, &self.project_state);
         self.project_entries.clear();
         for org in &ctx.orgs {
             let projects = ctx.org_projects(&org.id);
@@ -300,10 +309,11 @@ impl NavigatorState {
             self.project_entries
                 .extend(projects.into_iter().map(Entry::Project));
         }
-        fix_selection(&self.project_entries, &mut self.project_state);
+        fix_selection(&self.project_entries, &mut self.project_state, was);
     }
 
     fn rebuild_detail(&mut self, ctx: &Ctx) {
+        let was = selected_identity(&self.detail_entries, &self.detail_state);
         let project = ctx.projects[self.detail_project].clone();
         self.detail_entries.clear();
 
@@ -322,7 +332,7 @@ impl NavigatorState {
         }
         let sections = self.type_section_entries(ctx, &project);
         self.detail_entries.extend(sections);
-        fix_selection(&self.detail_entries, &mut self.detail_state);
+        fix_selection(&self.detail_entries, &mut self.detail_state, was);
     }
 
     pub fn handle_key(&mut self, ctx: &Ctx, code: KeyCode) -> Action {
@@ -640,14 +650,7 @@ impl NavigatorState {
                             Style::default().fg(Color::DarkGray),
                         ));
                     }
-                    let linked = ctx
-                        .feed(project)
-                        .map(|feed| {
-                            feed.items()
-                                .filter(|item| matches_branch(item, branch))
-                                .count()
-                        })
-                        .unwrap_or(0);
+                    let linked = ctx.items_on_branch(project, branch).len();
                     if linked > 0 {
                         spans.push(Span::styled(
                             format!("{linked} linked"),
@@ -806,9 +809,158 @@ fn count_spans(passed: u64, failed: u64, running: u64) -> Vec<Span<'static>> {
     spans
 }
 
-fn fix_selection(entries: &[Entry], state: &mut ListState) {
+/// What a selectable entry is, across a rebuild: this matter, this project,
+/// this branch — not the position it happens to occupy.
+fn identity(entry: &Entry) -> Option<String> {
+    match entry {
+        Entry::Item(row) => Some(format!("item:{}", row.item.id)),
+        Entry::Project(project) => Some(format!("project:{project}")),
+        Entry::Branch(project, branch, ..) => Some(format!("branch:{project}:{}", branch.branch)),
+        Entry::Org(_) | Entry::Header(_) | Entry::Unassigned => None,
+    }
+}
+
+/// What the cursor was on before a rebuild, where it was on anything.
+fn selected_identity(entries: &[Entry], state: &ListState) -> Option<String> {
+    entries.get(state.selected()?).and_then(identity)
+}
+
+/// Put the cursor back on the row it was on. Rows arrive under a reader who is
+/// still moving — a refresh runs beneath the screen (§FS-001-forge-interface.7)
+/// — and a selection kept by index over a list that grew above it silently
+/// changes what the next key acts on: the reader presses `x` on the row they
+/// were reading and gets the menu for another one.
+///
+/// The row it was on may also be gone, which is what marking an item done does
+/// to it. Then the index stands, and the cursor lands on whatever took its
+/// place.
+fn fix_selection(entries: &[Entry], state: &mut ListState, was: Option<String>) {
+    if let Some(was) = was {
+        if let Some(index) = entries
+            .iter()
+            .position(|entry| identity(entry).as_deref() == Some(was.as_str()))
+        {
+            state.select(Some(index));
+            return;
+        }
+    }
     match state.selected() {
         Some(index) if index < entries.len() && selectable(&entries[index]) => {}
         _ => state.select((0..entries.len()).find(|index| selectable(&entries[*index]))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn row(id: &str) -> Entry {
+        Entry::Item(Row {
+            item: Item {
+                id: id.to_string(),
+                project: "widget".to_string(),
+                source: "github-prs".to_string(),
+                kind: ItemKind::Pr,
+                role: None,
+                title: id.to_string(),
+                url: None,
+                state: None,
+                needs_response: false,
+                updated_at: Utc::now(),
+                raw: json!({}),
+            },
+            stale: false,
+            checked_out: None,
+            work: None,
+            resurfacing: None,
+        })
+    }
+
+    fn on(entries: &[Entry], index: usize) -> ListState {
+        let mut state = ListState::default();
+        state.select(Some(index));
+        assert!(selectable(&entries[index]), "the fixture selects a row");
+        state
+    }
+
+    /// A refresh lands a project's answers while the reader is still moving
+    /// through the tree (§FS-001-forge-interface.7), and what arrives can
+    /// sort above the cursor. The cursor belongs to the matter, not to the
+    /// line number it had (§FS-001-forge-interface.7).
+    #[test]
+    fn the_cursor_follows_the_matter_when_rows_arrive_above_it() {
+        let before = vec![row("pr:1"), row("pr:2")];
+        let mut state = on(&before, 1);
+        let was = selected_identity(&before, &state);
+
+        let after = vec![row("pr:9"), row("pr:8"), row("pr:1"), row("pr:2")];
+        fix_selection(&after, &mut state, was);
+
+        assert_eq!(state.selected(), Some(3));
+    }
+
+    /// The same rule across a header that is not selectable: it is the matter
+    /// that is looked for, and headers are never it.
+    #[test]
+    fn a_header_arriving_above_the_cursor_moves_it_too() {
+        let before = vec![row("pr:1")];
+        let mut state = on(&before, 0);
+        let was = selected_identity(&before, &state);
+
+        let after = vec![Entry::Header("My Pull Requests"), row("pr:1")];
+        fix_selection(&after, &mut state, was);
+
+        assert_eq!(state.selected(), Some(1));
+    }
+
+    /// Marking an item done takes it off an unread-only screen. Nothing to
+    /// follow, so the index stands and the row that took its place is
+    /// selected — which is what makes `m` `m` `m` work down a pile.
+    #[test]
+    fn a_row_that_is_gone_leaves_the_cursor_where_it_stood() {
+        let before = vec![row("pr:1"), row("pr:2"), row("pr:3")];
+        let mut state = on(&before, 1);
+        let was = selected_identity(&before, &state);
+
+        let after = vec![row("pr:1"), row("pr:3")];
+        fix_selection(&after, &mut state, was);
+
+        assert_eq!(state.selected(), Some(1));
+    }
+
+    /// The last row, marked done, has nothing under it: the cursor falls back
+    /// to something selectable rather than off the end.
+    #[test]
+    fn a_cursor_past_the_end_lands_on_a_selectable_row() {
+        let before = vec![row("pr:1"), row("pr:2"), row("pr:3")];
+        let mut state = on(&before, 2);
+        let was = selected_identity(&before, &state);
+
+        let after = vec![Entry::Header("My Pull Requests"), row("pr:1")];
+        fix_selection(&after, &mut state, was);
+
+        assert_eq!(state.selected(), Some(1));
+    }
+
+    /// A project row is a matter of its own for this purpose: the projects
+    /// view keeps its place across a rebuild too.
+    #[test]
+    fn a_project_row_keeps_its_place() {
+        let before = vec![
+            Entry::Org("Acme".to_string()),
+            Entry::Project("widget".to_string()),
+        ];
+        let mut state = on(&before, 1);
+        let was = selected_identity(&before, &state);
+
+        let after = vec![
+            Entry::Org("Acme".to_string()),
+            Entry::Project("gadget".to_string()),
+            Entry::Project("widget".to_string()),
+        ];
+        fix_selection(&after, &mut state, was);
+
+        assert_eq!(state.selected(), Some(2));
     }
 }

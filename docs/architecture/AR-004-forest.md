@@ -41,3 +41,21 @@ executor's place resolution (§AR-002-summons.1), dispatch's plan placement
 (§FS-005-dispatch.3), and the checkout offer. Two resolvers would
 eventually disagree about where a branch lives, and everything above them
 assumes they cannot.
+
+It runs backwards too, and that is what fills the branch table
+([§2](#2-probes-not-declarations)): the template split at `{branch}` gives a
+prefix and a suffix, and a directory under the workspace base that sits
+between them names a branch (§FS-008-attribution.2). So the branches ephor
+places items under are the row's, then every workspace found on disk that the
+row does not already name. Naming a discovered branch by its directory rather
+than by its checkout's `HEAD` is what keeps the one answer one: read `HEAD`
+instead and a tree at `…/GR-1` holding `you/GR-1-retry` would resolve forward
+to `…/GR-1-retry`, a directory it is not in.
+
+A workspace is recognized by holding a repository of the layout, tested
+through `.git` rather than by asking git. Discovery looks at every directory
+in the workspace area on every load, and a process per directory is a
+subprocess storm to answer what a path already answers. The walk is bounded —
+a branch name may carry separators, so a workspace sits a few components down
+— and stops descending the moment it finds one, because what is under a
+workspace is its repositories, not more workspaces.

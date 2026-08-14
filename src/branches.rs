@@ -15,13 +15,19 @@ use crate::feed::model::Item;
 use crate::forest::{Declaration, Forest};
 use crate::registry;
 
-/// A branch as the registry declares it.
+/// A branch of a project: one the registry row declares, or one found checked
+/// out under the workspace base (§FS-008-attribution.2).
 #[derive(Clone, Debug)]
 pub struct BranchInfo {
     pub branch: String,
     pub ticket: Option<String>,
     pub active: bool,
     pub is_release: bool,
+    /// Whether the row names this branch. A discovered one is placed and
+    /// worked like any other, but it may not widen the project's identity —
+    /// a checkout must not be able to claim another project's conversations
+    /// (§FS-008-attribution.1).
+    pub declared: bool,
 }
 
 /// Whether an item is work on this branch: by ticket key, by the branch name
@@ -47,6 +53,28 @@ pub fn matches(item: &Item, branch: &BranchInfo) -> bool {
         .is_some()
 }
 
+/// Which of a project's branches an item belongs to, by index. The branch the
+/// provider recorded is taken before any that merely resembles it: two branch
+/// names can carry one ticket key — `you/ABC-42` and `you/ABC-42-retry` are
+/// both real trees on disk — and resemblance must not take an item off the
+/// branch the forge named (§FS-008-attribution.3).
+///
+/// One answer for one item, so the group a row is filed under and the count
+/// the branch above it shows cannot disagree.
+pub fn place(item: &Item, branches: &[BranchInfo]) -> Option<usize> {
+    let recorded = item
+        .raw
+        .get("branch")
+        .and_then(Value::as_str)
+        .filter(|name| !name.is_empty());
+    if let Some(name) = recorded {
+        if let Some(exact) = branches.iter().position(|branch| branch.branch == name) {
+            return Some(exact);
+        }
+    }
+    branches.iter().position(|branch| matches(item, branch))
+}
+
 /// A branch name's workspace directory per the project's
 /// `branch_root_template`, whether or not it exists. None when the project has
 /// no branch workspaces — the root is the checkout then.
@@ -57,6 +85,11 @@ pub fn expand_workspace(template: Option<&str>, root: &Path, branch: &str) -> Op
             .replace("{branch}", branch),
     ))
 }
+
+/// A name no branch has, so the part of an expanded template that came from
+/// `{branch}` is identifiable however many path separators the branch itself
+/// contains.
+const MARK: &str = "\u{1}workspace\u{1}";
 
 /// What the project type declares about the repositories of a checkout
 /// (§AR-004-forest.2). A repository the type says to skip is not tracking the
@@ -108,12 +141,16 @@ pub enum WorkspaceState {
 }
 
 /// One project's placement data: where it is checked out, how its branch
-/// workspaces are named, and which branches the registry knows about.
+/// workspaces are named, and which branches it has.
 #[derive(Clone, Debug)]
 pub struct Placement {
     pub project: String,
     pub root: PathBuf,
     pub template: Option<String>,
+    /// The row's branches first, then every workspace found on disk that the
+    /// row does not already name (§FS-008-attribution.2). Read the `declared`
+    /// flag rather than the position for anything that must not treat the two
+    /// alike.
     pub branches: Vec<BranchInfo>,
     /// What branches here are measured against, and replayed onto
     /// (§FS-004-quick-actions.6).
@@ -178,10 +215,11 @@ impl Placement {
                         .and_then(Value::as_bool)
                         .unwrap_or(false),
                     is_release,
+                    declared: true,
                 });
             }
         }
-        Some(Placement {
+        let mut placement = Placement {
             project: project.to_string(),
             root,
             template,
@@ -196,7 +234,89 @@ impl Placement {
                 .ok()
                 .flatten()
                 .unwrap_or_default(),
-        })
+        };
+        // What the row wrote down, then what is actually on disk. The row
+        // first, so a branch it describes keeps its ticket and its `active`
+        // flag rather than the bare facts a directory can offer
+        // (§FS-008-attribution.2).
+        let named: Vec<String> = placement
+            .branches
+            .iter()
+            .map(|branch| branch.branch.clone())
+            .collect();
+        let discovered: Vec<BranchInfo> = placement
+            .discovered_branches()
+            .into_iter()
+            .filter(|found| !named.contains(&found.branch))
+            .collect();
+        placement.branches.extend(discovered);
+        Some(placement)
+    }
+
+    /// The branches this project has a workspace for on disk, whether or not
+    /// the row names them (§FS-008-attribution.2). Empty for a project whose
+    /// checkout is its root — there are no branch workspaces to find.
+    ///
+    /// A branch is named by the directory it was found in, not by what that
+    /// checkout has at `HEAD`: [`Placement::workspace_for`] has to lead back to
+    /// the directory the branch was discovered in, and a tree at `…/GR-1`
+    /// holding `you/GR-1-retry` would otherwise resolve forward to a directory
+    /// it is not in.
+    fn discovered_branches(&self) -> Vec<BranchInfo> {
+        let Some(base) = self.workspace_base() else {
+            return Vec::new();
+        };
+        // The template split at `{branch}`: what a workspace path starts with,
+        // and what it ends with. Whatever a found directory has between them
+        // is the branch name that expands back to it.
+        let expanded = self.workspace_for(MARK).unwrap_or_default();
+        let expanded = expanded.to_string_lossy().into_owned();
+        let Some((prefix, suffix)) = expanded.split_once(MARK) else {
+            return Vec::new();
+        };
+        let layout = self.layout();
+        let mut found = Vec::new();
+        collect_workspaces(&base, BRANCH_DEPTH, &layout, &mut found);
+        found.sort();
+        found.dedup();
+        found
+            .iter()
+            .filter_map(|path| {
+                let path = path.to_string_lossy();
+                let branch = path.strip_prefix(prefix)?.strip_suffix(suffix)?;
+                (!branch.is_empty()).then(|| BranchInfo {
+                    branch: branch.to_string(),
+                    ticket: {
+                        let ticket = crate::ticket_ids::extract_ticket(branch);
+                        (!ticket.is_empty()).then_some(ticket)
+                    },
+                    // Nobody wrote this one down, so nobody said it was what
+                    // they are working on; it is a place, not a plan.
+                    active: false,
+                    is_release: false,
+                    declared: false,
+                })
+            })
+            .collect()
+    }
+
+    /// The repository paths a checkout of this project holds: the row's layout
+    /// where it declares one, the manifest's where it does not
+    /// (§AR-004-forest.2). Empty where neither says, which leaves a checkout to
+    /// be recognized by holding a repository at all.
+    fn layout(&self) -> Vec<String> {
+        if !self.repos.is_empty() {
+            return self.repos.iter().map(|repo| repo.path.clone()).collect();
+        }
+        self.manifest()
+            .map(|manifest| {
+                manifest
+                    .forest
+                    .iter()
+                    .map(|repo| repo.path.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// The signals by which this project's matters are recognized
@@ -229,10 +349,14 @@ impl Placement {
         crate::attribution::Identity {
             project: self.project.clone(),
             // The prefixes its branches' ticket keys carry — what the row
-            // already says about which tickets are this project's.
+            // already says about which tickets are this project's. Declared
+            // branches only: a stray checkout under the workspace base would
+            // otherwise teach this project a whole ticket prefix, which is
+            // exactly the claim §FS-008-attribution.1 reserves to the row.
             tickets: self
                 .branches
                 .iter()
+                .filter(|branch| branch.declared)
                 .filter_map(|branch| branch.ticket.as_deref())
                 .filter_map(|ticket| ticket.split_once('-').map(|(prefix, _)| prefix.to_string()))
                 .fold(Vec::new(), |mut prefixes, prefix| {
@@ -313,9 +437,6 @@ impl Placement {
     /// the template, above wherever `{branch}` lands. None for a project whose
     /// checkout is its root.
     fn workspace_base(&self) -> Option<PathBuf> {
-        // A name no branch has, so the component holding it is identifiable
-        // however many path separators the branch itself contains.
-        const MARK: &str = "\u{1}workspace\u{1}";
         let expanded = self.workspace_for(MARK)?;
         let mut base = expanded.as_path();
         while base.to_string_lossy().contains(MARK) {
@@ -331,6 +452,76 @@ impl Placement {
 /// workspace area rather than a search of the repositories inside it
 /// (§AR-005-capabilities.1).
 const WORKSPACE_DEPTH: usize = 3;
+
+/// How far under the workspace base a branch workspace is looked for. Same
+/// bound as [`WORKSPACE_DEPTH`] and for the same reason — a branch name may
+/// carry separators, so its directory is a few components down — but reached
+/// one component sooner, since this walk stops at the workspace itself rather
+/// than at a store inside it.
+const BRANCH_DEPTH: usize = 3;
+
+/// Whether a directory is a checkout of a project with this layout: it holds a
+/// declared repository, or — where the layout is unknown — a repository at all,
+/// the same shape [`crate::git::probe`] looks for.
+///
+/// Tested through `.git` rather than by asking git: discovery looks at every
+/// directory in the workspace area on every load, and a process per directory
+/// is a subprocess storm to answer what a path already answers
+/// (§AR-004-forest.3).
+///
+/// An unknown layout cannot tell a workspace of one repository from the
+/// directory above it — both have a git working tree directly under them. The
+/// shallower one wins, because that is already the answer
+/// [`crate::git::probe`] gives for the same tree, and one wrong answer beats
+/// two that disagree. A declared layout — which every project with a registry
+/// type has — has no such ambiguity.
+fn holds_checkout(dir: &Path, layout: &[String]) -> bool {
+    if !layout.is_empty() {
+        return layout
+            .iter()
+            .any(|repo| is_repository(&crate::forest::under(dir, repo)));
+    }
+    is_repository(dir)
+        || std::fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .any(|entry| is_repository(&entry.path()))
+}
+
+/// Whether a directory is a git working tree, by the marker it carries: a
+/// directory for a clone, a file for a linked working tree.
+fn is_repository(dir: &Path) -> bool {
+    dir.join(".git").exists()
+}
+
+/// Walk for branch workspaces, to a bounded depth. What is under a workspace
+/// is its repositories, not more workspaces, so the walk stops descending the
+/// moment it finds one.
+fn collect_workspaces(dir: &Path, depth: usize, layout: &[String], found: &mut Vec<PathBuf>) {
+    if depth == 0 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        // Nothing hidden is a branch workspace, and descending into `.git`
+        // would be a walk of a repository rather than of the workspace area.
+        if entry.file_name().to_string_lossy().starts_with('.') {
+            continue;
+        }
+        if holds_checkout(&path, layout) {
+            found.push(path);
+            continue;
+        }
+        collect_workspaces(&path, depth - 1, layout, found);
+    }
+}
 
 /// Whether a directory holds a store ephor recognizes. The names are the
 /// stores' own, so they are asked of the adapter rather than spelled here
@@ -390,7 +581,7 @@ impl Placement {
     }
 
     pub fn matched(&self, item: &Item) -> Option<&BranchInfo> {
-        self.branches.iter().find(|branch| matches(item, branch))
+        self.branches.get(place(item, &self.branches)?)
     }
 
     /// The item's branch name: what the provider recorded (ground truth), or
@@ -463,6 +654,7 @@ mod tests {
                 ticket: Some("ABC-42".to_string()),
                 active: true,
                 is_release: false,
+                declared: true,
             }],
             main_branch: Some("main".to_string()),
             repos: Vec::new(),
@@ -470,6 +662,119 @@ mod tests {
             territory: Vec::new(),
             trust: crate::manifest::Trust::Full,
         }
+    }
+
+    /// A poly-repo workspace on disk: `ce` and `ee` under one directory, the
+    /// shape a branch workspace of several repositories has.
+    fn workspace_on_disk(base: &Path, branch: &str, repos: &[&str]) -> PathBuf {
+        let dir = base.join(branch);
+        for repo in repos {
+            std::fs::create_dir_all(dir.join(repo).join(".git")).unwrap();
+        }
+        dir
+    }
+
+    fn poly_repo(root: &Path) -> Placement {
+        let mut placement = placement(root, Some("{project_root}/{branch}"));
+        placement.repos = vec![Declaration::at("ce"), Declaration::at("ee")];
+        placement
+    }
+
+    #[test]
+    fn a_workspace_on_disk_is_a_branch_the_row_never_named() {
+        let tmp = tempfile::tempdir().unwrap();
+        workspace_on_disk(tmp.path(), "main", &["ce", "ee"]);
+        workspace_on_disk(tmp.path(), "you/ABC-7-tidy", &["ce"]);
+        // Neither a workspace nor on the way to one.
+        std::fs::create_dir_all(tmp.path().join("scratch/notes")).unwrap();
+
+        let found: Vec<String> = poly_repo(tmp.path())
+            .discovered_branches()
+            .into_iter()
+            .map(|branch| branch.branch)
+            .collect();
+        // `you` is the way to a workspace, not one; `main/ce` is a repository
+        // inside one, and the walk stopped before it.
+        assert_eq!(found, vec!["main", "you/ABC-7-tidy"]);
+    }
+
+    #[test]
+    fn a_discovered_branch_resolves_back_to_the_directory_it_was_found_in() {
+        let tmp = tempfile::tempdir().unwrap();
+        // The tree holds a branch its directory is not named for. The branch
+        // is the directory's, so that one workspace function keeps one answer.
+        let dir = workspace_on_disk(tmp.path(), "you/ABC-7", &["ce"]);
+        let placement = poly_repo(tmp.path());
+
+        let found = placement.discovered_branches();
+        let branch = found.first().expect("the workspace was found");
+        assert_eq!(branch.branch, "you/ABC-7");
+        assert_eq!(branch.ticket.as_deref(), Some("ABC-7"));
+        assert!(!branch.declared);
+        assert!(!branch.active);
+        assert_eq!(placement.workspace_for(&branch.branch), Some(dir));
+    }
+
+    #[test]
+    fn a_project_whose_checkout_is_its_root_has_nothing_to_discover() {
+        let tmp = tempfile::tempdir().unwrap();
+        workspace_on_disk(tmp.path(), "main", &["ce"]);
+        let mut placement = poly_repo(tmp.path());
+        placement.template = None;
+        assert!(placement.discovered_branches().is_empty());
+    }
+
+    fn registry(root: &Path) -> Value {
+        json!({
+            "projects": [{
+                "id": "widget",
+                "root": root.to_string_lossy(),
+                "branch_root_template": "{project_root}/{branch}",
+                "main_branch": "main",
+                "branches": [
+                    { "id": "widget-retry", "branch": "you/ABC-42-retry-window",
+                      "ticket": "ABC-42", "active": true }
+                ]
+            }]
+        })
+    }
+
+    #[test]
+    fn the_row_keeps_the_last_word_on_a_branch_it_also_names() {
+        let tmp = tempfile::tempdir().unwrap();
+        workspace_on_disk(tmp.path(), "you/ABC-42-retry-window", &["ce"]);
+        workspace_on_disk(tmp.path(), "you/DEF-9-spike", &["ce"]);
+
+        let placement = Placement::load(&registry(tmp.path()), "widget").expect("a row");
+        let named: Vec<(&str, bool, bool)> = placement
+            .branches
+            .iter()
+            .map(|branch| (branch.branch.as_str(), branch.declared, branch.active))
+            .collect();
+        // One entry for the branch both name, and the row's word on it.
+        assert_eq!(
+            named,
+            vec![
+                ("you/ABC-42-retry-window", true, true),
+                ("you/DEF-9-spike", false, false),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_checkout_may_not_teach_the_project_a_ticket_prefix() {
+        let tmp = tempfile::tempdir().unwrap();
+        workspace_on_disk(tmp.path(), "you/DEF-9-spike", &["ce"]);
+
+        let placement = Placement::load(&registry(tmp.path()), "widget").expect("a row");
+        // The branch is placed and worked like any other, but `DEF` is not
+        // this project's to claim — only the row may say that
+        // (§FS-008-attribution.1).
+        assert!(placement
+            .branches
+            .iter()
+            .any(|branch| branch.branch == "you/DEF-9-spike"));
+        assert_eq!(placement.identity().tickets, vec!["ABC".to_string()]);
     }
 
     #[test]

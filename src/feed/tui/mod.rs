@@ -423,20 +423,37 @@ impl Ctx {
         Some(self.placements.get(&item.project)?.checkout(item))
     }
 
+    /// The project's items that belong to this branch. Placed against the
+    /// project's whole branch list, so a branch row counts and links exactly
+    /// the items the group under it holds (§FS-008-attribution.2).
+    pub fn items_on_branch(&self, project: &str, branch: &BranchInfo) -> Vec<Item> {
+        let branches = self.branches(project);
+        let Some(position) = branches
+            .iter()
+            .position(|other| other.branch == branch.branch)
+        else {
+            return Vec::new();
+        };
+        match self.feed(project) {
+            Some(feed) => feed
+                .items()
+                .filter(|item| crate::branches::place(item, branches) == Some(position))
+                .collect(),
+            None => Vec::new(),
+        }
+    }
+
     /// Best link for a branch row: its most urgent matching feed item.
     pub fn branch_url(&self, project: &str, branch: &BranchInfo) -> Option<String> {
-        self.feed(project)?
-            .items()
-            .filter(|item| matches_branch(item, branch))
+        self.items_on_branch(project, branch)
+            .into_iter()
             .filter(|item| item.url.is_some())
             .max_by_key(|item| (item.needs_response, item.updated_at))
-            .and_then(|item| item.url.clone())
+            .and_then(|item| item.url)
     }
 }
 
 pub(crate) use crate::branches::WorkspaceState;
-
-pub(crate) use crate::branches::matches as matches_branch;
 
 /// What a screen asks the shell to do in response to a key.
 pub(crate) enum Action {
@@ -537,6 +554,9 @@ struct App {
     /// The half of ephor that hands work over (§FS-005-dispatch). None when
     /// the registry could not be read for it — the inbox still works.
     dispatcher: Option<crate::work::Dispatcher>,
+    /// A refresh running underneath this screen, where one is
+    /// (§FS-001-forge-interface.7).
+    refresh: Option<crate::feed::refresh::BackgroundRefresh>,
     message: String,
 }
 
@@ -671,6 +691,7 @@ impl App {
             menu: None,
             prompt: None,
             dispatcher: crate::work::Dispatcher::load(config).ok(),
+            refresh: None,
             message: String::new(),
         };
         app.reload_feeds()?;
@@ -743,6 +764,13 @@ impl App {
             terminal
                 .draw(|frame| self.draw(frame))
                 .map_err(|err| EphorError::Command(format!("draw failed: {err}")))?;
+
+            // Between key reads, never instead of them: whatever the refresh
+            // beneath this screen has finished lands here, and the screen goes
+            // back to being the reader's (§FS-001-forge-interface.7).
+            if self.collect_refresh()? {
+                continue;
+            }
 
             if !event::poll(Duration::from_millis(250))
                 .map_err(|err| EphorError::Command(format!("event poll failed: {err}")))?
@@ -1026,13 +1054,7 @@ impl App {
                 self.edit_file(terminal, &path)?;
                 self.reload_work();
             }
-            Action::Refresh => {
-                self.message = "Refreshing…".to_string();
-                terminal
-                    .draw(|frame| self.draw(frame))
-                    .map_err(|err| EphorError::Command(format!("draw failed: {err}")))?;
-                self.refresh(config)?;
-            }
+            Action::Refresh => self.start_refresh(config),
         }
         Ok(false)
     }
@@ -1367,64 +1389,84 @@ impl App {
         Ok(())
     }
 
-    fn refresh(&mut self, config: &StatusConfig) -> Result<()> {
-        let registry_doc = crate::feed::commands::load_registry_doc()?;
-        let filter_project = self.navigator.refresh_filter(&self.ctx);
-        // Named, not counted. "6 provider warnings" is the same sentence
-        // whether a forge has been uninstalled for months or a laptop is off
-        // the VPN for a minute, and in both cases the sections those providers
-        // fill just look empty.
-        let mut lost: Vec<String> = Vec::new();
-        let mut unreachable = 0usize;
-        for (project_id, project_config) in &config.projects {
-            if let Some(filter) = &filter_project {
-                if project_id != filter {
-                    continue;
-                }
-            }
-            match crate::feed::refresh::refresh_project(
-                &registry_doc,
-                project_id,
-                project_config,
-                &config.defaults,
-            ) {
-                Ok(outcome) => {
-                    unreachable += outcome.unreachable_count();
-                    lost.extend(
-                        outcome
-                            .failures
-                            .iter()
-                            .map(|failure| format!("{project_id}/{}", failure.provider)),
-                    );
-                }
-                Err(err) => {
-                    self.message = format!("Refresh failed for {project_id}: {err}");
-                    lost.push(project_id.clone());
-                }
-            }
+    /// Start a refresh and give the screen straight back
+    /// (§FS-001-forge-interface.7). What it asks for is what the view shows:
+    /// one project in Detail, every configured project otherwise.
+    fn start_refresh(&mut self, config: &StatusConfig) {
+        if self.refresh.is_some() {
+            self.message = "Already refreshing".to_string();
+            return;
         }
-        self.reload_feeds()?;
-        self.message = if lost.is_empty() {
-            "Refreshed".to_string()
-        } else {
-            // Enough names to act on, then a count for the rest.
-            const NAMED: usize = 3;
-            let mut shown = lost
-                .iter()
-                .take(NAMED)
-                .cloned()
-                .collect::<Vec<_>>()
-                .join(", ");
-            if lost.len() > NAMED {
-                shown = format!("{shown} +{} more", lost.len() - NAMED);
+        let only = self.navigator.refresh_filter(&self.ctx);
+        match crate::feed::refresh::BackgroundRefresh::start(config, only.as_deref()) {
+            Ok(refresh) => {
+                // The header carries the run from here; what it says about the
+                // last thing that happened is finished with.
+                self.message.clear();
+                self.refresh = Some(refresh);
             }
-            let network = if unreachable > 0 {
-                format!(" ({unreachable} unreachable — check the network/VPN)")
-            } else {
-                String::new()
-            };
-            format!("Refreshed — NO DATA from {}: {shown}{network}", lost.len())
+            Err(err) => self.message = err.to_string(),
+        }
+    }
+
+    /// Take in whatever the running refresh has finished. Returns true when
+    /// something changed on screen, so the caller redraws rather than waiting
+    /// out its poll.
+    fn collect_refresh(&mut self) -> Result<bool> {
+        let Some(refresh) = &mut self.refresh else {
+            return Ok(false);
         };
+        let arrived = refresh.collect();
+        let done = refresh.done();
+        if arrived.is_empty() && !done {
+            return Ok(false);
+        }
+        // Each project takes its place as it answers, rather than the whole
+        // run landing at the pace of its slowest forge
+        // (§FS-001-forge-interface.7).
+        for landed in &arrived {
+            self.absorb(&landed.project)?;
+        }
+        if done {
+            let mut refresh = self.refresh.take().expect("a refresh is in flight");
+            refresh.finish();
+            // Named, not counted. "6 provider warnings" is the same sentence
+            // whether a forge has been uninstalled for months or a laptop is
+            // off the VPN for a minute, and in both cases the sections those
+            // providers fill just look empty.
+            self.message = refresh.summary();
+            // Once, at the end: what a checkout trails and what a project can
+            // do are questions for git and the disk, not answers a forge just
+            // sent, and asking them per arrival would put the cost the run
+            // avoided back on the screen a project at a time.
+            self.reload_feeds()?;
+        }
+        Ok(true)
+    }
+
+    /// Take one project's newly written feed into the interface, without the
+    /// passes that ask the world. The reader is mid-scan: this is the cheap
+    /// half of [`App::reload_feeds`], and the rest waits for the end of the
+    /// run (§FS-001-forge-interface.7).
+    fn absorb(&mut self, project: &str) -> Result<()> {
+        let landed = cache::load_feed(project)?.unwrap_or_else(|| ProjectFeed {
+            project: project.to_string(),
+            ..ProjectFeed::default()
+        });
+        let Some(slot) = self
+            .ctx
+            .feeds
+            .iter_mut()
+            .find(|feed| feed.project == project)
+        else {
+            // Configured, but not among the feeds this screen was built over.
+            // There is no row to put it next to.
+            return Ok(());
+        };
+        *slot = landed;
+        self.ctx.recompute_resurfacing();
+        self.reload_work();
+        self.navigator.rebuild(&self.ctx);
         Ok(())
     }
 
@@ -1442,8 +1484,17 @@ impl App {
             Screen::Gate(gate) => gate.title(),
             Screen::Work(work) => work.title(),
         };
+        // A screen that stays live during a fetch is also a screen that looks
+        // finished, so a run in flight says so and says where it has got to —
+        // a half-filled feed read as the whole answer is the same failure as
+        // an empty section that only means "not asked yet"
+        // (§FS-001-forge-interface.7).
+        let progress = match &self.refresh {
+            Some(refresh) => format!("{}   ", refresh.progress()),
+            None => String::new(),
+        };
         frame.render_widget(
-            Paragraph::new(format!("{title}   {}", self.message))
+            Paragraph::new(format!("{title}   {progress}{}", self.message))
                 .style(Style::default().add_modifier(Modifier::BOLD)),
             header_area,
         );
@@ -1494,6 +1545,7 @@ mod tests {
             ticket: Some("ABC-42".to_string()),
             active: true,
             is_release: false,
+            declared: true,
         };
         let placement = Placement {
             project: "widget".to_string(),

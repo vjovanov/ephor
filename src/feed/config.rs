@@ -161,7 +161,7 @@ fn default_checkout_description() -> String {
     "check out branch workspace".to_string()
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Defaults {
     #[serde(default = "default_ttl")]
@@ -199,7 +199,9 @@ fn default_recent_days() -> u64 {
     7
 }
 
-#[derive(Debug, Deserialize)]
+// Cloned to hand a whole project's configuration to the thread a background
+// refresh runs on (§FS-001-forge-interface.7).
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectFeedConfig {
     pub providers: Vec<Value>,
