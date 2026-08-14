@@ -156,8 +156,21 @@ impl Provider for ForgeProvider {
             }
         }
         if capabilities.issues {
+            // The same switch the built-in issue source reads, from the same
+            // place: a source says whether an issue nobody has taken is work
+            // awaiting somebody (§FS-003-feed-categories.4), and an extension
+            // is configured no differently from anything else.
+            let unclaimed = match self.config.get("unclaimed").and_then(Value::as_bool) {
+                Some(true) => policy::Unclaimed::Awaits,
+                _ => policy::Unclaimed::Ignored,
+            };
             for issue in self.forge.issues(&request)? {
-                items.push(policy::issue_item(self.name, &ctx.project_id, &issue));
+                items.push(policy::issue_item(
+                    self.name,
+                    &ctx.project_id,
+                    &issue,
+                    unclaimed,
+                ));
             }
         }
         if capabilities.notices {

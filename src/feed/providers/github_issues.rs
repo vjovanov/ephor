@@ -47,6 +47,12 @@ struct Config {
     /// whether the issue awaits a reply. One API call per issue that has any.
     #[serde(default = "crate::feed::providers::enabled")]
     comments: bool,
+    /// Count an issue nobody has taken as work awaiting somebody
+    /// (§FS-003-feed-categories.4). Off unless asked for: it is the right
+    /// reading of a backlog you are answerable for, and the wrong reading of
+    /// every repository you have ever commented in.
+    #[serde(default)]
+    unclaimed: bool,
     #[serde(default)]
     host: Option<String>,
 }
@@ -71,13 +77,22 @@ reactions(first:50){nodes{content user{login}}}}}}}}";
 /// Search fields. `commentsCount` is what lets us skip the comment fetch for
 /// the many issues that have none — the difference between one API call and
 /// sixty on a forge-wide refresh.
-const SEARCH_FIELDS: &str = "number,title,url,updatedAt,state,repository,commentsCount";
+const SEARCH_FIELDS: &str = "number,title,url,updatedAt,state,repository,commentsCount,assignees";
 
 impl GithubIssues {
     pub fn from_config(config: &Value) -> Result<Self, ProviderError> {
         Ok(GithubIssues {
             config: parse_config(config)?,
         })
+    }
+
+    /// What this source asked ephor to make of an issue nobody has taken.
+    fn unclaimed(&self) -> policy::Unclaimed {
+        if self.config.unclaimed {
+            policy::Unclaimed::Awaits
+        } else {
+            policy::Unclaimed::Ignored
+        }
     }
 
     /// One search for one role. `role_flag` is `--author` or `--involves`.
@@ -168,6 +183,14 @@ impl GithubIssues {
             url,
             updated_at: parse_github_time(found.get("updatedAt").unwrap_or(&Value::Null)),
             role,
+            // Reported as a fact whatever the source asked for; what it means
+            // is the policy's to decide (§FS-001-forge-interface.3). Absent
+            // from the search result is not "nobody has it" — it is a field
+            // that did not come back, so it stays unsaid.
+            assigned: found
+                .get("assignees")
+                .and_then(Value::as_array)
+                .map(|assignees| !assignees.is_empty()),
             messages,
         })
     }
@@ -263,7 +286,12 @@ impl Provider for GithubIssues {
                 if !seen.insert(issue.key.clone()) {
                     continue;
                 }
-                items.push(policy::issue_item("github-issues", &ctx.project_id, &issue));
+                items.push(policy::issue_item(
+                    "github-issues",
+                    &ctx.project_id,
+                    &issue,
+                    self.unclaimed(),
+                ));
             }
         }
         Ok(items)
@@ -338,9 +366,10 @@ mod tests {
             url: None,
             updated_at: Utc::now(),
             role: Role::Author,
+            assigned: None,
             messages: Vec::new(),
         };
-        let item = policy::issue_item("github-issues", "hub", &issue);
+        let item = policy::issue_item("github-issues", "hub", &issue, policy::Unclaimed::Ignored);
         assert_eq!(item.id, "github-issues:earendil-works/pi#7951");
         assert!(item.is_finished());
         assert!(item.within_recent_window(Utc::now(), 7));

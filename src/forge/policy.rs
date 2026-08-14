@@ -321,16 +321,37 @@ fn merge_reports(reports: Vec<Item>) -> Vec<Item> {
         .collect()
 }
 
+/// Whether a source counts an issue nobody has taken as work awaiting somebody
+/// (§FS-003-feed-categories.4).
+///
+/// Configuration rather than a rule, and the spec says why: *unclaimed* only
+/// means *yours* where the reader is answerable for the backlog. On a project
+/// they run it is the whole point; among issues they once commented on
+/// somewhere it would turn every stranger's open bug into their work.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Unclaimed {
+    /// An unclaimed issue is an ordinary issue: the conversation decides.
+    #[default]
+    Ignored,
+    /// An issue nobody has taken awaits somebody, however the talk ended.
+    Awaits,
+}
+
 /// One issue as a feed item. An issue awaits the user when its last comment is
-/// someone else's — the same rule a conversation follows. Issues are their own
-/// category, split by role like pull requests
-/// (§FS-003-feed-categories.1).
-pub fn issue_item(forge: &str, project: &str, issue: &Issue) -> Item {
+/// someone else's — the same rule a conversation follows — and, where the
+/// source asked for it, when nobody has taken the issue at all
+/// (§FS-003-feed-categories.4). Issues are their own category, split by role
+/// like pull requests (§FS-003-feed-categories.1).
+pub fn issue_item(forge: &str, project: &str, issue: &Issue, unclaimed: Unclaimed) -> Item {
     let thread = Thread {
         messages: issue.messages.clone(),
         ..Thread::default()
     };
-    let pending = thread_pending(&thread);
+    // Only `Some(false)` is a claim that nobody has it. `None` is an
+    // implementation with no notion of assignment, and reading that as
+    // unclaimed would invent work out of a silence (§FS-001-forge-interface.1).
+    let unclaimed = unclaimed == Unclaimed::Awaits && issue.assigned == Some(false);
+    let pending = unclaimed || thread_pending(&thread);
     let threads = threads_json(std::slice::from_ref(&thread));
     let raw = if threads.as_array().is_some_and(|list| list.is_empty()) {
         Value::Null
@@ -810,9 +831,10 @@ mod tests {
             url: None,
             updated_at: Utc::now(),
             role: Role::Author,
+            assigned: None,
             messages: vec![message("them", false)],
         };
-        let item = issue_item("tracker", "widget", &issue);
+        let item = issue_item("tracker", "widget", &issue, Unclaimed::Ignored);
         assert_eq!(item.id, "tracker:ABC-42");
         // The status lives in `state`, which renderers show; it is not also
         // baked into the title.
@@ -834,9 +856,10 @@ mod tests {
             url: None,
             updated_at: Utc::now(),
             role: Role::Author,
+            assigned: None,
             messages: vec![message("me", true), message("them", false)],
         };
-        let item = issue_item("github-issues", "widget", &issue);
+        let item = issue_item("github-issues", "widget", &issue, Unclaimed::Ignored);
         assert!(item.is_finished());
         assert!(!item.needs_response);
 
@@ -844,6 +867,58 @@ mod tests {
         let mut merged = pr(Vec::new(), false, "merged:changes_requested", Role::Author);
         merged.state = Some("merged".to_string());
         assert!(!pull_request_item("forge", "widget", &merged).needs_response);
+    }
+
+    /// An issue nobody has taken awaits somebody however the conversation
+    /// ended, and the conversation is exactly what cannot say so
+    /// (§FS-003-feed-categories.4): an issue somebody filed and nobody picked
+    /// up has its author's word last, so every other rule reads it as
+    /// answered.
+    #[test]
+    fn an_unclaimed_issue_awaits_where_the_source_asked_for_it() {
+        let unclaimed = Issue {
+            key: "acme/widget#7".to_string(),
+            title: "Retry window".to_string(),
+            status: Some("open".to_string()),
+            url: None,
+            updated_at: Utc::now(),
+            role: Role::Author,
+            assigned: Some(false),
+            // The reader's own issue, never answered: silent in the most
+            // misleading way available.
+            messages: vec![message("me", true)],
+        };
+        assert!(
+            !issue_item("github-issues", "widget", &unclaimed, Unclaimed::Ignored).needs_response
+        );
+        assert!(
+            issue_item("github-issues", "widget", &unclaimed, Unclaimed::Awaits).needs_response
+        );
+
+        // Somebody has it: it is being handled, and the conversation decides
+        // as it always did.
+        let taken = Issue {
+            assigned: Some(true),
+            ..unclaimed.clone()
+        };
+        assert!(!issue_item("github-issues", "widget", &taken, Unclaimed::Awaits).needs_response);
+
+        // An implementation with no notion of assignment never invents work:
+        // `None` is a claim nobody made, not "nobody has it"
+        // (§FS-001-forge-interface.1).
+        let unsaid = Issue {
+            assigned: None,
+            ..unclaimed.clone()
+        };
+        assert!(!issue_item("github-issues", "widget", &unsaid, Unclaimed::Awaits).needs_response);
+
+        // And finished work asks nothing of anyone, claimed or not
+        // (§FS-003-feed-categories.2).
+        let closed = Issue {
+            status: Some("closed".to_string()),
+            ..unclaimed.clone()
+        };
+        assert!(!issue_item("github-issues", "widget", &closed, Unclaimed::Awaits).needs_response);
     }
 
     /// An issue the user did not open is theirs to follow, but under
@@ -857,9 +932,10 @@ mod tests {
             url: None,
             updated_at: Utc::now(),
             role: Role::Reviewer,
+            assigned: None,
             messages: Vec::new(),
         };
-        let item = issue_item("github-issues", "widget", &issue);
+        let item = issue_item("github-issues", "widget", &issue, Unclaimed::Ignored);
         assert_eq!(item.role, Some(crate::feed::model::ItemRole::Reviewer));
         // Closed, so it belongs under Recent rather than Participating.
         assert!(item.is_finished());

@@ -236,6 +236,13 @@ pub struct Issue {
     /// difference omits it and everything it reports counts as the user's own.
     #[serde(default)]
     pub role: Role,
+    /// Whether anyone has taken this issue, where the forge tracks that
+    /// (§FS-001-forge-interface.1). `None` is an implementation with no notion
+    /// of assignment, and it is kept apart from `Some(false)` on purpose:
+    /// "nobody has picked this up" is a claim about the world, and one nobody
+    /// made must never be counted as unclaimed work.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assigned: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub messages: Vec<Message>,
 }

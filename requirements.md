@@ -63,7 +63,14 @@ ephor degrades to what is answered rather than failing.
   only in a configured set of repositories: an issue filed against someone
   else's project is theirs to follow just as much as one on their own. State is
   reported whatever it is, closed included — an issue's closing is often the
-  activity worth seeing.
+  activity worth seeing. Each also reports **whether anyone has taken it**,
+  where the forge tracks that: an issue nobody has picked up is the plainest
+  case of work with no owner, and it is a fact only the forge holds — a
+  conversation cannot say it, and an issue filed and never answered looks
+  exactly like one that is finished
+  ([§FS-003-feed-categories.4](#4-a-conversation-is-answered-in-whatever-form-the-forge-recorded-it)).
+  An implementation with no notion of assignment omits it, and nothing it
+  reports is ever counted as unclaimed.
 - **Notices** — what the forge itself says is directed at the user: one entry
   per thing it decided to tell them, carrying the reason it gives, the subject
   it concerns, when it arrived, and whether the forge considers it read. This
@@ -274,6 +281,23 @@ spoke it. Task state is the forge's own record of whether the thing was done,
 which is exactly the question, and reading who spoke last instead leaves every
 bot checklist counted as work forever — the reader's own inbox tells them the
 box is unticked long after they ticked it.
+
+**An issue nobody has taken is a fourth, and it is not a conversation at all.**
+Where a source is configured to say so, an unclaimed issue
+([§FS-001-forge-interface.1](#1-capabilities)) awaits somebody however the
+conversation ended — including when it never started. The three forms above
+all read the talk, and the talk is silent here in the most misleading way
+available: an issue somebody filed and nobody picked up has its author's word
+last, so the rule that serves every other case reports it as answered. It is
+the same shape as a review asked for and never given
+([§FS-001-forge-interface.1](#1-capabilities)) — being waited on leaves no
+message behind.
+
+Whether it applies is the source's to say, because *unclaimed* only means
+*yours* where the reader is answerable for the backlog. On a project they run
+it is the whole point; among issues they merely commented on somewhere it
+would turn every stranger's open bug into their work. So it is configuration
+on the source rather than a rule everywhere, and off unless asked for.
 
 ### 5. One subject is one row, however many sources reported it
 

@@ -110,6 +110,7 @@
         "terminal": { "type": "boolean" },
         "url": { "type": "string" },
         "updated_at": { "type": "string", "format": "date-time" },
+        "assigned": { "type": "boolean", "description": "Whether anyone has taken this issue, where the tracker holds that (FS-001-forge-interface.1). Omit it where the tracker has no notion of assignment: omitted and false mean different things, and what nobody claimed about is never counted as unclaimed work." },
         "messages": {
           "type": "array",
           "items": { "$ref": "https://github.com/vjovanov/ephor/schemas/answer/v1#/$defs/message" },
