@@ -1099,7 +1099,7 @@ the cheap way to ask this question outside the inbox
 | checkout-able | a checkout command is bound, or a checkout is on disk to grow one from | work that edits |
 | checkable | `check.sh`, `check-style.sh`, or `smoke-test.sh` at the root, **or** a manifest `checks` block (§4.2.3) | verification that means something |
 | gated | a source reports a gate, **or** a manifest `ci` block binds one (§4.2.4) | failure dossiers and the restart |
-| ticketed | a `panta/` or `.beads/` store in the checkout, or one a manifest declares (§4.2.5) | local matters |
+| local-issues | a `panta/` or `.beads/` store at the root, in any branch workspace on disk, or one a manifest declares (§4.2.5) | the project's own issues as matters |
 | workable | the configured runner is on `PATH` | running the work |
 
 The ladder is resolved per project when the inbox loads, when a refresh

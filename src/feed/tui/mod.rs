@@ -1818,7 +1818,7 @@ mod tests {
         let can = ctx.can("widget");
         assert!(!can.holds(Rung::Placed));
         assert!(!can.holds(Rung::Checkable));
-        assert!(!can.holds(Rung::Ticketed));
+        assert!(!can.holds(Rung::LocalIssues));
         assert!(can.holds(Rung::BranchAddressable));
         assert!(can
             .refusal(&[Rung::Placed])
@@ -1832,7 +1832,7 @@ mod tests {
         let can = ctx.can("widget");
         assert!(can.holds(Rung::Placed));
         assert!(can.holds(Rung::Checkable));
-        assert!(can.holds(Rung::Ticketed));
+        assert!(can.holds(Rung::LocalIssues));
 
         // A project the registry says nothing about holds nothing, and the
         // table answers rather than being absent.

@@ -294,30 +294,11 @@ impl Dispatcher {
     /// The states YAML installed into a work root that has none: the project's
     /// own, the global one, or the machine ephor ships.
     fn states_yaml(&self, project: &str) -> Result<String> {
-        let configured = self
-            .projects
-            .get(project)
-            .and_then(|work| work.states.clone())
-            .or_else(|| self.global.states.clone());
-        match configured {
-            Some(path) => {
-                let path = crate::paths::resolve_path(&path);
-                std::fs::read_to_string(&path).map_err(|err| {
-                    EphorError::Command(format!(
-                        "Cannot read the configured state machine {}: {err}",
-                        path.display()
-                    ))
-                })
-            }
-            None => Ok(plan::SHIPPED_STATES.to_string()),
-        }
+        states_yaml(&self.global, self.projects.get(project))
     }
 
     fn root_template(&self, project: &str) -> String {
-        self.projects
-            .get(project)
-            .and_then(|work| work.root.clone())
-            .unwrap_or_else(|| self.global.root.clone())
+        root_template(&self.global, self.projects.get(project))
     }
 
     /// Where an item's work belongs, refusing where it would not run
@@ -762,6 +743,62 @@ impl Dispatcher {
     pub fn save(&self) -> Result<()> {
         ledger::store(&self.ledger)
     }
+}
+
+/// Where an item's work goes for a project: its own template, or the global
+/// one. A free function because `ephor checkout` resolves the same place
+/// (§FS-006-project-interface.7) and two answers to "where does work live"
+/// would eventually disagree.
+pub fn root_template(global: &WorkConfig, project: Option<&ProjectWorkConfig>) -> String {
+    project
+        .and_then(|work| work.root.clone())
+        .unwrap_or_else(|| global.root.clone())
+}
+
+/// The states YAML installed into a work root that has none: the project's
+/// own, the global one, or the machine ephor ships.
+pub fn states_yaml(global: &WorkConfig, project: Option<&ProjectWorkConfig>) -> Result<String> {
+    let configured = project
+        .and_then(|work| work.states.clone())
+        .or_else(|| global.states.clone());
+    match configured {
+        Some(path) => {
+            let path = crate::paths::resolve_path(&path);
+            std::fs::read_to_string(&path).map_err(|err| {
+                EphorError::Command(format!(
+                    "Cannot read the configured state machine {}: {err}",
+                    path.display()
+                ))
+            })
+        }
+        None => Ok(plan::SHIPPED_STATES.to_string()),
+    }
+}
+
+/// Make the work root for a workspace, so the first dispatch into that branch
+/// has somewhere to land and what is under way is visible from the moment the
+/// tree exists (§FS-006-project-interface.7).
+///
+/// The store ignores itself, which is what keeps this from being an artifact
+/// required of the project (§REQ-001-boundary.3): what it holds is ephor's own
+/// planning state that happens to live in a checkout.
+pub fn ensure_store(
+    global: &WorkConfig,
+    project: Option<&ProjectWorkConfig>,
+    project_id: &str,
+    workspace: &std::path::Path,
+    root: &std::path::Path,
+) -> Result<PathBuf> {
+    let values = BTreeMap::from([
+        ("workspace", workspace.to_string_lossy().into_owned()),
+        ("root", root.to_string_lossy().into_owned()),
+        ("project", project_id.to_string()),
+    ]);
+    let dir =
+        crate::paths::resolve_path(&dossier::render(&root_template(global, project), &values));
+    let states = states_yaml(global, project)?;
+    WorkRoot::ensure(&dir, &states)?;
+    Ok(dir)
 }
 
 /// The state a hand-written ask starts in when the reader names none: the

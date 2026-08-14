@@ -260,6 +260,59 @@ fn a_project_nobody_has_refreshed_says_so_rather_than_claiming_silence() {
         .contains(&json!("observable")));
 }
 
+/// Asking every source of every project takes as long as the slowest forge,
+/// and a diagnostic that prints nothing until it finishes is one a reader
+/// kills half way through and reports as hung (§FS-010-doctor.3). It narrates
+/// on the error stream, so what a program reads stays the report.
+#[test]
+fn it_says_what_it_is_doing_while_it_does_it_without_saying_it_to_a_parser() {
+    let tmp = tempdir();
+    fixture(tmp.path(), json!([{ "provider": "demo" }]));
+
+    let out = ephor(tmp.path())
+        .args(["doctor", "--skip-self", "--project", "widget"])
+        .output()
+        .unwrap();
+    let narration = String::from_utf8_lossy(&out.stderr);
+    // The project is announced before it is asked, and answered when it comes
+    // back — so a slow forge is a line already on screen rather than silence.
+    assert!(narration.contains("widget"), "{narration}");
+    assert!(narration.contains("item(s)"), "{narration}");
+
+    // And under --json none of it reaches stdout, which is the contract a
+    // timer parses.
+    let out = ephor(tmp.path())
+        .args(["doctor", "--skip-self", "--project", "widget", "--json"])
+        .output()
+        .unwrap();
+    serde_json::from_slice::<Value>(&out.stdout).expect("stdout is the report and nothing else");
+    assert!(
+        out.stderr.is_empty(),
+        "narration under --json: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// The self pass narrates by being incremental rather than by describing
+/// itself twice: each check is its own line as it finishes, so the progress
+/// and the report are one thing (§FS-010-doctor.3).
+#[test]
+fn the_self_pass_reports_each_check_as_it_finishes() {
+    let out = ephor_cmd()
+        .args(["doctor", "--self-only"])
+        .output()
+        .unwrap();
+    let report = String::from_utf8_lossy(&out.stdout);
+    assert!(report.contains("ephor itself"), "{report}");
+    // Ten checks, each on its own line, and none of them said twice.
+    let ticked = report.matches("  ✓ ").count();
+    assert!(ticked >= 10, "only {ticked} checks reported: {report}");
+    assert!(
+        !report.contains("walking the seams"),
+        "the report narrated itself as well: {report}"
+    );
+}
+
 /// A source that did not answer is named, split into the kind of not-answered
 /// it was, and makes the run exit `4` (§FS-001-forge-interface.6,
 /// §FS-010-doctor.5).

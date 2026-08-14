@@ -64,6 +64,39 @@ ships, the previous "latest" section moves verbatim to
   load and leaves a feed with no providers in it — every project on a site
   that predates the model bump read as totally silent. `fetched_at` is what
   tells them apart, and the rung names the remedy.
+- **A project's own issues are read where they live, and the rung is named
+  for what it holds**
+  ([§FS-006-project-interface.7](../requirements.md#7-local-ticket-stores-are-read-where-they-live)).
+  The default work root is `{workspace}/panta`, so dispatch on a
+  branch-addressable project writes its plans into the branch's own tree — and
+  the reader looked only at the forest root, so it never read them back. A
+  project with nine stores on disk reported holding none and showed none of
+  that work in its feed, one of them a ticket parked in `needs-human`; the
+  single-checkout case worked only because workspace and root are the same
+  directory there. Stores are verified **on disk** now, at the root and in
+  every branch workspace that has one — the row names the branches somebody
+  wrote down, and the work is wherever branches were actually checked out,
+  which are not the same list. And `ephor checkout` initializes a store in a
+  workspace it makes, so the first dispatch has somewhere to land. That is not
+  an artifact required of the project: the store ignores itself, so what it
+  holds is ephor's own planning state that happens to live in a checkout
+  (§REQ-001-boundary.3).
+- The *ticketed* rung is now **local-issues**
+  ([§FS-006-project-interface.10](../requirements.md#10-capability-rung-by-rung)).
+  A *ticket* is what a remote tracker keys — a Jira key, a forge issue number —
+  and these are the project's own, kept in its checkout, so one name for one
+  thing (§FS-001-forge-interface.3). `requires: ["ticketed"]` still resolves,
+  so nothing anybody already wrote stops meaning what it meant.
+- `doctor` says what it is doing while it does it
+  ([§FS-010-doctor.3](../requirements.md#3-two-passes-the-site-and-ephor-itself)).
+  Asking every source of every project takes as long as the slowest forge, and
+  the first version printed nothing at all until it was finished — a minute of
+  silence that reads as hung, which is the same failure the tool exists to
+  name with ephor as the source that did not answer. The site pass announces
+  each project before it asks and answers it when it comes back, on the error
+  stream so that what a program reads stays the report; the self pass narrates
+  by being incremental instead, each check printing its own line as it
+  finishes.
 - The ladder counts the sources that were **asked**, not the ones the
   configuration names
   ([§FS-006-project-interface.7](../requirements.md#7-local-ticket-stores-are-read-where-they-live)).

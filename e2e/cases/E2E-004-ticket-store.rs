@@ -85,6 +85,62 @@ fn a_declared_store_and_a_probed_one_are_both_read() {
     assert_eq!(world.matter("rhei:release.1")["title"], "Cut the tag");
 }
 
+/// Work about a change belongs in that change's working tree
+/// (§FS-005-dispatch.3), so a project whose branches have workspaces of their
+/// own keeps a store per workspace rather than one at the forest root — and
+/// both places are read (§FS-006-project-interface.7).
+///
+/// Looking only at the root is how such a project came to write its plans into
+/// a place nothing read again: dispatch put them in the branch workspace,
+/// where the default work root is, and the feed showed none of them.
+#[test]
+fn a_store_in_a_branch_workspace_is_read_as_readily_as_one_at_the_root() {
+    let world = World::new();
+    let workspace = world.path().join("trees/you-ABC-42");
+    std::fs::create_dir_all(&workspace).expect("the branch workspace");
+    // The row names one branch. The disk has two, and the one it does not name
+    // is where most of the work is — which is the situation this exists for.
+    world.register(serde_json::json!({
+        "branch_root_template": world.path().join("trees/{branch}").to_string_lossy(),
+        "branches": [{ "id": "current", "branch": "you-ABC-42", "active": true }]
+    }));
+    std::fs::create_dir_all(workspace.join("panta")).expect("the store");
+    std::fs::write(workspace.join("panta/window.rhei.md"), PLAN).expect("a plan in the branch");
+
+    let unnamed = world.path().join("trees/you-XYZ-9/panta");
+    std::fs::create_dir_all(&unnamed).expect("a store on a branch the row never named");
+    std::fs::write(
+        unnamed.join("old.rhei.md"),
+        "# Rhei: old\n\n## Tasks\n\n### Task 1: Something else\n**State:** pending\n",
+    )
+    .expect("a plan on a branch the row never named");
+
+    world.ephor().args(["refresh", PROJECT]).assert().success();
+
+    // Both are read: the stores are verified on disk, because the row names
+    // the branches somebody wrote down and the work is wherever branches were
+    // actually checked out (§FS-006-project-interface.7).
+    assert_eq!(
+        world.matter("rhei:window.1")["title"],
+        "Widen the retry window"
+    );
+    assert_eq!(world.matter("rhei:old.1")["title"], "Something else");
+
+    // And the rung holds on the strength of the workspace, with nothing at the
+    // forest root at all.
+    let placement = ephor::branches::Placement::load(&world.registry_doc(), PROJECT)
+        .expect("the registry describes the project");
+    let set = CapabilitySet::resolve(
+        PROJECT,
+        Some(&placement),
+        &Bindings {
+            sources: 1,
+            ..Bindings::default()
+        },
+    );
+    assert!(set.holds(Rung::LocalIssues));
+}
+
 /// Finding a store is a capability, never an obligation
 /// (§FS-006-project-interface.10): a project without one is watched exactly as
 /// before, and the rung says in one sentence what it looked for.
@@ -104,11 +160,19 @@ fn a_project_without_a_store_is_watched_all_the_same_and_says_what_it_looked_for
             ..Bindings::default()
         },
     );
-    assert!(!bare.holds(Rung::Ticketed));
+    assert!(!bare.holds(Rung::LocalIssues));
     let reason = bare
-        .reason(Rung::Ticketed)
+        .reason(Rung::LocalIssues)
         .expect("a missing rung says why");
-    assert!(reason.contains("holds no ticket store"), "{reason}");
+    // Every place a store may live is named, not just the forest root: a
+    // branch-addressable project keeps one per workspace
+    // (§FS-006-project-interface.7), and a reason that named only the root
+    // would send a reader to look in the wrong place.
+    assert!(reason.contains("keeps no issues of its own"), "{reason}");
+    assert!(
+        reason.contains(&world.forest().display().to_string()),
+        "{reason}"
+    );
 
     // The store appears, and so does the rung — resolved from the world as it
     // is now rather than from anything written down (§AR-005-capabilities.1).
@@ -121,5 +185,5 @@ fn a_project_without_a_store_is_watched_all_the_same_and_says_what_it_looked_for
             ..Bindings::default()
         },
     );
-    assert!(ticketed.holds(Rung::Ticketed));
+    assert!(ticketed.holds(Rung::LocalIssues));
 }

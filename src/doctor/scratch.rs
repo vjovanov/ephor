@@ -119,17 +119,24 @@ fn first_line(text: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Walk the seams and report each one (§FS-010-doctor.3).
-pub fn run() -> Report {
+/// Walk the seams, handing each answer to `report` as it arrives
+/// (§FS-010-doctor.3).
+///
+/// Streaming rather than returning the lot at the end is what keeps the pass
+/// from being a second of silence, and it means the caller's report and its
+/// progress are one thing rather than two that can disagree.
+pub fn run(mut report: impl FnMut(&Check)) -> Report {
     let site = match build() {
         Ok(site) => site,
         Err(why) => {
+            let check = Check {
+                name: "a scratch site can be built",
+                failure: Some(why),
+            };
+            report(&check);
             return Report {
-                checks: vec![Check {
-                    name: "a scratch site can be built",
-                    failure: Some(why),
-                }],
-            }
+                checks: vec![check],
+            };
         }
     };
 
@@ -155,15 +162,16 @@ pub fn run() -> Report {
         ("a local ticket store is read where it lives", ticket_store),
     ];
 
-    Report {
-        checks: steps
-            .into_iter()
-            .map(|(name, step)| Check {
-                name,
-                failure: step(&site).err(),
-            })
-            .collect(),
+    let mut checks = Vec::with_capacity(steps.len());
+    for (name, step) in steps {
+        let check = Check {
+            name,
+            failure: step(&site).err(),
+        };
+        report(&check);
+        checks.push(check);
     }
+    Report { checks }
 }
 
 /// The schemas are the interface's stability surface, printable without a

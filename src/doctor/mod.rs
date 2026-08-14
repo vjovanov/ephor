@@ -268,26 +268,85 @@ fn render_ladder(row: &Diagnosis, style: &Style) {
     }
 }
 
+/// Narrating a run: what is being done, as it is done (§FS-010-doctor.3).
+///
+/// On the error stream, so it narrates without becoming part of the answer —
+/// what a program reads is the report on stdout, and a progress line reaching
+/// a parser would be ephor writing to its own contract. Silent under `--json`
+/// for the same reason, twice over.
+struct Narrator {
+    quiet: bool,
+    style: Style,
+}
+
+impl Narrator {
+    /// A step being started. It ends without a newline where an answer will
+    /// follow on the same line, so a reader watching sees the question before
+    /// the answer rather than after it.
+    fn starting(&self, what: &str) {
+        if self.quiet {
+            return;
+        }
+        eprint!("{} {what} … ", self.style.dim("·"));
+        // The line is half-written, and a slow forge is exactly when it has to
+        // already be on screen.
+        let _ = std::io::Write::flush(&mut std::io::stderr());
+    }
+
+    /// How the step just started came out.
+    fn done(&self, answer: &str) {
+        if self.quiet {
+            return;
+        }
+        eprintln!("{answer}");
+    }
+
+    /// A heading between passes.
+    fn pass(&self, what: &str) {
+        if self.quiet {
+            return;
+        }
+        eprintln!("{}", self.style.dim(what));
+    }
+}
+
 /// `ephor doctor` — the whole site, then ephor itself (§FS-010-doctor.3).
 pub fn doctor(args: &DoctorArgs) -> Result<ExitCode> {
     let style = Style::detect();
+    let say = Narrator {
+        quiet: args.json,
+        style: Style::detect(),
+    };
     let mut worst = Health::Well;
 
     if !args.self_only {
-        worst = worst.max(site(args, &style)?);
+        worst = worst.max(site(args, &style, &say)?);
     }
     if !args.skip_self {
         if !args.self_only && !args.json {
             println!();
         }
-        let report = scratch::run();
+        if !args.json {
+            println!("{}", style.bold("ephor itself"));
+        }
+        // The self pass narrates by *being* incremental rather than by
+        // describing itself twice: each check prints its own line as it
+        // finishes, so the report and the progress are one thing
+        // (§FS-010-doctor.3).
+        let report = scratch::run(|check| {
+            if args.json {
+                return;
+            }
+            match &check.failure {
+                None => println!("  ✓ {}", check.name),
+                Some(why) => println!("  {} {} — {why}", style.red("✗"), check.name),
+            }
+        });
         if args.json {
             println!(
                 "{}",
                 serde_json::to_string_pretty(&report.to_json()).unwrap()
             );
-        } else {
-            render_self(&report, &style);
         }
         if !report.passed() {
             worst = Health::Broken;
@@ -304,29 +363,60 @@ pub fn doctor(args: &DoctorArgs) -> Result<ExitCode> {
 /// The site pass: refresh every configured source, then read each project's
 /// ladder (§FS-010-doctor.3). Refreshed rather than cached, because a cached
 /// answer cannot say whether a source still answers.
-fn site(args: &DoctorArgs, style: &Style) -> Result<Health> {
+fn site(args: &DoctorArgs, style: &Style, say: &Narrator) -> Result<Health> {
     let config = load_config()?;
     let registry_doc = crate::feed::commands::load_registry_doc()?;
     let projects = selected(&config, args.project.as_deref())?;
 
     // Ask the world before reading the table: the *observable* rung is about
-    // sources answering, and the answer has to be this run's.
+    // sources answering, and the answer has to be this run's. This is the slow
+    // half — it takes as long as the slowest forge — so every project is
+    // announced before it is asked and answered when it comes back
+    // (§FS-010-doctor.3).
+    say.pass(&format!(
+        "asking {} project(s) — every source, this run rather than the cache …",
+        projects.len()
+    ));
     for project in &projects {
         let Some(project_config) = config.projects.get(project) else {
             continue;
         };
+        say.starting(&format!(
+            "{project} ({} source(s))",
+            project_config.providers.len()
+        ));
         // A refresh that could not run at all is the registry being wrong,
         // which the ladder reports per project rather than ending the run.
-        let _ = crate::feed::refresh::refresh_project(
+        let outcome = crate::feed::refresh::refresh_project(
             &registry_doc,
             project,
             project_config,
             &config.defaults,
         );
+        say.done(&match &outcome {
+            Ok(outcome) if outcome.failures.is_empty() => {
+                format!("{} item(s)", outcome.item_count)
+            }
+            Ok(outcome) => format!(
+                "{} item(s), {} source(s) lost",
+                outcome.item_count,
+                outcome.failures.len()
+            ),
+            Err(err) => format!("could not be asked — {err}"),
+        });
     }
-    if args.project.is_none() {
-        let _ = crate::feed::refresh::refresh_shared(&registry_doc, &config);
+    if args.project.is_none() && !config.sources.is_empty() {
+        say.starting(&format!("the shared sources ({})", config.sources.len()));
+        let shared = crate::feed::refresh::refresh_shared(&registry_doc, &config);
+        say.done(&match &shared {
+            Ok(outcome) if outcome.failures.is_empty() => {
+                format!("{} item(s) placed", outcome.item_count)
+            }
+            Ok(outcome) => format!("{} source(s) lost", outcome.failures.len()),
+            Err(err) => format!("could not be asked — {err}"),
+        });
     }
+    say.pass("reading each project's ladder …");
 
     let mut rows = Vec::new();
     for project in projects {
@@ -417,16 +507,6 @@ fn render_project(row: &Diagnosis, style: &Style) {
     }
 }
 
-fn render_self(report: &scratch::Report, style: &Style) {
-    println!("{}", style.bold("ephor itself"));
-    for check in &report.checks {
-        match &check.failure {
-            None => println!("  ✓ {}", check.name),
-            Some(why) => println!("  {} {} — {why}", style.red("✗"), check.name),
-        }
-    }
-}
-
 fn summary(health: Health, style: &Style) -> String {
     match health {
         Health::Well => style.bold("well — everything asked answered"),
@@ -471,7 +551,7 @@ mod tests {
                 vec![
                     Rung::Workable,
                     Rung::Gated,
-                    Rung::Ticketed,
+                    Rung::LocalIssues,
                     Rung::Checkable,
                     Rung::BranchAddressable,
                     Rung::CheckoutAble,

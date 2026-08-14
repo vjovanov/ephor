@@ -895,6 +895,32 @@ declaration; attribution is the checkout's own project; and the stores are
 project-native things that exist without ephor — a store's presence is a
 capability rung, never an obligation.
 
+**Where they live is per branch, where a project has branch workspaces.**
+Work about a change belongs in that change's working tree
+(§FS-005-dispatch.3), so a branch-addressable project keeps a store per
+workspace rather than one at the forest root. Both places are read: the root,
+for a project whose checkout is its root, and every branch workspace on disk
+that holds one, for a project whose branches have trees of their own. Reading
+only the root leaves such a project writing its work into a place it never
+looks again — work dispatched, plans on disk, and a feed that shows none of
+it.
+
+Verified on disk rather than derived from the registry row. The row names the
+branches somebody wrote down; the stores are wherever branches were actually
+checked out, and the two are not the same list. The rung this buys is
+*local-issues* rather than *ticketed*, because a **ticket** is what a remote
+tracker keys and these are the project's own — one name for one thing
+(§FS-001-forge-interface.3).
+
+**A workspace ephor makes gets a store.** Where ephor creates a branch
+workspace (§FS-004-quick-actions.7) it initializes one there, so the first
+dispatch into that branch has somewhere to land and what is under way is
+visible from the moment the tree exists. This is not an artifact required of
+the project and does not bend §REQ-001-boundary.3: the store ignores itself,
+so what it holds is ephor's own planning state that happens to live in a
+checkout, never content the project carries. A project cloned without ephor
+is byte-for-byte what it was.
+
 ### 8. The checkout contract
 
 A project may bind one **checkout** command; its contract is to make
@@ -923,7 +949,8 @@ answering) buys the watch; *placed* (the forest root on disk) buys actions
 and update; *branch-addressable* (a workspace template) buys resolution of
 matters to workspaces; *checkout-able* (§8) buys work that edits;
 *checkable* (§5) buys verification that means something; *gated* (§6) buys
-failure dossiers and the restart; *ticketed* (§7) buys local matters;
+failure dossiers and the restart; *local-issues* (§7) buys the project's
+own issues as matters;
 *workable* (a bound runtime, §FS-005-dispatch) buys the loop. A missing
 rung degrades exactly the features that named it, with the reason stated
 where the feature would have appeared — never an error, never silence
@@ -1137,6 +1164,16 @@ It touches nothing of the person's, reads no registry of theirs, and reaches
 no forge: it is hermetic, or it is not a diagnosis. This is what a test suite
 cannot answer — `cargo test` speaks for the tree it was run in, and the
 question here is whether the binary on *this* machine still works.
+
+**Both passes say what they are doing while they do it.** Asking every source
+of every project takes as long as the slowest forge, and a diagnostic that
+prints nothing until it is finished is one a reader kills half way through
+and reports as hung — which is the same failure the tool exists to name, with
+ephor as the source that did not answer. So each step is announced as it is
+reached and each answer is given as it arrives, on the error stream, where it
+narrates the run without becoming part of it: what a program reads is the
+report, and a progress line that reached a parser would be ephor writing to
+its own contract.
 
 ### 4. Nothing of the reader's is written
 

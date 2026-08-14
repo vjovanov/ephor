@@ -113,7 +113,33 @@ pub fn checkout(args: &CheckoutArgs) -> Result<ExitCode> {
         return Ok(ExitCode::from(1));
     }
     println!("{}", outcome.summary());
+    init_store(&project, &target, &placement.root);
     Ok(ExitCode::SUCCESS)
+}
+
+/// A workspace ephor makes gets a ticket store, so the first dispatch into
+/// this branch has somewhere to land and what is under way is visible from
+/// the moment the tree exists (§FS-006-project-interface.7).
+///
+/// Reported and never fatal: the workspace is made either way, and a checkout
+/// that failed because a convenience did is a checkout that did not need to
+/// fail. Where no site configuration can be read, the shipped default answers
+/// — this is `ephor checkout` working on a machine that has a registry and
+/// nothing else.
+fn init_store(project: &str, workspace: &std::path::Path, root: &std::path::Path) {
+    let config = load_config().ok();
+    let global = config
+        .as_ref()
+        .map(|config| config.work.clone())
+        .unwrap_or_default();
+    let per_project = config
+        .as_ref()
+        .and_then(|config| config.projects.get(project))
+        .map(|project| &project.work);
+    match crate::work::ensure_store(&global, per_project, project, workspace, root) {
+        Ok(dir) => println!("  ticket store at {}", dir.display()),
+        Err(err) => eprintln!("note: no ticket store was made — {err}"),
+    }
 }
 
 fn write_report(path: &str, contents: &str) -> Result<()> {

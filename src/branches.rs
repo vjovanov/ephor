@@ -283,6 +283,93 @@ impl Placement {
         expand_workspace(self.template.as_deref(), &self.root, branch)
     }
 
+    /// The directories holding a local issue store for this project
+    /// (§FS-006-project-interface.7): the forest root, and every branch
+    /// workspace on disk that has one.
+    ///
+    /// Work about a change belongs in that change's working tree
+    /// (§FS-005-dispatch.3), so a branch-addressable project keeps a store per
+    /// workspace rather than one at the root — and looking only at the root
+    /// left such a project writing its plans where nothing read them again.
+    ///
+    /// Verified on disk rather than derived from the registry: the row names
+    /// the branches somebody wrote down, and the stores are wherever branches
+    /// were actually checked out. A project whose row names five branches had
+    /// nine workspaces holding work, none of them the five.
+    pub fn issue_stores(&self) -> Vec<PathBuf> {
+        let mut found = Vec::new();
+        if holds_store(&self.root) {
+            found.push(self.root.clone());
+        }
+        if let Some(base) = self.workspace_base() {
+            collect_stores(&base, WORKSPACE_DEPTH, &mut found);
+        }
+        found.sort();
+        found.dedup();
+        found
+    }
+
+    /// Where this project's branch workspaces are rooted — the fixed part of
+    /// the template, above wherever `{branch}` lands. None for a project whose
+    /// checkout is its root.
+    fn workspace_base(&self) -> Option<PathBuf> {
+        // A name no branch has, so the component holding it is identifiable
+        // however many path separators the branch itself contains.
+        const MARK: &str = "\u{1}workspace\u{1}";
+        let expanded = self.workspace_for(MARK)?;
+        let mut base = expanded.as_path();
+        while base.to_string_lossy().contains(MARK) {
+            base = base.parent()?;
+        }
+        Some(base.to_path_buf())
+    }
+}
+
+/// How far under the workspace base a store is looked for. A branch name may
+/// carry separators — `you/ABC-42` is two components — so the store under it
+/// is three deep, and stopping there keeps this a bounded walk of the
+/// workspace area rather than a search of the repositories inside it
+/// (§AR-005-capabilities.1).
+const WORKSPACE_DEPTH: usize = 3;
+
+/// Whether a directory holds a store ephor recognizes. The names are the
+/// stores' own, so they are asked of the adapter rather than spelled here
+/// (§REQ-001-boundary.5).
+fn holds_store(dir: &Path) -> bool {
+    crate::seams::tickets::Kind::all()
+        .iter()
+        .any(|kind| dir.join(kind.probed()).is_dir())
+}
+
+/// Walk for directories holding a store, to a bounded depth.
+fn collect_stores(dir: &Path, depth: usize, found: &mut Vec<PathBuf>) {
+    if depth == 0 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        // A store may be a dotted name of its own, but nothing else hidden is
+        // a workspace — and descending into `.git` would be a walk of the
+        // repository rather than of the workspace area.
+        if name.starts_with('.') {
+            continue;
+        }
+        if holds_store(&path) {
+            found.push(path.clone());
+        }
+        collect_stores(&path, depth - 1, found);
+    }
+}
+
+impl Placement {
     /// An existing checkout to make a new workspace from
     /// (§FS-004-quick-actions.7). A working tree is added *from* a repository,
     /// so there has to be one already on disk: the main branch's workspace by

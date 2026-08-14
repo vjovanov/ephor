@@ -198,7 +198,13 @@ pub fn refresh_project(
     // an obligation (§FS-006-project-interface.7).
     if let Some(placement) = crate::branches::Placement::load(registry_doc, project_id) {
         let manifest = placement.manifest();
-        let stores = crate::seams::tickets::find(&placement.root, manifest.as_ref());
+        // The root, and every active branch's workspace: work about a change
+        // lives in that change's tree, so a branch-addressable project keeps a
+        // store per workspace (§FS-006-project-interface.7).
+        let stores: Vec<crate::seams::tickets::Store> = std::iter::once(placement.root.clone())
+            .chain(placement.issue_stores())
+            .flat_map(|root| crate::seams::tickets::find(&root, manifest.as_ref()))
+            .collect();
         for store in stores {
             let name = store.kind.name().to_string();
             match crate::seams::tickets::read(&store, project_id) {
