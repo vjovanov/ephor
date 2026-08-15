@@ -18,7 +18,7 @@ use crate::paths;
 /// (§AR-006-matters.4): a model change rebuilds it rather than migrating it,
 /// because everything in it can be fetched again. `seen` is the one part that
 /// survives, and it lives in its own file for exactly that reason.
-pub const MODEL: u32 = 1;
+pub const MODEL: u32 = 2;
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct ProjectFeed {
@@ -116,7 +116,7 @@ impl ProjectFeed {
     }
 
     /// How many sources were asked at all. Not the same as how many the
-    /// configuration names: a local ticket store is probed rather than
+    /// configuration names: a task store is probed rather than
     /// configured (§FS-006-project-interface.7), and a shared source is
     /// declared once for the site and placed here
     /// (§DA-002-fetch-attribution-split) — both are sources of this project's

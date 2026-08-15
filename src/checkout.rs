@@ -140,7 +140,7 @@ pub fn checkout(args: &CheckoutArgs) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// A workspace ephor makes gets a ticket store, so the first dispatch into
+/// A workspace ephor makes gets a task store, so the first dispatch into
 /// this branch has somewhere to land and what is under way is visible from
 /// the moment the tree exists (§FS-006-project-interface.7).
 ///
@@ -160,8 +160,8 @@ fn init_store(project: &str, workspace: &std::path::Path, root: &std::path::Path
         .and_then(|config| config.projects.get(project))
         .map(|project| &project.work);
     match crate::work::ensure_store(&global, per_project, project, workspace, root) {
-        Ok(dir) => println!("  ticket store at {}", dir.display()),
-        Err(err) => eprintln!("note: no ticket store was made — {err}"),
+        Ok(dir) => println!("  task store at {}", dir.display()),
+        Err(err) => eprintln!("note: no task store was made — {err}"),
     }
 }
 

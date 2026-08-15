@@ -195,24 +195,24 @@ pub fn refresh_project(
     let mut results = results.into_inner().unwrap();
 
     // Checkout sources read the forest itself, where there is one on disk
-    // (§AR-008-pipeline.1). A local ticket store is a project-native thing
-    // that exists without ephor, so finding one is a capability rather than
-    // an obligation (§FS-006-project-interface.7).
+    // (§AR-008-pipeline.1). A task store is a project-native thing that
+    // exists without ephor, so finding one is a capability rather than an
+    // obligation (§FS-006-project-interface.7).
     if let Some(placement) = crate::branches::Placement::load(registry_doc, project_id) {
         let manifest = placement.manifest();
         // The root, and every active branch's workspace: work about a change
         // lives in that change's tree, so a branch-addressable project keeps a
         // store per workspace (§FS-006-project-interface.7).
-        let stores: Vec<crate::seams::tickets::Store> = std::iter::once(placement.root.clone())
-            .chain(placement.issue_stores())
-            .flat_map(|root| crate::seams::tickets::find(&root, manifest.as_ref()))
+        let stores: Vec<crate::seams::tasks::Store> = std::iter::once(placement.root.clone())
+            .chain(placement.task_stores())
+            .flat_map(|root| crate::seams::tasks::find(&root, manifest.as_ref()))
             .collect();
         for store in stores {
             let name = store.kind.name().to_string();
-            match crate::seams::tickets::read(&store, project_id) {
+            match crate::seams::tasks::read(&store, project_id) {
                 // A store that answered lands its matters, empty answer
-                // included: a store with no open tickets has said so, and its
-                // slot saying so is what tells last refresh's tickets to go.
+                // included: a store with no open tasks has said so, and its
+                // slot saying so is what tells last refresh's tasks to go.
                 Ok(items) => {
                     let slot = results.entry(name).or_insert((true, None, Vec::new()));
                     slot.0 = true;

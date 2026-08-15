@@ -2934,6 +2934,7 @@ mod tests {
         for kind in [
             ItemKind::Pr,
             ItemKind::Issue,
+            ItemKind::Task,
             ItemKind::Message,
             ItemKind::Ci,
             ItemKind::Status,
@@ -3338,21 +3339,21 @@ mod tests {
         let can = ctx.can("widget");
         assert!(!can.holds(Rung::Placed));
         assert!(!can.holds(Rung::Checkable));
-        assert!(!can.holds(Rung::LocalIssues));
+        assert!(!can.holds(Rung::Tasks));
         assert!(can.holds(Rung::BranchAddressable));
         assert!(can
             .refusal(&[Rung::Placed])
             .unwrap()
             .contains("is not on disk"));
 
-        // The project arrives, with a check verb and a ticket store in it.
+        // The project arrives, with a check verb and a task store in it.
         std::fs::create_dir_all(root.join("panta")).unwrap();
         std::fs::write(root.join("check.sh"), "#!/bin/sh\n").unwrap();
         ctx.recompute_capabilities();
         let can = ctx.can("widget");
         assert!(can.holds(Rung::Placed));
         assert!(can.holds(Rung::Checkable));
-        assert!(can.holds(Rung::LocalIssues));
+        assert!(can.holds(Rung::Tasks));
 
         // A project the registry says nothing about holds nothing, and the
         // table answers rather than being absent.

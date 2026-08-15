@@ -2,7 +2,7 @@
 //! { exit_code, answer, output }` (§AR-002-summons).
 //!
 //! Every command the project interface names — a check verb, a gate verb, a
-//! checkout, a ticket store's CLI, an offer, the runtime's run — is invoked
+//! checkout, a task store's CLI, an offer, the runtime's run — is invoked
 //! here and nowhere else (§FS-006-project-interface.3). One executor means one
 //! refusal path, one environment contract, and one answer reader, and that the
 //! same operation invoked from a menu key and from a state machine cannot drift

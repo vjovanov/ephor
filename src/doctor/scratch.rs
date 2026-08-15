@@ -159,7 +159,7 @@ pub fn run(mut report: impl FnMut(&Check)) -> Report {
             "an item becomes a ticket, and the ledger reads it back",
             dispatch,
         ),
-        ("a local ticket store is read where it lives", ticket_store),
+        ("a task store is read where it lives", task_store),
     ];
 
     let mut checks = Vec::with_capacity(steps.len());
@@ -361,9 +361,10 @@ fn dispatch(site: &Site) -> Step {
     Ok(())
 }
 
-/// A store the project keeps in its checkout is read through its own files,
-/// into the same feed under the same rules (§FS-006-project-interface.7).
-fn ticket_store(site: &Site) -> Step {
+/// A task store the project keeps in its checkout is read through its own
+/// files, into the same feed under the same rules
+/// (§FS-006-project-interface.7).
+fn task_store(site: &Site) -> Step {
     // The dispatch above wrote a plan into the project's work root, which is
     // the store this reads back. Asking the seam for the directory rather than
     // spelling it keeps the store's name in its own adapter
@@ -375,7 +376,7 @@ fn ticket_store(site: &Site) -> Step {
     site.expect(&["refresh", "scratch"], 0)?;
     let feed = site.expect(&["feed", "--project", "scratch", "--json"], 0)?;
     let rows: Value = serde_json::from_str(&feed).map_err(|err| format!("feed JSON: {err}"))?;
-    let store_source = crate::seams::tickets::Kind::Plans.name();
+    let store_source = crate::seams::tasks::Kind::Plans.name();
     let found = rows
         .as_array()
         .map(|rows| {

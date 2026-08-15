@@ -9,6 +9,11 @@ pub enum ItemKind {
     Pr,
     Ci,
     Issue,
+    /// The project's own task, read out of a store in its checkout
+    /// (§FS-006-project-interface.7). Not an issue: an issue is what a forge
+    /// files, and this is the project's own work
+    /// (§FS-003-feed-categories.1).
+    Task,
     Message,
 }
 
@@ -19,6 +24,7 @@ impl ItemKind {
             "pr" => Some(ItemKind::Pr),
             "ci" => Some(ItemKind::Ci),
             "issue" => Some(ItemKind::Issue),
+            "task" => Some(ItemKind::Task),
             "message" => Some(ItemKind::Message),
             _ => None,
         }
@@ -30,6 +36,7 @@ impl ItemKind {
             ItemKind::Pr => "pr",
             ItemKind::Ci => "ci",
             ItemKind::Issue => "issue",
+            ItemKind::Task => "task",
             ItemKind::Message => "msg",
         }
     }
@@ -174,5 +181,20 @@ mod tests {
     fn issue_is_a_kind_of_its_own() {
         assert_eq!(ItemKind::parse("issue"), Some(ItemKind::Issue));
         assert_eq!(ItemKind::Issue.label(), "issue");
+    }
+
+    /// The project's own task is its own kind, and not an issue: an issue is
+    /// what a forge files, and a task is the project's own work in its own
+    /// checkout (§FS-003-feed-categories.1). The label is what a serialized
+    /// matter carries and what a recipe's `kinds` matches, so it round-trips.
+    #[test]
+    fn task_is_a_kind_of_its_own() {
+        assert_eq!(ItemKind::parse("task"), Some(ItemKind::Task));
+        assert_eq!(ItemKind::Task.label(), "task");
+        assert_ne!(ItemKind::Task, ItemKind::Issue);
+        assert_eq!(
+            serde_json::to_value(ItemKind::Task).unwrap(),
+            serde_json::json!("task")
+        );
     }
 }

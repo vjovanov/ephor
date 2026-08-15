@@ -427,7 +427,7 @@ impl Placement {
         expand_workspace(self.template.as_deref(), &self.root, branch)
     }
 
-    /// The directories holding a local issue store for this project
+    /// The directories holding a task store for this project
     /// (§FS-006-project-interface.7): the forest root, and every branch
     /// workspace on disk that has one.
     ///
@@ -440,7 +440,7 @@ impl Placement {
     /// the branches somebody wrote down, and the stores are wherever branches
     /// were actually checked out. A project whose row names five branches had
     /// nine workspaces holding work, none of them the five.
-    pub fn issue_stores(&self) -> Vec<PathBuf> {
+    pub fn task_stores(&self) -> Vec<PathBuf> {
         let mut found = Vec::new();
         if holds_store(&self.root) {
             found.push(self.root.clone());
@@ -547,7 +547,7 @@ fn collect_workspaces(dir: &Path, depth: usize, layout: &[String], found: &mut V
 /// stores' own, so they are asked of the adapter rather than spelled here
 /// (§REQ-001-boundary.5).
 fn holds_store(dir: &Path) -> bool {
-    crate::seams::tickets::Kind::all()
+    crate::seams::tasks::Kind::all()
         .iter()
         .any(|kind| dir.join(kind.probed()).is_dir())
 }

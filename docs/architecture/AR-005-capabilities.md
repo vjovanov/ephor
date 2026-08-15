@@ -9,7 +9,7 @@ reads this table; nothing else runs its own `command_exists` or path check.
 ## 1. Resolution
 
 Each rung names its establishment and is resolved accordingly
-(§FS-006-project-interface.1): *placed* and *checkable* and *ticketed* by
+(§FS-006-project-interface.1): *placed* and *checkable* and *tasks* by
 probing the checkout; *checkout-able*, *workable*, and parts of *gated* by
 looking up bindings; *observable* and *branch-addressable* from the row and
 the sources' last answers. Resolution is cheap by construction — stat

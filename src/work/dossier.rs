@@ -300,7 +300,9 @@ fn threads_of(item: &Item) -> Vec<Thread> {
 }
 
 /// Kinds whose whole point is what people said about them. A status line has
-/// no conversation and saying so about it is noise.
+/// no conversation and saying so about it is noise; neither has the project's
+/// own task, which is a heading in a file and not a thread
+/// (§FS-006-project-interface.7).
 fn expects_conversation(kind: crate::feed::model::ItemKind) -> bool {
     use crate::feed::model::ItemKind;
     matches!(kind, ItemKind::Pr | ItemKind::Issue | ItemKind::Message)

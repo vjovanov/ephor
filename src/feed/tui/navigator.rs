@@ -20,6 +20,46 @@ use crate::forest::{Staleness, Standing};
 
 use super::{highlight_style, Action, BranchInfo, Ctx, WorkBadge};
 
+/// One category's filter (§FS-003-feed-categories.1).
+type SectionFilter = fn(&Item) -> bool;
+
+/// The categories of §FS-003-feed-categories.1, in the order they are worked.
+/// An item lands in exactly one: every filter but Recent's excludes finished
+/// work, and the kinds do not overlap.
+const SECTIONS: [(&str, SectionFilter); 9] = [
+    ("Status", |item| {
+        item.kind == ItemKind::Status && !item.is_finished()
+    }),
+    ("My Pull Requests", |item| {
+        item.kind == ItemKind::Pr && item.role != Some(ItemRole::Reviewer) && !item.is_finished()
+    }),
+    ("Reviewing", |item| {
+        item.kind == ItemKind::Pr && item.role == Some(ItemRole::Reviewer) && !item.is_finished()
+    }),
+    // Gate results ride on the matter they are about (§FS-007-matters.5);
+    // what is left for this section is the periodic build that belongs to no
+    // change of its own.
+    ("CI", |item| {
+        item.kind == ItemKind::Ci && !item.is_finished()
+    }),
+    ("My Issues", |item| {
+        item.kind == ItemKind::Issue && item.role != Some(ItemRole::Reviewer) && !item.is_finished()
+    }),
+    ("Participating", |item| {
+        item.kind == ItemKind::Issue && item.role == Some(ItemRole::Reviewer) && !item.is_finished()
+    }),
+    // The project's own tasks, out of a store in its checkout
+    // (§FS-006-project-interface.7). Nobody is a reviewer on one, so the role
+    // does not divide them the way it divides issues.
+    ("Tasks", |item| {
+        item.kind == ItemKind::Task && !item.is_finished()
+    }),
+    ("Messages", |item| {
+        item.kind == ItemKind::Message && !item.is_finished()
+    }),
+    ("Recent", |item| item.is_finished()),
+];
+
 #[derive(Clone, Copy, PartialEq)]
 enum Mode {
     Stream,
@@ -154,46 +194,8 @@ impl NavigatorState {
         };
         let branches = ctx.branches(project).to_vec();
 
-        // §FS-003-feed-categories.1. Every filter but Recent's excludes
-        // finished work, so an item lands in exactly one category.
-        type SectionFilter = fn(&Item) -> bool;
-        let sections: [(&'static str, SectionFilter); 8] = [
-            ("Status", |item| {
-                item.kind == ItemKind::Status && !item.is_finished()
-            }),
-            ("My Pull Requests", |item| {
-                item.kind == ItemKind::Pr
-                    && item.role != Some(ItemRole::Reviewer)
-                    && !item.is_finished()
-            }),
-            ("Reviewing", |item| {
-                item.kind == ItemKind::Pr
-                    && item.role == Some(ItemRole::Reviewer)
-                    && !item.is_finished()
-            }),
-            // Gate results ride on the matter they are about
-            // (§FS-007-matters.5); what is left for this section is the
-            // periodic build that belongs to no change of its own.
-            ("CI", |item| {
-                item.kind == ItemKind::Ci && !item.is_finished()
-            }),
-            ("My Issues", |item| {
-                item.kind == ItemKind::Issue
-                    && item.role != Some(ItemRole::Reviewer)
-                    && !item.is_finished()
-            }),
-            ("Participating", |item| {
-                item.kind == ItemKind::Issue
-                    && item.role == Some(ItemRole::Reviewer)
-                    && !item.is_finished()
-            }),
-            ("Messages", |item| {
-                item.kind == ItemKind::Message && !item.is_finished()
-            }),
-            ("Recent", |item| item.is_finished()),
-        ];
         let now = Utc::now();
-        for (header, section_filter) in sections {
+        for (header, section_filter) in SECTIONS {
             let mut rows: Vec<Row> = feed
                 .items()
                 .filter(|item| item.is_visible(now, ctx.recent_days))
@@ -926,6 +928,45 @@ mod tests {
             work: None,
             resurfacing: None,
         })
+    }
+
+    /// An item belongs to exactly one category, so that the size of a
+    /// category is the size of that pile of work and not a double count
+    /// (§FS-003-feed-categories.1) — and the project's own task belongs to
+    /// **Tasks**, never to My Issues, because an issue is what a forge files
+    /// (§FS-006-project-interface.7).
+    #[test]
+    fn every_kind_lands_in_exactly_one_category_and_a_task_lands_in_tasks() {
+        let mut item = match row("rhei:work.1") {
+            Entry::Item(row) => row.item,
+            _ => unreachable!("the fixture is a row"),
+        };
+        for (kind, expected) in [
+            (ItemKind::Status, "Status"),
+            (ItemKind::Pr, "My Pull Requests"),
+            (ItemKind::Ci, "CI"),
+            (ItemKind::Issue, "My Issues"),
+            (ItemKind::Task, "Tasks"),
+            (ItemKind::Message, "Messages"),
+        ] {
+            item.kind = kind;
+            let landed: Vec<&str> = SECTIONS
+                .iter()
+                .filter(|(_, filter)| filter(&item))
+                .map(|(header, _)| *header)
+                .collect();
+            assert_eq!(landed, [expected], "{kind:?}");
+        }
+
+        // Finished work leaves its category for Recent, whatever its kind.
+        item.kind = ItemKind::Task;
+        item.state = Some("closed".to_string());
+        let landed: Vec<&str> = SECTIONS
+            .iter()
+            .filter(|(_, filter)| filter(&item))
+            .map(|(header, _)| *header)
+            .collect();
+        assert_eq!(landed, ["Recent"]);
     }
 
     fn on(entries: &[Entry], index: usize) -> ListState {

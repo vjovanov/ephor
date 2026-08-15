@@ -82,9 +82,9 @@ is the forge half of the same law.
   forge-hosted one where a person actually looks
   ([§FS-006-project-interface.6](../requirements.md#6-the-gate-is-the-projects-in-three-verbs),
   [§E2E-003-gate-verbs](../e2e/cases/E2E-003-gate-verbs.rs)).
-- **One ticket store is recognized and unread.** `beads` is probed and reports
+- **One task store is recognized and unread.** `beads` is probed and reports
   nothing rather than pretending
-  ([§FS-006-project-interface.7](../requirements.md#7-local-ticket-stores-are-read-where-they-live)).
+  ([§FS-006-project-interface.7](../requirements.md#7-the-projects-own-tasks-are-read-where-they-live)).
   That is an honest degrade and still a reader nobody wrote.
 
 ### 2. Why now

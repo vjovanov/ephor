@@ -355,7 +355,7 @@ fn a_lost_source_is_named_with_its_kind_and_the_run_exits_degraded() {
     assert_eq!(rows["projects"][0]["sources"]["answering"], 1);
     assert_eq!(rows["projects"][0]["sources"]["configured"], 2);
     // Asked, not configured: a project's sources are what wrote a slot, which
-    // includes a probed ticket store and a site-level shared source. Reporting
+    // includes a probed task store and a site-level shared source. Reporting
     // the configured count as the denominator said more answered than were
     // asked (§FS-006-project-interface.7).
     assert_eq!(rows["projects"][0]["sources"]["asked"], 2);
@@ -441,7 +441,7 @@ fn the_self_pass_walks_the_seams_against_a_site_it_made_up() {
         "a branch workspace is checked out",
         "a trailing branch is replayed",
         "an item becomes a ticket, and the ledger reads it back",
-        "a local ticket store is read where it lives",
+        "a task store is read where it lives",
     ] {
         assert!(names.iter().any(|name| name == expected), "{names:?}");
     }

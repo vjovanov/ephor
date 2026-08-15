@@ -34,12 +34,11 @@ pub enum Rung {
     /// A gate that can be asked (§FS-006-project-interface.6). Buys failure
     /// dossiers and the restart.
     Gated,
-    /// A local issue store, at the root or in a branch workspace
-    /// (§FS-006-project-interface.7). Buys local matters. A *ticket* is what a
-    /// remote tracker keys — these are the project's own, kept in its
-    /// checkout, and the rung is named for what it holds rather than for what
-    /// a forge calls something else.
-    LocalIssues,
+    /// A task store, at the root or in a branch workspace
+    /// (§FS-006-project-interface.7). Buys the project's own tasks as matters.
+    /// A *ticket* is what a remote tracker keys and an *issue* is what a forge
+    /// files — these are neither, so the rung is named for what it holds.
+    Tasks,
     /// A bound runtime on PATH (§FS-005-dispatch). Buys the loop.
     Workable,
 }
@@ -54,7 +53,7 @@ impl Rung {
             Rung::CheckoutAble => "checkout-able",
             Rung::Checkable => "checkable",
             Rung::Gated => "gated",
-            Rung::LocalIssues => "local-issues",
+            Rung::Tasks => "tasks",
             Rung::Workable => "workable",
         }
     }
@@ -65,11 +64,11 @@ impl Rung {
     /// requiring nothing, since a requirement nobody checks is worse than one
     /// nobody wrote.
     pub fn parse(name: &str) -> Option<Rung> {
-        // `ticketed` was this rung's name before it was one a reader could
-        // tell from a remote tracker's tickets. Still accepted, so a
-        // `requires` somebody already wrote goes on meaning what it meant.
-        if name == "ticketed" {
-            return Some(Rung::LocalIssues);
+        // `ticketed` and `local-issues` were this rung's names before these
+        // were called what they are. Both still accepted, so a `requires`
+        // somebody already wrote goes on meaning what it meant.
+        if name == "ticketed" || name == "local-issues" {
+            return Some(Rung::Tasks);
         }
         Rung::all().into_iter().find(|rung| rung.name() == name)
     }
@@ -83,7 +82,7 @@ impl Rung {
             Rung::CheckoutAble,
             Rung::Checkable,
             Rung::Gated,
-            Rung::LocalIssues,
+            Rung::Tasks,
             Rung::Workable,
         ]
     }
@@ -100,13 +99,13 @@ pub fn check_scripts() -> Vec<&'static str> {
         .collect()
 }
 
-/// The directories the ticket stores are probed under
+/// The directories the task stores are probed under
 /// (§FS-006-project-interface.7). Each is a project-native thing that exists
 /// without ephor; finding one is a rung, never an obligation. The names are
 /// the stores' own, so they are asked of the store adapter rather than
 /// spelled here (§REQ-001-boundary.5).
-pub fn ticket_stores() -> Vec<&'static str> {
-    crate::seams::tickets::Kind::all()
+pub fn task_stores() -> Vec<&'static str> {
+    crate::seams::tasks::Kind::all()
         .iter()
         .map(|kind| kind.probed())
         .collect()
@@ -259,17 +258,17 @@ impl CapabilitySet {
             // store may live is asked, not just the forest root.
             // The repo, not one directory of it: a store at the forest root,
             // one a manifest declares, or one in any branch workspace on disk
-            // all say the same thing — this project keeps its issues locally
-            // (§FS-006-project-interface.7).
-            let declared = !crate::seams::tickets::find(root, bindings.manifest).is_empty();
-            if !declared && placement.issue_stores().is_empty() {
+            // all say the same thing — this project keeps its own work in its
+            // checkout (§FS-006-project-interface.7).
+            let declared = !crate::seams::tasks::find(root, bindings.manifest).is_empty();
+            if !declared && placement.task_stores().is_empty() {
                 fails(
-                    Rung::LocalIssues,
+                    Rung::Tasks,
                     format!(
-                        "{} keeps no issues of its own: no {} at its root, in any branch \
+                        "{} keeps no tasks of its own: no {} at its root, in any branch \
                          workspace on disk, or declared in its manifest",
                         root.display(),
-                        ticket_stores().join(" or ")
+                        task_stores().join(" or ")
                     ),
                 );
             }
@@ -279,7 +278,7 @@ impl CapabilitySet {
                 root.display()
             );
             fails(Rung::Checkable, unplaced.clone());
-            fails(Rung::LocalIssues, unplaced);
+            fails(Rung::Tasks, unplaced);
         }
 
         // A bound verb counts as much as a forge that reports one: above the
@@ -395,6 +394,19 @@ mod tests {
         }
     }
 
+    /// The rung is *tasks*, and the two names it had before — *ticketed*, then
+    /// *local-issues* — still resolve, so a `requires` somebody already wrote
+    /// goes on meaning what it meant (§FS-006-project-interface.10). A word
+    /// that is not a rung at all is still None.
+    #[test]
+    fn the_rungs_older_names_still_resolve() {
+        assert_eq!(Rung::parse("tasks"), Some(Rung::Tasks));
+        assert_eq!(Rung::parse("local-issues"), Some(Rung::Tasks));
+        assert_eq!(Rung::parse("ticketed"), Some(Rung::Tasks));
+        assert_eq!(Rung::Tasks.name(), "tasks");
+        assert_eq!(Rung::parse("issues"), None);
+    }
+
     #[test]
     fn a_project_with_nothing_on_disk_says_so_once_per_rung() {
         let missing = PathBuf::from("/nowhere/that/exists");
@@ -410,23 +422,23 @@ mod tests {
             .unwrap()
             .contains("cannot be looked in"));
         assert!(set
-            .reason(Rung::LocalIssues)
+            .reason(Rung::Tasks)
             .unwrap()
             .contains("cannot be looked in"));
     }
 
     #[test]
-    fn probing_finds_the_check_verbs_and_the_ticket_store() {
+    fn probing_finds_the_check_verbs_and_the_task_store() {
         let tmp = tempfile::tempdir().unwrap();
         let set = CapabilitySet::resolve("widget", Some(&placement(tmp.path(), None)), &bindings());
         assert!(!set.holds(Rung::Checkable));
-        assert!(!set.holds(Rung::LocalIssues));
+        assert!(!set.holds(Rung::Tasks));
 
         std::fs::write(tmp.path().join("check.sh"), "#!/bin/sh\n").unwrap();
         std::fs::create_dir(tmp.path().join("panta")).unwrap();
         let set = CapabilitySet::resolve("widget", Some(&placement(tmp.path(), None)), &bindings());
         assert!(set.holds(Rung::Checkable));
-        assert!(set.holds(Rung::LocalIssues));
+        assert!(set.holds(Rung::Tasks));
     }
 
     /// A project may keep its verbs and its store anywhere and say so

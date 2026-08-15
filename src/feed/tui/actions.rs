@@ -1325,6 +1325,8 @@ mod tests {
             WorkspaceState::Ready,
             None,
             &unplaced,
+            // Spelled the old way on purpose: an older `requires` still
+            // resolves to the *tasks* rung (§FS-006-project-interface.10).
             vec![requiring(&["ticketed"])],
         );
         match menu.gate(0) {

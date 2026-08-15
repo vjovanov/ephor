@@ -4,7 +4,7 @@
 Two checks, both over the Rust sources git tracks under ``src/``:
 
 1. **No product literal outside its adapter.** The name of a forge, vendor
-   CLI, runtime, or ticket store appears only in its own adapter. The law
+   CLI, runtime, or task store appears only in its own adapter. The law
    permits it in shipped assets, in examples, and in documentation, so this
    check reads only ``src/``, skips comments, and skips ``#[cfg(test)]``
    bodies: a doc-comment that spells ``gh:acme/widget#42`` is documenting the
@@ -87,16 +87,16 @@ PRODUCTS = (
     Product(
         "rhei",
         r"rhei",
-        homes=("src/work/runtime/*.rs", "src/seams/tickets.rs"),
+        homes=("src/work/runtime/*.rs", "src/seams/tasks.rs"),
         kind="runtime",
     ),
     Product(
         "panta",
         r"panta",
-        homes=("src/work/runtime/*.rs", "src/seams/tickets.rs", "src/work/recipe.rs"),
+        homes=("src/work/runtime/*.rs", "src/seams/tasks.rs", "src/work/recipe.rs"),
         kind="runtime",
     ),
-    Product("beads", r"beads", homes=("src/seams/tickets.rs",), kind="ticket store"),
+    Product("beads", r"beads", homes=("src/seams/tasks.rs",), kind="task store"),
 )
 
 

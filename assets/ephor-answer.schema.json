@@ -39,7 +39,7 @@
     "matters": {
       "type": "array",
       "items": { "$ref": "#/$defs/matter" },
-      "description": "Subjects this command reports (FS-007-matters). Read by ticket stores and custom-status."
+      "description": "Subjects this command reports (FS-007-matters). Read by task stores and custom-status."
     },
     "discussions": {
       "type": "array",

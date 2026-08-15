@@ -80,17 +80,15 @@
         "restart": { "$ref": "#/$defs/command" }
       }
     },
+    "tasks": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/taskStore" },
+      "description": "The project's own task stores beyond the probed conventions (FS-006-project-interface.7). These are the project's own work, kept in its own checkout: a ticket is what a remote tracker keys and an issue is what a forge files, and neither is this."
+    },
     "tickets": {
       "type": "array",
-      "items": {
-        "type": "object",
-        "required": ["kind", "path"],
-        "properties": {
-          "kind": { "type": "string", "description": "'rhei', 'beads', or another store ephor has a reader for." },
-          "path": { "type": "string", "description": "Relative to the forest root." }
-        }
-      },
-      "description": "Local ticket stores beyond the probed conventions (FS-006-project-interface.7)."
+      "items": { "$ref": "#/$defs/taskStore" },
+      "description": "The older spelling of 'tasks', still read (FS-006-project-interface.11). Prefer 'tasks'."
     },
     "actions": {
       "type": "array",
@@ -99,6 +97,14 @@
     }
   },
   "$defs": {
+    "taskStore": {
+      "type": "object",
+      "required": ["kind", "path"],
+      "properties": {
+        "kind": { "type": "string", "description": "'rhei', 'beads', or another store ephor has a reader for." },
+        "path": { "type": "string", "description": "Relative to the forest root." }
+      }
+    },
     "command": {
       "oneOf": [
         { "type": "string" },
@@ -141,9 +147,9 @@
         "requires": {
           "type": "array",
           "items": {
-            "enum": ["placed", "branch-addressable", "checkout-able", "checkable", "gated", "ticketed", "workable"]
+            "enum": ["placed", "branch-addressable", "checkout-able", "checkable", "gated", "tasks", "local-issues", "ticketed", "workable"]
           },
-          "description": "Capability rungs this offer needs (FS-006-project-interface.10); unmet rungs render '(unavailable: …)'."
+          "description": "Capability rungs this offer needs (FS-006-project-interface.10); unmet rungs render '(unavailable: …)'. 'ticketed' and 'local-issues' are older spellings of 'tasks' and still resolve."
         },
         "confirm": { "type": "boolean", "description": "Ask before running." }
       }

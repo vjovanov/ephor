@@ -82,7 +82,7 @@ struct Diagnosis {
     answering: Option<usize>,
     asked: Option<usize>,
     /// How many the configuration names — which is not the same number: a
-    /// ticket store is probed and a shared source is site-level, and both are
+    /// task store is probed and a shared source is site-level, and both are
     /// sources of this project's matters.
     configured: usize,
 }
@@ -92,7 +92,7 @@ impl Diagnosis {
     /// have chosen to be without holds.
     ///
     /// Most rungs are choices: a project with no runtime bound, no gate verbs
-    /// and no ticket store is a project somebody watches and does not hand
+    /// and no task store is a project somebody watches and does not hand
     /// work to, which is the ladder working as intended
     /// (§FS-006-project-interface.10). Two are not. *observable* failing means
     /// nothing is watching it at all, and *placed* failing means the registry
@@ -626,7 +626,7 @@ mod tests {
                 vec![
                     Rung::Workable,
                     Rung::Gated,
-                    Rung::LocalIssues,
+                    Rung::Tasks,
                     Rung::Checkable,
                     Rung::BranchAddressable,
                     Rung::CheckoutAble,

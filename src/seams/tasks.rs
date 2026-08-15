@@ -1,9 +1,12 @@
-//! Local ticket stores, read where they live (§FS-006-project-interface.7).
+//! The project's own tasks, read where they live (§FS-006-project-interface.7).
 //!
-//! A project may keep tickets in its checkout — a plan directory, a git-backed
-//! issue store — and a store ephor recognizes is read through the store's own
-//! files, as matters with their discussions (§FS-007-matters), into the same
-//! feed under the same rules as anything a forge reported.
+//! A project may keep its own work in its checkout — a plan directory, a
+//! git-backed issue store — and a task store ephor recognizes is read through
+//! the store's own files, as matters with their discussions
+//! (§FS-007-matters), into the same feed under the same rules as anything a
+//! forge reported. The word is **task** and not ticket or issue: a ticket is
+//! what a remote tracker keys, an issue is what a forge files, and these are
+//! the project's own.
 //!
 //! Recognition is by probed convention or manifest declaration; attribution is
 //! the checkout's own project; and the stores are project-native things that
@@ -19,7 +22,7 @@ use crate::manifest::Manifest;
 /// also what a manifest declares (§FS-006-project-interface.7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
-    /// A plan directory: markdown plans whose task headings are the tickets.
+    /// A plan directory: markdown plans whose task headings are the tasks.
     Plans,
     /// A git-backed issue store.
     Beads,
@@ -63,7 +66,7 @@ pub struct Store {
     pub path: PathBuf,
 }
 
-/// Every ticket store this checkout holds: what the manifest declares, then
+/// Every task store this checkout holds: what the manifest declares, then
 /// what the well-known names find. Declared and probed are not alternatives
 /// here the way a verb's binding is — a project may keep two stores, and both
 /// are read.
@@ -75,7 +78,7 @@ pub fn find(root: &Path, manifest: Option<&Manifest>) -> Vec<Store> {
         }
     };
     if let Some(manifest) = manifest {
-        for declared in &manifest.tickets {
+        for declared in &manifest.tasks {
             if let Some(kind) = Kind::parse(&declared.kind) {
                 push(kind, root.join(&declared.path));
             }
@@ -87,12 +90,12 @@ pub fn find(root: &Path, manifest: Option<&Manifest>) -> Vec<Store> {
     found
 }
 
-/// Read one store's tickets as items of the project the checkout belongs to
+/// Read one store's tasks as items of the project the checkout belongs to
 /// (§FS-006-project-interface.7). Attribution is the checkout's project: a
 /// store in a checkout is about that checkout, and nothing has to guess.
 ///
 /// A store that could not be read is an error and not an empty answer: it is a
-/// source like any other, and "no tickets" has to mean there are none rather
+/// source like any other, and "no tasks" has to mean there are none rather
 /// than that nobody could look (§FS-001-forge-interface.6).
 pub fn read(store: &Store, project: &str) -> Result<Vec<Item>, String> {
     match store.kind {
@@ -104,8 +107,8 @@ pub fn read(store: &Store, project: &str) -> Result<Vec<Item>, String> {
     }
 }
 
-/// The plan reader. Every plan in the directory is one matter per open ticket,
-/// keyed by the store's own id — `rhei:<plan>.<ticket>` — because the store
+/// The plan reader. Every plan in the directory is one matter per open task,
+/// keyed by the store's own id — `rhei:<plan>.<task>` — because the store
 /// named it and ephor does not get to rename it (§FS-007-matters.1).
 ///
 /// A task in a final state is not read (§FS-006-project-interface.7): the
@@ -138,7 +141,7 @@ fn plans(store: &Store, project: &str) -> Result<Vec<Item>, String> {
     let mut items = Vec::new();
     for path in paths {
         // A plan the store holds and ephor cannot read is the store failing to
-        // answer, not a plan with no tickets in it.
+        // answer, not a plan with no tasks in it.
         let plan = crate::work::runtime::plan::Plan::read(&path)
             .map_err(|err| format!("cannot read {}: {err}", path.display()))?;
         let Some(plan) = plan else {
@@ -150,8 +153,8 @@ fn plans(store: &Store, project: &str) -> Result<Vec<Item>, String> {
             .map(|name| name.split('.').next().unwrap_or(name).to_string())
             .unwrap_or_default();
         let updated_at = modified(&path);
-        for ticket in plan.tickets() {
-            let state = ticket.state.clone().unwrap_or_default();
+        for task in plan.tickets() {
+            let state = task.state.clone().unwrap_or_default();
             // A finished task is history the store keeps, not news the feed
             // carries: it has no activity time of its own beyond this file's,
             // so it would resurface every time the plan was touched
@@ -160,16 +163,18 @@ fn plans(store: &Store, project: &str) -> Result<Vec<Item>, String> {
                 continue;
             }
             items.push(Item {
-                id: format!("{}:{stem}.{}", store.kind.name(), ticket.id),
+                id: format!("{}:{stem}.{}", store.kind.name(), task.id),
                 project: project.to_string(),
                 source: store.kind.name().to_string(),
-                kind: ItemKind::Issue,
+                // The project's own task, and not an issue a forge filed
+                // (§FS-003-feed-categories.1).
+                kind: ItemKind::Task,
                 role: None,
-                title: ticket.title.clone(),
+                title: task.title.clone(),
                 url: None,
                 state: (!state.is_empty()).then_some(state),
-                // A local ticket waits on whoever keeps the store; nothing
-                // about it says anyone is waiting on an answer.
+                // A task waits on whoever keeps the store; nothing about it
+                // says anyone is waiting on an answer.
                 needs_response: false,
                 updated_at,
                 raw: serde_json::json!({ "plan": path.to_string_lossy() }),
@@ -180,7 +185,7 @@ fn plans(store: &Store, project: &str) -> Result<Vec<Item>, String> {
 }
 
 /// When the store last changed, which is the closest thing a file-backed
-/// ticket has to a last-activity time.
+/// task has to a last-activity time.
 fn modified(path: &Path) -> chrono::DateTime<chrono::Utc> {
     std::fs::metadata(path)
         .and_then(|metadata| metadata.modified())
@@ -215,6 +220,23 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         plan_dir(tmp.path(), "docs/plans", "# Plan\n");
         let manifest = crate::manifest::parse(
+            r#"{"tasks": [{"kind": "rhei", "path": "docs/plans"}]}"#,
+            "ephor.json",
+        )
+        .unwrap();
+        let found = find(tmp.path(), Some(&manifest));
+        assert_eq!(found.len(), 1);
+        assert!(found[0].path.ends_with("docs/plans"));
+    }
+
+    /// `tickets` was this key's name before these were called what they are,
+    /// and a manifest somebody already wrote goes on meaning what it meant
+    /// (§FS-006-project-interface.11).
+    #[test]
+    fn the_older_spelling_of_the_key_is_still_read() {
+        let tmp = tempfile::tempdir().unwrap();
+        plan_dir(tmp.path(), "docs/plans", "# Plan\n");
+        let manifest = crate::manifest::parse(
             r#"{"tickets": [{"kind": "rhei", "path": "docs/plans"}]}"#,
             "ephor.json",
         )
@@ -232,7 +254,7 @@ mod tests {
         plan_dir(tmp.path(), "panta", "# Plan\n");
         plan_dir(tmp.path(), "elsewhere", "# Plan\n");
         let manifest = crate::manifest::parse(
-            r#"{"tickets": [{"kind": "rhei", "path": "elsewhere"}]}"#,
+            r#"{"tasks": [{"kind": "rhei", "path": "elsewhere"}]}"#,
             "ephor.json",
         )
         .unwrap();
@@ -242,13 +264,13 @@ mod tests {
         assert!(found[0].path.ends_with("elsewhere"));
     }
 
-    /// The store named its tickets; ephor does not get to rename them
+    /// The store named its tasks; ephor does not get to rename them
     /// (§FS-007-matters.1). And a task in a final state is the store's record
     /// rather than the feed's news, so it is not read at all
     /// (§FS-006-project-interface.7) — final here by the runtime's built-in
     /// default machine, since this store declares none of its own.
     #[test]
-    fn a_plans_store_reads_its_open_tickets_under_the_stores_own_ids() {
+    fn a_plans_store_reads_its_open_tasks_under_the_stores_own_ids() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = plan_dir(
             tmp.path(),
@@ -272,6 +294,9 @@ mod tests {
         // Attribution is the checkout's project: nothing has to guess.
         assert!(items.iter().all(|item| item.project == "widget"));
         assert!(items.iter().all(|item| item.source == "rhei"));
+        // The project's own task, never an issue a forge filed
+        // (§FS-003-feed-categories.1).
+        assert!(items.iter().all(|item| item.kind == ItemKind::Task));
     }
 
     /// Which states are final is the store's own machine to say, not a list of
@@ -279,7 +304,7 @@ mod tests {
     /// verified work to itself, and its `completed` — a state its machine never
     /// heard of — is as open as anything else (§FS-006-project-interface.7).
     #[test]
-    fn the_stores_own_machine_says_which_tickets_are_over() {
+    fn the_stores_own_machine_says_which_tasks_are_over() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = plan_dir(
             tmp.path(),
@@ -309,7 +334,7 @@ mod tests {
 
     /// A task with no state at all is open: nothing said it was over.
     #[test]
-    fn a_ticket_with_no_state_is_read() {
+    fn a_task_with_no_state_is_read() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = plan_dir(
             tmp.path(),
@@ -326,7 +351,7 @@ mod tests {
     }
 
     /// A machine ephor cannot read is the store failing to answer, exactly like
-    /// a plan it cannot read: "no tickets" has to mean there are none
+    /// a plan it cannot read: "no tasks" has to mean there are none
     /// (§FS-001-forge-interface.6).
     #[test]
     fn a_store_whose_machine_cannot_be_read_says_so_rather_than_answering_empty() {
@@ -358,7 +383,7 @@ mod tests {
 
     /// A store that is there and cannot be read is a source that did not
     /// answer, never a store with nothing in it
-    /// (§FS-001-forge-interface.6): an empty section has to mean "no tickets".
+    /// (§FS-001-forge-interface.6): an empty section has to mean "no tasks".
     #[test]
     fn a_store_that_cannot_be_read_says_so_rather_than_answering_empty() {
         let tmp = tempfile::tempdir().unwrap();

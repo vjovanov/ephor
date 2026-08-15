@@ -11,7 +11,7 @@ drives them.
 Remote sources fetch per the §FS-001-forge-interface capability set —
 shared sources (a mailbox, a notification stream) once per site, per-repo
 sources per project — and checkout sources read the forests: git probes,
-custom-status, ticket stores, each a summons (§AR-002-summons). Fetch
+custom-status, task stores, each a summons (§AR-002-summons). Fetch
 normalizes everything to discussions and events with their evidence
 attached, and fails per §FS-001-forge-interface.6: explicitly, visibly,
 with last-good kept and marked stale.

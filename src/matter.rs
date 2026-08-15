@@ -793,8 +793,8 @@ fn references(matter: &Matter) -> Vec<String> {
     found
 }
 
-/// Whether this matter *is* the thing that ticket key names — a local ticket
-/// store's matter, or one whose key carries it.
+/// Whether this matter *is* the thing that ticket key names — a task store's
+/// matter, or one whose key carries it.
 fn names(matter: &Matter, ticket: &str) -> bool {
     matter.key.as_str().contains(ticket)
 }

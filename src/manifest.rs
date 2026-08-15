@@ -138,8 +138,10 @@ pub struct Gate {
     pub restart: Option<Binding>,
 }
 
+/// A task store the project keeps somewhere other than a probed name
+/// (§FS-006-project-interface.7).
 #[derive(Debug, Clone, Deserialize)]
-pub struct TicketStore {
+pub struct TaskStore {
     pub kind: String,
     pub path: String,
 }
@@ -203,8 +205,11 @@ pub struct Manifest {
     pub checks: Checks,
     #[serde(default, rename = "ci")]
     pub gate: Gate,
-    #[serde(default)]
-    pub tickets: Vec<TicketStore>,
+    /// `tickets` is the older spelling of this key and is still read: the
+    /// interface evolves by addition (§FS-006-project-interface.11), so a
+    /// manifest somebody already wrote goes on meaning what it meant.
+    #[serde(default, alias = "tickets")]
+    pub tasks: Vec<TaskStore>,
     #[serde(default, rename = "actions")]
     pub offers: Vec<Offer>,
 }

@@ -14,12 +14,12 @@ no IO, no vendor, no product.
   functions; testable without a filesystem.
 - **sources** — what fetches: remote providers behind the
   §FS-001-forge-interface capability set, and checkout sources (the git
-  prober, custom-status, local ticket readers). Each adapter owns its vendor
+  prober, custom-status, task-store readers). Each adapter owns its vendor
   literal; nothing else does.
 - **seams** — what binds and runs: binding resolution
   (site configuration over manifest over probe, §FS-006-project-interface.1),
   the summons executor and answer reader, and the verb modules — checks,
-  gate, checkout, ticket stores, runtime (§AR-007-runtime).
+  gate, checkout, task stores, runtime (§AR-007-runtime).
 - **engine** — the pipeline of §AR-008-pipeline, the cache, refresh, and the
   work ledger's operations.
 - **surfaces** — CLI, TUI, status widget, JSON output. Presentation only;

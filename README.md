@@ -308,7 +308,7 @@ A project that wants to say more places one optional file at its forest root:
 { "identity": { "aliases": ["widget"], "territory": ["acme-labs"] },
   "checks":   { "check": "./check.sh", "smoke": { "command": "./ci/smoke.sh", "features": "list" } },
   "ci":       { "status": "./ci/gate.sh", "failures": "./ci/gate-failures.sh" },
-  "tickets":  [{ "kind": "rhei", "path": "docs/plans" }],
+  "tasks":    [{ "kind": "rhei", "path": "docs/plans" }],
   "actions":  [{ "id": "rebuild", "description": "rebuild the docs site",
                  "command": "./tools/rebuild.sh", "requires": ["checkout-able"] }] }
 ```
@@ -320,8 +320,8 @@ A project that wants to say more places one optional file at its forest root:
 - **The gate is the project's, in three verbs** — `status`, `failures`,
   `restart`. A forge-hosted gate needs none of this: the provider's own gate
   capability is the shipped default.
-- **Ticket stores are read where they live** — `panta/`, `.beads/`, or wherever
-  the manifest says.
+- **The project's own tasks are read where they live** — `panta/`, `.beads/`,
+  or wherever the manifest says.
 - **Offers** are menu entries the project ships with itself, gated by the same
   capability rungs your own actions use.
 - **What crosses the interface is validated**: `ephor validate --manifest .`,
@@ -523,9 +523,9 @@ deliberately.
 | `<anything else>` | a forge extension: `ephor-forge-<name>` on `PATH` ([§FS-001-forge-interface.2](requirements.md#2-two-transports-one-interface)) | ephor's policy, over what it answered |
 | `slack`/`discord`/`email` | stubs; activate by adding secrets under `~/config/secrets/ephor/` | mentions/DMs (planned) |
 
-A ticket store in the checkout — `panta/`, `.beads/` — is read on every refresh
+A task store in the checkout — `panta/`, `.beads/` — is read on every refresh
 without any provider block, and reports under its own name
-([§FS-006-project-interface.7](requirements.md#7-local-ticket-stores-are-read-where-they-live)).
+([§FS-006-project-interface.7](requirements.md#7-the-projects-own-tasks-are-read-where-they-live)).
 
 **Answered detection**: a citation or thread stops needing a response once
 you answered it — with a message afterwards, with a reaction on the

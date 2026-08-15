@@ -401,7 +401,7 @@ A project that wants to speak places one file at its forest root
 It is **offered, never required**: every field is optional, an empty `{}` is
 valid, and a project that places nothing is fully watchable exactly as it
 stands. It may declare identity hints, its forest's own layout, check and gate
-verbs, ticket stores, and offers — menu entries you invoke.
+verbs, task stores, and offers — menu entries you invoke.
 
 ```jsonc
 { "identity": { "aliases": ["widget"], "territory": ["acme-labs"] },
@@ -409,7 +409,7 @@ verbs, ticket stores, and offers — menu entries you invoke.
   "checks":   { "check": "./check.sh",
                 "smoke": { "command": "./ci/smoke.sh", "features": "list" } },
   "ci":       { "status": "./ci/gate.sh", "failures": "./ci/gate-failures.sh" },
-  "tickets":  [{ "kind": "rhei", "path": "docs/plans" }],
+  "tasks":    [{ "kind": "rhei", "path": "docs/plans" }],
   "actions":  [{ "id": "rebuild", "description": "rebuild it",
                  "command": "./build.sh", "cwd": "repo:ce",
                  "when": { "kinds": ["pr"] },
@@ -422,7 +422,7 @@ verbs, ticket stores, and offers — menu entries you invoke.
 | `forest` | the repositories under the root, as the project declares them ([§AR-004-forest.1](architecture/AR-004-forest.md#1-folds)) | §5.1, `EPHOR_REPOS` |
 | `checks` | what fills `check`, `style`, `smoke` ([§FS-006-project-interface.5](../requirements.md#5-checks-are-verbs-and-every-script-is-self-contained)) | §4.2.3 |
 | `ci` | what answers `status`, `failures`, `restart` ([§FS-006-project-interface.6](../requirements.md#6-the-gate-is-the-projects-in-three-verbs)) | §4.2.4 |
-| `tickets` | ticket stores kept somewhere other than the probed names ([§FS-006-project-interface.7](../requirements.md#7-local-ticket-stores-are-read-where-they-live)) | §4.2.5 |
+| `tasks` | task stores kept somewhere other than the probed names — `tickets` is the older spelling and is still read ([§FS-006-project-interface.7](../requirements.md#7-the-projects-own-tasks-are-read-where-they-live)) | §4.2.5 |
 | `actions` | menu entries the project offers ([§FS-006-project-interface.9](../requirements.md#9-offers-the-projects-actions)) | §7.6 |
 
 An offer is a menu entry in the same shape yours have (§7.2), selected by the
@@ -546,36 +546,41 @@ follows the forge. Binding these verbs is therefore worth doing where a script
 in front of the agent asks them ([§8.5](#85-a-script-in-front-of-the-agent));
 where your gate is the forge's, there is nothing to write.
 
-### 4.2.5 Local ticket stores
+### 4.2.5 The project's own tasks
 
-A project may keep its tickets in its own checkout — a plan directory, a
-git-backed issue store — and ephor reads a store it recognizes through the
-store's own files, into the same feed under the same rules as anything a forge
-reported ([§FS-006-project-interface.7](../requirements.md#7-local-ticket-stores-are-read-where-they-live)):
+A project may keep its own work in its own checkout — a plan directory, a
+git-backed issue store — and ephor reads a **task store** it recognizes through
+the store's own files, into the same feed under the same rules as anything a
+forge reported ([§FS-006-project-interface.7](../requirements.md#7-the-projects-own-tasks-are-read-where-they-live)):
 
 | Store | Probed | Read as |
 |---|---|---|
-| `rhei` | `panta/` | every task heading in every plan, keyed `rhei:<plan>.<ticket>` |
+| `rhei` | `panta/` | every open task heading in every plan, keyed `rhei:<plan>.<task>` |
 | `beads` | `.beads/` | recognized; the reader is not written yet, so it reports nothing rather than pretending |
 
-A manifest's `tickets` adds a store the project keeps elsewhere, and declaring
-one does not hide a probed one — a project may keep two, and both are read.
-Attribution needs no configuration: a store in a checkout is about that
-checkout's project. The tickets arrive as issues under the source name the
-store carries (`rhei`, `beads`), so they sit in **My Issues** beside anything
-else nobody else opened, carrying the state the store gave them. Nothing is
-ever written back — the store is the project's, and ephor only reads it.
+They are **tasks** and not tickets or issues: a ticket is what a remote tracker
+keys, an issue is what a forge files, and these are the project's own work in
+the project's own checkout.
 
-A ticket in a **final** state is not read at all — final as the store's own
+A manifest's `tasks` adds a store the project keeps elsewhere, and declaring
+one does not hide a probed one — a project may keep two, and both are read. The
+older spelling of that key, `tickets`, is still read. Attribution needs no
+configuration: a store in a checkout is about that checkout's project. The
+tasks arrive under the source name the store carries (`rhei`, `beads`), so they
+sit in **Tasks** ([§6.1](#61-the-categories)), carrying the state the store gave
+them. Nothing is ever written back — the store is the project's, and ephor only
+reads it.
+
+A task in a **final** state is not read at all — final as the store's own
 `states.yaml` says, or, where it declares none, as the runtime's built-in
 default machine says (`pending`, and `completed` final) — because the store is
 the record of the finished work and the feed shows what is open
-([§FS-006-project-interface.7](../requirements.md#7-local-ticket-stores-are-read-where-they-live)).
+([§FS-006-project-interface.7](../requirements.md#7-the-projects-own-tasks-are-read-where-they-live)).
 A store whose machine cannot be read reports as a source that did not answer,
 exactly like a plan ephor cannot read.
 
-Finding a store is a capability, never an obligation: it buys the *ticketed*
-rung and nothing about a project without one degrades
+Finding a store is a capability, never an obligation: it buys the *tasks* rung
+and nothing about a project without one degrades
 ([§7.5](#75-why-something-is-not-offered)).
 
 ### 4.2.6 What a verb may answer — the envelope
@@ -650,7 +655,7 @@ state directory, registry, configuration and checkout — and walks the seams
 against it: a forge reached out of process, a refresh that categorizes what
 came back, a summons answering by exit code and by envelope, check verbs
 probed and declared, the checkout and the rebase, a dispatch whose ledger is
-read back out of its plan, and a local ticket store. It reaches no forge and
+read back out of its plan, and a task store. It reaches no forge and
 reads nothing of yours, so it is the half that works on a machine with no
 site at all. Then it takes the temporary place away.
 
@@ -741,7 +746,7 @@ A provider block always has `provider`; the rest is its own.
 | `<anything else>` | an external forge executable (§10.1) | ephor's policy, over what it answered |
 | `slack`, `discord`, `email` | stubs; activate by adding secrets | mentions and DMs (planned) |
 
-Two more sources need no provider block at all: a **ticket store** in the
+Two more sources need no provider block at all: a **task store** in the
 checkout is read on every refresh where one is there, and reports under its own
 name — `rhei`, `beads` (§4.2.5). Nothing configures them; finding one is what
 makes them a source.
@@ -911,6 +916,7 @@ claims as its own (§FS-008-attribution.2).
 | CI | gate and build results |
 | My Issues | issues you opened |
 | Participating | issues you are in but did not open |
+| Tasks | the project's own tasks, from a store in its checkout (§4.2.5) |
 | Messages | conversations attached to nothing else |
 | Recent | finished work, for `recent_days` |
 
@@ -1239,7 +1245,7 @@ the cheap way to ask this question outside the inbox
 | checkout-able | a checkout command is bound, or a checkout is on disk to grow one from | work that edits |
 | checkable | `check.sh`, `check-style.sh`, or `smoke-test.sh` at the root, **or** a manifest `checks` block (§4.2.3) | verification that means something |
 | gated | a source reports a gate, **or** a manifest `ci` block binds one (§4.2.4) | failure dossiers and the restart |
-| local-issues | a `panta/` or `.beads/` store at the root, in any branch workspace on disk, or one a manifest declares (§4.2.5) | the project's own issues as matters |
+| tasks | a `panta/` or `.beads/` store at the root, in any branch workspace on disk, or one a manifest declares (§4.2.5) | the project's own tasks as matters |
 | workable | the configured runner is on `PATH` | running the work |
 
 The ladder is resolved per project when the inbox loads, when a refresh

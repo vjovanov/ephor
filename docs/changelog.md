@@ -28,22 +28,6 @@ ships, the previous "latest" section moves verbatim to
 
 ## Unreleased
 
-### Fixed
-
-- **A finished task in a local store is no longer a matter**
-  ([§FS-006-project-interface.7](../requirements.md#7-local-ticket-stores-are-read-where-they-live)).
-  The plan reader pushed every task heading whatever its state, on the belief
-  that a finished one would be hidden by the recency window anyway — but a
-  local task has no activity time of its own beyond its plan file's, so every
-  finished task in a plan resurfaced each time the plan was touched. A project
-  keeping its own work in a store showed its whole record as open issues.
-  Finality is now the store's own word: the machine its `states.yaml`
-  declares, or — where it declares none — the runtime's built-in default, which
-  is what such a store's tasks actually run under. A task in a final state is
-  history the store keeps and is not read; a store whose machine cannot be read
-  reports as a source that did not answer, exactly like a plan ephor cannot
-  read (§FS-001-forge-interface.6).
-
 ### Added
 
 - **A ticket can be taken back**
@@ -193,7 +177,7 @@ ships, the previous "latest" section moves verbatim to
   tells them apart, and the rung names the remedy.
 - **A project's own issues are read where they live, and the rung is named
   for what it holds**
-  ([§FS-006-project-interface.7](../requirements.md#7-local-ticket-stores-are-read-where-they-live)).
+  ([§FS-006-project-interface.7](../requirements.md#7-the-projects-own-tasks-are-read-where-they-live)).
   The default work root is `{workspace}/panta`, so dispatch on a
   branch-addressable project writes its plans into the branch's own tree — and
   the reader looked only at the forest root, so it never read them back. A
@@ -242,7 +226,7 @@ ships, the previous "latest" section moves verbatim to
   finishes.
 - The ladder counts the sources that were **asked**, not the ones the
   configuration names
-  ([§FS-006-project-interface.7](../requirements.md#7-local-ticket-stores-are-read-where-they-live)).
+  ([§FS-006-project-interface.7](../requirements.md#7-the-projects-own-tasks-are-read-where-they-live)).
   A local ticket store is probed rather than configured and a shared source is
   declared once for the site, and both write a slot of their own — so a
   project with a store reported more sources answering than it had, `5/4`.
@@ -377,7 +361,7 @@ ships, the previous "latest" section moves verbatim to
   named for the plan now, with an alias so a ledger written before this still
   reads.
 - **Tickets a project keeps in its checkout are read where they live**
-  ([§FS-006-project-interface.7](../requirements.md#7-local-ticket-stores-are-read-where-they-live)).
+  ([§FS-006-project-interface.7](../requirements.md#7-the-projects-own-tasks-are-read-where-they-live)).
   A `panta/` plan directory — or one the manifest points at — is now a source
   like any other: its open tasks arrive in the feed beside what the forges
   reported, under the store's own ids, attributed to the checkout's project
@@ -933,6 +917,19 @@ ships, the previous "latest" section moves verbatim to
 
 ### Fixed
 
+- **A finished task in a local store is no longer a matter**
+  ([§FS-006-project-interface.7](../requirements.md#7-the-projects-own-tasks-are-read-where-they-live)).
+  The plan reader pushed every task heading whatever its state, on the belief
+  that a finished one would be hidden by the recency window anyway — but a
+  local task has no activity time of its own beyond its plan file's, so every
+  finished task in a plan resurfaced each time the plan was touched. A project
+  keeping its own work in a store showed its whole record as open issues.
+  Finality is now the store's own word: the machine its `states.yaml`
+  declares, or — where it declares none — the runtime's built-in default, which
+  is what such a store's tasks actually run under. A task in a final state is
+  history the store keeps and is not read; a store whose machine cannot be read
+  reports as a source that did not answer, exactly like a plan ephor cannot
+  read (§FS-001-forge-interface.6).
 - **A parked subtask is visible on an idle root**
   ([§FS-005-dispatch.15](../requirements.md#15-every-operation-is-visible-in-one-place),
   [§FS-005-dispatch.9](../requirements.md#9-work-that-stops-for-a-person-says-so-where-the-person-is-looking)).
@@ -1215,7 +1212,7 @@ ships, the previous "latest" section moves verbatim to
   one". It rides on the placement now, and a matter placed by nothing firmer
   than the project's name is its own subject in the merge.
 - **A ticket store that could not be read answered as an empty store**
-  ([§FS-006-project-interface.7](../requirements.md#7-local-ticket-stores-are-read-where-they-live),
+  ([§FS-006-project-interface.7](../requirements.md#7-the-projects-own-tasks-are-read-where-they-live),
   [§FS-001-forge-interface.6](../requirements.md#6-a-source-that-did-not-answer-says-so-and-says-which-kind-of-not)).
   An unreadable plan directory, and a plan the reader could not parse, both
   became "no tickets" — the one thing an empty section must never mean. A
@@ -1274,6 +1271,25 @@ ships, the previous "latest" section moves verbatim to
 
 ### Changed
 
+- **The project's own work is called a task, everywhere**
+  ([§FS-006-project-interface.7](../requirements.md#7-the-projects-own-tasks-are-read-where-they-live),
+  [§FS-003-feed-categories.1](../requirements.md#1-the-categories)).
+  A **ticket** is what a remote tracker keys, an **issue** is what a forge
+  files, and what a project keeps in its own checkout is neither — so it is a
+  **task**, and one name for one thing (§FS-001-forge-interface.3). Tasks get
+  a row of their own: a `task` kind and a **Tasks** category between
+  Participating and Messages, in the navigator, the plain renderer and the
+  manual's table, instead of sitting in **My Issues** among things other
+  people filed. The rung is **tasks**; `requires: ["ticketed"]` and
+  `requires: ["local-issues"]` still resolve, so nothing anybody already
+  wrote stops meaning what it meant. The manifest key is `tasks`, with
+  `tickets` still read as the older spelling — evolution by addition, so the
+  schema gains the new key rather than breaking the old
+  ([§FS-006-project-interface.11](../requirements.md#11-the-interface-is-versioned)).
+  The feed cache model is bumped, so a cache holding these as issues is
+  rebuilt rather than shown stale. What is not one of these keeps its name:
+  the ticket ephor writes to dispatch work and the ticket keys a forge is
+  asked for are other things and are still called tickets.
 - **The operations board enumerates the work roots, not the ledger**
   ([§FS-005-dispatch.15](../requirements.md#15-every-operation-is-visible-in-one-place)).
   Rows used to derive from ledger entries — operations about items ephor

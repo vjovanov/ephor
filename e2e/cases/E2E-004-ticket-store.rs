@@ -1,13 +1,18 @@
-//! E2E-004-ticket-store: tickets a project keeps in its own checkout become matters.
+//! E2E-004-ticket-store: the tasks a project keeps in its own checkout become
+//! matters.
 //!
 //! The scenario is a project that tracks its work in files rather than on a
 //! forge: a plan directory in the checkout, kept for the project's own sake and
 //! existing whether or not ephor ever runs (§FS-006-project-interface.7). ephor
-//! recognizes the store by its own name, reads it where it lives, and the
-//! tickets arrive in the feed as matters under the store's own ids — nothing is
-//! renamed, nothing is written back, and no configuration was needed to say the
-//! tickets belong to this project: they are in its checkout
+//! recognizes the task store by its own name, reads it where it lives, and the
+//! open tasks arrive in the feed as matters under the store's own ids —
+//! nothing is renamed, nothing is written back, and no configuration was needed
+//! to say the tasks belong to this project: they are in its checkout
 //! (§FS-007-matters.1, §FS-008-attribution.2).
+//!
+//! The case keeps its id, which is stable; what it is about is the project's
+//! own **tasks** — a ticket is what a remote tracker keys, an issue is what a
+//! forge files, and these are neither (§FS-003-feed-categories.1).
 
 #[path = "../support.rs"]
 mod support;
@@ -18,7 +23,7 @@ use predicates::prelude::*;
 
 use support::*;
 
-/// A plan as the store itself writes one: tickets are task headings, and the
+/// A plan as the store itself writes one: tasks are task headings, and the
 /// state line under each is the store's, not ephor's.
 const PLAN: &str = "# Rhei: the retry window\n\n\
 ## Tasks\n\n\
@@ -36,17 +41,19 @@ fn a_store_in_the_checkout_is_read_where_it_lives_and_keeps_its_own_ids() {
 
     world.ephor().args(["refresh", PROJECT]).assert().success();
 
-    // The open ticket is a matter, keyed as the store keys it: the store named
+    // The open task is a matter, keyed as the store keys it: the store named
     // it and ephor does not get to rename it.
     let open = world.matter("rhei:window.1");
     assert_eq!(open["title"], "Widen the retry window");
     assert_eq!(open["state"], "pending");
-    assert_eq!(open["kind"], "issue");
+    // The project's own task, and so its own row (§FS-003-feed-categories.1):
+    // never an issue, which is what a forge files.
+    assert_eq!(open["kind"], "task");
     // Attribution is the checkout's project: a store in a checkout is about
     // that checkout, and nothing has to guess (§FS-008-attribution.2).
     assert_eq!(open["placement"]["on"]["project"], PROJECT);
-    // A local ticket waits on whoever keeps the store; nothing about it says
-    // someone is waiting on an answer.
+    // A task waits on whoever keeps the store; nothing about it says someone
+    // is waiting on an answer.
     assert_eq!(open["needs_response"], false);
 
     // And the finished one is not a matter at all: it is history the store
@@ -64,12 +71,12 @@ fn a_store_in_the_checkout_is_read_where_it_lives_and_keeps_its_own_ids() {
         .stdout(predicate::str::contains("Widen the retry window"));
 }
 
-/// Which of a store's tickets are over is the store's own machine to say, never
+/// Which of a store's tasks are over is the store's own machine to say, never
 /// a list of spellings ephor carries (§FS-006-project-interface.7): a store
 /// declaring `verified` final keeps its verified work to itself, and a state
 /// that machine never heard of is as open as anything else.
 #[test]
-fn the_stores_own_machine_says_which_of_its_tickets_are_over() {
+fn the_stores_own_machine_says_which_of_its_tasks_are_over() {
     let world = World::new();
     world.file(
         "panta/states.yaml",
@@ -102,8 +109,8 @@ A word this machine never heard of.\n",
     assert_eq!(world.matter("rhei:window.3")["title"], "Retire the flag");
 }
 
-/// A project that keeps its store somewhere else says so in its manifest, and
-/// declaring one does not hide the other — a project may keep two
+/// A project that keeps its store somewhere else says so in its manifest under
+/// `tasks`, and declaring one does not hide the other — a project may keep two
 /// (§FS-006-project-interface.7).
 #[test]
 fn a_declared_store_and_a_probed_one_are_both_read() {
@@ -114,7 +121,7 @@ fn a_declared_store_and_a_probed_one_are_both_read() {
         "# Rhei: the release\n\n## Tasks\n\n### Task 1: Cut the tag\n**State:** pending\n",
     );
     world.manifest(serde_json::json!({
-        "tickets": [{ "kind": "rhei", "path": "docs/plans" }]
+        "tasks": [{ "kind": "rhei", "path": "docs/plans" }]
     }));
 
     world.ephor().args(["refresh", PROJECT]).assert().success();
@@ -124,6 +131,26 @@ fn a_declared_store_and_a_probed_one_are_both_read() {
         "Widen the retry window"
     );
     assert_eq!(world.matter("rhei:release.1")["title"], "Cut the tag");
+}
+
+/// `tickets` was that key's name before these were called what they are, and a
+/// manifest somebody already wrote goes on meaning what it meant: the interface
+/// evolves by addition (§FS-006-project-interface.11).
+#[test]
+fn a_manifest_written_the_older_way_is_still_read() {
+    let world = World::new();
+    world.file(
+        "docs/plans/release.rhei.md",
+        "# Rhei: the release\n\n## Tasks\n\n### Task 1: Cut the tag\n**State:** pending\n",
+    );
+    world.manifest(serde_json::json!({
+        "tickets": [{ "kind": "rhei", "path": "docs/plans" }]
+    }));
+
+    world.ephor().args(["refresh", PROJECT]).assert().success();
+
+    assert_eq!(world.matter("rhei:release.1")["title"], "Cut the tag");
+    assert_eq!(world.matter("rhei:release.1")["kind"], "task");
 }
 
 /// Work about a change belongs in that change's working tree
@@ -179,7 +206,7 @@ fn a_store_in_a_branch_workspace_is_read_as_readily_as_one_at_the_root() {
             ..Bindings::default()
         },
     );
-    assert!(set.holds(Rung::LocalIssues));
+    assert!(set.holds(Rung::Tasks));
 }
 
 /// Finding a store is a capability, never an obligation
@@ -201,15 +228,13 @@ fn a_project_without_a_store_is_watched_all_the_same_and_says_what_it_looked_for
             ..Bindings::default()
         },
     );
-    assert!(!bare.holds(Rung::LocalIssues));
-    let reason = bare
-        .reason(Rung::LocalIssues)
-        .expect("a missing rung says why");
+    assert!(!bare.holds(Rung::Tasks));
+    let reason = bare.reason(Rung::Tasks).expect("a missing rung says why");
     // Every place a store may live is named, not just the forest root: a
     // branch-addressable project keeps one per workspace
     // (§FS-006-project-interface.7), and a reason that named only the root
     // would send a reader to look in the wrong place.
-    assert!(reason.contains("keeps no issues of its own"), "{reason}");
+    assert!(reason.contains("keeps no tasks of its own"), "{reason}");
     assert!(
         reason.contains(&world.forest().display().to_string()),
         "{reason}"
@@ -218,7 +243,7 @@ fn a_project_without_a_store_is_watched_all_the_same_and_says_what_it_looked_for
     // The store appears, and so does the rung — resolved from the world as it
     // is now rather than from anything written down (§AR-005-capabilities.1).
     world.file("panta/window.rhei.md", PLAN);
-    let ticketed = CapabilitySet::resolve(
+    let with_store = CapabilitySet::resolve(
         PROJECT,
         Some(&placement),
         &Bindings {
@@ -226,5 +251,5 @@ fn a_project_without_a_store_is_watched_all_the_same_and_says_what_it_looked_for
             ..Bindings::default()
         },
     );
-    assert!(ticketed.holds(Rung::LocalIssues));
+    assert!(with_store.holds(Rung::Tasks));
 }

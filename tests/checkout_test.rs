@@ -160,13 +160,13 @@ fn a_missing_workspace_is_made_from_the_registry_alone() {
     assert!(target.join("ce/mine.txt").exists());
     assert!(!target.join("ee/mine.txt").exists());
 
-    // A workspace ephor makes gets a ticket store, so the first dispatch into
+    // A workspace ephor makes gets a task store, so the first dispatch into
     // this branch has somewhere to land and what is under way is visible from
     // the moment the tree exists (§FS-006-project-interface.7). It sits at the
     // root of the multi-repo workspace, beside the repositories rather than
     // inside one of them.
     let store = target.join("panta");
-    assert!(store.is_dir(), "no ticket store at {}", store.display());
+    assert!(store.is_dir(), "no task store at {}", store.display());
     assert!(store.join("states.yaml").is_file());
     // And it ignores itself, so it is ephor's planning state living in a
     // checkout rather than content the project carries

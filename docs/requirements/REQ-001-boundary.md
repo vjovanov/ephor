@@ -58,7 +58,7 @@ registry row leaves a clean ephor. Neither side holds the other hostage.
 
 ## 5. No product literal outside its adapter
 
-The name of a forge, vendor CLI, runtime, or ticket store appears only in
+The name of a forge, vendor CLI, runtime, or task store appears only in
 its own adapter, in shipped assets and examples, and in documentation —
 never in core source. This is checked mechanically, not observed as a
 convention: the check fails the build, the same way the site-word check

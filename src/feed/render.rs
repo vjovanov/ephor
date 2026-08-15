@@ -105,14 +105,16 @@ pub fn render_project(feed: &ProjectFeed, seen: &Seen, style: &Style, recent_day
     items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
 
     // The categories of §FS-003-feed-categories.1, in the order they are
-    // worked: status, then prs, ci, issues, messages — and Recent last, which
-    // is every finished item whatever its kind. The plain renderer prints no
-    // headers, so a row's category is its position plus its `[state]`.
+    // worked: status, then prs, ci, issues, tasks, messages — and Recent last,
+    // which is every finished item whatever its kind. The plain renderer
+    // prints no headers, so a row's category is its position plus its
+    // `[state]`.
     for kind in [
         ItemKind::Status,
         ItemKind::Pr,
         ItemKind::Ci,
         ItemKind::Issue,
+        ItemKind::Task,
         ItemKind::Message,
     ] {
         for item in items

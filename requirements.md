@@ -314,6 +314,7 @@ role on it:
 | CI | gate and build results |
 | My Issues | issues the user opened |
 | Participating | issues the user is in but did not open |
+| Tasks | the project's own tasks, from a store in its checkout (§FS-006-project-interface.7) |
 | Messages | anything addressed to the user that is not a pull request or an issue |
 | Recent | finished items — see [§2](#2-recent) |
 
@@ -1396,7 +1397,7 @@ declaration, and the person always has the last word.
 
 A project that chooses to speak places one file, `ephor.json`, at its forest
 root (decided in §DF-001-manifest-offered). It may declare identity hints,
-the forest's own layout, check verbs, gate verbs, ticket stores, and
+the forest's own layout, check verbs, gate verbs, task stores, and
 offers — every field optional, an empty
 manifest valid, and nothing in it able to gate a capability that probing or
 site configuration could not establish alone. Identity fields are hints the
@@ -1412,7 +1413,7 @@ spend it.
 ### 3. A summons: environment in, exit code and answer out
 
 Every command the interface names — a check verb, a gate verb, a checkout, a
-ticket store's CLI, an offer — is invoked one way. It runs in the resolved
+task store's CLI, an offer — is invoked one way. It runs in the resolved
 place: the item's branch workspace where one resolves, the forest root
 otherwise, a manifest-designated repository of the forest where the entry
 says so. It receives the dossier as `EPHOR_*` environment — one vocabulary,
@@ -1479,16 +1480,26 @@ provider's own gate capability is the shipped default binding. A project
 with an internal gate binds three commands, and nothing above the seam can
 tell the difference.
 
-### 7. Local ticket stores are read where they live
+### 7. The project's own tasks are read where they live
 
-A project may keep tickets in its checkout — a plan directory, a
-git-backed issue store — and a store ephor recognizes is read through the
-store's own files and CLI, as matters with their discussions
+A project may keep its own work in its checkout — a plan directory, a
+git-backed issue store — and a **task store** ephor recognizes is read
+through the store's own files and CLI, as matters with their discussions
 (§FS-007-matters), into the same feed under the same rules as anything a
 forge reported. Recognition is by probed convention or manifest
 declaration; attribution is the checkout's own project; and the stores are
 project-native things that exist without ephor — a store's presence is a
 capability rung, never an obligation.
+
+The word is **task**, and it is one name for one thing
+(§FS-001-forge-interface.3): a *ticket* is what a remote tracker keys, an
+*issue* is what a forge files, and these are neither — they are the
+project's own work, written down in the project's own checkout. So the row
+they land on is **Tasks** (§FS-003-feed-categories.1), the rung is *tasks*
+(§10), and the manifest key is `tasks`. What is not one of these keeps its
+own name: the ticket ephor writes to dispatch work (§FS-005-dispatch.3) and
+the ticket keys a forge is asked for (§FS-001-forge-interface.1) are other
+things and are called what they are.
 
 **A task in a final state is not read.** Final is the store's own word: what
 its state machine declares final, or — where the store declares no machine —
@@ -1514,10 +1525,7 @@ it.
 
 Verified on disk rather than derived from the registry row. The row names the
 branches somebody wrote down; the stores are wherever branches were actually
-checked out, and the two are not the same list. The rung this buys is
-*local-issues* rather than *ticketed*, because a **ticket** is what a remote
-tracker keys and these are the project's own — one name for one thing
-(§FS-001-forge-interface.3).
+checked out, and the two are not the same list.
 
 **A workspace ephor makes gets a store.** Where ephor creates a branch
 workspace (§FS-004-quick-actions.7) it initializes one there, so the first
@@ -1605,8 +1613,9 @@ answering) buys the watch; *placed* (the forest root on disk) buys actions
 and update; *branch-addressable* (a workspace template) buys resolution of
 matters to workspaces; *checkout-able* (§8) buys work that edits;
 *checkable* (§5) buys verification that means something; *gated* (§6) buys
-failure dossiers and the restart; *local-issues* (§7) buys the project's
-own issues as matters;
+failure dossiers and the restart; *tasks* (§7) buys the project's
+own tasks as matters — a `requires` naming either of its older spellings,
+*ticketed* or *local-issues*, goes on meaning it;
 *workable* (a bound runtime, §FS-005-dispatch) buys the loop. A missing
 rung degrades exactly the features that named it, with the reason stated
 where the feature would have appeared — never an error, never silence
@@ -1625,8 +1634,8 @@ a release may change is answerable by diffing them.
 ## FS-007-matters: the feed is made of matters, and a matter knows why it is there
 
 The unit of the watch is the **matter**: the subject under discussion or
-observation — a pull request, an issue, a ticket in a local store, a
-periodic build, a status subject, or a bare topic. What the spec has so far
+observation — a pull request, an issue, a task in the project's own
+store, a periodic build, a status subject, or a bare topic. What the spec has so far
 called an item is a matter seen through one source's report. A matter is
 the feed's row, the unit of attribution, of state, of fingerprinting, and
 of dispatch — the dossier is the dossier of a matter — and the reason for
@@ -1648,7 +1657,7 @@ established is left alone (§FS-003-feed-categories.5).
 Reports of the same subject key merge into one matter, however many sources
 made them, under the survival rules of §FS-003-feed-categories.5. Matters
 that *reference* each other — the pull request implementing a ticket, the
-local ticket tracking a gate — stay distinct and are **linked**, presented
+project's own task tracking a gate — stay distinct and are **linked**, presented
 together under the branch that relates them. Merging what is one thing and
 linking what is related is the difference between a readable pile and a
 lossy one.
@@ -1714,8 +1723,8 @@ project, and it is promoted, not duplicated.
 
 **A project's branches are the row's and the disk's together.** The row names
 the branches somebody wrote down; the workspaces are wherever branches were
-actually checked out, and the two are not the same list — the same gap local
-ticket stores are read across (§FS-006-project-interface.7). A branch whose
+actually checked out, and the two are not the same list — the same gap task
+stores are read across (§FS-006-project-interface.7). A branch whose
 workspace is on disk is one ephor can place work on, so it is one items are
 placed under, whether or not the row names it. Anything else is ephor
 contradicting itself about a fact it measured: a row reading `✓ checked out`
@@ -1831,7 +1840,7 @@ summons answering by exit code and by envelope (§FS-006-project-interface.3),
 a check verb bound by manifest and by probe (§FS-006-project-interface.5),
 the git operations both a key and a state machine run
 (§FS-004-quick-actions.6, §FS-004-quick-actions.7), a dispatch that writes a
-plan and reads its ledger back (§FS-005-dispatch.4), and a local ticket store
+plan and reads its ledger back (§FS-005-dispatch.4), and a task store
 read where it lives (§FS-006-project-interface.7).
 
 It touches nothing of the person's, reads no registry of theirs, and reaches
