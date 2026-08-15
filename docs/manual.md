@@ -2184,9 +2184,19 @@ event — so while the board is open the locks are probed too, and a root that
 came alive gets its row. Rows arriving above the cursor do not move it: it
 stays on the operation it was on, not on the line number that operation had.
 
-Today's rows come from the ledger — operations about items ephor dispatched.
-A plan written by hand, or a run started in another terminal against a root
-ephor never wrote into, is not listed yet.
+**The rows are found by looking, never by remembering.** The board
+enumerates the work roots themselves — the configured `work.root`, resolved
+at each project's checkout and again in every branch workspace on disk — so
+a plan written by hand, a project's own planning tickets, and a run somebody
+started in another terminal on a root ephor never dispatched into all appear,
+judged by the same artifacts as dispatched work
+([§FS-005-dispatch.15](../requirements.md#15-every-operation-is-visible-in-one-place)).
+An operation ephor never dispatched has no matter behind it, so `Enter`
+opens its plan — titled in the plan's own words — instead of a thread.
+The walk runs when the board is built (opened, or rebuilt because the
+glance saw something move), never on the bare 2-second tick, and is bounded
+by the registry's own places: between builds the tick stats only what the
+last walk found.
 
 ---
 

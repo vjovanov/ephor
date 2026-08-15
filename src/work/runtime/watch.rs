@@ -354,9 +354,12 @@ fn parse_listing(output: &str) -> Option<Vec<ListedTicket>> {
 }
 
 /// One plan inside an execution root, as the caller knows it — from the
-/// ledger today, from enumerating the root later. `item` is the feed item
-/// the plan is about, where the caller knows one: it is how the board's
-/// Enter finds the matter.
+/// ledger where ephor dispatched it, from enumerating the work roots
+/// otherwise (§FS-005-dispatch.15). `item` is the feed item the plan is
+/// about, where the caller knows one: it is how the board's Enter finds the
+/// matter, and a plan ephor never dispatched has none by construction —
+/// Enter opens the plan itself then. `title` may be empty for such a plan;
+/// the board fills it from the plan's own heading.
 #[derive(Debug, Clone)]
 pub struct PlanRef {
     pub project: String,
@@ -501,13 +504,20 @@ pub fn board(config: &WorkConfig, roots: &[RootPlans]) -> Board {
         let lock_born = fs::metadata(group.root.join(LOCK))
             .and_then(|meta| meta.modified())
             .ok();
-        // The floor first: the plans themselves, read off disk.
-        let floor: Vec<(&PlanRef, Vec<super::plan::PlanTicket>)> = group
+        // The floor first: the plans themselves, read off disk. A plan the
+        // caller has no title for — enumerated, never dispatched — lends its
+        // own heading, so a foreign row still says what the work is about
+        // (§FS-005-dispatch.15).
+        let floor: Vec<(&PlanRef, String, Vec<super::plan::PlanTicket>)> = group
             .plans
             .iter()
             .filter_map(|plan_ref| {
                 let plan = Plan::read(&plan_ref.path).ok().flatten()?;
-                Some((plan_ref, plan.tickets()))
+                let title = match plan_ref.title.is_empty() {
+                    true => plan.title().unwrap_or_default(),
+                    false => plan_ref.title.clone(),
+                };
+                Some((plan_ref, title, plan.tickets()))
             })
             .collect();
         // The listing forks the runner's binary, so it is asked only where a
@@ -516,7 +526,7 @@ pub fn board(config: &WorkConfig, roots: &[RootPlans]) -> Board {
         // (§FS-005-dispatch.15.1).
         let floor_claim = floor
             .iter()
-            .any(|(_, tickets)| tickets.iter().any(|ticket| ticket.assignee.is_some()));
+            .any(|(.., tickets)| tickets.iter().any(|ticket| ticket.assignee.is_some()));
         let lifted: BTreeMap<(String, String), ListedTicket> = if is_live || floor_claim {
             listing(config, &group.root)
                 .unwrap_or_default()
@@ -565,7 +575,7 @@ pub fn board(config: &WorkConfig, roots: &[RootPlans]) -> Board {
         let mut tickets = Vec::new();
         let mut done = 0;
         let mut known: BTreeSet<(String, String)> = BTreeSet::new();
-        for (plan_ref, floor_tickets) in &floor {
+        for (plan_ref, title, floor_tickets) in &floor {
             for ticket in floor_tickets {
                 known.insert((plan_ref.plan_id.clone(), ticket.id.clone()));
                 // The floor is the plan file; a listing that names this
@@ -629,7 +639,7 @@ pub fn board(config: &WorkConfig, roots: &[RootPlans]) -> Board {
                     state,
                     doing,
                     item: plan_ref.item.clone(),
-                    title: plan_ref.title.clone(),
+                    title: title.clone(),
                     plan: plan_ref.path.clone(),
                 });
             }
@@ -659,7 +669,13 @@ pub fn board(config: &WorkConfig, roots: &[RootPlans]) -> Board {
                     state: row.state.clone(),
                     doing: Doing::Running,
                     item: plan_ref.item.clone(),
-                    title: plan_ref.title.clone(),
+                    // The same backfill the floor got: the plan's own heading
+                    // where the caller had no title (§FS-005-dispatch.15).
+                    title: floor
+                        .iter()
+                        .find(|(candidate, ..)| candidate.plan_id == row.plan)
+                        .map(|(_, title, _)| title.clone())
+                        .unwrap_or_else(|| plan_ref.title.clone()),
                     plan: plan_ref.path.clone(),
                 });
             }
@@ -1310,6 +1326,32 @@ mod tests {
             board.operations[0].machine_unread.as_deref(),
             Some("states.yaml unreadable — nothing judged queued or finished")
         );
+    }
+
+    /// A plan ephor never dispatched is watched exactly as one it did
+    /// (§FS-005-dispatch.15): its ref carries no matter and no title — there
+    /// is no item to borrow one from — so the board fills the title from the
+    /// plan's own heading, and the operation leads to the plan itself.
+    #[test]
+    fn a_foreign_plan_lends_its_own_heading_and_leads_to_itself() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let mut group = root_with_plan(root, false);
+        group.plans[0].item = None;
+        group.plans[0].title = String::new();
+        write(
+            &root.join("widget-42.rhei.md"),
+            "# Rhei: Audit the retry paths\n**States:** m\n\n## Tasks\n\n\
+             ### Task fix-gate-1: fix the gate\n**State:** needs-human\n\nwork\n",
+        );
+        write(&root.join(LOCK), "");
+
+        let board = board(&config(), std::slice::from_ref(&group));
+        assert_eq!(board.operations.len(), 1);
+        let op = &board.operations[0];
+        assert_eq!(op.item(), None, "nothing dispatched this, so no matter");
+        assert_eq!(op.plan(), Some(root.join("widget-42.rhei.md").as_path()));
+        assert_eq!(op.tickets[0].title, "Audit the retry paths");
     }
 
     /// A parked subtask on a root with no live run keeps its row: the floor

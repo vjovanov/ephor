@@ -1170,6 +1170,27 @@ listed ahead of anything else its work is doing — a parked question first,
 then what a dead run left holding — then what runs, then claims, then the
 queue.
 
+**The rows are found by looking, never by remembering.** What ephor
+dispatched is in the ledger, but "every operation" is a claim about the
+world, not about the ledger: the work roots themselves are enumerated —
+the place a project's work is configured to live, resolved at the
+project's own checkout and again in each branch workspace on disk, since
+the work root is per branch workspace and each one is its own execution
+root — and every plan found in one is watched, whoever wrote it. A plan
+written by hand, a project's own planning tickets, and a run somebody
+started in another terminal on a root ephor never dispatched into are
+operations exactly as dispatched work is, judged row-worthy by the same
+artifacts; the ledger still says which matter a plan is about
+(§FS-005-dispatch.4), it just no longer decides what exists. And an
+operation ephor never dispatched has no matter behind it by construction —
+that is the common case for a foreign plan, not an edge — so `Enter`,
+which goes to the matter where the feed still carries one, opens the plan
+itself there: the same reading `e` offers wherever work is shown, and no
+row on the board leads nowhere. Enumerating is a reading of the plan files
+on disk and asks nothing of the bound runner: with no runner installed the
+plans are still found and still readable — it is only operations that
+cannot exist then.
+
 **Liveness is read from the runtime's artifacts, never from a process
 table.** The same reasoning that keeps work state out of the ledger
 (§FS-005-dispatch.4) applies to whether work is running at all: the runtime
@@ -1256,14 +1277,26 @@ refresh. This is not the refresh (§FS-001-forge-interface.7) wearing a new
 name: a refresh asks the world's forges and costs what they cost, while this
 watches files ephor already knows by name and asks nothing of any forge
 (§GOAL-005-costless). It is cheap by construction — nothing is re-read while
-nothing has changed, a timestamp answers that, and the timestamp asked is
-one the runtime moves on every slot it takes or releases, never a sweep of
-everything it ever wrote; the bound runner is asked to list its plans only
-about a root that holds an operation, and nothing is ever read while a
-frame is being put on screen — and it holds everywhere work is
-shown, not only on the board: a ticket the runtime parks resurfaces on the
-reader's rows when it parks (§FS-005-dispatch.9), instead of waiting for a
-refresh that was never going to be about it.
+nothing has changed, a timestamp answers that, and the timestamps asked
+are a fixed handful per root: each plan file the last enumeration found,
+the root's own directory — a plan appearing or vanishing is a directory
+event — and the artifact the runtime moves on every slot it takes or
+releases, never a sweep of everything it ever wrote; the bound runner is
+asked to list its plans only about a root that holds an operation, and
+nothing is ever read while a frame is being put on screen — and it holds
+everywhere work is shown, not only on the board: a ticket the runtime
+parks resurfaces on the reader's rows when it parks (§FS-005-dispatch.9),
+instead of waiting for a refresh that was never going to be about it.
+
+Finding the roots (§FS-005-dispatch.15) is the one walk in the design, and
+it is not the tick's: the work roots are enumerated when the rows are
+built — the board opened over the reading, rebuilt because the glance saw
+something move, or a refresh landing — and never merely because time
+passed. The walk is bounded by where work is configured to live, not by
+what the disk holds: it visits the project checkouts and the branch
+workspaces ephor already resolves, to the fixed depth a branch name can
+nest, and costs one directory listing per candidate work root — it never
+descends into a repository, and it never reads a plan to find it.
 
 ## FS-006-project-interface: a project and ephor meet over one interface, in three homes
 

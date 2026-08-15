@@ -322,6 +322,113 @@ fn a_claim_with_the_lock_free_is_its_own_row_with_the_remedy() {
     );
 }
 
+/// The rows are found by looking, never by remembering
+/// (§FS-005-dispatch.15): a plan ephor never dispatched — hand-written, or a
+/// project's own planning tickets — is enumerated off the work root itself,
+/// and a run somebody started in another terminal on that root is a running
+/// row like any other. Such an operation has no matter behind it by
+/// construction, so where `Enter` would go to the matter it opens the plan
+/// instead — the row leads to the plan, titled in the plan's own words. And
+/// enumeration is a reading: with no runner bound the plans are still found,
+/// it is only operations that cannot exist then.
+#[test]
+fn a_plan_ephor_never_dispatched_is_watched_all_the_same() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    write(
+        &root.join("states.yaml"),
+        concat!(
+            "name: m\n",
+            "states:\n",
+            "  fix:\n    agent: x\n",
+            "  needs-human:\n    gating: true\n",
+            "  done:\n    final: true\n",
+        ),
+    );
+    // Hand-written: no ledger entry anywhere names this plan.
+    write(
+        &root.join("audit.rhei.md"),
+        "# Rhei: Audit the retry paths\n**States:** m\n\n## Tasks\n\n\
+         ### Task sweep-1: sweep the callers\n**State:** fix\n\nwork\n",
+    );
+
+    // Enumeration knows what a plan looks like; the caller gets ids and
+    // paths and wraps them item-less — there is no matter to attach.
+    let found = ephor::work::runtime::plan::plans_in(root);
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].plan_id, "audit");
+    let group = RootPlans {
+        root: root.to_path_buf(),
+        plans: found
+            .into_iter()
+            .map(|plan| PlanRef {
+                project: "widget".to_string(),
+                plan_id: plan.plan_id,
+                path: plan.path,
+                item: None,
+                title: String::new(),
+            })
+            .collect(),
+    };
+
+    // A run started in another terminal: ephor never dispatched into this
+    // root, and the lock is the whole signal.
+    let holder = hold_lock(root);
+    write(
+        &root.join("runtime/transitions.log"),
+        "2026-08-14T10:00:00Z  sweep-1  start@fix  runtime/logs/task-sweep-1-fix.log\n",
+    );
+    let board = watch::board(&floor_config(), std::slice::from_ref(&group));
+    assert_eq!(board.operations.len(), 1);
+    let op = &board.operations[0];
+    assert!(op.live);
+    assert_eq!(op.tickets[0].ticket, "sweep-1");
+    assert_eq!(op.tickets[0].doing, Doing::Running);
+    // No matter by construction — Enter's fallback is the plan itself, and
+    // the row speaks in the plan's own words.
+    assert_eq!(op.item(), None);
+    assert_eq!(op.plan(), Some(root.join("audit.rhei.md").as_path()));
+    assert_eq!(op.tickets[0].title, "Audit the retry paths");
+    drop(holder);
+
+    // The run gone and nothing waiting, the root stops being a row — being
+    // enumerated makes a plan watched, not listed forever.
+    let released = (0..200).any(|_| {
+        let clear = !watch::live(&floor_config(), root);
+        if !clear {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        clear
+    });
+    assert!(released, "the lock should read released");
+    write(&root.join("runtime/transitions.log"), "");
+    let board = watch::board(&floor_config(), std::slice::from_ref(&group));
+    assert!(board.operations.is_empty());
+
+    // Parked by that run before it exited: the hand-written plan keeps its
+    // row exactly as a dispatched one would (§FS-005-dispatch.9).
+    let text = fs::read_to_string(root.join("audit.rhei.md")).unwrap();
+    write(
+        &root.join("audit.rhei.md"),
+        &text.replacen("**State:** fix", "**State:** needs-human", 1),
+    );
+    let board = watch::board(&floor_config(), std::slice::from_ref(&group));
+    assert_eq!(board.operations.len(), 1);
+    assert_eq!(board.operations[0].tickets[0].doing, Doing::Waiting);
+
+    // With no runner bound enumeration still finds the plan — reading is
+    // the floor and never requires the binary — while the board rightly
+    // holds no operations (§FS-005-dispatch.15).
+    assert_eq!(ephor::work::runtime::plan::plans_in(root).len(), 1);
+    let absent = WorkConfig {
+        runner: Some("acme-runtime".to_string()),
+        ..WorkConfig::default()
+    };
+    let board = watch::board(&absent, std::slice::from_ref(&group));
+    assert!(board.operations.is_empty());
+    assert!(board.refusal.is_some());
+}
+
 /// With no runtime bound the board is empty and says why in the workable
 /// rung's own words — the shape most installations see, and correct rather
 /// than broken — while the plan files stay readable exactly as before: the

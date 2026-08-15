@@ -825,6 +825,12 @@ struct App {
     /// The work configuration, kept for the board and the tick: both read
     /// the runtime's artifacts through the binding (§AR-007-runtime.1).
     work: crate::work::recipe::WorkConfig,
+    /// Every execution root the last enumeration found, with its plans —
+    /// what the ledger dispatched and what the work roots hold besides
+    /// (§FS-005-dispatch.15). The walk runs when rows are built, never on
+    /// the bare tick: between builds this cache is what the glance stats
+    /// (§FS-005-dispatch.15.1).
+    work_groups: Vec<crate::work::runtime::watch::RootPlans>,
     /// When the work artifacts were last glanced at, and the newest write
     /// seen then (§FS-005-dispatch.15.1).
     ticked_at: std::time::Instant,
@@ -1031,6 +1037,7 @@ impl App {
             dispatcher: crate::work::Dispatcher::load(config).ok(),
             refresh: None,
             work: config.work.clone(),
+            work_groups: Vec::new(),
             ticked_at: std::time::Instant::now(),
             work_seen: None,
             message: String::new(),
@@ -1068,9 +1075,22 @@ impl App {
         self.ctx.recompute_placements();
         self.ctx.recompute_capabilities();
         self.ctx.recompute_resurfacing();
+        self.reload_work_groups();
         self.reload_work();
         self.rebuild_view();
         Ok(())
+    }
+
+    /// Re-enumerate the work roots (§FS-005-dispatch.15): the ledger's
+    /// dispatches and every plan the roots hold besides. Runs when rows are
+    /// built — a load, a refresh landing, the board opening, a glance that
+    /// saw something move — never on the bare tick, which only stats what
+    /// this last found (§FS-005-dispatch.15.1).
+    fn reload_work_groups(&mut self) {
+        self.work_groups = match &mut self.dispatcher {
+            Some(dispatcher) => dispatcher.work_roots(),
+            None => Vec::new(),
+        };
     }
 
     /// Re-read every dispatched item's plan. The state of the work belongs to
@@ -2129,53 +2149,41 @@ impl App {
     }
 
     /// Open the operations board over whatever is on screen, or close it
-    /// back to where the reader was (§FS-005-dispatch.15).
+    /// back to where the reader was (§FS-005-dispatch.15). Opening
+    /// re-enumerates the roots first: a plan written by hand, or a run
+    /// started in another terminal on a root ephor never dispatched into,
+    /// is found by looking, never remembered.
     fn toggle_operations(&mut self) {
         if matches!(self.screen, Screen::Operations(_)) {
             self.screen = self.saved.take().unwrap_or(Screen::Navigator);
             return;
         }
+        self.reload_work_groups();
         let (rows, refusal) = self.board_rows();
         let board = Screen::Operations(OperationsScreen::new(rows, refusal));
         self.saved = Some(std::mem::replace(&mut self.screen, board));
     }
 
     /// The board's rows, built off the draw path (§FS-005-dispatch.15):
-    /// every execution root the ledger knows, grouped — rhei locks per root
-    /// and ephor's work root is per branch workspace, so two items in one
-    /// workspace are one operation — with the runtime's artifacts answering
-    /// what is live there. From the ledger for now, which is every operation
-    /// about an item ephor dispatched; enumerating the work roots themselves
-    /// is a later task.
+    /// every execution root the last enumeration found, grouped — rhei locks
+    /// per root and ephor's work root is per branch workspace, so two items
+    /// in one workspace are one operation — with the runtime's artifacts
+    /// answering what is live there. The ledger's plans carry their matter;
+    /// an enumerated plan ephor never dispatched has none, and its row leads
+    /// to the plan itself.
     fn board_rows(&self) -> (Vec<operations::OpRow>, Option<String>) {
         use crate::work::runtime::watch;
-        let Some(dispatcher) = &self.dispatcher else {
+        if self.dispatcher.is_none() {
             return (
                 Vec::new(),
                 Some("Work needs the registry, which could not be read at startup".to_string()),
             );
-        };
-        let mut groups: BTreeMap<PathBuf, watch::RootPlans> = BTreeMap::new();
-        for (item_id, entry) in &dispatcher.ledger.entries {
-            let group = groups
-                .entry(entry.root.clone())
-                .or_insert_with(|| watch::RootPlans {
-                    root: entry.root.clone(),
-                    plans: Vec::new(),
-                });
-            group.plans.push(watch::PlanRef {
-                project: entry.project.clone(),
-                plan_id: entry.plan_id.clone(),
-                path: entry.plan.clone(),
-                item: Some(item_id.clone()),
-                title: entry.title.clone(),
-            });
         }
-        let groups: Vec<watch::RootPlans> = groups.into_values().collect();
+        let groups = &self.work_groups;
         let watch::Board {
             operations,
             refusal,
-        } = watch::board(&self.work, &groups);
+        } = watch::board(&self.work, groups);
         // Every row's matter in one walk of the feeds, rather than a walk per
         // row: `items()` rebuilds each matter into a row, so asking it once
         // per operation pays for the whole feed once per operation.
@@ -2252,6 +2260,10 @@ impl App {
         };
         if moved {
             self.work_seen = newest;
+            // Something moved, so the walk is paid once here: a plan that
+            // appeared in a known root — the directory's own timestamp is in
+            // the gate — joins the universe now (§FS-005-dispatch.15.1).
+            self.reload_work_groups();
             self.reload_work();
             self.rebuild_view();
             self.reload_operations();
@@ -2263,16 +2275,12 @@ impl App {
         };
         // A run *starting* on a root the board has no row for writes nothing
         // the timestamp above watches — the OS takes its lock, and that is the
-        // whole event. So the roots the ledger knows and the board is not
+        // whole event. So the roots the enumeration knows and the board is not
         // showing are probed for exactly that, and one that came alive asks
         // for the rebuild that would give it a row (§FS-005-dispatch.15.1).
-        let appeared = self.dispatcher.as_ref().is_some_and(|dispatcher| {
-            let mut probed: std::collections::BTreeSet<&Path> = std::collections::BTreeSet::new();
-            dispatcher.ledger.entries.values().any(|entry| {
-                probed.insert(entry.root.as_path())
-                    && !shown.contains(&entry.root)
-                    && crate::work::runtime::watch::live(&self.work, &entry.root)
-            })
+        let appeared = self.work_groups.iter().any(|group| {
+            !shown.contains(&group.root)
+                && crate::work::runtime::watch::live(&self.work, &group.root)
         });
         let work = &self.work;
         let found = match &mut self.screen {
@@ -2291,11 +2299,12 @@ impl App {
         found.changed
     }
 
-    /// The newest write across everything the ledger points at: each plan
-    /// file, and each execution root's own run artifacts. Stat calls only —
-    /// the gate in front of every re-read (§FS-005-dispatch.15.1).
+    /// The newest write across everything the last enumeration found: each
+    /// plan file, each execution root's own directory — a plan appearing or
+    /// vanishing is a directory event — and each root's run artifacts. Stat
+    /// calls only, a fixed handful per root — the gate in front of every
+    /// re-read and of every re-walk (§FS-005-dispatch.15.1).
     fn work_wrote(&self) -> Option<std::time::SystemTime> {
-        let dispatcher = self.dispatcher.as_ref()?;
         let mut newest: Option<std::time::SystemTime> = None;
         let mut fold = |at: Option<std::time::SystemTime>| {
             if let Some(at) = at {
@@ -2304,17 +2313,20 @@ impl App {
                 }
             }
         };
-        let mut roots: std::collections::BTreeSet<&Path> = std::collections::BTreeSet::new();
-        for entry in dispatcher.ledger.entries.values() {
-            fold(
-                std::fs::metadata(&entry.plan)
-                    .and_then(|meta| meta.modified())
-                    .ok(),
-            );
-            roots.insert(&entry.root);
-        }
-        for root in roots {
-            fold(crate::work::runtime::watch::wrote_at(&self.work, root));
+        let modified = |path: &Path| {
+            std::fs::metadata(path)
+                .and_then(|meta| meta.modified())
+                .ok()
+        };
+        for group in &self.work_groups {
+            for plan in &group.plans {
+                fold(modified(&plan.path));
+            }
+            fold(modified(&group.root));
+            fold(crate::work::runtime::watch::wrote_at(
+                &self.work,
+                &group.root,
+            ));
         }
         newest
     }

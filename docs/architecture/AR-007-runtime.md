@@ -42,7 +42,12 @@ runner's own words (§FS-005-dispatch.10). Where the binary itself is
 present, its own plan listing (`rhei list --json`) may sharpen state and
 assignee read-back — the binding's own stdout, honored by this one binding
 the way custom-status's is (§AR-002-summons.3) — while the direct plan read
-of §3 stays the floor and is never removed (§FS-005-dispatch.15).
+of §3 stays the floor and is never removed (§FS-005-dispatch.15). Also
+this module's: the recognition of a plan on disk. The plan-file suffix and
+the directory-workspace shape are the binding's grammar, so a surface that
+enumerates a work root's plans (§FS-005-dispatch.15) asks this module what
+the directory holds and gets back plan ids and paths — the suffix is never
+spelled above it (§REQ-001-boundary.5).
 
 ## 2. What stays outside
 
@@ -64,4 +69,7 @@ the workable rung). The refusal is the capability table's sentence
 the same rung's own sentence (§FS-005-dispatch.14): who can be asked is
 the runtime's knowledge, and nothing else in ephor changes. The operations
 board is then the refresh row alone (§FS-005-dispatch.15) — an operation is
-a run, and where nothing can run there are none.
+a run, and where nothing can run there are none. Enumerating a work root's
+plans is part of reading, not of running: a directory listing against the
+binding's own naming, with no runner asked — so every plan is still found
+and still readable with no runner installed.

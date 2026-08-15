@@ -383,6 +383,25 @@ impl Dispatcher {
         )))
     }
 
+    /// Every execution root beneath the watch, with the plans it holds
+    /// (§FS-005-dispatch.15): the ledger's dispatches — those plans carry the
+    /// matter behind them — merged with what enumerating the work roots
+    /// finds, so a plan ephor never wrote is watched exactly as one it did.
+    /// The walk is bounded by the registry, never by the disk: each project's
+    /// checkout and each branch workspace already resolved
+    /// (§FS-005-dispatch.15.1).
+    pub fn work_roots(&mut self) -> Vec<runtime::watch::RootPlans> {
+        let ids: Vec<String> = crate::registry::array_field(&self.registry_doc, "projects")
+            .iter()
+            .map(|project| crate::registry::id_of(project).to_string())
+            .collect();
+        let placements: Vec<Placement> = ids
+            .iter()
+            .filter_map(|id| self.placement(id).cloned())
+            .collect();
+        enumerate_roots(&self.global, &self.projects, &placements, &self.ledger)
+    }
+
     /// What this ticket pins, and what the reader is told about it. Refuses
     /// where the choice cannot stand, so nothing is written and no opening
     /// move is made under a hand that may not have it
@@ -1043,6 +1062,100 @@ pub fn root_template(global: &WorkConfig, project: Option<&ProjectWorkConfig>) -
         .unwrap_or_else(|| global.root.clone())
 }
 
+/// The board's universe (§FS-005-dispatch.15): one group per execution root —
+/// the ledger's plans first, since they carry the matter behind them, and
+/// every plan enumeration finds after, item-less where nothing dispatched it.
+/// Enumeration resolves the work-root template at each configured place: the
+/// project's own checkout and each branch workspace on disk, because a
+/// branch-addressable project keeps a work root per branch workspace and each
+/// one is its own execution root. A template naming a placeholder only an
+/// item can fill is skipped rather than guessed — work written through it is
+/// the ledger's to know. Reading only, and bounded: one directory listing per
+/// candidate work root, no plan opened, no repository entered, no runner
+/// asked (§FS-005-dispatch.15.1, §AR-007-runtime.3).
+pub fn enumerate_roots(
+    global: &WorkConfig,
+    projects: &BTreeMap<String, ProjectWorkConfig>,
+    placements: &[Placement],
+    ledger: &Ledger,
+) -> Vec<runtime::watch::RootPlans> {
+    use runtime::watch::{PlanRef, RootPlans};
+    // One row per execution root means one per *directory*, not one per
+    // spelling: a workspace template that symlinks back to the checkout
+    // renders the same root under two names, and the runtime's lock is on
+    // the directory, so two groups here would be one operation shown twice.
+    let canon =
+        |path: &std::path::Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let mut groups: BTreeMap<PathBuf, RootPlans> = BTreeMap::new();
+    for (item_id, entry) in &ledger.entries {
+        let root = canon(&entry.root);
+        let group = groups.entry(root.clone()).or_insert_with(|| RootPlans {
+            root,
+            plans: Vec::new(),
+        });
+        group.plans.push(PlanRef {
+            project: entry.project.clone(),
+            plan_id: entry.plan_id.clone(),
+            path: entry.plan.clone(),
+            item: Some(item_id.clone()),
+            title: entry.title.clone(),
+        });
+    }
+    for placement in placements {
+        let template = root_template(global, projects.get(&placement.project));
+        let mut places = vec![placement.root.clone()];
+        for branch in &placement.branches {
+            places.extend(placement.workspace_for(&branch.branch));
+        }
+        places.sort();
+        places.dedup();
+        // A template that ignores the workspace renders every place to one
+        // root; listing it once is enough.
+        let mut listed: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
+        for place in places {
+            if !place.is_dir() {
+                continue;
+            }
+            let values = BTreeMap::from([
+                ("workspace", place.to_string_lossy().into_owned()),
+                ("root", placement.root.to_string_lossy().into_owned()),
+                ("project", placement.project.clone()),
+            ]);
+            let rendered = dossier::render(&template, &values);
+            if rendered.contains('{') {
+                continue;
+            }
+            let root = canon(&crate::paths::resolve_path(&rendered));
+            if !listed.insert(root.clone()) {
+                continue;
+            }
+            for found in plan::plans_in(&root) {
+                let group = groups.entry(root.clone()).or_insert_with(|| RootPlans {
+                    root: root.clone(),
+                    plans: Vec::new(),
+                });
+                // The ledger may spell the same plan through a different
+                // alias; a plan is the file, not the spelling.
+                if group
+                    .plans
+                    .iter()
+                    .any(|plan| canon(&plan.path) == found.path)
+                {
+                    continue;
+                }
+                group.plans.push(PlanRef {
+                    project: placement.project.clone(),
+                    plan_id: found.plan_id,
+                    path: found.path,
+                    item: None,
+                    title: String::new(),
+                });
+            }
+        }
+    }
+    groups.into_values().collect()
+}
+
 /// The states YAML installed into a work root that has none: the project's
 /// own, the global one, or the machine ephor ships.
 pub fn states_yaml(global: &WorkConfig, project: Option<&ProjectWorkConfig>) -> Result<String> {
@@ -1135,4 +1248,199 @@ struct Site {
     values: BTreeMap<&'static str, String>,
     #[allow(dead_code)] // kept for callers that report where work landed
     checkout: crate::branches::Checkout,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::branches::BranchInfo;
+    use std::fs;
+    use std::path::Path;
+
+    fn placement(project: &str, root: &Path, template: Option<&str>) -> Placement {
+        Placement {
+            project: project.to_string(),
+            root: root.to_path_buf(),
+            template: template.map(String::from),
+            branches: Vec::new(),
+            main_branch: None,
+            repos: Vec::new(),
+            aliases: Vec::new(),
+            territory: Vec::new(),
+            trust: Default::default(),
+        }
+    }
+
+    fn branch(name: &str) -> BranchInfo {
+        BranchInfo {
+            branch: name.to_string(),
+            ticket: None,
+            active: false,
+            is_release: false,
+            declared: true,
+        }
+    }
+
+    fn plant(dir: &Path, plan: &str, title: &str) {
+        fs::create_dir_all(dir).unwrap();
+        fs::write(dir.join(plan), format!("# Rhei: {title}\n")).unwrap();
+    }
+
+    /// The work roots are enumerated from the configured places
+    /// (§FS-005-dispatch.15): the project's own checkout and each branch
+    /// workspace on disk — the work root is per branch workspace, and each
+    /// is its own execution root. A declared branch with no workspace yet is
+    /// skipped, not guessed at; a plan the ledger knows keeps its matter and
+    /// its title, and one found beside it arrives item-less.
+    #[test]
+    fn the_roots_are_the_configured_places_and_the_ledger_keeps_its_matter() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("widget");
+        let mut widget = placement("widget", &root, Some("{project_root}/branches/{branch}"));
+        widget.branches = vec![branch("you/ABC-1"), branch("you/ABC-2-unmade")];
+        // The project's own tickets, and a branch workspace holding a
+        // dispatched plan beside a hand-written one.
+        plant(&root.join("panta"), "housekeeping.rhei.md", "Housekeeping");
+        let workspace = root.join("branches/you/ABC-1");
+        plant(
+            &workspace.join("panta"),
+            "forge-widget-7.rhei.md",
+            "ledger's",
+        );
+        plant(&workspace.join("panta"), "audit.rhei.md", "Audit the paths");
+
+        let mut ledger = Ledger {
+            version: 1,
+            entries: BTreeMap::new(),
+        };
+        ledger.entries.insert(
+            "forge:widget/7".to_string(),
+            Entry {
+                project: "widget".to_string(),
+                title: "Widen the retry window".to_string(),
+                url: None,
+                root: workspace.join("panta"),
+                checkout: workspace.clone(),
+                plan_id: "forge-widget-7".to_string(),
+                plan: workspace.join("panta/forge-widget-7.rhei.md"),
+                dispatches: Vec::new(),
+            },
+        );
+
+        let groups = enumerate_roots(
+            &WorkConfig::default(),
+            &BTreeMap::new(),
+            std::slice::from_ref(&widget),
+            &ledger,
+        );
+        assert_eq!(groups.len(), 2, "{:?}", roots_of(&groups));
+        let by_root = |dir: &Path| {
+            let dir = fs::canonicalize(dir).unwrap();
+            groups
+                .iter()
+                .find(|group| group.root == dir)
+                .unwrap_or_else(|| panic!("{} should be a root", dir.display()))
+        };
+        let own = by_root(&root.join("panta"));
+        assert_eq!(own.plans.len(), 1);
+        assert_eq!(own.plans[0].plan_id, "housekeeping");
+        assert_eq!(own.plans[0].item, None);
+
+        let dispatched = by_root(&workspace.join("panta"));
+        assert_eq!(dispatched.plans.len(), 2);
+        // The ledger's plan first, with its matter and its title; the
+        // hand-written one beside it, item-less.
+        assert_eq!(dispatched.plans[0].item.as_deref(), Some("forge:widget/7"));
+        assert_eq!(dispatched.plans[0].title, "Widen the retry window");
+        assert_eq!(dispatched.plans[1].plan_id, "audit");
+        assert_eq!(dispatched.plans[1].item, None);
+        assert_eq!(dispatched.plans[1].title, "");
+    }
+
+    fn roots_of(groups: &[runtime::watch::RootPlans]) -> Vec<&Path> {
+        groups.iter().map(|group| group.root.as_path()).collect()
+    }
+
+    /// The walk is bounded by what can resolve without an item: a work-root
+    /// template that ignores the workspace is listed once however many
+    /// places render to it, and one naming a placeholder only an item can
+    /// fill is skipped rather than guessed (§FS-005-dispatch.15.1).
+    #[test]
+    fn a_shared_root_is_listed_once_and_an_item_template_is_skipped() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("widget");
+        let mut widget = placement("widget", &root, Some("{project_root}/branches/{branch}"));
+        widget.branches = vec![branch("a"), branch("b")];
+        fs::create_dir_all(root.join("branches/a")).unwrap();
+        fs::create_dir_all(root.join("branches/b")).unwrap();
+        plant(&root.join("work"), "shared.rhei.md", "Shared");
+
+        let mut projects = BTreeMap::new();
+        projects.insert(
+            "widget".to_string(),
+            ProjectWorkConfig {
+                root: Some("{root}/work".to_string()),
+                ..ProjectWorkConfig::default()
+            },
+        );
+        let ledger = Ledger {
+            version: 1,
+            entries: BTreeMap::new(),
+        };
+        let groups = enumerate_roots(
+            &WorkConfig::default(),
+            &projects,
+            std::slice::from_ref(&widget),
+            &ledger,
+        );
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].root, fs::canonicalize(root.join("work")).unwrap());
+        assert_eq!(groups[0].plans.len(), 1, "one listing, one plan, no dupes");
+
+        // A placeholder only an item can fill cannot resolve here.
+        projects.insert(
+            "widget".to_string(),
+            ProjectWorkConfig {
+                root: Some("{root}/work/{ticket}".to_string()),
+                ..ProjectWorkConfig::default()
+            },
+        );
+        let groups = enumerate_roots(
+            &WorkConfig::default(),
+            &projects,
+            std::slice::from_ref(&widget),
+            &ledger,
+        );
+        assert!(groups.is_empty(), "{:?}", roots_of(&groups));
+    }
+
+    /// A branch workspace that is a symlink back to the checkout renders the
+    /// same work root under two names, and one directory is one operation —
+    /// the runtime's lock is on the directory, so two rows here would show
+    /// one run twice (§FS-005-dispatch.15). Groups collapse on the
+    /// directory, never on the spelling.
+    #[cfg(unix)]
+    #[test]
+    fn an_aliased_workspace_is_one_root_not_two() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("widget");
+        let mut widget = placement("widget", &root, Some("{project_root}/branches/{branch}"));
+        widget.branches = vec![branch("main")];
+        plant(&root.join("panta"), "housekeeping.rhei.md", "Housekeeping");
+        fs::create_dir_all(root.join("branches")).unwrap();
+        std::os::unix::fs::symlink(&root, root.join("branches/main")).unwrap();
+
+        let ledger = Ledger {
+            version: 1,
+            entries: BTreeMap::new(),
+        };
+        let groups = enumerate_roots(
+            &WorkConfig::default(),
+            &BTreeMap::new(),
+            std::slice::from_ref(&widget),
+            &ledger,
+        );
+        assert_eq!(groups.len(), 1, "{:?}", roots_of(&groups));
+        assert_eq!(groups[0].plans.len(), 1);
+    }
 }

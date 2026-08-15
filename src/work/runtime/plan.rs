@@ -172,16 +172,49 @@ pub fn plan_path_in(dir: &Path, plan_id: &str) -> PathBuf {
 /// directory workspace, among its direct non-hidden children — which is where
 /// the runtime looks for them.
 fn holds_plans(dir: &Path) -> bool {
+    !plans_in(dir).is_empty()
+}
+
+/// One plan found in a work root: its id — the name the runtime knows it
+/// by — and the file the floor reads (§AR-007-runtime.3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FoundPlan {
+    pub plan_id: String,
+    pub path: PathBuf,
+}
+
+/// Every plan a work root holds, whoever wrote it (§FS-005-dispatch.15): the
+/// `*.rhei.md` files and the directory workspaces among its direct non-hidden
+/// children, exactly where the runtime looks for them. One directory listing,
+/// no file read, no runner asked — recognizing a plan is this module's
+/// grammar (§AR-007-runtime.1), and the callers get ids and paths, never the
+/// suffix.
+pub fn plans_in(dir: &Path) -> Vec<FoundPlan> {
     let Ok(entries) = fs::read_dir(dir) else {
-        return false;
+        return Vec::new();
     };
-    entries.flatten().any(|entry| {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with('.') || name == "runtime" {
-            return false;
-        }
-        name.ends_with(PLAN_SUFFIX) || entry.path().join(format!("index{PLAN_SUFFIX}")).is_file()
-    })
+    let mut found: Vec<FoundPlan> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') || name == "runtime" {
+                return None;
+            }
+            if let Some(plan_id) = name.strip_suffix(PLAN_SUFFIX) {
+                return Some(FoundPlan {
+                    plan_id: plan_id.to_string(),
+                    path: entry.path(),
+                });
+            }
+            let index = entry.path().join(format!("index{PLAN_SUFFIX}"));
+            index.is_file().then(|| FoundPlan {
+                plan_id: name,
+                path: index,
+            })
+        })
+        .collect();
+    found.sort_by(|a, b| a.plan_id.cmp(&b.plan_id));
+    found
 }
 
 /// The `name:` of a states document — the shallowest one, so a state called
@@ -342,6 +375,19 @@ impl Plan {
 
     pub fn text(&self) -> &str {
         &self.text
+    }
+
+    /// The plan's own name: its leading heading, with the plan language's
+    /// label stripped — what a board row can say about work ephor never
+    /// dispatched, which has no matter to borrow a title from
+    /// (§FS-005-dispatch.15). None where the file opens with no heading.
+    pub fn title(&self) -> Option<String> {
+        let heading = self
+            .text
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("# "))?;
+        let title = heading.strip_prefix("Rhei:").unwrap_or(heading).trim();
+        (!title.is_empty()).then(|| title.to_string())
     }
 
     /// Every ticket in the plan, in the order it was written — at every
@@ -790,6 +836,77 @@ mod tests {
         )
         .unwrap();
         assert!(WorkRoot::ensure(tmp.path(), SHIPPED_STATES).is_err());
+    }
+
+    /// Every plan a work root holds is found whoever wrote it
+    /// (§FS-005-dispatch.15): the plan files and the directory workspaces
+    /// among the direct children, with ids and paths handed back so nothing
+    /// above this module spells the suffix (§AR-007-runtime.1) — and nothing
+    /// hidden, nothing under `runtime/`, and nothing that merely mentions a
+    /// plan is one.
+    #[test]
+    fn every_plan_a_root_holds_is_found_with_its_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        fs::write(dir.join("zeta.rhei.md"), "# Rhei: Zeta\n").unwrap();
+        fs::create_dir(dir.join("billing")).unwrap();
+        fs::write(dir.join("billing/index.rhei.md"), "# Rhei: Billing\n").unwrap();
+        // None of these is a plan: the manifest, a backup, a hidden file, the
+        // runtime's own artifacts, and a bare directory.
+        fs::write(dir.join("index.panta.md"), "# Panta: theirs\n").unwrap();
+        fs::write(dir.join("zeta.rhei.md.bak"), "old").unwrap();
+        fs::write(dir.join(".draft.rhei.md"), "hidden").unwrap();
+        fs::create_dir_all(dir.join("runtime")).unwrap();
+        fs::write(dir.join("runtime/echo.rhei.md"), "artifact").unwrap();
+        fs::create_dir(dir.join("notes")).unwrap();
+
+        let found = plans_in(dir);
+        assert_eq!(
+            found,
+            vec![
+                FoundPlan {
+                    plan_id: "billing".to_string(),
+                    path: dir.join("billing/index.rhei.md"),
+                },
+                FoundPlan {
+                    plan_id: "zeta".to_string(),
+                    path: dir.join("zeta.rhei.md"),
+                },
+            ]
+        );
+        // A directory that is not there answers empty, not an error: the
+        // enumeration probes places that may hold nothing.
+        assert!(plans_in(&dir.join("nowhere")).is_empty());
+    }
+
+    /// A plan lends its own heading where nothing dispatched it — a foreign
+    /// plan has no matter to borrow a title from (§FS-005-dispatch.15).
+    #[test]
+    fn a_plan_says_its_own_title() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("widget-42.rhei.md");
+        let created = Plan::create(
+            &path,
+            "ephor-work",
+            "Widen the retry window",
+            "dossier",
+            &ticket("fix-1", "fix", "work"),
+        );
+        assert_eq!(created.title().as_deref(), Some("Widen the retry window"));
+
+        // A hand-written plan with a plain heading, below frontmatter.
+        fs::write(
+            &path,
+            "---\nowner: luna\n---\n\n# Audit the retry paths\n\n## Tasks\n",
+        )
+        .unwrap();
+        let plain = Plan::read(&path).unwrap().unwrap();
+        assert_eq!(plain.title().as_deref(), Some("Audit the retry paths"));
+
+        // No heading, no title — never a guess.
+        fs::write(&path, "just notes\n").unwrap();
+        let bare = Plan::read(&path).unwrap().unwrap();
+        assert_eq!(bare.title(), None);
     }
 
     #[test]
