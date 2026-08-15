@@ -359,6 +359,7 @@ ephor work dispatch [--project P] [--recipe R] [--item ID] [--kind pr]
                     [--updated-within DAYS] [--again]
 ephor work ask --item ID "…"                # a ticket in your own words
 ephor work sync [--dry-run]                 # reopen work whose item has moved
+ephor work cancel --item ID TICKET… [--why "…"]   # take a ticket back; the plan keeps it
 ephor work run [--project P] [--item ID] [-- --parallel 2]   # rhei run, per work root
 ephor work forget [--item ID | --done | --missing]
 ephor work states                           # the state machine the tickets run under
@@ -382,10 +383,12 @@ left deliberate.
 In the TUI, `w` on any item opens its **work screen**: the tickets already
 opened and what they reached, whether the item has moved under them, and the
 recipes that apply now with the exact words each would send. `1`-`9` opens one,
-`a` asks for something no recipe covers, `s` reopens stale work, `R` hands this
-item's plan to the runtime (which takes over the terminal, so you watch it
-work), `e` reads the plan. Rows carry a badge — `⚙ fix-gate · review`,
-`✓ answer · done — …`, `⟳ 2 new messages`.
+`a` asks for something no recipe covers, `s` reopens stale work, `c` takes a
+ticket back (through the runtime's own move into `cancelled`, with your reason
+as its result — the plan keeps it), `R` hands this item's plan to the runtime
+(which takes over the terminal, so you watch it work), `e` reads the plan.
+Rows carry a badge — `⚙ fix-gate · review`, `✓ answer · done — …`,
+`⊘ fix-gate · cancelled`, `⟳ 2 new messages`.
 
 ### By hand
 

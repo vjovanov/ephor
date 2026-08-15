@@ -784,6 +784,12 @@ pub(crate) enum Action {
     ReadPlan(PathBuf),
     /// Ask this item for something no recipe covers (§FS-005-dispatch.10).
     AskWork(Item),
+    /// Take one of this item's tickets back (§FS-005-dispatch.16): the shell
+    /// asks why, then asks the runtime for the move.
+    CancelWork {
+        item: Item,
+        ticket: String,
+    },
     ToggleUnread,
     Refresh,
     SetMessage(String),
@@ -1169,8 +1175,13 @@ impl App {
                 match prompt.handle_key(key.code, key.modifiers) {
                     PromptOutcome::Stay => {}
                     PromptOutcome::Cancel => {
-                        self.prompt = None;
-                        self.message = "Nothing asked for".to_string();
+                        let prompt = self.prompt.take().expect("prompt is open");
+                        self.message = match prompt.asking {
+                            Asking::Cancel { ticket, .. } => {
+                                format!("{ticket} kept — nothing cancelled")
+                            }
+                            _ => "Nothing asked for".to_string(),
+                        };
                     }
                     PromptOutcome::Submit(line) => {
                         let prompt = self.prompt.take().expect("prompt is open");
@@ -1563,6 +1574,20 @@ impl App {
                     "becomes a ticket with the dossier  ·  enter opens it  ·  esc cancels",
                 ))
             }
+            // The reason first, in one line: it becomes the ticket's result,
+            // which is what the record keeps (§FS-005-dispatch.16). Blank is
+            // allowed and recorded as blank; Esc keeps the ticket.
+            Action::CancelWork { item, ticket } => self.prompt = Some(
+                Prompt::new(
+                    Asking::Cancel {
+                        item,
+                        ticket: ticket.clone(),
+                    },
+                    format!("cancel {ticket} — why?"),
+                    "the reason becomes the ticket's result  ·  enter cancels it  ·  esc keeps it",
+                )
+                .empty_submits(),
+            ),
             Action::ReadPlan(path) => {
                 self.edit_file(terminal, &path)?;
                 // The reader may have edited what the screens read.
@@ -1594,6 +1619,22 @@ impl App {
                         }
                     }
                     Ok(outcome) => outcome.describe(),
+                    Err(err) => err.to_string(),
+                };
+                self.reload_work();
+                self.rebuild_view();
+                self.open_work(item);
+            }
+            // The runtime's move, in its own words, and its answer on the
+            // message line (§FS-005-dispatch.16); the screen below is rebuilt
+            // from the plan, which is where the truth of it now is.
+            Asking::Cancel { item, ticket } => {
+                let Some(dispatcher) = &self.dispatcher else {
+                    self.message = "Work needs the registry, which could not be read".to_string();
+                    return Ok(());
+                };
+                self.message = match dispatcher.cancel(&item.id, &ticket, line, false) {
+                    Ok(cancelled) => cancelled.describe(),
                     Err(err) => err.to_string(),
                 };
                 self.reload_work();

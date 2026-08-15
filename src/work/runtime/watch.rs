@@ -171,6 +171,32 @@ pub fn holding(_config: &WorkConfig, root: &Path) -> Vec<Held> {
         .collect()
 }
 
+/// Whether a live run holds this ticket right now: the root's lock is held,
+/// and the journal names the ticket in the state the plan still has it in,
+/// by a log that does not predate the lock. The same reading the board makes
+/// for a running row (§FS-005-dispatch.15), asked here before a cancel: a
+/// ticket a live run holds is the run's to finish, not the reader's to move
+/// (§FS-005-dispatch.16).
+pub fn held_by_live_run(
+    config: &WorkConfig,
+    root: &Path,
+    plan_id: &str,
+    ticket: &str,
+    state: &str,
+) -> bool {
+    if !live(config, root) {
+        return false;
+    }
+    let lock_born = fs::metadata(root.join(LOCK))
+        .and_then(|meta| meta.modified())
+        .ok();
+    holding(config, root).iter().any(|entry| {
+        (entry.task == ticket || entry.task == format!("{plan_id}.{ticket}"))
+            && entry.still_at(state)
+            && !predates_lock(root, entry, lock_born)
+    })
+}
+
 /// Whether a held entry's log was last written before the root's lock file
 /// existed. The lock is created before the first run on a root does
 /// anything, so a genuine invocation's log always postdates it — a log that
@@ -442,8 +468,12 @@ pub struct Operation {
     pub quiet: Option<u64>,
     pub tickets: Vec<BoardTicket>,
     /// Finished tickets, counted rather than listed: they are history, and
-    /// the plan behind Enter holds the whole of it.
+    /// the plan behind Enter holds the whole of it. Tickets taken back are
+    /// counted apart, in [`Operation::cancelled`] — a different kind of over
+    /// (§FS-005-dispatch.16).
     pub done: usize,
+    /// Tickets in the abandonment state, counted beside the finished.
+    pub cancelled: usize,
     /// Why this root's own state machine could not be read, where it could
     /// not (§FS-005-dispatch.15): finality and gating are the machine's
     /// words, so nothing on such a row is called queued or waiting and
@@ -574,6 +604,7 @@ pub fn board(config: &WorkConfig, roots: &[RootPlans]) -> Board {
         };
         let mut tickets = Vec::new();
         let mut done = 0;
+        let mut cancelled = 0;
         let mut known: BTreeSet<(String, String)> = BTreeSet::new();
         for (plan_ref, title, floor_tickets) in &floor {
             for ticket in floor_tickets {
@@ -586,7 +617,12 @@ pub fn board(config: &WorkConfig, roots: &[RootPlans]) -> Board {
                         None => (ticket.state.clone(), ticket.assignee.clone()),
                     };
                 if is_final(state.as_deref()) {
-                    done += 1;
+                    // Over either way; taken back is said apart from finished
+                    // (§FS-005-dispatch.16).
+                    match state.as_deref() == Some(super::plan::CANCELLED) {
+                        true => cancelled += 1,
+                        false => done += 1,
+                    }
                     continue;
                 }
                 let holds = held_now(&plan_ref.plan_id, &ticket.id, state.as_deref());
@@ -701,6 +737,7 @@ pub fn board(config: &WorkConfig, roots: &[RootPlans]) -> Board {
                 live: is_live,
                 tickets,
                 done,
+                cancelled,
                 machine_unread,
                 plans: group.plans.iter().map(|plan| plan.path.clone()).collect(),
             });

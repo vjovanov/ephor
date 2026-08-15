@@ -15,6 +15,27 @@ use crate::error::{EphorError, Result};
 /// Where the shipped states put what a run wrote, relative to the work root.
 const ARTIFACTS: &str = "runtime/ephor";
 
+/// Where the runtime itself keeps a ticket's result — the message a terminal
+/// move carried, appended as one `## Result` entry per move — relative to the
+/// work root, keyed by the ticket's project-qualified id. The runtime's own
+/// ledger, read and never written here.
+const RESULTS: &str = "runtime/results";
+
+/// The result the runtime recorded for a ticket, where it recorded one: the
+/// last entry's first line — which for a ticket the reader took back is the
+/// reason they gave (§FS-005-dispatch.16). None where the runtime wrote
+/// nothing, or wrote an empty file to satisfy its own link.
+pub fn result(root: &Path, plan_id: &str, ticket: &str) -> Option<String> {
+    let path = root.join(RESULTS).join(format!("{plan_id}.{ticket}.md"));
+    let text = fs::read_to_string(path).ok()?;
+    let last_entry = text.rsplit("## Result").next().unwrap_or(&text);
+    last_entry
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(String::from)
+}
+
 /// The verdict a finished ticket left behind, as the state machine ephor ships
 /// asks for it. Found by what it says rather than by where it sits: an agent
 /// asked for a document writes a document, and its first line is a heading.
@@ -96,6 +117,28 @@ mod tests {
         let dir = root.join(ARTIFACTS);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// The runtime's own result entry comes back as the ticket's line: the
+    /// last entry, its first line — the reason a cancel carried
+    /// (§FS-005-dispatch.16) — and nothing where the file is empty.
+    #[test]
+    fn the_runtimes_result_entry_is_read_back_last_entry_first_line() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join(RESULTS);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("widget-42.fix-gate-2.md"),
+            "## Result\n\nfirst move\n\n## Result\n\nasked twice by mistake\nmore words\n",
+        )
+        .unwrap();
+        assert_eq!(
+            result(tmp.path(), "widget-42", "fix-gate-2").as_deref(),
+            Some("asked twice by mistake")
+        );
+        fs::write(dir.join("widget-42.fix-gate-3.md"), "").unwrap();
+        assert_eq!(result(tmp.path(), "widget-42", "fix-gate-3"), None);
+        assert_eq!(result(tmp.path(), "widget-42", "nothing-1"), None);
     }
 
     #[test]

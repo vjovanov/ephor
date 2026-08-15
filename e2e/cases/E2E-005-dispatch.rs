@@ -57,14 +57,50 @@ case "${1:?subcommand}" in
 esac
 "#;
 
-/// A runtime in bash: it reads the plan it was handed, writes the verdict the
-/// shipped state machine asks each ticket for, drafts the reply where ephor
-/// said to, and moves the tickets it finished into the final state. Work state
-/// is the runtime's, which is why it is the runtime that edits the plan
-/// (§FS-005-dispatch.4).
+/// A runtime in bash. Asked to `run`, it reads the plan it was handed, writes
+/// the verdict the shipped state machine asks each ticket for, drafts the
+/// reply where ephor said to, and moves the tickets it finished into the
+/// final state. Asked for a `transition`, it moves the one ticket named,
+/// checking the state it is expected to be in, and records the result the
+/// move carried — which is the verb a cancel asks for
+/// (§FS-005-dispatch.16). Work state is the runtime's, which is why it is the
+/// runtime that edits the plan (§FS-005-dispatch.4).
 const ACME_RUNTIME: &str = r#"#!/usr/bin/env bash
 set -euo pipefail
-root="$2"
+verb="$1"; shift
+if [ "$verb" = transition ]; then
+  file="$1"; shift
+  task=""; from=""; to=""; result=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --task) task="$2"; shift 2 ;;
+      --from) from="$2"; shift 2 ;;
+      --to) to="$2"; shift 2 ;;
+      --result) result="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  current="$(awk -v task="$task" '
+    /^### Task / { current = $3; sub(":", "", current) }
+    /^\*\*State:\*\*/ && current == task { print $2; exit }
+  ' "$file")"
+  if [ "$current" != "$from" ]; then
+    printf '  × Task %s is in state %s, not %s.\n' "$task" "$current" "$from" >&2
+    exit 1
+  fi
+  awk -v task="$task" -v to="$to" '
+    /^### Task / { current = $3; sub(":", "", current) }
+    /^\*\*State:\*\*/ && current == task { print "**State:** " to; next }
+    { print }
+  ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+  stem="$(basename "$file" .rhei.md)"
+  mkdir -p "$(dirname "$file")/runtime/results"
+  printf '## Result\n\n%s\n' "$result" >> "$(dirname "$file")/runtime/results/$stem.$task.md"
+  echo "Task $stem.$task transitioned: '$from' → '$to'"
+  exit 0
+fi
+
+root="$1"
 plan=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -254,4 +290,163 @@ fn a_bound_runtime_runs_the_plan_and_its_verdict_and_drafted_reply_come_back() {
         .join("runtime/ephor")
         .join(format!("{PLAN}.reply.posted.md"))
         .exists());
+}
+
+/// The same recipe pressed twice is two tickets about one fix, and the second
+/// is taken back through the runtime's own move (§FS-005-dispatch.16): the
+/// plan keeps it, marked cancelled with the reason as its result; what was
+/// ordered after it is named as left waiting; and the next ticket ephor
+/// writes is ordered after the last one not taken back — never after the
+/// abandoned one. With no runtime installed the cancel is refused in the
+/// workable rung's words, and the plan is left exactly as it was.
+#[test]
+fn a_ticket_asked_for_twice_is_taken_back_and_the_plan_keeps_the_record() {
+    let world = watching();
+    for again in [false, true] {
+        let mut args = vec![
+            "work",
+            "dispatch",
+            "--item",
+            "acmeforge:app/101",
+            "--recipe",
+            "fix-gate",
+        ];
+        if again {
+            args.push("--again");
+        }
+        world
+            .ephor()
+            .args(&args)
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("1 ticket(s) opened"));
+    }
+    let plan = std::fs::read_to_string(plan_path(&world)).expect("the plan is on disk");
+    assert!(plan.contains("### Task fix-gate-1:"), "{plan}");
+    assert!(plan.contains("### Task fix-gate-2:"), "{plan}");
+    assert!(plan.contains("**Prior:** Task fix-gate-1"), "{plan}");
+
+    // Nobody on PATH can make the move: refused in the rung's sentence, and
+    // the plan is untouched (§FS-005-dispatch.16).
+    world
+        .ephor()
+        .args([
+            "work",
+            "cancel",
+            "--item",
+            "acmeforge:app/101",
+            "fix-gate-1",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("acme-runtime is not on PATH"));
+    assert_eq!(std::fs::read_to_string(plan_path(&world)).unwrap(), plan);
+
+    world.stub("acme-runtime", ACME_RUNTIME);
+    // Cancelling the first names the second as left waiting: it is ordered
+    // after a ticket that now satisfies no prior.
+    world
+        .ephor()
+        .args([
+            "work",
+            "cancel",
+            "--item",
+            "acmeforge:app/101",
+            "fix-gate-1",
+            "--why",
+            "asked twice by mistake",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("⊘ fix-gate-1 cancelled"))
+        .stdout(predicate::str::contains("fix-gate-2 is ordered after it"));
+    let plan = std::fs::read_to_string(plan_path(&world)).unwrap();
+    assert!(
+        plan.contains(
+            "### Task fix-gate-1: fix the red gate — Widen the retry window\n**State:** cancelled"
+        ),
+        "{plan}"
+    );
+    assert!(
+        plan.contains(
+            "### Task fix-gate-2: fix the red gate — Widen the retry window\n**State:** fix"
+        ),
+        "{plan}"
+    );
+
+    // Read back: taken back, with the reason the runtime recorded.
+    let listed = world
+        .ephor()
+        .args(["work", "list", "--json"])
+        .output()
+        .expect("the ledger lists");
+    let rows = json_of(&listed);
+    let one = &rows[0]["tickets"][0];
+    assert_eq!(one["id"], "fix-gate-1");
+    assert_eq!(one["state"], "cancelled");
+    assert_eq!(one["cancelled"], true);
+    assert_eq!(one["finished"], true);
+    assert_eq!(one["verdict"], "asked twice by mistake");
+    assert_eq!(rows[0]["tickets"][1]["cancelled"], false);
+
+    // Twice is once: the second cancel of the same ticket is refused, and so
+    // is one on a ticket that is not there.
+    world
+        .ephor()
+        .args([
+            "work",
+            "cancel",
+            "--item",
+            "acmeforge:app/101",
+            "fix-gate-1",
+            "fix-gate-9",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("fix-gate-1 is already cancelled"))
+        .stderr(predicate::str::contains("holds no ticket 'fix-gate-9'"));
+
+    // The next ticket follows the last one not taken back: with fix-gate-2
+    // cancelled too, a third ask is ordered after nothing.
+    world
+        .ephor()
+        .args([
+            "work",
+            "cancel",
+            "--item",
+            "acmeforge:app/101",
+            "fix-gate-2",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("⊘ fix-gate-2 cancelled"));
+    world
+        .ephor()
+        .args([
+            "work",
+            "ask",
+            "--item",
+            "acmeforge:app/101",
+            "just check the retry test",
+        ])
+        .assert()
+        .success();
+    let plan = std::fs::read_to_string(plan_path(&world)).unwrap();
+    let third = plan
+        .split("### Task ask-1:")
+        .nth(1)
+        .expect("the ask was written");
+    assert!(!third.contains("**Prior:**"), "{third}");
+    // And the reason left unsaid is recorded as exactly that.
+    let rows = json_of(
+        &world
+            .ephor()
+            .args(["work", "list", "--json"])
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(
+        rows[0]["tickets"][1]["verdict"],
+        "Cancelled from ephor; no reason was given."
+    );
 }

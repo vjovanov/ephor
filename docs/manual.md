@@ -1872,6 +1872,7 @@ ledger goes on saying the item moved past it.
 | `1`-`9`, `Enter` | open work under that recipe |
 | `a` | ask for something no recipe covers |
 | `s` | reopen work whose item has moved |
+| `c` | take a ticket back (§8.7.1) |
 | `R` | hand **this item's plan** to the runtime |
 | `e` | read the plan in `$EDITOR` |
 | `o` | open the item in the browser |
@@ -1898,6 +1899,69 @@ The header line above the run names who is getting it — `rhei run — <item> �
 agent pi at high` — and anything the resolution had to say, such as a hand
 that went unbound, waits for you on the message line when the run returns
 rather than scrolling away with it.
+
+#### 8.7.1 Taking a ticket back
+
+The same recipe pressed twice, an ask on the wrong item, a question the item
+moved past — not every ticket should run to its end. `c` on the work screen
+takes one back
+([§FS-005-dispatch.16](../requirements.md#16-work-that-should-not-go-on-is-cancelled-and-the-plan-says-so)):
+the open tickets are numbered, `j`/`k` or a digit picks one, and a one-line
+prompt asks why — the reason becomes the ticket's result, `Enter` on an empty
+line records that no reason was given, `Esc` keeps the ticket.
+
+```
+  what has been asked for   — which one to take back?
+  ▸ 1 ⚙ fix-gate-1    fix the red gate  [collect]
+    2 ⚙ fix-gate-2    fix the red gate  [collect]
+
+┌ cancel fix-gate-2 — why? ────────────────────────────────────────┐
+│ asked twice by mistake▌                                           │
+│ the reason becomes the ticket's result · enter cancels it · esc keeps it │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+Afterwards the ticket reads `⊘ fix-gate-2 … [cancelled]` with the reason
+beneath it, and the row's badge says `⊘ fix-gate · cancelled` where that is
+the last word on the item. **Nothing is deleted** — the plan is the record,
+and taking an ask back is a decision it keeps.
+
+Cancelling is **the runtime's move, in its own words**: ephor asks the bound
+runner for the transition into `cancelled` — `rhei transition <plan> --task
+<ticket> --from <state> --to cancelled --result "<why>"` — captured, and
+tells you what it answered. It never rewrites a `**State:**` line by hand,
+because the plan language reserves a ticket's state to the runtime's verbs
+once the ticket is written (the compare-and-swap, the artifact checks, the
+callbacks, the audit trail;
+[§DA-005](decisions/architectural/DA-005-cancel-is-the-runtimes-move.md)).
+So with no runtime bound `c` is not offered and says why, exactly as `R` does;
+the plan stays hand-editable for anyone who wants to make the move themselves.
+
+Three things are refused before the runtime is asked, in one sentence each:
+a ticket **a live run holds** — the run's to finish; wait for it or stop it
+where it is running — a ticket that is **already over**, and a machine that
+**declares no final `cancelled` state** (ephor's shipped machine and the
+examples beside it declare one and a `from: "*"` transition into it; a
+machine of your own must too — `ephor work states` prints ephor's to copy
+from). What the runner itself refuses comes back in its own sentence.
+
+Order follows from the state's name. `cancelled` is the one final state that
+satisfies no `**Prior:**` — which is why the join in
+[§8.5](#85-a-script-in-front-of-the-agent) relies on it — so a ticket
+ordered after one you cancel will not start, and the message names it:
+`⊘ fix-gate-1 cancelled — fix-gate-2 is ordered after it and will not start
+while it stands cancelled`. Cancel that one too if you mean to; ephor does
+not decide for it. The next ticket ephor writes — a reopen, an ask — is
+ordered after the last one *not* cancelled, so ephor's own chain never hangs
+off abandoned work.
+
+From the shell:
+
+```bash
+ephor work cancel --item github-prs:acme/widget#42 fix-gate-2 --why "asked twice"
+ephor work cancel --item ID fix-gate-1 fix-gate-2          # several at once, each reported
+ephor work cancel --item ID fix-gate-2 --dry-run           # what would be cancelled, nothing moved
+```
 
 ### 8.8 By hand
 
@@ -1933,6 +1997,7 @@ ephor work dispatch [--project P] [--item ID] [--recipe R] [--kind K]
                     [--again] [--hand H] [--updated-within DAYS] [--dry-run]
 ephor work ask --item ID [WORDS…] [--state S] [--dry-run]
 ephor work sync [--project P] [--dry-run]
+ephor work cancel --item ID TICKET… [--why WORDS] [--dry-run]
 ephor work run [--project P] [--item ID] [-- RHEI_ARGS…]
 ephor work forget [--item ID | --done | --missing]
 ephor work states
@@ -2459,6 +2524,23 @@ starts a fresh plan.
 
 **Work looks finished but the item moved on.** That is what `⟳` means. `s` on
 the work screen, or `ephor work sync`, writes the next ticket.
+
+**Cancel says the machine "declares no final 'cancelled' state".** The work
+root's `states.yaml` governs, and cancelling moves the ticket into a state it
+must declare. Add a `cancelled` state with `final: true` and a `from: "*"`
+transition into it — `ephor work states` prints ephor's machine, which has
+both — to that root's `states.yaml` and to the file `work.states` points at,
+so the next root gets it too. An existing `states.yaml` is never rewritten
+for you (§8.4).
+
+**Cancel says the runtime "refused: … cannot leave state …".** That is the
+runtime's own sentence, relayed. The shipped runtime enforces a state's
+declared `outputs:` on every transition out of it, the edge into `cancelled`
+included, so a ticket parked in a state whose artifacts were never written
+cannot be moved through the verb until the runtime exempts cancellation the
+way it exempts its own failure routes. ephor does not edit around it
+([§DA-005](decisions/architectural/DA-005-cancel-is-the-runtimes-move.md));
+the plan is yours to hand-edit if you must.
 
 **An agent never runs.** ephor writes tickets; the runtime runs them.
 `ephor work run`, or `rhei run` in the checkout.

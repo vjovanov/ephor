@@ -798,7 +798,9 @@ So ephor **fingerprints** the item at dispatch — its last activity, its state,
 its gate, how much conversation it had — and a change to any of those makes the
 work **stale**. Stale work is reopened by appending a ticket to the same plan
 that says what changed since the last one and asks for the difference, ordered
-after it. Not by opening a second plan: the point of the record is that one
+after it — after the last ticket that was not cancelled
+([§16](#16-work-that-should-not-go-on-is-cancelled-and-the-plan-says-so)),
+since a cancelled prior is one nothing waits out. Not by opening a second plan: the point of the record is that one
 item's work reads in one place, in order.
 
 What is asked for is chosen against the item as it now is, preferring what was
@@ -1297,6 +1299,73 @@ what the disk holds: it visits the project checkouts and the branch
 workspaces ephor already resolves, to the fixed depth a branch name can
 nest, and costs one directory listing per candidate work root — it never
 descends into a repository, and it never reads a plan to find it.
+
+### 16. Work that should not go on is cancelled, and the plan says so
+
+Not every ask should run to its end. The same recipe was pressed twice; a
+ticket was asked for on the wrong item; the item moved past the question
+before anyone picked it up. What is wanted then is not a fix and not a
+reopen but a **cancel** — and a watch that can hand work over and cannot
+take it back leaves the reader with two runs of the same fix in one
+checkout, or with an editor open on the plan, guessing at what the runtime
+would have written.
+
+So a ticket can be cancelled: from the work screen, on the ticket, and from
+the command line. Cancelling moves the ticket into the machine's
+**abandonment state** — spelled `cancelled` in the plan language, the one
+final state that satisfies no `**Prior:**` — carrying the reader's reason
+as the ticket's result. Two things follow from its being a state.
+
+**It is the runtime's move, made in the runtime's own words.** The plan
+language reserves a ticket's state, after it is written, to the runtime's
+own verbs — the compare-and-swap, the artifact checks, the callbacks, the
+audit trail — and a state line ephor rewrote by hand would be a plan the
+runtime can no longer vouch for
+([§4](#4-the-ledger-is-ephors-record-and-never-the-truth-about-the-work),
+§DA-005-cancel-is-the-runtimes-move). So ephor asks the runtime for the
+transition, captured rather than watched, and what comes back is what the
+reader is told: the ticket cancelled, or the runtime's own refusal in its
+own sentence. It follows that with no runner bound cancelling is refused in
+the workable rung's words like running is
+([§14](#14-who-does-the-work-is-chosen-and-defaulted-per-project)): the
+plan is still readable and hand-editable, and nobody is there to make the
+move.
+
+**The record keeps it.** A cancelled ticket stays in the plan, in its place
+in the order, marked as cancelled with its reason beneath it — the same
+reading a finished ticket gets. Nothing is deleted: the plan is the record
+of what was decided about this item
+([§3](#3-one-rhei-per-item-one-ticket-per-dispatch)), and taking an ask
+back is a decision too.
+
+Cancelling refuses where the move would be wrong, and says why in one
+sentence before anything is asked of the runtime. A ticket a **live run
+holds** is that run's to finish: pulling the state out from under an agent
+is interfering with a run, which is the later section
+([§15](#15-every-operation-is-visible-in-one-place)), and the refusal names
+the run. A **finished** ticket has nothing left to cancel. A machine that
+declares **no abandonment state** is refused with the machine and its file
+named, exactly as a recipe naming a state the machine lacks is
+([§6](#6-dispatch-is-offered-where-it-would-work-and-refuses-where-it-would-not)):
+a ticket moved into a state the machine does not have leaves a plan the
+runtime refuses to run at all. The machine ephor ships and the examples
+beside it declare the state and a transition into it from anywhere, so a
+work root ephor made can cancel from the start; a machine of the reader's
+own says whether it can, and the refusal tells them what to add. Everything
+else is fair: a ticket that is queued, parked on a question, dropped by a
+run that died, or claimed and unscheduled is somebody's to cancel, and the
+runtime's own checks are the last word.
+
+Order follows from the state's name. A ticket **ordered after** one now
+cancelled will not start — the abandonment state satisfies no `**Prior:**`,
+which is what its spelling is for
+([§11](#11-a-failure-that-is-not-the-changes-fault-is-restarted-not-fixed))
+— so cancelling says which open tickets those are, and cancelling them too
+is one more keystroke; ephor does not decide for them. And a ticket ephor
+appends afterwards — a reopen, a second ask — is ordered after the last
+ticket that is **not** cancelled
+([§5](#5-an-item-that-moved-reopens-its-work)), so ephor's own chain never
+hangs off abandoned work.
 
 ## FS-006-project-interface: a project and ephor meet over one interface, in three homes
 

@@ -141,7 +141,7 @@ impl OperationsScreen {
     /// Lines one operation takes: its own, one per ticket, and the finished
     /// count where there is one.
     fn row_lines(row: &OpRow) -> usize {
-        1 + row.op.tickets.len() + usize::from(row.op.done > 0)
+        1 + row.op.tickets.len() + usize::from(row.op.done > 0 || row.op.cancelled > 0)
     }
 
     /// Where an operation's first line sits in what [`OperationsScreen::lines`]
@@ -376,11 +376,23 @@ impl OperationsScreen {
                     Span::raw(saying),
                 ]));
             }
-            if op.done > 0 {
-                lines.push(Line::from(Span::styled(
-                    format!("        ✓ {} finished", op.done),
-                    Style::default().fg(Color::Green),
-                )));
+            if op.done > 0 || op.cancelled > 0 {
+                let mut over = Vec::new();
+                if op.done > 0 {
+                    over.push(Span::styled(
+                        format!("✓ {} finished", op.done),
+                        Style::default().fg(Color::Green),
+                    ));
+                }
+                if op.cancelled > 0 {
+                    if !over.is_empty() {
+                        over.push(Span::styled(" · ".to_string(), dim));
+                    }
+                    over.push(Span::styled(format!("⊘ {} cancelled", op.cancelled), dim));
+                }
+                let mut spans = vec![Span::raw("        ".to_string())];
+                spans.extend(over);
+                lines.push(Line::from(spans));
             }
         }
         lines
@@ -446,6 +458,7 @@ mod tests {
                     ticket("answer-1", Doing::Queued),
                 ],
                 done: 2,
+                cancelled: 1,
                 machine_unread: None,
                 plans: vec![plan()],
             },
@@ -472,6 +485,7 @@ mod tests {
                     },
                 )],
                 done: 0,
+                cancelled: 0,
                 machine_unread: None,
                 plans: vec![plan()],
             },
@@ -527,7 +541,7 @@ mod tests {
             text.contains("‖ forge-demo-17.answer-1  · Humanize durations  [fix]  queued"),
             "{text}"
         );
-        assert!(text.contains("✓ 2 finished"), "{text}");
+        assert!(text.contains("✓ 2 finished · ⊘ 1 cancelled"), "{text}");
     }
 
     /// A dead run's leavings are their own flavour on the screen, never

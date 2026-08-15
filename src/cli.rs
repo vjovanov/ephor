@@ -126,6 +126,9 @@ pub enum WorkCommand {
     Ask(WorkAskArgs),
     /// Reopen work whose item has moved since it was dispatched.
     Sync(WorkSyncArgs),
+    /// Take a ticket back: the runtime moves it into its cancelled state, with
+    /// your reason as its result. The plan keeps it.
+    Cancel(WorkCancelArgs),
     /// Run the runtime over every work root that still has an open ticket.
     Run(WorkRunArgs),
     /// Drop ledger entries; the plans they point at stay on disk.
@@ -202,6 +205,31 @@ pub struct WorkAskArgs {
     pub state: Option<String>,
 
     /// Report what would be written without writing it.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+/// `ephor work cancel` (§FS-005-dispatch.16): one item's tickets, taken back
+/// through the runtime's own transition. A ticket a live run holds, one
+/// already over, and a machine with no cancelled state are refused by name;
+/// tickets ordered after a cancelled one are named as left waiting.
+#[derive(Args, Debug)]
+pub struct WorkCancelArgs {
+    /// The item whose tickets these are, by its feed id.
+    #[arg(long)]
+    pub item: String,
+
+    /// The ticket(s) to take back, by id inside the item's plan (`fix-gate-2`).
+    #[arg(value_name = "TICKET", required = true)]
+    pub tickets: Vec<String>,
+
+    /// Why — one line, recorded as the ticket's result. Left out, the result
+    /// says the reason was left unsaid.
+    #[arg(long, value_name = "WORDS")]
+    pub why: Option<String>,
+
+    /// Report what would be cancelled without asking the runtime to move
+    /// anything.
     #[arg(long)]
     pub dry_run: bool,
 }

@@ -18,6 +18,12 @@ pub(crate) enum Asking {
     Work(crate::feed::model::Item),
     /// A shell command to run on the item the action menu is open on.
     Command(Box<super::ActionMenu>),
+    /// Why one of this item's tickets is being taken back
+    /// (§FS-005-dispatch.16) — the reason that becomes its result.
+    Cancel {
+        item: crate::feed::model::Item,
+        ticket: String,
+    },
 }
 
 pub(crate) struct Prompt {
@@ -25,6 +31,10 @@ pub(crate) struct Prompt {
     title: String,
     hint: String,
     input: String,
+    /// Whether an empty line is an answer. An ask that says nothing asks for
+    /// nothing; a reason left blank is a reason left blank, and the cancel
+    /// still happens (§FS-005-dispatch.16).
+    empty_submits: bool,
 }
 
 pub(crate) enum PromptOutcome {
@@ -40,14 +50,22 @@ impl Prompt {
             title: title.into(),
             hint: hint.into(),
             input: String::new(),
+            empty_submits: false,
         }
+    }
+
+    /// Let Enter on an empty line submit it, where nothing typed is still an
+    /// answer.
+    pub fn empty_submits(mut self) -> Self {
+        self.empty_submits = true;
+        self
     }
 
     pub fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> PromptOutcome {
         match code {
             KeyCode::Esc => PromptOutcome::Cancel,
             KeyCode::Enter => {
-                if self.input.trim().is_empty() {
+                if self.input.trim().is_empty() && !self.empty_submits {
                     PromptOutcome::Cancel
                 } else {
                     PromptOutcome::Submit(self.input.trim().to_string())
@@ -167,6 +185,22 @@ mod tests {
         prompt.handle_key(KeyCode::Char('u'), KeyModifiers::CONTROL);
         assert!(matches!(
             prompt.handle_key(KeyCode::Enter, KeyModifiers::NONE),
+            PromptOutcome::Cancel
+        ));
+    }
+
+    /// A reason left blank still answers where the prompt says it may
+    /// (§FS-005-dispatch.16): the cancel goes ahead with the reason unsaid,
+    /// and Esc alone keeps the ticket.
+    #[test]
+    fn an_empty_line_answers_where_the_prompt_allows_it() {
+        let mut prompt = asking().empty_submits();
+        match prompt.handle_key(KeyCode::Enter, KeyModifiers::NONE) {
+            PromptOutcome::Submit(words) => assert_eq!(words, ""),
+            _ => panic!("an empty reason is still an answer here"),
+        }
+        assert!(matches!(
+            prompt.handle_key(KeyCode::Esc, KeyModifiers::NONE),
             PromptOutcome::Cancel
         ));
     }

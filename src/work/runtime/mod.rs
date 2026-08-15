@@ -60,6 +60,95 @@ pub fn advance_command(
 /// The verb this seam fills, for messages.
 pub const VERB: &str = "work.run";
 
+/// The verb a cancel fills, for messages (§FS-005-dispatch.16).
+pub const CANCEL_VERB: &str = "work.cancel";
+
+/// How long the runner gets to move one ticket before ephor stops waiting.
+/// A transition is a file rewrite and, at most, a callback the machine
+/// hangs on it — seconds are generous, and a reader is holding the screen.
+const CANCEL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// `<runner> transition <plan> --task <ticket> --from <state> --to cancelled
+/// --result <why>`, quoted for `sh`, with the runner's own standard error
+/// folded into what is captured — its refusal is written there, and it is the
+/// one thing worth reading back when the move does not happen
+/// (§FS-005-dispatch.16, §DA-005-cancel-is-the-runtimes-move). The
+/// abandonment state is the plan language's word (§AR-007-runtime.1), and the
+/// result carries the reader's reason: the runtime records why a ticket ended
+/// where it did, and refuses a terminal move that says nothing.
+pub fn cancel_command(
+    config: &crate::work::recipe::WorkConfig,
+    plan: &Path,
+    ticket: &str,
+    from: &str,
+    why: &str,
+) -> String {
+    format!(
+        "{} transition {} --task {} --from {} --to {} --result {} 2>&1",
+        runner(config),
+        quote(&plan.to_string_lossy()),
+        quote(ticket),
+        quote(from),
+        quote(plan::CANCELLED),
+        quote(why),
+    )
+}
+
+/// Ask the runner to move one ticket into the abandonment state, from the
+/// work root, captured (§FS-005-dispatch.16). `Ok` is the ticket cancelled;
+/// `Err` is the runner's own refusal in its own first words — what it printed
+/// is what the reader is told, since ephor neither works around it nor knows
+/// better (§DA-005-cancel-is-the-runtimes-move).
+pub fn cancel(
+    config: &crate::work::recipe::WorkConfig,
+    root: &Path,
+    plan: &Path,
+    ticket: &str,
+    from: &str,
+    why: &str,
+) -> Result<()> {
+    let answer = summons::run(
+        &Summons::new(CANCEL_VERB, cancel_command(config, plan, ticket, from, why)),
+        &Site::root(root),
+        Mode::Captured(CANCEL_TIMEOUT),
+    )?;
+    if answer.is_done() {
+        return Ok(());
+    }
+    let said = said(answer.output.as_deref().unwrap_or(""));
+    Err(crate::error::EphorError::Command(match said.is_empty() {
+        true => format!(
+            "{} refused: {}",
+            label_of(config, "transition"),
+            answer.refusal(CANCEL_VERB)
+        ),
+        false => format!("{} refused: {said}", label_of(config, "transition")),
+    }))
+}
+
+/// The runner's own words out of what it printed: the first two lines that
+/// say anything, with the box-drawing a pretty error report wraps them in
+/// stripped, joined into one sentence a message line can carry.
+fn said(output: &str) -> String {
+    output
+        .lines()
+        .map(|line| {
+            line.trim()
+                .trim_start_matches(['×', '│', '╰', '╭', '─', '┬', '├', '┤', '▶', '·', ' '])
+                .trim()
+        })
+        .filter(|line| !line.is_empty() && !line.starts_with("help:"))
+        .take(2)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// How a surface names one of the runtime's verbs in a message — the bound
+/// command and the verb, never a word compiled in above this module.
+fn label_of(config: &crate::work::recipe::WorkConfig, verb: &str) -> String {
+    format!("{} {verb}", runner(config))
+}
+
 /// `<runner> run <root> [--rhei <plan>]… [--agent <agent> [--agent-mode
 /// <effort>]] [extra…]`, quoted for `sh`. The hand flags carry a chosen hand
 /// the plan language cannot spell — one naming an agent and no model
@@ -279,6 +368,80 @@ mod tests {
             ..crate::work::recipe::WorkConfig::default()
         };
         assert_eq!(refusal(&present), None);
+    }
+
+    /// A cancel is the runner's transition verb into the abandonment state,
+    /// carrying the reader's reason as the result, with the runner's standard
+    /// error folded in so its refusal can be read back
+    /// (§FS-005-dispatch.16, §DA-005-cancel-is-the-runtimes-move).
+    #[test]
+    fn a_cancel_is_the_runners_transition_into_the_abandonment_state() {
+        let command = cancel_command(
+            &crate::work::recipe::WorkConfig::default(),
+            Path::new("/w/panta/forge-demo-17.rhei.md"),
+            "fix-gate-2",
+            "collect",
+            "asked twice by mistake",
+        );
+        assert_eq!(
+            command,
+            "rhei transition '/w/panta/forge-demo-17.rhei.md' --task 'fix-gate-2' \
+             --from 'collect' --to 'cancelled' --result 'asked twice by mistake' 2>&1"
+        );
+        // Under another binding it is that binding's verb.
+        let bound = crate::work::recipe::WorkConfig {
+            runner: Some("my-runtime".to_string()),
+            ..crate::work::recipe::WorkConfig::default()
+        };
+        assert!(
+            cancel_command(&bound, Path::new("/w/p.rhei.md"), "a-1", "fix", "why")
+                .starts_with("my-runtime transition ")
+        );
+    }
+
+    /// What the runner printed comes back as its own sentence, unwrapped from
+    /// the report decoration and cut to what a message line can carry.
+    #[test]
+    fn the_runners_refusal_is_read_back_in_its_own_words() {
+        let printed = "  × Task item.fix-gate-1 cannot leave state collect.\n  │ Missing required output artifact: failures\n  │ (runtime/ephor/item.fix-gate-1.failures.md)\n  help: the state's work is not finished until that file exists.\n";
+        assert_eq!(
+            said(printed),
+            "Task item.fix-gate-1 cannot leave state collect. Missing required output artifact: failures"
+        );
+        assert_eq!(said("\n   \n"), "");
+    }
+
+    /// Run against a stand-in runner: a stand-in that agrees moves nothing
+    /// ephor can see but answers done, and one that refuses hands its words
+    /// back as the error (§FS-005-dispatch.16).
+    #[test]
+    fn a_cancel_is_done_or_carries_the_runners_words() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("panta");
+        std::fs::create_dir_all(&root).unwrap();
+        let plan = root.join("p.rhei.md");
+        std::fs::write(&plan, "# Rhei: p\n").unwrap();
+        // The binding is a shell function of the reader's: `sh -c` resolves
+        // it as any command, and a name on PATH is not needed for the seam.
+        let agrees = crate::work::recipe::WorkConfig {
+            runner: Some("echo".to_string()),
+            ..crate::work::recipe::WorkConfig::default()
+        };
+        cancel(&agrees, &root, &plan, "a-1", "fix", "why").expect("echo agrees to anything");
+
+        let refuses = crate::work::recipe::WorkConfig {
+            runner: Some(
+                "sh -c 'printf \"  × Task a-1 cannot leave state fix.\\n\" >&2; exit 1' --"
+                    .to_string(),
+            ),
+            ..crate::work::recipe::WorkConfig::default()
+        };
+        let err = cancel(&refuses, &root, &plan, "a-1", "fix", "why").expect_err("it refused");
+        let said = err.to_string();
+        assert!(
+            said.contains("refused: Task a-1 cannot leave state fix."),
+            "{said}"
+        );
     }
 
     #[test]

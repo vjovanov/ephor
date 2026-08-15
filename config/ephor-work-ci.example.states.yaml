@@ -5,6 +5,7 @@
 #      │ └──75──► collect        (the gate is still running; wait)
 #      │ └───3──► gate-green     (nothing failed; nothing to fix)
 #      └─nonzero─► fix           (the forge could not say; the report says so)
+#   any ──► cancelled            (the reader took the ticket back)
 #
 # `collect` is a **program** state: no agent runs, a script does, and its exit
 # code picks the next state. ephor writes the item into the plan as metadata,
@@ -107,6 +108,13 @@ states:
     description: The ticket is finished; the verdict says how.
     final: true
 
+  # Where a ticket goes when it should not go on (§FS-005-dispatch.16).
+  # Spelled `cancelled` because that is the one final state that satisfies no
+  # `**Prior:**` — an abandoned ticket lets nothing run on the strength of it.
+  cancelled:
+    description: The ticket was taken back; the result says why.
+    final: true
+
 transitions:
   # Ordered: the first matching exit code wins, so the specific ones lead.
   - from: collect
@@ -141,3 +149,9 @@ transitions:
   - from: review
     to: done
     description: Reviewed, with a verdict.
+
+  # What `ephor work cancel` and the work screen's `c` take, from whichever
+  # state the ticket is in.
+  - from: "*"
+    to: cancelled
+    description: The reader took the ticket back.

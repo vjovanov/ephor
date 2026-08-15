@@ -6,11 +6,18 @@
 # than dispatched into a machine that cannot run it.
 #
 #   fix ──► review ──► done
+#     └────────┴──► cancelled     (from anywhere, when the reader says so)
 #
 # Two agent passes and nothing else. The first does the work and writes down
 # what it did; the second reads that against the ticket and reaches a verdict.
 # `review` requires the report `fix` writes, so work that produced nothing
 # stops at the boundary instead of arriving at `done` with an empty result.
+#
+# `cancelled` is where a ticket goes when it should not go on — asked twice,
+# asked by mistake, overtaken (§FS-005-dispatch.16). It is reachable from any
+# state, and it is spelled `cancelled` deliberately: that is the one final
+# state that satisfies no `**Prior:**`, so nothing ordered after an abandoned
+# ticket runs on the strength of it.
 
 name: ephor-work
 version: 1.0
@@ -85,6 +92,10 @@ states:
     description: The ticket is finished; the verdict says how.
     final: true
 
+  cancelled:
+    description: The ticket was taken back; the result says why.
+    final: true
+
 transitions:
   - from: fix
     to: review
@@ -93,3 +104,9 @@ transitions:
   - from: review
     to: done
     description: Reviewed, with a verdict.
+
+  # Named transitions lead; the wildcard is what `ephor work cancel` and the
+  # work screen's `c` take, from whichever state the ticket is in.
+  - from: "*"
+    to: cancelled
+    description: The reader took the ticket back.

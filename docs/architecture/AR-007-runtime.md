@@ -38,7 +38,15 @@ behind the very run it asks about; the transition journal and the newest
 matching agent log for which tickets a live run holds, one task having many
 logs across states and visits; the dashboard address a live run publishes,
 per run rather than per ticket; and the advance and release commands in the
-runner's own words (§FS-005-dispatch.10). Where the binary itself is
+runner's own words (§FS-005-dispatch.10). Cancelling: the transition of
+one ticket into the abandonment state, composed in the runner's own
+words — plan, ticket, expected state, target, and the reader's reason as
+the result — and run as a captured summons from the work root, with the
+runner's own refusal lifted from what it printed (§FS-005-dispatch.16,
+§DA-005-cancel-is-the-runtimes-move); the abandonment state's name is the
+plan language's and is spelled here and nowhere else, so above this
+module a surface asks only whether the machine in force declares one and
+whether a ticket sits in it. Where the binary itself is
 present, its own plan listing (`rhei list --json`) may sharpen state and
 assignee read-back — the binding's own stdout, honored by this one binding
 the way custom-status's is (§AR-002-summons.3) — while the direct plan read

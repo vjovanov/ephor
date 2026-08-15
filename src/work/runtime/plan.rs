@@ -15,6 +15,14 @@ use crate::error::{EphorError, Result};
 /// The state machine ephor installs into a work root that has none.
 pub const SHIPPED_STATES: &str = include_str!("../../../assets/ephor-work.states.yaml");
 
+/// The plan language's **abandonment state**: the one final state that
+/// satisfies no `**Prior:**`, and where a ticket the reader takes back goes
+/// (§FS-005-dispatch.16). The name is the runtime's — its readiness rule
+/// turns on this spelling and no other — so it is spelled here and nowhere
+/// above this module (§REQ-001-boundary.5); a surface asks a [`WorkRoot`]
+/// whether its machine declares it and a [`PlanTicket`] whether it sits in it.
+pub const CANCELLED: &str = "cancelled";
+
 /// What surrounds the dossier, so a later sync can rewrite exactly that much
 /// and leave every `**State:**` line the runtime owns untouched.
 const DOSSIER_OPEN: &str = "<!-- ephor:dossier -->";
@@ -139,6 +147,17 @@ impl WorkRoot {
     /// Whether a state is one the work does not leave.
     pub fn is_final(&self, state: &str) -> bool {
         self.flag(state, |info| info.is_final)
+    }
+
+    /// The abandonment state this machine declares, where it declares one
+    /// (§FS-005-dispatch.16): [`CANCELLED`], and final — a state under that
+    /// name the work would leave again is not one a ticket can be taken back
+    /// into. None is a refusal's cue, never a state to write.
+    pub fn cancel_state(&self) -> Option<&str> {
+        self.states
+            .iter()
+            .find(|info| info.name == CANCELLED && info.is_final)
+            .map(|info| info.name.as_str())
     }
 
     /// Whether a state is one the runtime will not leave on its own — work
@@ -339,6 +358,17 @@ pub struct PlanTicket {
     /// The execution line the ticket carries, where it carries one
     /// (§FS-005-dispatch.14).
     pub pinned: Option<Pin>,
+    /// The tickets this one is ordered after — its `**Prior:**` list, ids
+    /// only, the kind word dropped as the runtime's own readers drop it. What
+    /// a cancel names as left waiting (§FS-005-dispatch.16).
+    pub prior: Vec<String>,
+}
+
+impl PlanTicket {
+    /// Whether the ticket sits in the abandonment state (§FS-005-dispatch.16).
+    pub fn cancelled(&self) -> bool {
+        self.state.as_deref() == Some(CANCELLED)
+    }
 }
 
 pub struct Plan {
@@ -414,6 +444,7 @@ impl Plan {
                             state: None,
                             assignee: None,
                             pinned: None,
+                            prior: Vec::new(),
                         });
                         in_header = true;
                     }
@@ -441,6 +472,10 @@ impl Plan {
                 let assignee = assignee.trim();
                 if last.assignee.is_none() && !assignee.is_empty() {
                     last.assignee = Some(assignee.to_string());
+                }
+            } else if let Some(prior) = trimmed.strip_prefix("**Prior:**") {
+                if last.prior.is_empty() {
+                    last.prior = prior_ids(prior);
                 }
             } else if let Some(value) = trimmed.strip_prefix("**Target:**") {
                 // The full line makes the ticket its own authority on who
@@ -480,14 +515,22 @@ impl Plan {
         format!("{recipe}-{}", highest + 1)
     }
 
-    /// The last top-level ticket in the plan, which a new one follows: a new
-    /// dispatch orders itself after the previous dispatch, never after a
-    /// subtask the runtime nested under one.
+    /// The last top-level ticket in the plan that was not cancelled, which a
+    /// new one follows: a new dispatch orders itself after the previous
+    /// dispatch, never after a subtask the runtime nested under one — and
+    /// never after an abandoned ticket, since the abandonment state satisfies
+    /// no `**Prior:**` and a chain hung off one would never start
+    /// (§FS-005-dispatch.16, §FS-005-dispatch.5).
     pub fn last_ticket(&self) -> Option<PlanTicket> {
         self.tickets()
             .into_iter()
-            .filter(|ticket| !ticket.id.contains('.'))
+            .filter(|ticket| !ticket.id.contains('.') && !ticket.cancelled())
             .next_back()
+    }
+
+    /// One ticket by id, as the plan has it.
+    pub fn ticket(&self, id: &str) -> Option<PlanTicket> {
+        self.tickets().into_iter().find(|ticket| ticket.id == id)
     }
 
     pub fn append(&mut self, ticket: &Ticket) {
@@ -624,6 +667,29 @@ fn ticket_heading(line: &str) -> Option<(String, String)> {
         return None;
     }
     Some((id.to_string(), title.trim().to_string()))
+}
+
+/// The ids a `**Prior:**` list names: `Task a-1, Task b-2` is `a-1`, `b-2`.
+/// The kind word is decoration in the runtime's grammar — a reference
+/// resolves on the id alone, and its own readers accept the bare form — so
+/// both spellings read the same here.
+fn prior_ids(list: &str) -> Vec<String> {
+    list.split(',')
+        .filter_map(|reference| {
+            let reference = reference.trim();
+            let id = match reference.split_once(char::is_whitespace) {
+                Some((kind, id))
+                    if kind
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') =>
+                {
+                    id.trim()
+                }
+                _ => reference,
+            };
+            (!id.is_empty()).then(|| id.to_string())
+        })
+        .collect()
 }
 
 /// One id segment, as the runtime's grammar has it: a name — a letter, then
@@ -786,6 +852,77 @@ mod tests {
         assert!(fs::read_to_string(tmp.path().join(".gitignore"))
             .unwrap()
             .contains('*'));
+    }
+
+    /// The shipped machine declares the abandonment state and it is final;
+    /// a machine spelling the name over a state it would leave again declares
+    /// none, and neither does one without it (§FS-005-dispatch.16).
+    #[test]
+    fn the_abandonment_state_is_the_final_one_under_the_runtimes_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = WorkRoot::ensure(tmp.path(), SHIPPED_STATES).unwrap();
+        assert_eq!(root.cancel_state(), Some(CANCELLED));
+        assert!(root.is_final(CANCELLED));
+
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(
+            tmp.path().join("states.yaml"),
+            "name: m\nstates:\n  fix:\n    agent: x\n  cancelled:\n    agent: y\n  done:\n    final: true\n",
+        )
+        .unwrap();
+        let root = WorkRoot::ensure(tmp.path(), SHIPPED_STATES).unwrap();
+        assert_eq!(root.cancel_state(), None, "not final is not abandonment");
+
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(
+            tmp.path().join("states.yaml"),
+            "name: m\nstates:\n  fix:\n    agent: x\n  done:\n    final: true\n",
+        )
+        .unwrap();
+        let root = WorkRoot::ensure(tmp.path(), SHIPPED_STATES).unwrap();
+        assert_eq!(root.cancel_state(), None);
+    }
+
+    /// A ticket's `**Prior:**` list is read as ids, kind word or not; a
+    /// cancelled ticket reads as such; and the ticket a new one follows is
+    /// the last that was not taken back, so ephor's own chain never hangs
+    /// off abandoned work (§FS-005-dispatch.16, §FS-005-dispatch.5).
+    #[test]
+    fn priors_are_read_and_a_new_ticket_follows_the_last_that_was_not_cancelled() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("p.rhei.md");
+        fs::write(
+            &path,
+            concat!(
+                "# Rhei: p\n**States:** m\n\n## Tasks\n\n",
+                "### Task fix-gate-1: one\n**State:** done\n\nbody\n\n",
+                "### Task fix-gate-2: two\n**State:** cancelled\n**Prior:** Task fix-gate-1\n\nbody\n\n",
+                "### Task fix-gate-3: three\n**State:** cancelled\n**Prior:** fix-gate-1, Task fix-gate-2\n\nbody\n\n",
+                "#### Task fix-gate-3.1: sub\n**State:** fix\n\nbody\n",
+            ),
+        )
+        .unwrap();
+        let plan = Plan::read(&path).unwrap().unwrap();
+        let tickets = plan.tickets();
+        assert_eq!(tickets[1].prior, vec!["fix-gate-1"]);
+        assert_eq!(tickets[2].prior, vec!["fix-gate-1", "fix-gate-2"]);
+        assert!(tickets[1].cancelled());
+        assert!(!tickets[0].cancelled());
+        assert_eq!(
+            plan.ticket("fix-gate-2").map(|t| t.id),
+            Some("fix-gate-2".to_string())
+        );
+        assert!(plan.ticket("fix-gate-9").is_none());
+        // Not the cancelled ones, and not the subtask: the finished one.
+        assert_eq!(
+            plan.last_ticket().map(|t| t.id),
+            Some("fix-gate-1".to_string())
+        );
+        assert_eq!(
+            prior_ids("Task a-1, Bug 2.3,  c-9 "),
+            vec!["a-1", "2.3", "c-9"]
+        );
+        assert!(prior_ids("  ").is_empty());
     }
 
     #[test]

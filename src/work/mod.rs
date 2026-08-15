@@ -107,6 +107,10 @@ pub struct TicketStatus {
     pub title: String,
     pub state: Option<String>,
     pub finished: bool,
+    /// Taken back rather than finished: the ticket sits in the machine's
+    /// abandonment state (§FS-005-dispatch.16). Finished too, since that
+    /// state is final — this says which kind of over it is.
+    pub cancelled: bool,
     /// The runtime has stopped on this ticket and a person has to answer it
     /// (§FS-005-dispatch.9).
     pub waiting: bool,
@@ -116,9 +120,47 @@ pub struct TicketStatus {
     /// The execution line the ticket carries, where it carries one
     /// (§FS-005-dispatch.14).
     pub pinned: Option<plan::Pin>,
-    /// What the review left behind, where the work reached one.
+    /// What the review left behind, where the work reached one — or, for a
+    /// ticket taken back, the reason the reader gave (§FS-005-dispatch.16).
     pub verdict: Option<String>,
 }
+
+/// What one cancel did (§FS-005-dispatch.16).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Cancelled {
+    pub ticket: String,
+    /// The state it was taken back from.
+    pub from: String,
+    pub plan: PathBuf,
+    /// Open tickets ordered after it, which will not start while it stands
+    /// cancelled — named, never moved: cancelling them too is the reader's
+    /// call.
+    pub left_waiting: Vec<String>,
+}
+
+impl Cancelled {
+    /// One line for a message: what was cancelled, and what that leaves
+    /// waiting.
+    pub fn describe(&self) -> String {
+        match self.left_waiting.is_empty() {
+            true => format!("⊘ {} cancelled", self.ticket),
+            false => format!(
+                "⊘ {} cancelled — {} ordered after it and will not start while it stands cancelled",
+                self.ticket,
+                match self.left_waiting.len() {
+                    1 => format!("{} is", self.left_waiting[0]),
+                    _ => format!("{} are", self.left_waiting.join(", ")),
+                }
+            ),
+        }
+    }
+}
+
+/// What a cancel says when the reader says nothing: the runtime records why
+/// a ticket ended where it did and refuses a terminal move that says
+/// nothing, and this is the truth of a reason left blank — never a reason
+/// invented on the reader's behalf.
+pub const CANCELLED_UNSAID: &str = "Cancelled from ephor; no reason was given.";
 
 /// An item's work as it stands: read from the plan every time
 /// (§FS-005-dispatch.4).
@@ -183,6 +225,9 @@ impl WorkStatus {
                 open.state.as_deref().unwrap_or("?")
             ),
             None => match self.tickets.last() {
+                // Taken back is a different kind of over from finished, and
+                // the row says which (§FS-005-dispatch.16).
+                Some(last) if last.cancelled => format!("⊘ {} · cancelled", last.recipe),
                 Some(last) => match &last.verdict {
                     // The verdict's own sentence, cut where a row ends: the
                     // rest of it is in the artifact, one keystroke away.
@@ -952,6 +997,27 @@ impl Dispatcher {
         self.dispatch(item, &recipe, None, dry_run)
     }
 
+    /// Take one of an item's tickets back (§FS-005-dispatch.16): the runtime's
+    /// own move into the abandonment state, asked in its own words, refused
+    /// beforehand on what ephor can see for itself. The ledger is untouched —
+    /// it records what was asked, and this was asked.
+    pub fn cancel(&self, item: &str, ticket: &str, why: &str, dry_run: bool) -> Result<Cancelled> {
+        let entry = self.ledger.entries.get(item).ok_or_else(|| {
+            EphorError::Command(format!(
+                "{item} has no work to cancel — nothing was dispatched for it"
+            ))
+        })?;
+        cancel_ticket(
+            &self.global,
+            &entry.root,
+            &entry.plan_id,
+            &entry.plan,
+            ticket,
+            why,
+            dry_run,
+        )
+    }
+
     /// The reply a run drafted about this matter and did not send, where one
     /// was drafted (§FS-005-dispatch.13). Attached to the matter here rather
     /// than stored on it: it is what the runtime left on disk, and reading it
@@ -978,78 +1044,214 @@ impl Dispatcher {
     }
 
     pub fn status_of(&self, entry: &Entry, item: Option<&Item>) -> WorkStatus {
-        let recipes: BTreeMap<&str, &str> = entry
-            .dispatches
-            .iter()
-            .map(|dispatch| (dispatch.ticket.as_str(), dispatch.recipe.as_str()))
-            .collect();
-        let root = WorkRoot::open(&entry.root).ok().flatten();
-        let plan = Plan::read(&entry.plan).ok().flatten();
-        let tickets: Vec<TicketStatus> = plan
-            .as_ref()
-            .map(|plan| {
-                plan.tickets()
-                    .into_iter()
-                    .map(|ticket| TicketStatus {
-                        recipe: recipes
-                            .get(ticket.id.as_str())
-                            .map(|recipe| recipe.to_string())
-                            .unwrap_or_else(|| ticket.id.clone()),
-                        finished: ticket
-                            .state
-                            .as_deref()
-                            .map(|state| {
-                                root.as_ref()
-                                    .map(|root| root.is_final(state))
-                                    // With no machine to ask, a ticket is
-                                    // finished when the work left a verdict.
-                                    .unwrap_or(false)
-                            })
-                            .unwrap_or(false),
-                        waiting: ticket
-                            .state
-                            .as_deref()
-                            .map(|state| {
-                                root.as_ref()
-                                    .map(|root| root.is_gating(state))
-                                    .unwrap_or(false)
-                            })
-                            .unwrap_or(false),
-                        verdict: runtime::results::verdict(&entry.root, &entry.plan_id, &ticket.id),
-                        assignee: ticket.assignee,
-                        pinned: ticket.pinned,
-                        id: ticket.id,
-                        title: ticket.title,
-                        state: ticket.state,
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        let advance = tickets.iter().find(|ticket| ticket.waiting).map(|ticket| {
-            runtime::advance_command(
-                &self.global,
-                &ticket.id,
-                ticket.state.as_deref().unwrap_or("?"),
-            )
-        });
-        WorkStatus {
-            project: entry.project.clone(),
-            root: entry.root.clone(),
-            plan_id: entry.plan_id.clone(),
-            checkout: entry.checkout(),
-            plan: entry.plan.clone(),
-            missing: plan.is_none(),
-            tickets,
-            advance,
-            changes: item
-                .map(|item| entry.changes_since(item))
-                .unwrap_or_default(),
-        }
+        status_of_entry(&self.global, entry, item)
     }
 
     pub fn save(&self) -> Result<()> {
         ledger::store(&self.ledger)
     }
+}
+
+/// An entry's work as it stands, read from the plan (§FS-005-dispatch.4). A
+/// free function so a test can read a plan back the way every surface does.
+pub fn status_of_entry(global: &WorkConfig, entry: &Entry, item: Option<&Item>) -> WorkStatus {
+    let recipes: BTreeMap<&str, &str> = entry
+        .dispatches
+        .iter()
+        .map(|dispatch| (dispatch.ticket.as_str(), dispatch.recipe.as_str()))
+        .collect();
+    let root = WorkRoot::open(&entry.root).ok().flatten();
+    let plan = Plan::read(&entry.plan).ok().flatten();
+    let tickets: Vec<TicketStatus> = plan
+        .as_ref()
+        .map(|plan| {
+            plan.tickets()
+                .into_iter()
+                .map(|ticket| TicketStatus {
+                    recipe: recipes
+                        .get(ticket.id.as_str())
+                        .map(|recipe| recipe.to_string())
+                        .unwrap_or_else(|| ticket.id.clone()),
+                    finished: ticket
+                        .state
+                        .as_deref()
+                        .map(|state| {
+                            root.as_ref()
+                                .map(|root| root.is_final(state))
+                                // With no machine to ask, a ticket is
+                                // finished when the work left a verdict.
+                                .unwrap_or(false)
+                        })
+                        .unwrap_or(false),
+                    // The abandonment state is the machine's word too:
+                    // judged only where the machine is there to say it is
+                    // final (§FS-005-dispatch.16).
+                    cancelled: ticket.cancelled()
+                        && root
+                            .as_ref()
+                            .is_some_and(|root| root.cancel_state().is_some()),
+                    waiting: ticket
+                        .state
+                        .as_deref()
+                        .map(|state| {
+                            root.as_ref()
+                                .map(|root| root.is_gating(state))
+                                .unwrap_or(false)
+                        })
+                        .unwrap_or(false),
+                    // The review's line where the work reached one; for a
+                    // ticket taken back, the reason the reader gave, read
+                    // out of the runtime's own result (§FS-005-dispatch.16).
+                    verdict: runtime::results::verdict(&entry.root, &entry.plan_id, &ticket.id)
+                        .or_else(|| {
+                            ticket
+                                .cancelled()
+                                .then(|| {
+                                    runtime::results::result(
+                                        &entry.root,
+                                        &entry.plan_id,
+                                        &ticket.id,
+                                    )
+                                })
+                                .flatten()
+                        }),
+                    assignee: ticket.assignee,
+                    pinned: ticket.pinned,
+                    id: ticket.id,
+                    title: ticket.title,
+                    state: ticket.state,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let advance = tickets.iter().find(|ticket| ticket.waiting).map(|ticket| {
+        runtime::advance_command(global, &ticket.id, ticket.state.as_deref().unwrap_or("?"))
+    });
+    WorkStatus {
+        project: entry.project.clone(),
+        root: entry.root.clone(),
+        plan_id: entry.plan_id.clone(),
+        checkout: entry.checkout(),
+        plan: entry.plan.clone(),
+        missing: plan.is_none(),
+        tickets,
+        advance,
+        changes: item
+            .map(|item| entry.changes_since(item))
+            .unwrap_or_default(),
+    }
+}
+
+/// Cancel one ticket of one plan (§FS-005-dispatch.16): refuse on what the
+/// artifacts already say — no runner bound, no such ticket, a ticket already
+/// over, a machine with no abandonment state, a ticket a live run holds — and
+/// otherwise ask the runtime for the move in its own words, and report what
+/// that leaves waiting. A free function so the command line and the interface
+/// make one and the same set of refusals in one and the same order
+/// (§DA-005-cancel-is-the-runtimes-move). `why` empty is the reason left
+/// unsaid, recorded as exactly that.
+pub fn cancel_ticket(
+    config: &WorkConfig,
+    root: &std::path::Path,
+    plan_id: &str,
+    plan_path: &std::path::Path,
+    ticket: &str,
+    why: &str,
+    dry_run: bool,
+) -> Result<Cancelled> {
+    // The move is the runtime's; with nobody to make it the plan is left as
+    // it is, and the refusal is the workable rung's sentence
+    // (§AR-005-capabilities.2).
+    if let Some(refusal) = runtime::refusal(config) {
+        return Err(EphorError::Command(refusal));
+    }
+    let plan = Plan::read(plan_path)?.ok_or_else(|| {
+        EphorError::Command(format!(
+            "the plan {} is gone — nothing there to cancel",
+            plan_path.display()
+        ))
+    })?;
+    let found = plan.ticket(ticket).ok_or_else(|| {
+        let known: Vec<String> = plan.tickets().into_iter().map(|t| t.id).collect();
+        EphorError::Command(format!(
+            "{} holds no ticket '{ticket}' (it has: {})",
+            plan_path.display(),
+            match known.is_empty() {
+                true => "none".to_string(),
+                false => known.join(", "),
+            }
+        ))
+    })?;
+    let from = found.state.clone().ok_or_else(|| {
+        EphorError::Command(format!(
+            "{ticket} declares no state, so there is nothing to move it from"
+        ))
+    })?;
+    // A machine that cannot say what final means cannot say what cancelled
+    // means either; and one that declares no abandonment state has nowhere to
+    // put the ticket (§FS-005-dispatch.6).
+    let machine = WorkRoot::open(root)?.ok_or_else(|| {
+        EphorError::Command(format!(
+            "{} declares no state machine, so no state there is one to cancel into",
+            root.display()
+        ))
+    })?;
+    if found.cancelled() && machine.cancel_state().is_some() {
+        return Err(EphorError::Command(format!(
+            "{ticket} is already cancelled"
+        )));
+    }
+    if machine.is_final(&from) {
+        return Err(EphorError::Command(format!(
+            "{ticket} is already over — it sits in '{from}', which is final"
+        )));
+    }
+    if machine.cancel_state().is_none() {
+        return Err(EphorError::Command(format!(
+            "the machine '{}' in {} declares no final '{}' state to cancel into (it has: {}) — \
+             add one and a transition into it from anywhere (`ephor work states` prints ephor's, \
+             which has both), or move the ticket by hand",
+            machine.machine,
+            root.display(),
+            plan::CANCELLED,
+            machine.state_names().join(", ")
+        )));
+    }
+    // A ticket a live run holds is that run's to finish (§FS-005-dispatch.16):
+    // moving it out from under the agent is interfering with the run, which
+    // is not this key's to do (§FS-005-dispatch.15).
+    if runtime::watch::held_by_live_run(config, root, plan_id, ticket, &from) {
+        return Err(EphorError::Command(format!(
+            "{ticket} is held by a live run in '{from}' — the run is its to finish; wait for it, \
+             or stop the run where it is running, then cancel"
+        )));
+    }
+    let left_waiting: Vec<String> = plan
+        .tickets()
+        .into_iter()
+        .filter(|other| {
+            other.id != ticket
+                && other.prior.iter().any(|prior| prior == ticket)
+                && !other
+                    .state
+                    .as_deref()
+                    .is_some_and(|state| machine.is_final(state))
+        })
+        .map(|other| other.id)
+        .collect();
+    let why = match why.trim().is_empty() {
+        true => CANCELLED_UNSAID,
+        false => why.trim(),
+    };
+    if !dry_run {
+        runtime::cancel(config, root, plan_path, ticket, &from, why)?;
+    }
+    Ok(Cancelled {
+        ticket: ticket.to_string(),
+        from,
+        plan: plan_path.to_path_buf(),
+        left_waiting,
+    })
 }
 
 /// Where an item's work goes for a project: its own template, or the global
@@ -1359,6 +1561,318 @@ mod tests {
 
     fn roots_of(groups: &[runtime::watch::RootPlans]) -> Vec<&Path> {
         groups.iter().map(|group| group.root.as_path()).collect()
+    }
+
+    /// A stand-in runtime with the transition verb the cancel asks for
+    /// (§FS-005-dispatch.16): it moves the named ticket's state line and
+    /// records the result the way the shipped binding does — the plan's own
+    /// state line, and `runtime/results/<plan>.<ticket>.md`. Anything else
+    /// it is asked, it refuses, in a sentence of its own.
+    const STAND_IN_RUNTIME: &str = r#"#!/usr/bin/env bash
+set -euo pipefail
+verb="${1:-}"; shift || true
+[ "$verb" = transition ] || { echo "  × stand-in: no verb '$verb'" >&2; exit 2; }
+plan="$1"; shift
+task=""; from=""; to=""; result=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --task) task="$2"; shift 2 ;;
+    --from) from="$2"; shift 2 ;;
+    --to) to="$2"; shift 2 ;;
+    --result) result="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+grep -q "^### Task $task:" "$plan" || { echo "  × stand-in: no task '$task'" >&2; exit 1; }
+if [ "$from" = "fix" ]; then
+  echo "  × Task $task cannot leave state fix." >&2
+  echo "  │ Missing required output artifact: report" >&2
+  exit 1
+fi
+awk -v task="$task" -v to="$to" '
+  /^### Task / { current = $3; sub(":", "", current) }
+  /^\*\*State:\*\*/ && current == task { print "**State:** " to; next }
+  { print }
+' "$plan" > "$plan.tmp" && mv "$plan.tmp" "$plan"
+stem="$(basename "$plan" .rhei.md)"
+mkdir -p "$(dirname "$plan")/runtime/results"
+printf '## Result\n\n%s\n' "$result" >> "$(dirname "$plan")/runtime/results/$stem.$task.md"
+echo "Task $stem.$task transitioned: '$from' → '$to'"
+"#;
+
+    /// A work root under the shipped machine, holding one plan with three
+    /// tickets — one done, two open, the third ordered after the second — and
+    /// the config binding the stand-in runtime as the runner.
+    fn root_with_plan(tmp: &Path) -> (WorkConfig, PathBuf, PathBuf) {
+        let root = tmp.join("panta");
+        WorkRoot::ensure(&root, plan::SHIPPED_STATES).unwrap();
+        let plan_path = root.join("forge-demo-17.rhei.md");
+        fs::write(
+            &plan_path,
+            concat!(
+                "# Rhei: demo\n**States:** ephor-work\n\n## Tasks\n\n",
+                "### Task fix-gate-1: one\n**State:** done\n\nbody\n\n",
+                "### Task fix-gate-2: two\n**State:** review\n**Prior:** Task fix-gate-1\n\nbody\n\n",
+                "### Task fix-gate-3: three\n**State:** review\n**Prior:** Task fix-gate-2\n\nbody\n\n",
+                "### Task ask-1: four\n**State:** fix\n\nbody\n",
+            ),
+        )
+        .unwrap();
+        let runner = tmp.join("stand-in-runtime");
+        fs::write(&runner, STAND_IN_RUNTIME).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&runner, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let config = WorkConfig {
+            runner: Some(runner.to_string_lossy().into_owned()),
+            ..WorkConfig::default()
+        };
+        (config, root, plan_path)
+    }
+
+    fn entry_for(root: &Path, plan_path: &Path) -> Entry {
+        Entry {
+            project: "demo".to_string(),
+            title: "demo".to_string(),
+            url: None,
+            root: root.to_path_buf(),
+            checkout: root.parent().unwrap().to_path_buf(),
+            plan_id: "forge-demo-17".to_string(),
+            plan: plan_path.to_path_buf(),
+            dispatches: Vec::new(),
+        }
+    }
+
+    /// A cancel is the runtime's move: the stand-in moves the state line and
+    /// records the reason, ephor reads both back — the ticket taken back,
+    /// with its reason as its line — and names what was ordered after it.
+    /// A reason left blank is recorded as exactly that; a dry run moves
+    /// nothing; and a second cancel of the same ticket is refused
+    /// (§FS-005-dispatch.16).
+    #[test]
+    fn a_cancel_asks_the_runtime_names_what_it_leaves_waiting_and_is_read_back() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (config, root, plan_path) = root_with_plan(tmp.path());
+
+        let dry = cancel_ticket(
+            &config,
+            &root,
+            "forge-demo-17",
+            &plan_path,
+            "fix-gate-2",
+            "",
+            true,
+        )
+        .expect("a dry run answers");
+        assert_eq!(dry.left_waiting, vec!["fix-gate-3"]);
+        assert!(fs::read_to_string(&plan_path)
+            .unwrap()
+            .contains("**State:** review\n**Prior:** Task fix-gate-1"));
+
+        let done = cancel_ticket(
+            &config,
+            &root,
+            "forge-demo-17",
+            &plan_path,
+            "fix-gate-2",
+            "asked twice",
+            false,
+        )
+        .expect("the stand-in agrees");
+        assert_eq!(done.from, "review");
+        assert_eq!(done.left_waiting, vec!["fix-gate-3"]);
+        assert!(
+            done.describe().contains("fix-gate-3 is ordered after it"),
+            "{}",
+            done.describe()
+        );
+        let text = fs::read_to_string(&plan_path).unwrap();
+        assert!(
+            text.contains("### Task fix-gate-2: two\n**State:** cancelled"),
+            "{text}"
+        );
+        assert!(
+            text.contains("### Task fix-gate-3: three\n**State:** review"),
+            "{text}"
+        );
+
+        // Read back: taken back, with the reason as its line; the badge says
+        // taken back where that is the last word (§FS-005-dispatch.16).
+        let status = status_of_entry(&config, &entry_for(&root, &plan_path), None);
+        let two = status
+            .tickets
+            .iter()
+            .find(|t| t.id == "fix-gate-2")
+            .unwrap();
+        assert!(two.cancelled && two.finished);
+        assert_eq!(two.verdict.as_deref(), Some("asked twice"));
+        assert_eq!(status.open_tickets(), 2);
+
+        // Blank is recorded as blank, and said so on the row.
+        cancel_ticket(
+            &config,
+            &root,
+            "forge-demo-17",
+            &plan_path,
+            "fix-gate-3",
+            "   ",
+            false,
+        )
+        .unwrap();
+        let status = status_of_entry(&config, &entry_for(&root, &plan_path), None);
+        let three = status
+            .tickets
+            .iter()
+            .find(|t| t.id == "fix-gate-3")
+            .unwrap();
+        assert_eq!(three.verdict.as_deref(), Some(CANCELLED_UNSAID));
+
+        // Already taken back: nothing to do, said rather than asked again.
+        let again = cancel_ticket(
+            &config,
+            &root,
+            "forge-demo-17",
+            &plan_path,
+            "fix-gate-2",
+            "",
+            false,
+        )
+        .expect_err("already cancelled");
+        assert!(again.to_string().contains("already cancelled"), "{again}");
+
+        // The next ticket ephor writes follows the last one not taken back.
+        let plan = Plan::read(&plan_path).unwrap().unwrap();
+        assert_eq!(plan.last_ticket().map(|t| t.id), Some("ask-1".to_string()));
+    }
+
+    /// Everything ephor can see for itself is refused before the runtime is
+    /// asked, in one sentence each; and what the runtime refuses comes back
+    /// in its own words (§FS-005-dispatch.16, §DA-005-cancel-is-the-runtimes-move).
+    #[test]
+    fn a_cancel_refuses_on_what_the_artifacts_say_and_relays_what_the_runtime_says() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (config, root, plan_path) = root_with_plan(tmp.path());
+        let refuse = |config: &WorkConfig, ticket: &str| {
+            cancel_ticket(
+                config,
+                &root,
+                "forge-demo-17",
+                &plan_path,
+                ticket,
+                "",
+                false,
+            )
+            .expect_err("refused")
+            .to_string()
+        };
+
+        // No runner: the workable rung's own sentence, and the plan untouched.
+        let unbound = WorkConfig {
+            runner: Some("no-such-runtime-anywhere".to_string()),
+            ..WorkConfig::default()
+        };
+        assert!(refuse(&unbound, "fix-gate-2").contains("is not on PATH"));
+
+        // No such ticket, and one already over.
+        assert!(refuse(&config, "fix-gate-9").contains("holds no ticket 'fix-gate-9'"));
+        assert!(refuse(&config, "fix-gate-1").contains("already over"));
+
+        // The runtime's own refusal, relayed: the stand-in will not leave `fix`.
+        let said = refuse(&config, "ask-1");
+        assert!(said.contains("refused: Task ask-1 cannot leave state fix. Missing required output artifact: report"), "{said}");
+        assert!(fs::read_to_string(&plan_path)
+            .unwrap()
+            .contains("### Task ask-1: four\n**State:** fix"));
+
+        // A machine with no abandonment state: refused by name, with what to add.
+        let bare = tmp.path().join("bare");
+        fs::create_dir_all(&bare).unwrap();
+        fs::write(
+            bare.join("states.yaml"),
+            "name: bare\nstates:\n  fix:\n    agent: x\n  done:\n    final: true\n",
+        )
+        .unwrap();
+        let bare_plan = bare.join("p.rhei.md");
+        fs::write(
+            &bare_plan,
+            "# Rhei: p\n**States:** bare\n\n## Tasks\n\n### Task a-1: a\n**State:** fix\n\nbody\n",
+        )
+        .unwrap();
+        let said = cancel_ticket(&config, &bare, "p", &bare_plan, "a-1", "", false)
+            .expect_err("nowhere to put it")
+            .to_string();
+        assert!(said.contains("the machine 'bare' in"), "{said}");
+        assert!(
+            said.contains("declares no final 'cancelled' state"),
+            "{said}"
+        );
+        assert!(said.contains("ephor work states"), "{said}");
+    }
+
+    /// A ticket a live run holds is the run's to finish (§FS-005-dispatch.16):
+    /// with the root's lock held and the journal naming the ticket where the
+    /// plan has it, the cancel refuses and names the run; with the lock free
+    /// the same journal line is a dead run's, and the cancel goes ahead.
+    #[cfg(unix)]
+    #[test]
+    fn a_ticket_a_live_run_holds_is_not_cancelled_from_under_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (config, root, plan_path) = root_with_plan(tmp.path());
+        fs::create_dir_all(root.join(".rhei")).unwrap();
+        fs::create_dir_all(root.join("runtime/logs")).unwrap();
+        let lock_path = root.join(".rhei/run.lock");
+        fs::write(&lock_path, "").unwrap();
+        let log = root.join("runtime/logs/task-fix-gate-2-review.log");
+        fs::write(&log, "working").unwrap();
+        fs::write(
+            root.join("runtime/transitions.log"),
+            "2026-08-15T10:00:00Z  fix-gate-2  start@review  runtime/logs/task-fix-gate-2-review.log\n",
+        )
+        .unwrap();
+
+        // The lock held, as a live run holds it.
+        let held = fs::File::open(&lock_path).unwrap();
+        held.lock().unwrap();
+        let said = cancel_ticket(
+            &config,
+            &root,
+            "forge-demo-17",
+            &plan_path,
+            "fix-gate-2",
+            "",
+            false,
+        )
+        .expect_err("a live run holds it")
+        .to_string();
+        assert!(said.contains("held by a live run in 'review'"), "{said}");
+        // Another ticket in the same root, not held, is fair.
+        cancel_ticket(
+            &config,
+            &root,
+            "forge-demo-17",
+            &plan_path,
+            "fix-gate-3",
+            "",
+            false,
+        )
+        .expect("queued, not held");
+        held.unlock().unwrap();
+        drop(held);
+
+        // The lock free: the run died, the journal line is history, and the
+        // reader may take the ticket back.
+        cancel_ticket(
+            &config,
+            &root,
+            "forge-demo-17",
+            &plan_path,
+            "fix-gate-2",
+            "the run died",
+            false,
+        )
+        .expect("nobody holds it now");
     }
 
     /// The walk is bounded by what can resolve without an item: a work-root

@@ -568,9 +568,11 @@ states:
 
   # Named `cancelled` deliberately: a prerequisite in any other final state
   # satisfies a `**Prior:**`, and only this name does not. It is what stops the
-  # join below from landing work while a cause is unresolved.
+  # join below from landing work while a cause is unresolved — and it is where
+  # a ticket the reader takes back goes too (§FS-005-dispatch.16), which blocks
+  # the join for the same reason.
   cancelled:
-    description: Out of budget, and a person should look. Blocks the join.
+    description: Out of budget, taken back, or a person should look. Blocks the join.
     final: true
 
 transitions:
@@ -791,3 +793,10 @@ transitions:
   - from: needs-human
     to: cancelled
     description: Not worth doing; close it.
+
+  # From anywhere else, by hand only: what `ephor work cancel` and the work
+  # screen's `c` take (§FS-005-dispatch.16). The named edges above lead; this
+  # one is what remains for a ticket the reader takes back.
+  - from: "*"
+    to: cancelled
+    description: The reader took the ticket back.

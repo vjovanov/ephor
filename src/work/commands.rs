@@ -34,6 +34,7 @@ pub fn work(args: &WorkArgs) -> Result<ExitCode> {
         WorkCommand::Dispatch(dispatch) => dispatch_work(&config, dispatch),
         WorkCommand::Ask(ask) => ask_work(&config, ask),
         WorkCommand::Sync(sync) => sync_work(&config, sync),
+        WorkCommand::Cancel(cancel) => cancel_work(&config, cancel),
         WorkCommand::Run(run) => run_work(&config, run),
         WorkCommand::Forget(forget) => forget_work(&config, forget),
         WorkCommand::States => {
@@ -134,6 +135,7 @@ fn list_work(config: &StatusConfig, args: &crate::cli::WorkListArgs) -> Result<E
                         "recipe": ticket.recipe,
                         "state": ticket.state,
                         "finished": ticket.finished,
+                        "cancelled": ticket.cancelled,
                         "verdict": ticket.verdict,
                     })).collect::<Vec<_>>(),
                 })
@@ -380,6 +382,45 @@ fn ask_work(config: &StatusConfig, args: &crate::cli::WorkAskArgs) -> Result<Exi
     // Who got it, where that is worth saying (§FS-006-project-interface.9).
     for note in dispatcher.notes() {
         println!("note: {}", style.dim(note));
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `ephor work cancel` — take tickets back, through the runtime's own move
+/// (§FS-005-dispatch.16). One ticket at a time, each reported: a refusal on
+/// one — a live run holds it, it is over already, the runtime would not — is
+/// said and does not stop the next, and the exit code says whether every one
+/// asked for was cancelled.
+fn cancel_work(config: &StatusConfig, args: &crate::cli::WorkCancelArgs) -> Result<ExitCode> {
+    let dispatcher = Dispatcher::load(config)?;
+    let style = Style::detect();
+    let why = args.why.as_deref().unwrap_or("");
+    let mut refused = 0usize;
+    for ticket in &args.tickets {
+        match dispatcher.cancel(&args.item, ticket, why, args.dry_run) {
+            Ok(cancelled) => println!(
+                "{}{}\n  {}",
+                if args.dry_run {
+                    "would cancel — "
+                } else {
+                    ""
+                },
+                cancelled.describe(),
+                style.dim(&format!(
+                    "from '{}' in {}",
+                    cancelled.from,
+                    cancelled.plan.display()
+                ))
+            ),
+            Err(err) => {
+                refused += 1;
+                eprintln!("note: {ticket}: {err}");
+            }
+        }
+    }
+    // The ledger records what was asked, and it still was: nothing to save.
+    if refused > 0 {
+        return Ok(ExitCode::from(1));
     }
     Ok(ExitCode::SUCCESS)
 }
