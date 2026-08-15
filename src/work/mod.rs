@@ -473,6 +473,31 @@ impl Dispatcher {
         None
     }
 
+    /// The hand riding a run of one item's plan, and what the reader should
+    /// be told about it — everything a surface that runs a single plan needs
+    /// to know before it cedes the terminal (§FS-005-dispatch.14). The same
+    /// resolution `work run` makes, over this item's entry and the plan as it
+    /// stands right now, so the key and the command line cannot come apart
+    /// (§FS-005-dispatch.12). One plan is one group: such a run advances no
+    /// other plan, so there is nothing for its flags to contradict and no
+    /// grouping to do.
+    ///
+    /// The notes come back rather than piling up: what an earlier keystroke
+    /// was told does not silence this run's own answer, and does not travel
+    /// with it either.
+    pub fn run_hand_for(
+        &mut self,
+        item: &str,
+    ) -> (Option<runtime::roster::HandFlags>, Vec<String>) {
+        let said = std::mem::take(&mut self.notes);
+        let hand = self.ledger.entries.get(item).cloned().and_then(|entry| {
+            let status = self.status_of(&entry, None);
+            self.run_hand(&entry, &status)
+        });
+        let notes = std::mem::replace(&mut self.notes, said);
+        (hand, notes)
+    }
+
     fn placement(&mut self, project: &str) -> Option<&Placement> {
         self.placements
             .entry(project.to_string())

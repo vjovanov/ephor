@@ -199,6 +199,18 @@ pub struct HandFlags {
     pub effort: Option<String>,
 }
 
+impl HandFlags {
+    /// Who is getting this run, in one phrase — the same sentence on every
+    /// surface that starts one, because the command line and the key in the
+    /// interface are the same run (§FS-005-dispatch.14).
+    pub fn describe(&self) -> String {
+        match &self.effort {
+            Some(effort) => format!("agent {} at {effort}", self.agent),
+            None => format!("agent {}", self.agent),
+        }
+    }
+}
+
 /// Who does one action (§FS-005-dispatch.14, §FS-006-project-interface.9), in
 /// the order that spec sets: what the reader picked for this dispatch alone,
 /// the pin the action or recipe carries, the project's table — this action's

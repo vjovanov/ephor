@@ -979,6 +979,34 @@ fn an_agent_only_hand_binds_as_flags_on_the_run() {
     );
     assert!(!args.contains("--model"), "{args}");
 
+    // One item's plan alone — the shape the key in the interface runs
+    // (§FS-005-dispatch.14): one ledger entry, one plan named, so that plan's
+    // own tickets settle the flags and there is no second plan to group
+    // against. The same resolution, and the same command line.
+    let ledger: Value = serde_json::from_str(
+        &fs::read_to_string(tmp.path().join("state/ephor/work.json")).unwrap(),
+    )
+    .unwrap();
+    let one = ledger["entries"]
+        .as_object()
+        .expect("the ledger's entries")
+        .keys()
+        .next()
+        .expect("the dispatched item")
+        .clone();
+    fs::remove_file(&log).unwrap();
+    run(&["work", "run", "--item", &one])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("agent our-agent at high"));
+    let args = fs::read_to_string(&log).unwrap();
+    assert!(args.contains("github-prs-acme-widget-42"), "{args}");
+    assert!(
+        args.trim_end()
+            .ends_with("--agent our-agent --agent-mode high"),
+        "{args}"
+    );
+
     // A second ticket dispatched under a model hand carries its own line —
     // with the carrier's one effort completed into it, because an effort-less
     // selector would run without any of the hand's efforts.

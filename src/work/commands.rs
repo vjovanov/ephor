@@ -498,14 +498,9 @@ fn run_work(config: &StatusConfig, args: &crate::cli::WorkRunArgs) -> Result<Exi
             root.display(),
             plans.len(),
             match hand {
-                Some(hand) => format!(
-                    ", agent {}{}",
-                    hand.agent,
-                    hand.effort
-                        .as_deref()
-                        .map(|effort| format!(" at {effort}"))
-                        .unwrap_or_default()
-                ),
+                // The same phrase the key in the interface shows: one run,
+                // one sentence about who is getting it (§FS-005-dispatch.14).
+                Some(hand) => format!(", {}", hand.describe()),
                 None => String::new(),
             }
         );

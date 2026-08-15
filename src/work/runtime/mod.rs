@@ -147,20 +147,13 @@ pub fn refusal(config: &crate::work::recipe::WorkConfig) -> Option<String> {
     capabilities::workable(Some(runner(config)))
 }
 
-/// The summons that runs one work root's plans, with no hand riding it.
-pub fn summons(
-    config: &crate::work::recipe::WorkConfig,
-    root: &Path,
-    plans: &[String],
-    extra: &[String],
-) -> Summons {
-    summons_with(config, root, plans, None, extra)
-}
-
 /// The summons that runs one work root's plans under a chosen hand the plan
-/// language cannot spell (§FS-005-dispatch.14). `hand` is None where every
-/// ticket carries its own line, or where the run's tickets do not agree on
-/// one spelling — flags ride a run only where they can contradict nothing.
+/// language cannot spell (§FS-005-dispatch.14). The one way to build a run —
+/// the key in the interface and `work run` both come through here, so neither
+/// can drift into an invocation the other does not make
+/// (§FS-005-dispatch.12). `hand` is None where every ticket carries its own
+/// line, or where the run's tickets do not agree on one spelling — flags ride
+/// a run only where they can contradict nothing.
 pub fn summons_with(
     config: &crate::work::recipe::WorkConfig,
     root: &Path,
@@ -262,7 +255,8 @@ mod tests {
         };
         assert_eq!(runner(&bound), "my-runtime");
         assert_eq!(label(&bound), "my-runtime run");
-        let command = summons(&bound, Path::new("/w/panta"), &["a".to_string()], &[]).binding;
+        let command =
+            summons_with(&bound, Path::new("/w/panta"), &["a".to_string()], None, &[]).binding;
         assert!(command.starts_with("my-runtime run "), "{command}");
     }
 

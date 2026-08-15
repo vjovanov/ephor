@@ -1108,6 +1108,20 @@ model profile declared in the runtime's own settings turns an agent-only
 hand into a model hand, and the ticket line then carries it everywhere,
 with no flags involved at all.
 
+**A run started from the interface is the same run.** The key that hands
+one item's plan to the runtime resolves the hand exactly as the command
+line does and carries the same flags — which surface a reader started a
+run from is not a fact about who did the work, and two resolutions of it
+would eventually disagree (§FS-005-dispatch.12). Such a run names one
+plan and advances no other, so that plan's own open tickets settle its
+flags and no other plan's can contradict them. What the resolution has to
+say — a hand nothing resolves, an effort completed, a hand left unbound —
+is said where the reader can still read it when the run returns: a surface
+that cedes the terminal keeps the note for its own message rather than
+printing it into a screen the run is about to take, and a refusal is
+answered before the terminal is ceded at all, never after
+(§FS-004-quick-actions.2).
+
 With no runtime bound, or a bound one not on `PATH`, the roster is empty and
 says so in the *workable* rung's own words (§FS-006-project-interface.10):
 who can be asked is the runtime's knowledge, and where nobody can run work

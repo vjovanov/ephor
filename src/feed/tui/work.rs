@@ -128,6 +128,7 @@ impl WorkScreen {
             KeyCode::Char('R') => match (&self.refusal, &self.status) {
                 (Some(refusal), _) => Action::SetMessage(refusal.clone()),
                 (None, Some(status)) => Action::RunWork {
+                    item: self.item.id.clone(),
                     root: status.root.clone(),
                     checkout: status.checkout.clone(),
                     plan_id: status.plan_id.clone(),
@@ -454,10 +455,16 @@ mod tests {
             screen.handle_key(KeyCode::Char('s')),
             Action::SetMessage(_)
         ));
-        assert!(matches!(
-            screen.handle_key(KeyCode::Char('R')),
-            Action::RunWork { .. }
-        ));
+        // The run names this item's own plan, and names the item too: the
+        // hand riding the run is resolved from that item's ledger entry
+        // (§FS-005-dispatch.14).
+        match screen.handle_key(KeyCode::Char('R')) {
+            Action::RunWork { item, plan_id, .. } => {
+                assert_eq!(item, "forge:demo/17");
+                assert_eq!(plan_id, "forge-demo-17");
+            }
+            _ => panic!("expected a run"),
+        }
     }
 
     /// With no runtime bound there is nothing `R` could start, so the screen

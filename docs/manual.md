@@ -1553,8 +1553,9 @@ can be: the flags would supply its carrier, and one run advances several
 tickets. So the flags ride a run only when every open, unclaimed ticket
 without a line of its own resolves to the same hand and none pins a bare
 model: a plan whose tickets disagree runs unflagged, and `work run` says the
-hand went unbound for that run. The inbox's run key does not carry the flags
-yet — running from the command line is what binds an agent-only hand today.
+hand went unbound for that run. The inbox's run key
+([§8.7](#87-the-work-screen)) binds the same way: it
+resolves the hand exactly as `work run` does, over the one plan it runs.
 
 `permitted_hands` narrows a project to the hands that may work on it at all,
 which is what a repository under a policy about which models may see its code
@@ -1864,6 +1865,14 @@ bound it is not offered at all — the footer drops it, and pressing it says why
 rather than handing the terminal to a command that cannot start. Everything
 else on the screen is unchanged: the ticket is written, read, reopened and
 edited whether or not anything can run it.
+
+It is the same run `ephor work run` starts, over this one plan: the hand is
+resolved before the terminal is ceded and rides the run as the runtime's own
+agent flags where it names an agent and no model ([§8.4](#84-where-work-goes-and-what-runs-it)).
+The header line above the run names who is getting it — `rhei run — <item> ·
+agent pi at high` — and anything the resolution had to say, such as a hand
+that went unbound, waits for you on the message line when the run returns
+rather than scrolling away with it.
 
 ### 8.8 By hand
 

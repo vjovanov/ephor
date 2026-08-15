@@ -771,6 +771,9 @@ pub(crate) enum Action {
     SyncWork(Item),
     /// Leave the interface and let the runtime work one item's plan.
     RunWork {
+        /// Whose plan this is: the ledger entry behind it answers which hand
+        /// rides the run (§FS-005-dispatch.14).
+        item: String,
         root: PathBuf,
         /// Where to run it from — the checkout the work is about.
         checkout: PathBuf,
@@ -1447,6 +1450,7 @@ impl App {
                 self.open_work(item);
             }
             Action::RunWork {
+                item,
                 root,
                 checkout,
                 plan_id,
@@ -1454,27 +1458,51 @@ impl App {
             } => {
                 // The runtime is a rung: refused here in the same words the
                 // command line uses, instead of handing the terminal over to a
-                // command that cannot start (§AR-005-capabilities.2).
+                // command that cannot start (§AR-005-capabilities.2). Before
+                // the hand is resolved and before anything is ceded, because a
+                // refusal answered after the terminal is gone is answered too
+                // late (§FS-005-dispatch.14).
+                //
                 // False, not true: this arm refuses the run, it does not end the
                 // session. Returning quit here shut the inbox down on a machine
                 // with no runtime bound — the one machine where the refusal is
-                // the whole point of the message.
+                // the whole point of the message. The screen ahead of it does
+                // not offer the key at all when nothing can run, so this is the
+                // second line of defence: a screen built before the runtime
+                // left `PATH` can still send the action.
                 if let Some(refusal) = crate::work::runtime::refusal(&config.work) {
                     self.message = refusal;
                     return Ok(false);
                 }
+                // Who gets this run, resolved the way `work run` resolves it —
+                // a hand the plan language could not spell rides here as the
+                // runtime's own agent flags (§FS-005-dispatch.14). This run
+                // names one plan and advances no other, so that plan's tickets
+                // settle its flags alone and there is nothing to group.
+                let (hand, notes) = match &mut self.dispatcher {
+                    Some(dispatcher) => dispatcher.run_hand_for(&item),
+                    None => (None, Vec::new()),
+                };
                 // The checkout, not the plan directory: it is where the work
                 // is, and where the runtime falls back to when a workspace has
                 // no one repository to be found by looking.
                 self.handover(
                     terminal,
                     "▶",
-                    &format!("{} — {label}", crate::work::runtime::label(&config.work)),
+                    &format!(
+                        "{} — {label}{}",
+                        crate::work::runtime::label(&config.work),
+                        match &hand {
+                            Some(hand) => format!(" · {}", hand.describe()),
+                            None => String::new(),
+                        }
+                    ),
                     &Site::root(&checkout),
-                    &crate::work::runtime::summons(
+                    &crate::work::runtime::summons_with(
                         &config.work,
                         &root,
                         std::slice::from_ref(&plan_id),
+                        hand.as_ref(),
                         &[],
                     ),
                 )?;
@@ -1484,6 +1512,13 @@ impl App {
                 if let Screen::Work(screen) = &self.screen {
                     let item = screen.item.clone();
                     self.open_work(item);
+                }
+                // What the resolution had to say, kept for after the run: the
+                // terminal was the runtime's while it worked, and a note
+                // printed into it would have scrolled away with the run
+                // (§FS-005-dispatch.14).
+                if !notes.is_empty() {
+                    self.message = format!("{} · {}", self.message, notes.join(" · "));
                 }
             }
             Action::AskWork(item) => {
