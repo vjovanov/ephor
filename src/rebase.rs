@@ -54,6 +54,18 @@ pub fn rebase(args: &RebaseArgs) -> Result<ExitCode> {
         Some(id) => Some(find_item(&id)?),
         None => None,
     };
+    // Who resolves a conflict this run hands over, for this dispatch alone
+    // (§FS-005-dispatch.14) — the same flag `work dispatch` takes, because the
+    // key and the command line are one operation (§FS-005-dispatch.12). Parsed
+    // before the replay runs: the refusal of a pick that is not one is
+    // computed here, not discovered on the conflicted run (§AR-002-summons.4).
+    let picked = or_env(&args.hand, "HAND")
+        .map(|text| crate::work::recipe::HandPin::parse(&text))
+        .transpose()
+        .map_err(EphorError::Command)?;
+    if picked.is_some() && !args.dispatch {
+        eprintln!("note: --hand rides --dispatch — without it, nothing is handed over.");
+    }
     let project =
         or_env(&args.project, "PROJECT").or_else(|| item.as_ref().map(|item| item.project.clone()));
     let placement = project.as_deref().and_then(|project| {
@@ -130,7 +142,7 @@ pub fn rebase(args: &RebaseArgs) -> Result<ExitCode> {
         // about the code (§FS-005-dispatch.12).
         if args.dispatch {
             match &item {
-                Some(item) => hand_over(item, &outcome)?,
+                Some(item) => hand_over(item, &outcome, picked.as_ref())?,
                 None => {
                     eprintln!("note: --dispatch needs --item to know whose work this conflict is.")
                 }
@@ -151,7 +163,13 @@ pub fn rebase(args: &RebaseArgs) -> Result<ExitCode> {
 }
 
 /// Open the ticket the conflict is about, carrying what the rebase reached.
-fn hand_over(item: &Item, outcome: &git::Rebase) -> Result<()> {
+/// `picked` is the reader's own choice of who resolves it, spent by this one
+/// dispatch (§FS-005-dispatch.14).
+fn hand_over(
+    item: &Item,
+    outcome: &git::Rebase,
+    picked: Option<&crate::work::recipe::HandPin>,
+) -> Result<()> {
     let config = load_config()?;
     let mut dispatcher = Dispatcher::load(&config)?;
     let recipe = dispatcher
@@ -171,9 +189,15 @@ fn hand_over(item: &Item, outcome: &git::Rebase) -> Result<()> {
         opens_with: None,
         ..recipe
     };
-    let opened = dispatcher.dispatch(item, &recipe, false)?;
+    let opened = dispatcher.dispatch(item, &recipe, picked, false)?;
     dispatcher.save()?;
     println!("\nhanded over: {}", opened.describe());
+    // What the resolution had to say about who got it — an effort completed,
+    // a hand nobody can be asked for — said here, where the reader still is
+    // (§FS-005-dispatch.14).
+    for note in dispatcher.notes() {
+        println!("note: {note}");
+    }
     println!("  ephor work run --item {}", item.id);
     Ok(())
 }

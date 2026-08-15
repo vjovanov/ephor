@@ -1262,6 +1262,19 @@ The menu is assembled in provenance order
    marked with `→` and the hand that would get them
    ([§FS-005-dispatch.1](../requirements.md#1-a-recipe-decides-which-items-deserve-work-and-what-to-ask-for)).
 
+On an entry that hands work over, **`t` opens the picker**
+([§FS-005-dispatch.14](../requirements.md#14-who-does-the-work-is-chosen-and-defaulted-per-project)):
+the roster's hands in one column and, beside a hand that declares efforts,
+those efforts in a second — absent where it declares none, which is every
+hand on a machine with no model profiles. Arrows move between the columns,
+`j`/`k` within one, `Enter` dispatches the entry to what is highlighted,
+`Esc` returns to the menu. An unavailable hand is listed with its reason and
+cannot be chosen; a hand the project's `permitted_hands` excludes is not
+listed at all; with an empty roster there is no picker and the entry
+dispatches as it always did. The pick is for that one dispatch alone — the
+first of §8.4's seven steps — and nothing remembers it: the next dispatch of
+the same action resolves from the tables again.
+
 Where two entries share an `id`, the later one wins **in the place the earlier
 one held**: yours beats the project's beats the shipped one, and the key that
 ran a thing goes on running that thing. An entry with no `id` overrides nothing
@@ -1501,6 +1514,14 @@ entry for the action id, the site's `default`, and — where nobody named
 anyone — whatever the runtime picks unasked. That is the runtime's own
 resolution order mirrored deliberately, so the two cannot come to disagree
 about one configuration.
+
+**Picking for one dispatch.** The first step has two spellings of one
+operation: `t` on a menu entry that hands work over (§7.6), and `--hand
+<hand>[:<effort>]` on `ephor work dispatch` and on `ephor rebase --dispatch`
+(§8.11). Either displaces every table for exactly that dispatch and is
+remembered by nothing — the next dispatch of the same action resolves from
+the tables again. A pick outside the project's `permitted_hands` is refused
+like any other named choice.
 
 The long form `{ "agent", "model", "effort" }` is for a pair the runtime's
 registry never listed — a proxy serving a model it does not know about. It is
@@ -1857,7 +1878,11 @@ ledger goes on saying the item moved past it.
 | `j` `k` | move between recipes · `f`/`b` page · `;` ops · `Esc` back |
 
 The recipe rows show the words each would actually send, rendered against this
-item — dispatching is cheap to press and expensive to run.
+item — dispatching is cheap to press and expensive to run — and the hand each
+would go to, resolved the way dispatch will resolve it (§8.4), in the same
+sentence the action menu's entries carry. To pick a different hand for one
+dispatch, use the menu's picker (`x`, then `t` — §7.6) or `--hand` on the
+command line.
 
 `R` leaves the interface entirely: the runtime's own dashboard takes the
 terminal while it works, and coming back re-reads the plans. With no runtime
@@ -1905,7 +1930,7 @@ ephor work ask --item ID --state review "…"                   # start elsewher
 ephor work                                  # = work list
 ephor work list [--project P] [--open] [--json]
 ephor work dispatch [--project P] [--item ID] [--recipe R] [--kind K]
-                    [--again] [--updated-within DAYS] [--dry-run]
+                    [--again] [--hand H] [--updated-within DAYS] [--dry-run]
 ephor work ask --item ID [WORDS…] [--state S] [--dry-run]
 ephor work sync [--project P] [--dry-run]
 ephor work run [--project P] [--item ID] [-- RHEI_ARGS…]
@@ -1920,7 +1945,8 @@ ephor work states
   yet. It takes the *first* matching recipe unless `--recipe` names one. It
   skips items that already have work — naming `--recipe` asks for that work
   specifically and lands as another ticket; `--again` overrides the skip
-  entirely.
+  entirely. `--hand <hand>[:<effort>]` is your pick of who does it, for this
+  invocation alone (§8.4).
 - **`run`** groups by work root and names the plans ephor opened, so a runtime
   project you keep in the same checkout for your own work is not swept in. One
   root at a time: tickets in one root are about one checkout, and two agents in
@@ -1967,6 +1993,7 @@ ephor rebase --project widget --checkout ~/c/widget/you/ABC-42-retry
 ephor rebase --onto release/24 --checkout .   # some other base
 ephor rebase --upstream --checkout .          # onto the branch's published copy
 ephor rebase --item forge:widget/42 --dispatch    # and open a ticket on conflict
+ephor rebase --item forge:widget/42 --dispatch --hand luna:high   # …to that hand
 ```
 
 It fetches and replays **every repository in the checkout** — the project
@@ -2003,8 +2030,8 @@ it needs the same leased force push the rebase onto main does.
 | `1` | uncommitted work, no repository, or git refused | a person |
 
 Each argument can arrive as an environment variable instead — `CHECKOUT`,
-`PROJECT`, `ONTO`, `UPSTREAM` (set to any non-empty value), `ITEM`, `REPORT`
-— which is how a program state passes it `{meta.*}`. The refusal of
+`PROJECT`, `ONTO`, `UPSTREAM` (set to any non-empty value), `ITEM`, `HAND`,
+`REPORT` — which is how a program state passes it `{meta.*}`. The refusal of
 `--upstream` with `--onto` holds in these spellings too: the flag parser
 cannot see the environment, and silently preferring one would run a different
 rebase than the state asked for. `config/ci-green.example.states.yaml` wires

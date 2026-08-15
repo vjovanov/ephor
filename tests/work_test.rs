@@ -1068,6 +1068,181 @@ fn an_agent_only_hand_binds_as_flags_on_the_run() {
     );
 }
 
+/// The reader's pick is made at the moment of dispatch and spent by it
+/// (§FS-005-dispatch.14): `--hand` displaces every table for exactly one
+/// dispatch — the same first step the interface's picker feeds — nothing
+/// records it, and the next dispatch resolves from the tables again. A pick
+/// that is not a hand is refused before anything is written.
+#[test]
+fn the_readers_pick_is_made_at_dispatch_and_spent_by_it() {
+    let tmp = tempdir();
+    fixture(tmp.path(), json!({ "runner": "runner-of-ours" }));
+    project_hands(tmp.path(), json!({ "fix-gate": "impl-fast:high" }), &[]);
+
+    let home = tmp.path().join("home");
+    let settings = home.join(".config/rhei/settings.json");
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    fs::write(
+        &settings,
+        r#"{
+            "agents": { "our-agent": { "command": ["sh"], "modes": { "high": [] } } },
+            "models": {
+                "impl-fast": { "provider": "acme", "model": "m-fast", "default_agent": "our-agent" },
+                "picked": { "provider": "acme", "model": "m-picked", "default_agent": "our-agent" }
+            }
+        }"#,
+    )
+    .unwrap();
+    fs::create_dir_all(tmp.path().join("fakebin")).unwrap();
+    make_executable(
+        &tmp.path().join("fakebin/runner-of-ours"),
+        "#!/bin/sh\nexit 0\n",
+    );
+    let run = |args: &[&str]| {
+        let mut command = ephor(tmp.path());
+        command.env("HOME", &home).args(args);
+        command
+    };
+
+    run(&["refresh", "demo"]).assert().success();
+    // The pick displaces the project's own entry for this action.
+    run(&[
+        "work",
+        "dispatch",
+        "--item",
+        "github-prs:acme/widget#42",
+        "--hand",
+        "picked:high",
+    ])
+    .assert()
+    .success();
+    let plan_path = tmp
+        .path()
+        .join("demo/panta/github-prs-acme-widget-42.rhei.md");
+    let plan = fs::read_to_string(&plan_path).unwrap();
+    assert!(
+        plan.contains("**Target:** our-agent[high]:acme:m-picked"),
+        "{plan}"
+    );
+    assert!(!plan.contains("m-fast"), "{plan}");
+
+    // And it is spent: the next dispatch of the same action resolves from
+    // the second step down — the project's table answers again.
+    run(&[
+        "work",
+        "dispatch",
+        "--item",
+        "github-prs:acme/widget#42",
+        "--recipe",
+        "fix-gate",
+        "--again",
+    ])
+    .assert()
+    .success();
+    let plan = fs::read_to_string(&plan_path).unwrap();
+    assert!(
+        plan.contains("**Target:** our-agent[high]:acme:m-fast"),
+        "{plan}"
+    );
+    assert_eq!(plan.matches("m-picked").count(), 1, "{plan}");
+
+    // A pick nothing resolves is refused with what the roster does have,
+    // and nothing is written under it.
+    run(&[
+        "work",
+        "dispatch",
+        "--item",
+        "github-prs:acme/widget#42",
+        "--again",
+        "--hand",
+        "lnua",
+    ])
+    .assert()
+    .code(1)
+    .stderr(predicate::str::contains("names 'lnua'"));
+    assert_eq!(
+        fs::read_to_string(&plan_path)
+            .unwrap()
+            .matches("### Task")
+            .count(),
+        2
+    );
+
+    // A pick that is not even a hand is refused before the sweep starts.
+    run(&["work", "dispatch", "--hand", "a:b:c"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("spell them out"));
+}
+
+/// `--hand` on `ephor rebase --dispatch` is the same pick
+/// (§FS-005-dispatch.14): the key and the command line are one operation
+/// (§FS-005-dispatch.12), so the conflict's ticket carries the picked hand —
+/// completed to its one declared effort, with the note said where the reader
+/// still is.
+#[test]
+fn a_rebase_conflict_is_handed_to_the_picked_hand() {
+    let tmp = tempdir();
+    let checkout = trailing_checkout(tmp.path(), true);
+    fixture_with(
+        tmp.path(),
+        &checkout,
+        "master",
+        json!({ "runner": "runner-of-ours" }),
+    );
+
+    let home = tmp.path().join("home");
+    let settings = home.join(".config/rhei/settings.json");
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    fs::write(
+        &settings,
+        r#"{
+            "agents": { "our-agent": { "command": ["sh"], "modes": { "high": [] } } },
+            "models": {
+                "picked": { "provider": "acme", "model": "m-picked", "default_agent": "our-agent" }
+            }
+        }"#,
+    )
+    .unwrap();
+    fs::create_dir_all(tmp.path().join("fakebin")).unwrap();
+    make_executable(
+        &tmp.path().join("fakebin/runner-of-ours"),
+        "#!/bin/sh\nexit 0\n",
+    );
+    let run = |args: &[&str]| {
+        let mut command = ephor(tmp.path());
+        command.env("HOME", &home).args(args);
+        command
+    };
+
+    run(&["refresh", "demo"]).assert().success();
+    run(&[
+        "rebase",
+        "--project",
+        "demo",
+        "--checkout",
+        checkout.to_str().unwrap(),
+        "--item",
+        "github-prs:acme/widget#42",
+        "--dispatch",
+        "--hand",
+        "picked",
+    ])
+    .assert()
+    .code(3)
+    .stdout(predicate::str::contains("handed over"))
+    // The effort-less pick of a hand declaring exactly one is completed to
+    // it, and the completion is said (§FS-005-dispatch.14).
+    .stdout(predicate::str::contains("the one it declares"));
+
+    let plan =
+        fs::read_to_string(checkout.join("panta/github-prs-acme-widget-42.rhei.md")).unwrap();
+    assert!(
+        plan.contains("**Target:** our-agent[high]:acme:m-picked"),
+        "{plan}"
+    );
+}
+
 /// Rewrite `projects.demo.work` with a hands table and a narrowing, the way a
 /// person editing status.json would.
 fn project_hands(tmp: &Path, hands: Value, permitted: &[&str]) {

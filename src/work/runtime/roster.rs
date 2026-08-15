@@ -349,6 +349,26 @@ pub fn resolve(
     }
 }
 
+/// The hands a picker may offer on a project (§FS-005-dispatch.14): the
+/// roster's, without those the project's narrowing excludes. An unavailable
+/// hand stays, with its reason — its time is wrong, not its name — but a hand
+/// the project does not permit is not a choice at the moment of asking at
+/// all: what the narrowing refuses loudly is a *named* choice
+/// (§FS-006-project-interface.9), and a picker offering a name only to refuse
+/// it would teach the policy one wasted keystroke at a time.
+pub fn pickable(
+    roster: &Roster,
+    project: Option<&crate::work::recipe::ProjectWorkConfig>,
+) -> Vec<Hand> {
+    let permitted: &[String] = project.map_or(&[], |work| work.permitted_hands.as_slice());
+    roster
+        .hands
+        .iter()
+        .filter(|hand| permitted.is_empty() || permitted.iter().any(|name| name == &hand.id))
+        .cloned()
+        .collect()
+}
+
 /// Whether a project's narrowing lets this work be pinned by something no hand
 /// id named — a selector written out in the binding's own words. Public
 /// because such a pin is a recipe's field rather than a hand, and the caller
@@ -1710,6 +1730,41 @@ mod tests {
         let unasked = resolve(&roster, &site_of(&[]), None, "x", None, None);
         assert_eq!(unasked.pin(), (None, None));
         assert_eq!(unasked.flags(), None);
+    }
+
+    /// The picker's roster is the narrowing applied, not announced
+    /// (§FS-005-dispatch.14): a hand the project does not permit does not
+    /// appear at all, while an unavailable one stays with its reason — its
+    /// time is wrong, not its name. No narrowing offers everything, and an
+    /// empty roster offers nothing.
+    #[test]
+    fn the_picker_is_offered_only_what_the_project_permits() {
+        let mut roster = full_roster();
+        roster.hands.push(Hand {
+            id: "away".to_string(),
+            agent: Some("nowhere".to_string()),
+            model: None,
+            provider: None,
+            efforts: Vec::new(),
+            available: Some("nowhere is not on PATH".to_string()),
+        });
+
+        let everyone = pickable(&roster, None);
+        assert_eq!(everyone.len(), roster.hands.len());
+        assert!(
+            everyone.iter().any(|hand| hand.available.is_some()),
+            "an unavailable hand is shown, never hidden"
+        );
+
+        let narrowed = pickable(&roster, Some(&project_of(&[], &["luna", "away"])));
+        let ids: Vec<&str> = narrowed.iter().map(|hand| hand.id.as_str()).collect();
+        assert_eq!(ids, ["luna", "away"]);
+
+        let empty = Roster {
+            hands: Vec::new(),
+            refusal: Some("nobody".to_string()),
+        };
+        assert!(pickable(&empty, None).is_empty());
     }
 
     /// With nobody to ask, a configured hand resolves to nothing and says so

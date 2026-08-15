@@ -172,6 +172,12 @@ pub struct WorkDispatchArgs {
     #[arg(long)]
     pub again: bool,
 
+    /// Who does it, for this dispatch alone: a hand id from the roster,
+    /// optionally at an effort (`<hand>[:<effort>]`). Displaces every table
+    /// for exactly this dispatch and is remembered by nothing.
+    #[arg(long)]
+    pub hand: Option<String>,
+
     /// Skip items with no activity in this many days.
     #[arg(long, value_name = "DAYS")]
     pub updated_within: Option<i64>,
@@ -452,6 +458,12 @@ pub struct RebaseArgs {
     /// (§FS-005-dispatch.12). Needs `--item`.
     #[arg(long)]
     pub dispatch: bool,
+
+    /// Who resolves a conflict this rebase hands over (`HAND`), for this
+    /// dispatch alone: a hand id from the roster, optionally at an effort
+    /// (`<hand>[:<effort>]`). Rides `--dispatch` (§FS-005-dispatch.14).
+    #[arg(long)]
+    pub hand: Option<String>,
 
     /// Also write the outcome as markdown here (`REPORT`), for a state to
     /// hand on to the one that resolves it.

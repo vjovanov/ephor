@@ -1078,6 +1078,27 @@ what a repository under a policy about which models may see its code needs —
 and a hand outside the narrowing is refused with that reason, never silently
 dropped.
 
+The first step is **made at the moment of dispatch and spent by it**. In the
+interface it is a picker over the menu's entry: the roster's hands in one
+column and, beside a hand that declares efforts, those efforts in a second —
+absent where it declares none, which is every hand on a machine whose
+runtime settings declare no model profiles, and a dead column would teach an
+axis that is not there. On the command line it is `--hand
+<hand-id>[:<effort>]` on the command that dispatches, the same grammar the
+tables write (§FS-006-project-interface.9), so the key and the flag are one
+operation (§FS-005-dispatch.12). The pick lives exactly as long as the one
+dispatch it was made for: nothing records it, and the next dispatch of the
+same action resolves from the second step down — a pick that outlived its
+dispatch would be a configuration layer nothing wrote down. The picker never
+assembles a choice the resolution would refuse — a hand that declares
+efforts is picked at one of them — and it shows an unavailable hand with its
+reason without letting it be chosen. A hand the project's narrowing excludes
+does not appear in it at all: the narrowing is the project's policy rather
+than a state of the hand, and what is refused loudly is a *named* choice —
+offering the name only to refuse it would teach the policy one wasted
+keystroke at a time. With an empty roster there is no picker, and the entry
+dispatches exactly as if nothing had been picked.
+
 **A chosen hand binds in one of two spellings, never both.** A hand that
 carries a model is written onto its ticket, at dispatch, in the runtime's
 own per-ticket execution line (§REQ-001-boundary.1) — each ticket carrying

@@ -1351,6 +1351,18 @@ impl App {
                     .unwrap_or_default();
                 let mut applicable = self.ctx.actions_for(&item, &recipes);
                 self.name_the_hands(&item, &mut applicable, config);
+                // The hands `t` may offer, read once at menu open against the
+                // work root the dispatch will use (§FS-005-dispatch.14) —
+                // already without what the project's narrowing excludes, and
+                // empty where there is no agent entry to pick for or nobody
+                // to pick, which is what withholds the picker entirely.
+                let roster = match applicable.iter().any(|entry| entry.agent.is_some()) {
+                    true => match (self.work_root(&item, config), &mut self.dispatcher) {
+                        (Some(root), Some(dispatcher)) => dispatcher.pickable(&item.project, &root),
+                        _ => Vec::new(),
+                    },
+                    false => Vec::new(),
+                };
                 // An empty menu is no longer empty: the last entry is always
                 // "run a command here…" (§FS-005-dispatch.10), and refusing
                 // to open would hide it exactly where nothing is configured.
@@ -1372,16 +1384,19 @@ impl App {
                         // an offer and a configured action are refused in the
                         // same sentence (§AR-005-capabilities.2).
                         let can = self.ctx.can(&item.project);
-                        self.menu = Some(ActionMenu::new(
-                            actions::Subject::Item(Box::new(item)),
-                            root.clone(),
-                            placed.workspace,
-                            branch,
-                            placed.state,
-                            checkout,
-                            &can,
-                            applicable,
-                        ));
+                        self.menu = Some(
+                            ActionMenu::new(
+                                actions::Subject::Item(Box::new(item)),
+                                root.clone(),
+                                placed.workspace,
+                                branch,
+                                placed.state,
+                                checkout,
+                                &can,
+                                applicable,
+                            )
+                            .with_roster(roster),
+                        );
                     }
                     _ => {
                         self.message = refusal.unwrap_or_else(|| {
@@ -1575,6 +1590,7 @@ impl App {
                     },
                     is_checkout: false,
                     is_freehand: false,
+                    picked: None,
                     gate: actions::Gate::Ready,
                 };
                 self.run_menu_entry(terminal, &menu, &entry)?;
@@ -1618,11 +1634,39 @@ impl App {
             return;
         };
         let status = dispatcher.status(&item);
+        // Who would get each offer, beside it (§FS-005-dispatch.14): the
+        // same resolution the menu shows, against the work root the dispatch
+        // will use, so the row and the ticket cannot come apart. None where
+        // the item cannot be placed — the dispatch's own refusal says why
+        // better than a wrong name would.
+        let unbound = crate::work::runtime::refusal(&self.work);
+        let root = dispatcher.work_root_of(&item);
         let offers = dispatcher
             .offers(&item)
             .into_iter()
             .map(|recipe| work::Offer {
                 brief: dispatcher.brief(&item, &recipe),
+                hand: root.as_ref().map(|root| {
+                    // A recipe spelling the runtime's own execution identity
+                    // has pinned itself (§FS-006-project-interface.9); the
+                    // row says that rather than resolving a hand the
+                    // dispatch will not use.
+                    if recipe.hand.is_none() && (recipe.target.is_some() || recipe.model.is_some())
+                    {
+                        return "its own pinned execution identity".to_string();
+                    }
+                    who_gets_it(
+                        &dispatcher.hand(
+                            &item.project,
+                            &recipe.id,
+                            None,
+                            recipe.hand.as_ref(),
+                            root,
+                        ),
+                        unbound.as_deref(),
+                    )
+                    .says
+                }),
                 recipe,
             })
             .collect();
@@ -1645,7 +1689,7 @@ impl App {
             self.message = format!("'{recipe_id}' does not apply to this item any more");
             return;
         };
-        self.hand_over(item, &recipe);
+        self.hand_over(item, &recipe, None);
     }
 
     /// An agent entry of the action menu, handed over
@@ -1664,22 +1708,30 @@ impl App {
             self.message = "There is no matter here to open work about".to_string();
             return;
         };
-        self.hand_over(&item, &recipe);
+        self.hand_over(&item, &recipe, entry.picked.as_ref());
         // Where the reader pressed is not a fact about the work: they land on
         // the same screen the work key would have shown them.
         self.open_work(item);
     }
 
     /// Handing one recipe over about one item, and saying what landed. Both
-    /// keys that dispatch come through here (§FS-005-dispatch.4).
-    fn hand_over(&mut self, item: &Item, recipe: &crate::work::recipe::Recipe) {
+    /// keys that dispatch come through here (§FS-005-dispatch.4). `picked` is
+    /// the reader's own choice from the picker, spent by this one dispatch
+    /// (§FS-005-dispatch.14): it arrives on the entry that carried it and is
+    /// recorded nowhere.
+    fn hand_over(
+        &mut self,
+        item: &Item,
+        recipe: &crate::work::recipe::Recipe,
+        picked: Option<&crate::work::recipe::HandPin>,
+    ) {
         let Some(dispatcher) = &mut self.dispatcher else {
             self.message = "Work needs the registry, which could not be read".to_string();
             return;
         };
         // The screen below already shows the plan and its tickets, so the
         // header says what was asked for rather than repeating a long path.
-        self.message = match dispatcher.dispatch(item, recipe, false) {
+        self.message = match dispatcher.dispatch(item, recipe, picked, false) {
             Ok(crate::work::Outcome::Opened { ticket, .. })
             | Ok(crate::work::Outcome::Reopened { ticket, .. }) => match dispatcher.save() {
                 Ok(()) => format!("{} {} — {ticket}", recipe.icon, recipe.description),

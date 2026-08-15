@@ -26,7 +26,8 @@ use crate::capabilities::CapabilitySet;
 use crate::feed::config::{ActionConfig, CheckoutConfig};
 use crate::feed::model::Item;
 use crate::forest::{Forest, Upstream};
-use crate::work::recipe::Facts;
+use crate::work::recipe::{Facts, HandPin};
+use crate::work::runtime::roster::Hand;
 
 use super::{highlight_style, BranchInfo, WorkspaceState};
 
@@ -333,7 +334,29 @@ pub(crate) struct MenuEntry {
     /// The synthetic row with no command yet: the reader types one
     /// (§FS-005-dispatch.10).
     pub is_freehand: bool,
+    /// What the reader picked for this dispatch alone, where the picker was
+    /// used (§FS-005-dispatch.14). It rides the one outcome that carries it
+    /// to the dispatch and dies there: nothing records it, and the next
+    /// dispatch resolves from the second step down.
+    pub picked: Option<HandPin>,
     pub gate: Gate,
+}
+
+/// The reader's own pick, made over one entry at the moment of asking
+/// (§FS-005-dispatch.14): two columns, not three — the hands, and the efforts
+/// the selected hand declares, the second absent where it declares none,
+/// which is every hand on a machine with no model profiles. It holds indices
+/// into the menu's roster; the hands themselves stay on the menu.
+///
+/// The choice it produces is always one the resolution can stand: a hand
+/// that declares efforts is picked at the highlighted one, so nothing here
+/// can assemble the effort-less ask of a several-effort hand that the
+/// resolution refuses.
+struct HandPicker {
+    selected: usize,
+    /// The reader is in the efforts column.
+    on_efforts: bool,
+    effort: usize,
 }
 
 pub(crate) struct ActionMenu {
@@ -352,6 +375,15 @@ pub(crate) struct ActionMenu {
     /// An entry that asked to be confirmed and has been chosen once
     /// (§FS-006-project-interface.9): the next Enter on it runs it.
     confirming: Option<usize>,
+    /// The hands `t` may offer on this menu's agent entries
+    /// (§FS-005-dispatch.14): the roster's, already without what the
+    /// project's narrowing excludes. Empty where there is nobody to pick
+    /// from, which is what withholds the picker entirely — the entry still
+    /// dispatches as if nothing had been picked.
+    roster: Vec<Hand>,
+    /// The picker, open over the selected entry — the menu's second level,
+    /// like `confirming`.
+    picker: Option<HandPicker>,
 }
 
 impl ActionMenu {
@@ -375,6 +407,7 @@ impl ActionMenu {
                 action,
                 is_checkout: true,
                 is_freehand: false,
+                picked: None,
                 gate: Gate::NeedsCheckout,
             });
         }
@@ -421,6 +454,7 @@ impl ActionMenu {
                 action,
                 is_checkout: false,
                 is_freehand: false,
+                picked: None,
                 gate,
             });
         }
@@ -435,6 +469,7 @@ impl ActionMenu {
             },
             is_checkout: false,
             is_freehand: true,
+            picked: None,
             gate: Gate::Ready,
         });
         ActionMenu {
@@ -447,7 +482,17 @@ impl ActionMenu {
             entries,
             selected: 0,
             confirming: None,
+            roster: Vec::new(),
+            picker: None,
         }
+    }
+
+    /// The hands `t` may offer here (§FS-005-dispatch.14). Separate from the
+    /// constructor because most menus — a branch row's, a project with no
+    /// recipes — carry no agent entry to pick for and need no roster read.
+    pub fn with_roster(mut self, roster: Vec<Hand>) -> Self {
+        self.roster = roster;
+        self
     }
 
     /// The checkout to run before an action that needs the workspace, and the
@@ -464,6 +509,27 @@ impl ActionMenu {
     /// reader to find out what it meant from a line at the bottom of a screen
     /// they were not reading.
     pub fn footer(&self) -> String {
+        // The picker's own keys, built from its selection the same way
+        // (§FS-004-quick-actions.2): the column key appears only where there
+        // is a column to enter, and Enter is not taught on a hand that
+        // cannot be chosen.
+        if let Some(picker) = &self.picker {
+            let hand = &self.roster[picker.selected];
+            let mut keys = String::from(" j/k move");
+            if hand.available.is_none() && !hand.efforts.is_empty() {
+                keys.push_str("  ←/→ column");
+            }
+            if hand.available.is_none() {
+                let at = hand
+                    .efforts
+                    .get(picker.effort)
+                    .map(|effort| format!(" at {effort}"))
+                    .unwrap_or_default();
+                keys.push_str(&format!("  enter hand over to {}{at}", hand.id));
+            }
+            keys.push_str("  esc back");
+            return keys;
+        }
         let mut keys = String::from(" j/k move");
         if self.entries.len() > 1 {
             keys.push_str("  1-9 pick");
@@ -489,12 +555,31 @@ impl ActionMenu {
             if let Some(verb) = verb {
                 keys.push_str(&format!("  {verb}"));
             }
+            // The pick for this dispatch alone (§FS-005-dispatch.14), taught
+            // only where there is work to hand over and somebody to pick —
+            // with an empty roster the picker is not offered at all.
+            if self.picker_offered(entry) {
+                keys.push_str("  t pick the hand");
+            }
         }
         keys.push_str("  esc cancel");
         keys
     }
 
+    /// Whether `t` has anything to open on this entry: work to hand over,
+    /// not refused, and a roster with somebody on it (§FS-005-dispatch.14).
+    fn picker_offered(&self, entry: &MenuEntry) -> bool {
+        entry.action.agent.is_some()
+            && !matches!(entry.gate, Gate::Blocked(_))
+            && !self.roster.is_empty()
+    }
+
     pub fn handle_key(&mut self, code: KeyCode) -> MenuOutcome {
+        // The picker is the menu's second level: while it is open, the keys
+        // are its (§FS-005-dispatch.14).
+        if self.picker.is_some() {
+            return self.pick_key(code);
+        }
         match code {
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('x') => MenuOutcome::Close,
             KeyCode::Char('j') | KeyCode::Down => {
@@ -510,6 +595,25 @@ impl ActionMenu {
                 MenuOutcome::Stay
             }
             KeyCode::Enter => self.choose(self.selected),
+            // `t`: the pick for this dispatch alone (§FS-005-dispatch.14).
+            // Only over an entry that hands work over, and only where there
+            // is somebody to pick — with an empty roster the picker is not
+            // offered and the entry dispatches as if nothing had been picked.
+            KeyCode::Char('t') => {
+                let offered = self
+                    .entries
+                    .get(self.selected)
+                    .is_some_and(|entry| self.picker_offered(entry));
+                if offered {
+                    self.confirming = None;
+                    self.picker = Some(HandPicker {
+                        selected: 0,
+                        on_efforts: false,
+                        effort: 0,
+                    });
+                }
+                MenuOutcome::Stay
+            }
             KeyCode::Char(digit) if digit.is_ascii_digit() => {
                 let index = (digit as usize).wrapping_sub('1' as usize);
                 match self.entries.get(index) {
@@ -519,6 +623,71 @@ impl ActionMenu {
             }
             _ => MenuOutcome::Stay,
         }
+    }
+
+    /// One key of the open picker. Arrows move between the columns, `j`/`k`
+    /// within one, Enter runs the entry with what is selected, Esc returns
+    /// to the menu (§FS-005-dispatch.14).
+    fn pick_key(&mut self, code: KeyCode) -> MenuOutcome {
+        let Some(picker) = &mut self.picker else {
+            return MenuOutcome::Stay;
+        };
+        let hand = &self.roster[picker.selected];
+        match code {
+            KeyCode::Esc => self.picker = None,
+            KeyCode::Char('j') | KeyCode::Down => {
+                if picker.on_efforts {
+                    if picker.effort + 1 < hand.efforts.len() {
+                        picker.effort += 1;
+                    }
+                } else if picker.selected + 1 < self.roster.len() {
+                    picker.selected += 1;
+                    picker.effort = 0;
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if picker.on_efforts {
+                    picker.effort = picker.effort.saturating_sub(1);
+                } else if picker.selected > 0 {
+                    picker.selected -= 1;
+                    picker.effort = 0;
+                }
+            }
+            // Into the efforts where the selected hand declares any and can
+            // be asked at all; a hand declaring none has no second column —
+            // it is asked plainly, and a dead column would teach an axis
+            // that is not there (§FS-005-dispatch.14).
+            KeyCode::Right => {
+                if hand.available.is_none() && !hand.efforts.is_empty() {
+                    picker.on_efforts = true;
+                }
+            }
+            KeyCode::Left => picker.on_efforts = false,
+            KeyCode::Enter => {
+                // An unavailable hand is shown with its reason and cannot be
+                // chosen — the refusal was computed when the roster was read,
+                // not discovered on the dispatch (§AR-002-summons.4).
+                if hand.available.is_some() {
+                    return MenuOutcome::Stay;
+                }
+                // A hand with efforts is picked at the highlighted one, so
+                // this can never assemble the effort-less ask the resolution
+                // refuses (§FS-005-dispatch.14).
+                let pin = HandPin::Named {
+                    id: hand.id.clone(),
+                    effort: hand.efforts.get(picker.effort).cloned(),
+                };
+                let mut entry = self.entries[self.selected].clone();
+                entry.picked = Some(pin);
+                self.picker = None;
+                // Opening the picker and choosing in it is already the
+                // deliberate second step a `confirm` entry asks for.
+                self.confirming = None;
+                return MenuOutcome::Run(entry);
+            }
+            _ => {}
+        }
+        MenuOutcome::Stay
     }
 
     /// Choosing an entry runs it — unless it asked to be confirmed, and this
@@ -645,6 +814,98 @@ impl ActionMenu {
         let mut state = ListState::default();
         state.select(Some(self.selected));
         frame.render_stateful_widget(list, rect, &mut state);
+        if let Some(picker) = &self.picker {
+            self.draw_picker(frame, area, picker);
+        }
+    }
+
+    /// The picker over the menu (§FS-005-dispatch.14): the hands, and beside
+    /// a hand that declares efforts, those efforts — the second column drawn
+    /// only where there is one, because on a machine with no model profiles
+    /// no hand declares any and a dead column would teach an axis that is
+    /// not there.
+    fn draw_picker(&self, frame: &mut ratatui::Frame, area: Rect, picker: &HandPicker) {
+        let width = area.width.saturating_sub(4).min(72).max(20);
+        let height = (self.roster.len() as u16 + 2).min(area.height);
+        let rect = Rect {
+            x: area.x + (area.width.saturating_sub(width)) / 2,
+            y: area.y + (area.height.saturating_sub(height)) / 2,
+            width,
+            height,
+        };
+        frame.render_widget(Clear, rect);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" who does it — this dispatch alone ");
+        let inner = block.inner(rect);
+        frame.render_widget(block, rect);
+
+        let chosen = &self.roster[picker.selected];
+        // A column only where the selected hand has one to enter.
+        let efforts_width = match chosen.available.is_none() && !chosen.efforts.is_empty() {
+            true => chosen
+                .efforts
+                .iter()
+                .map(|effort| effort.chars().count() as u16 + 3)
+                .max()
+                .unwrap_or(0)
+                .min(inner.width / 2),
+            false => 0,
+        };
+        let hands_rect = Rect {
+            width: inner.width.saturating_sub(efforts_width),
+            ..inner
+        };
+
+        let dim = Style::default().fg(Color::DarkGray);
+        let rows: Vec<ListItem> = self
+            .roster
+            .iter()
+            .map(|hand| {
+                let mut spans = vec![
+                    Span::raw(format!(" {}", hand.id)),
+                    Span::styled(format!("  {}", hand.resolves_to()), dim),
+                ];
+                // The reason is on the row, never saved for whoever presses
+                // it (§AR-002-summons.4).
+                if let Some(why) = &hand.available {
+                    spans.push(Span::styled(
+                        format!("  (unavailable: {why})"),
+                        dim.add_modifier(Modifier::ITALIC),
+                    ));
+                }
+                ListItem::new(Line::from(spans))
+            })
+            .collect();
+        // The active column carries the highlight; the other keeps a dim one,
+        // so where the next `j` lands is readable before it is pressed.
+        let hands = List::new(rows).highlight_style(match picker.on_efforts {
+            true => dim.add_modifier(Modifier::BOLD),
+            false => highlight_style(),
+        });
+        let mut state = ListState::default();
+        state.select(Some(picker.selected));
+        frame.render_stateful_widget(hands, hands_rect, &mut state);
+
+        if efforts_width > 0 {
+            let efforts_rect = Rect {
+                x: inner.x + hands_rect.width,
+                width: efforts_width,
+                ..inner
+            };
+            let rows: Vec<ListItem> = chosen
+                .efforts
+                .iter()
+                .map(|effort| ListItem::new(format!(" {effort}")))
+                .collect();
+            let efforts = List::new(rows).highlight_style(match picker.on_efforts {
+                true => highlight_style(),
+                false => dim.add_modifier(Modifier::BOLD),
+            });
+            let mut state = ListState::default();
+            state.select(Some(picker.effort));
+            frame.render_stateful_widget(efforts, efforts_rect, &mut state);
+        }
     }
 }
 
@@ -1223,6 +1484,193 @@ mod tests {
             "{}",
             asked.footer()
         );
+    }
+
+    fn roster_hand(id: &str, efforts: &[&str], available: Option<&str>) -> Hand {
+        Hand {
+            id: id.to_string(),
+            agent: Some("agent-x".to_string()),
+            model: Some("m-x".to_string()),
+            provider: None,
+            efforts: efforts.iter().map(|effort| effort.to_string()).collect(),
+            available: available.map(str::to_string),
+        }
+    }
+
+    /// A menu holding one agent entry and a roster for `t` to offer.
+    fn menu_with_roster(hands: Vec<Hand>) -> ActionMenu {
+        menu(
+            WorkspaceState::Ready,
+            None,
+            vec![agent_entry(&crate::work::recipe::shipped()[0])],
+        )
+        .with_roster(hands)
+    }
+
+    fn full_roster() -> Vec<Hand> {
+        vec![
+            roster_hand("luna", &["high", "yolo"], None),
+            roster_hand("pi-alone", &[], None),
+            roster_hand("away", &[], Some("nowhere is not on PATH")),
+        ]
+    }
+
+    /// `t` on an entry that hands work over opens the picker, and Enter runs
+    /// the entry with what is selected (§FS-005-dispatch.14). A hand that
+    /// declares efforts is picked at the highlighted one — never the
+    /// effort-less ask of a several-effort hand that resolution refuses —
+    /// and a hand declaring none is asked plainly, with no column to enter.
+    #[test]
+    fn t_opens_the_picker_and_enter_runs_with_what_is_selected() {
+        let mut menu = menu_with_roster(full_roster());
+        assert!(
+            menu.footer().contains("t pick the hand"),
+            "{}",
+            menu.footer()
+        );
+        assert!(matches!(
+            menu.handle_key(KeyCode::Char('t')),
+            MenuOutcome::Stay
+        ));
+        // The picker's footer teaches its own keys, with the choice named.
+        assert!(
+            menu.footer().contains("enter hand over to luna at high"),
+            "{}",
+            menu.footer()
+        );
+        match menu.handle_key(KeyCode::Enter) {
+            MenuOutcome::Run(entry) => {
+                assert!(entry.action.agent.is_some());
+                assert_eq!(
+                    entry.picked,
+                    Some(HandPin::Named {
+                        id: "luna".to_string(),
+                        effort: Some("high".to_string()),
+                    })
+                );
+            }
+            _ => panic!("expected the entry to run with the pick"),
+        }
+
+        // Into the efforts column, and down: the second effort rides the pin.
+        menu.handle_key(KeyCode::Char('t'));
+        menu.handle_key(KeyCode::Right);
+        assert!(menu.footer().contains("←/→ column"), "{}", menu.footer());
+        menu.handle_key(KeyCode::Char('j'));
+        match menu.handle_key(KeyCode::Enter) {
+            MenuOutcome::Run(entry) => assert_eq!(
+                entry.picked,
+                Some(HandPin::Named {
+                    id: "luna".to_string(),
+                    effort: Some("yolo".to_string()),
+                })
+            ),
+            _ => panic!("expected the picked effort to ride"),
+        }
+
+        // A hand declaring no efforts has no second column — Right does
+        // nothing — and is asked plainly (§FS-005-dispatch.14).
+        menu.handle_key(KeyCode::Char('t'));
+        menu.handle_key(KeyCode::Char('j'));
+        assert!(!menu.footer().contains("←/→"), "{}", menu.footer());
+        menu.handle_key(KeyCode::Right);
+        match menu.handle_key(KeyCode::Enter) {
+            MenuOutcome::Run(entry) => assert_eq!(
+                entry.picked,
+                Some(HandPin::Named {
+                    id: "pi-alone".to_string(),
+                    effort: None,
+                })
+            ),
+            _ => panic!("expected the plain ask"),
+        }
+    }
+
+    /// An unavailable hand is shown with its reason and cannot be chosen —
+    /// the refusal was computed when the roster was read, not discovered on
+    /// the dispatch (§AR-002-summons.4) — and Esc returns to the menu with
+    /// nothing picked.
+    #[test]
+    fn an_unavailable_hand_is_shown_and_not_chosen() {
+        let mut menu = menu_with_roster(full_roster());
+        menu.handle_key(KeyCode::Char('t'));
+        menu.handle_key(KeyCode::Char('j'));
+        menu.handle_key(KeyCode::Char('j'));
+        // The footer stops teaching Enter on it (§FS-004-quick-actions.2).
+        assert!(!menu.footer().contains("enter"), "{}", menu.footer());
+        assert!(matches!(menu.handle_key(KeyCode::Enter), MenuOutcome::Stay));
+        // Still in the picker: Esc leaves it, the next Esc leaves the menu.
+        assert!(matches!(menu.handle_key(KeyCode::Esc), MenuOutcome::Stay));
+        assert!(
+            menu.footer().contains("t pick the hand"),
+            "back on the menu: {}",
+            menu.footer()
+        );
+        assert!(matches!(menu.handle_key(KeyCode::Esc), MenuOutcome::Close));
+    }
+
+    /// With an empty roster the picker is not offered at all and the entry
+    /// still dispatches (§FS-005-dispatch.14) — the shape of every machine
+    /// with no runtime bound. And `t` on an entry that runs a command, or on
+    /// one whose choice was refused, opens nothing.
+    #[test]
+    fn with_an_empty_roster_the_picker_is_withheld_and_the_entry_still_dispatches() {
+        let mut unpicked = menu(
+            WorkspaceState::Ready,
+            None,
+            vec![agent_entry(&crate::work::recipe::shipped()[0])],
+        );
+        assert!(
+            !unpicked.footer().contains("t pick"),
+            "{}",
+            unpicked.footer()
+        );
+        assert!(matches!(
+            unpicked.handle_key(KeyCode::Char('t')),
+            MenuOutcome::Stay
+        ));
+        match unpicked.handle_key(KeyCode::Enter) {
+            MenuOutcome::Run(entry) => {
+                assert!(entry.action.agent.is_some());
+                assert_eq!(entry.picked, None);
+            }
+            _ => panic!("the entry dispatches as if nothing had been picked"),
+        }
+
+        // A command entry has nothing to hand over, so nothing to pick for.
+        let mut commands = menu(WorkspaceState::Ready, None, vec![action("browser", &[])])
+            .with_roster(full_roster());
+        assert!(
+            !commands.footer().contains("t pick"),
+            "{}",
+            commands.footer()
+        );
+        commands.handle_key(KeyCode::Char('t'));
+        match commands.handle_key(KeyCode::Enter) {
+            MenuOutcome::Run(entry) => assert_eq!(entry.picked, None),
+            _ => panic!("expected the command to run"),
+        }
+
+        // A refused choice blocks the entry, and the picker with it: the
+        // remedy is configuration, and the row carries the whole reason.
+        let refused = ActionConfig {
+            hand: Some(crate::feed::config::Handed {
+                says: "permits only sonnet".to_string(),
+                refusal: Some("permits only sonnet".to_string()),
+            }),
+            ..agent_entry(&crate::work::recipe::shipped()[0])
+        };
+        let mut blocked =
+            menu(WorkspaceState::Ready, None, vec![refused]).with_roster(full_roster());
+        assert!(!blocked.footer().contains("t pick"), "{}", blocked.footer());
+        assert!(matches!(
+            blocked.handle_key(KeyCode::Char('t')),
+            MenuOutcome::Stay
+        ));
+        assert!(matches!(
+            blocked.handle_key(KeyCode::Esc),
+            MenuOutcome::Close
+        ));
     }
 
     /// An entry that asked to be confirmed runs on the second choice, and the

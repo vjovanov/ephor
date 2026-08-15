@@ -329,10 +329,7 @@ impl Dispatcher {
         pinned: Option<&recipe::HandPin>,
         root: &std::path::Path,
     ) -> runtime::roster::Choice {
-        if !self.rosters.contains_key(root) {
-            let roster = runtime::roster::roster(&self.global, Some(root));
-            self.rosters.insert(root.to_path_buf(), roster);
-        }
+        self.ensure_roster(root);
         runtime::roster::resolve(
             &self.rosters[root],
             &self.global,
@@ -343,6 +340,49 @@ impl Dispatcher {
         )
     }
 
+    /// The hands a picker may offer about this project's work, against the
+    /// work root the dispatch will use (§FS-005-dispatch.14): the roster's,
+    /// already without what the project's narrowing excludes. Empty where
+    /// the roster is — with no runtime bound there is nothing to pick from,
+    /// and the picker is simply not offered.
+    pub fn pickable(
+        &mut self,
+        project: &str,
+        root: &std::path::Path,
+    ) -> Vec<runtime::roster::Hand> {
+        self.ensure_roster(root);
+        runtime::roster::pickable(&self.rosters[root], self.projects.get(project))
+    }
+
+    fn ensure_roster(&mut self, root: &std::path::Path) {
+        if !self.rosters.contains_key(root) {
+            let roster = runtime::roster::roster(&self.global, Some(root));
+            self.rosters.insert(root.to_path_buf(), roster);
+        }
+    }
+
+    /// Where an item's work root is, without making it: the ledger's answer
+    /// where the item has work, and the same template `site` resolves at
+    /// dispatch otherwise (§FS-006-project-interface.7) — so a surface asking
+    /// "who would get this" resolves against the root the dispatch will use.
+    pub fn work_root_of(&mut self, item: &Item) -> Option<PathBuf> {
+        if let Some(entry) = self.ledger.entries.get(&item.id) {
+            return Some(entry.root.clone());
+        }
+        let template = self.root_template(&item.project);
+        let placement = self.placement(&item.project)?.clone();
+        let checkout = placement.checkout(item);
+        let subject = Subject {
+            item,
+            checkout: &checkout,
+            root: &placement.root,
+        };
+        Some(crate::paths::resolve_path(&dossier::render(
+            &template,
+            &subject.placeholders(),
+        )))
+    }
+
     /// What this ticket pins, and what the reader is told about it. Refuses
     /// where the choice cannot stand, so nothing is written and no opening
     /// move is made under a hand that may not have it
@@ -351,6 +391,7 @@ impl Dispatcher {
         &mut self,
         item: &Item,
         recipe: &Recipe,
+        picked: Option<&recipe::HandPin>,
         root: &std::path::Path,
     ) -> Result<(Option<String>, Option<String>)> {
         // One spelling per recipe: a hand is the checkable name for exactly
@@ -364,10 +405,15 @@ impl Dispatcher {
             )));
         }
         // A recipe spelling the runtime's own execution identity has pinned
-        // itself — the second step — and the tables below do not displace it.
-        // A project that narrows the roster binds it all the same: a selector
-        // no hand named is not authorized by a list of names.
-        if recipe.hand.is_none() && (recipe.target.is_some() || recipe.model.is_some()) {
+        // itself — the second step — and the tables below do not displace it;
+        // only the reader's own pick, the first step, does
+        // (§FS-005-dispatch.14). A project that narrows the roster binds it
+        // all the same: a selector no hand named is not authorized by a list
+        // of names.
+        if picked.is_none()
+            && recipe.hand.is_none()
+            && (recipe.target.is_some() || recipe.model.is_some())
+        {
             if let Some(why) = runtime::roster::refuse_unnamed(
                 self.projects.get(&item.project),
                 &format!(
@@ -379,7 +425,13 @@ impl Dispatcher {
             }
             return Ok((recipe.target.clone(), recipe.model.clone()));
         }
-        let choice = self.hand(&item.project, &recipe.id, None, recipe.hand.as_ref(), root);
+        let choice = self.hand(
+            &item.project,
+            &recipe.id,
+            picked,
+            recipe.hand.as_ref(),
+            root,
+        );
         if let runtime::roster::Choice::Refused(why) = choice {
             return Err(EphorError::Command(why));
         }
@@ -625,13 +677,23 @@ impl Dispatcher {
     }
 
     /// Hand an item to the runtime under one recipe. Opens the plan when the
-    /// item has none, and appends to it when it has.
-    pub fn dispatch(&mut self, item: &Item, recipe: &Recipe, dry_run: bool) -> Result<Outcome> {
+    /// item has none, and appends to it when it has. `picked` is what the
+    /// reader chose for this dispatch alone — the first of the seven steps,
+    /// made at the moment of dispatch and spent by it: nothing records it,
+    /// and the next dispatch resolves from the second step down
+    /// (§FS-005-dispatch.14).
+    pub fn dispatch(
+        &mut self,
+        item: &Item,
+        recipe: &Recipe,
+        picked: Option<&recipe::HandPin>,
+        dry_run: bool,
+    ) -> Result<Outcome> {
         let site = self.site(item, recipe)?;
         // Who does it, before anything is written and before the opening move
         // is made: a refusal leaves nothing behind
         // (§FS-006-project-interface.9).
-        let (target, model) = self.pin(item, recipe, &site.dir)?;
+        let (target, model) = self.pin(item, recipe, picked, &site.dir)?;
         let states = self.states_yaml(&item.project)?;
         let plan_id = plan::plan_id(&item.id);
 
@@ -836,7 +898,7 @@ impl Dispatcher {
             target: None,
             model: None,
         };
-        self.dispatch(item, &recipe, dry_run)
+        self.dispatch(item, &recipe, None, dry_run)
     }
 
     /// Reopen an item's work when the item has moved under it
@@ -868,7 +930,7 @@ impl Dispatcher {
         else {
             return Ok(Outcome::Dormant { changes });
         };
-        self.dispatch(item, &recipe, dry_run)
+        self.dispatch(item, &recipe, None, dry_run)
     }
 
     /// The reply a run drafted about this matter and did not send, where one

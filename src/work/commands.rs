@@ -196,6 +196,16 @@ fn dispatch_work(config: &StatusConfig, args: &crate::cli::WorkDispatchArgs) -> 
     let mut dispatcher = Dispatcher::load(config)?;
     let items = selected_items(config, &args.project)?;
     let kind = kind_filter(&args.kind)?;
+    // Who does it, for this dispatch alone — the first of the seven steps
+    // (§FS-005-dispatch.14), in the same grammar the tables write. Parsed
+    // before the sweep, so a pick that is not one refuses before anything is
+    // written.
+    let picked = args
+        .hand
+        .as_deref()
+        .map(crate::work::recipe::HandPin::parse)
+        .transpose()
+        .map_err(EphorError::Command)?;
     let style = Style::detect();
 
     let now = Utc::now();
@@ -259,7 +269,7 @@ fn dispatch_work(config: &StatusConfig, args: &crate::cli::WorkDispatchArgs) -> 
             }
             continue;
         }
-        match dispatcher.dispatch(item, &recipe, args.dry_run) {
+        match dispatcher.dispatch(item, &recipe, picked.as_ref(), args.dry_run) {
             // A deterministic opening move that finished is not a ticket
             // (§FS-005-dispatch.12) — it is reported as what it was, and
             // nothing was handed over.

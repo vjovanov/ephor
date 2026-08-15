@@ -26,6 +26,10 @@ use super::Action;
 pub(crate) struct Offer {
     pub recipe: Recipe,
     pub brief: String,
+    /// Who would get it, resolved when the screen opened — the same sentence
+    /// the menu's entry carries (§FS-005-dispatch.14). None where nothing
+    /// can say: the item cannot be placed, or there is no dispatcher.
+    pub hand: Option<String>,
 }
 
 pub(crate) struct WorkScreen {
@@ -283,6 +287,14 @@ impl WorkScreen {
             if recipe.needs_checkout {
                 spans.push(Span::styled("  (needs the branch here)".to_string(), dim));
             }
+            // Who would get this work, before the key is pressed — the same
+            // sentence the menu shows (§FS-005-dispatch.14).
+            if let Some(hand) = &offer.hand {
+                spans.push(Span::styled(
+                    format!("  → {hand}"),
+                    Style::default().fg(Color::Cyan),
+                ));
+            }
             lines.push(Line::from(spans));
         }
         // What the selected recipe would actually ask for: dispatching is
@@ -369,12 +381,13 @@ mod tests {
     }
 
     /// Offers as the shell builds them: each recipe with its brief already
-    /// rendered against the item.
+    /// rendered against the item, and the hand it would go to resolved.
     fn offers() -> Vec<Offer> {
         crate::work::recipe::shipped()
             .into_iter()
             .map(|recipe| Offer {
                 brief: recipe.brief.replace("{title}", "Humanize durations"),
+                hand: Some("luna at high".to_string()),
                 recipe,
             })
             .collect()
@@ -416,6 +429,9 @@ mod tests {
             "{text}"
         );
         assert!(!text.contains("{title}"), "{text}");
+        // And who each offer would go to, beside it — the same sentence the
+        // menu's entry carries (§FS-005-dispatch.14).
+        assert!(text.contains("→ luna at high"), "{text}");
     }
 
     #[test]
