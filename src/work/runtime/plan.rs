@@ -23,6 +23,14 @@ pub const SHIPPED_STATES: &str = include_str!("../../../assets/ephor-work.states
 /// whether its machine declares it and a [`PlanTicket`] whether it sits in it.
 pub const CANCELLED: &str = "cancelled";
 
+/// The runtime's **built-in default machine**: what a project that declares no
+/// `states.yaml` of its own runs its plans under — `pending`, and `completed`
+/// final — as the runtime itself resolves it. The names and the shape are the
+/// runtime's, so they are spelled here and nowhere above this module
+/// (§REQ-001-boundary.5); a caller asks [`WorkRoot::in_force`] for the machine
+/// a store's tasks actually run under (§FS-006-project-interface.7).
+pub const DEFAULT_STATES: &str = "name: rhei\nstates:\n  pending:\n  completed:\n    final: true\n";
+
 /// What surrounds the dossier, so a later sync can rewrite exactly that much
 /// and leave every `**State:**` line the runtime owns untouched.
 const DOSSIER_OPEN: &str = "<!-- ephor:dossier -->";
@@ -120,17 +128,38 @@ impl WorkRoot {
         Self::read_root(dir, &states).map(Some)
     }
 
+    /// The machine a directory's plans actually run under: the one it declares,
+    /// or — where it declares none — the runtime's built-in default
+    /// ([`DEFAULT_STATES`]), which is what the runtime resolves such a project
+    /// to. This is the question a reader of somebody else's store asks, since a
+    /// task's state means whatever the machine in force says it means
+    /// (§FS-006-project-interface.7). [`open`](Self::open) keeps its own
+    /// meaning: a surface that must withhold judgment where nothing is declared
+    /// asks that one instead.
+    pub fn in_force(dir: &Path) -> Result<WorkRoot> {
+        match Self::open(dir)? {
+            Some(root) => Ok(root),
+            None => Self::from_states(dir, DEFAULT_STATES, "the runtime's default state machine"),
+        }
+    }
+
     fn read_root(dir: &Path, states: &Path) -> Result<WorkRoot> {
         let text = read(states)?;
+        Self::from_states(dir, &text, &states.display().to_string())
+    }
+
+    /// A root from a states document, whatever it was read from — `origin`
+    /// names that source in the one error this can raise.
+    fn from_states(dir: &Path, text: &str, origin: &str) -> Result<WorkRoot> {
         Ok(WorkRoot {
             dir: dir.to_path_buf(),
-            machine: machine_name(&text).ok_or_else(|| {
+            machine: machine_name(text).ok_or_else(|| {
                 EphorError::Command(format!(
-                    "{} declares no state machine name; ephor cannot write tickets that name one.",
-                    states.display()
+                    "{origin} declares no state machine name; ephor cannot write tickets that \
+                     name one."
                 ))
             })?,
-            states: state_infos(&text),
+            states: state_infos(text),
         })
     }
 
@@ -852,6 +881,39 @@ mod tests {
         assert!(fs::read_to_string(tmp.path().join(".gitignore"))
             .unwrap()
             .contains('*'));
+    }
+
+    /// The machine in force is the declared one where there is one and the
+    /// runtime's built-in default where there is not — which is what the
+    /// runtime itself resolves an undeclared project to, and so what a reader
+    /// of somebody else's store must judge its tasks by
+    /// (§FS-006-project-interface.7). `open` is unchanged: it still answers
+    /// None, for the surfaces that must withhold judgment.
+    #[test]
+    fn the_machine_in_force_falls_back_to_the_runtimes_default() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(WorkRoot::open(tmp.path()).unwrap().is_none());
+        let root = WorkRoot::in_force(tmp.path()).unwrap();
+        assert!(root.declares("pending"), "{:?}", root.state_names());
+        assert!(root.is_final("completed"));
+        assert!(!root.is_final("pending"));
+
+        // A declared machine is the one in force, and nothing of the default
+        // leaks into it: `completed` is not one of its states at all.
+        fs::write(
+            tmp.path().join("states.yaml"),
+            "name: custom\nstates:\n  todo:\n  verified:\n    final: true\n",
+        )
+        .unwrap();
+        let root = WorkRoot::in_force(tmp.path()).unwrap();
+        assert_eq!(root.machine, "custom");
+        assert!(root.is_final("verified"));
+        assert!(!root.is_final("completed"));
+
+        // A machine that is there and cannot be read is an error, never the
+        // default quietly standing in for it.
+        fs::write(tmp.path().join("states.yaml"), "states:\n  todo:\n").unwrap();
+        assert!(WorkRoot::in_force(tmp.path()).is_err());
     }
 
     /// The shipped machine declares the abandonment state and it is final;

@@ -566,6 +566,14 @@ store carries (`rhei`, `beads`), so they sit in **My Issues** beside anything
 else nobody else opened, carrying the state the store gave them. Nothing is
 ever written back — the store is the project's, and ephor only reads it.
 
+A ticket in a **final** state is not read at all — final as the store's own
+`states.yaml` says, or, where it declares none, as the runtime's built-in
+default machine says (`pending`, and `completed` final) — because the store is
+the record of the finished work and the feed shows what is open
+([§FS-006-project-interface.7](../requirements.md#7-local-ticket-stores-are-read-where-they-live)).
+A store whose machine cannot be read reports as a source that did not answer,
+exactly like a plan ephor cannot read.
+
 Finding a store is a capability, never an obligation: it buys the *ticketed*
 rung and nothing about a project without one degrades
 ([§7.5](#75-why-something-is-not-offered)).

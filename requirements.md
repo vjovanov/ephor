@@ -1490,6 +1490,18 @@ declaration; attribution is the checkout's own project; and the stores are
 project-native things that exist without ephor — a store's presence is a
 capability rung, never an obligation.
 
+**A task in a final state is not read.** Final is the store's own word: what
+its state machine declares final, or — where the store declares no machine —
+what the runtime's built-in default machine declares, since that is what the
+store's own tasks actually run under. Such a task is history the store keeps,
+not news the feed carries: it has no activity time of its own beyond its
+file's, so under §FS-003-feed-categories.2 every finished task in a plan would
+resurface each time the plan was touched, and a store that is the record of a
+project's work would drown the feed in its record. The store keeps the finished
+work and answers for it; the feed shows what is open. A store whose machine
+cannot be read is a store that did not answer, exactly like a plan that cannot
+be read (§FS-001-forge-interface.6).
+
 **Where they live is per branch, where a project has branch workspaces.**
 Work about a change belongs in that change's working tree
 (§FS-005-dispatch.3), so a branch-addressable project keeps a store per

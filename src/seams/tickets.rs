@@ -107,7 +107,21 @@ pub fn read(store: &Store, project: &str) -> Result<Vec<Item>, String> {
 /// The plan reader. Every plan in the directory is one matter per open ticket,
 /// keyed by the store's own id — `rhei:<plan>.<ticket>` — because the store
 /// named it and ephor does not get to rename it (§FS-007-matters.1).
+///
+/// A task in a final state is not read (§FS-006-project-interface.7): the
+/// machine in force says which states those are, and it is asked once for the
+/// store rather than once per plan.
 fn plans(store: &Store, project: &str) -> Result<Vec<Item>, String> {
+    // What the store's own tasks run under: the machine it declares, or the
+    // runtime's built-in default where it declares none. A machine that cannot
+    // be read is the store failing to answer, like a plan it cannot read
+    // (§FS-001-forge-interface.6).
+    let machine = crate::work::runtime::plan::WorkRoot::in_force(&store.path).map_err(|err| {
+        format!(
+            "cannot read the state machine in {}: {err}",
+            store.path.display()
+        )
+    })?;
     let entries = std::fs::read_dir(&store.path)
         .map_err(|err| format!("cannot read {}: {err}", store.path.display()))?;
     let mut paths: Vec<PathBuf> = entries
@@ -137,9 +151,14 @@ fn plans(store: &Store, project: &str) -> Result<Vec<Item>, String> {
             .unwrap_or_default();
         let updated_at = modified(&path);
         for ticket in plan.tickets() {
-            // A ticket that is finished is not news; the store keeps it, and
-            // the feed's own recency rules would hide it anyway.
             let state = ticket.state.clone().unwrap_or_default();
+            // A finished task is history the store keeps, not news the feed
+            // carries: it has no activity time of its own beyond this file's,
+            // so it would resurface every time the plan was touched
+            // (§FS-006-project-interface.7).
+            if machine.is_final(&state) {
+                continue;
+            }
             items.push(Item {
                 id: format!("{}:{stem}.{}", store.kind.name(), ticket.id),
                 project: project.to_string(),
@@ -224,9 +243,12 @@ mod tests {
     }
 
     /// The store named its tickets; ephor does not get to rename them
-    /// (§FS-007-matters.1).
+    /// (§FS-007-matters.1). And a task in a final state is the store's record
+    /// rather than the feed's news, so it is not read at all
+    /// (§FS-006-project-interface.7) — final here by the runtime's built-in
+    /// default machine, since this store declares none of its own.
     #[test]
-    fn a_plans_store_reads_its_tickets_under_the_stores_own_ids() {
+    fn a_plans_store_reads_its_open_tickets_under_the_stores_own_ids() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = plan_dir(
             tmp.path(),
@@ -243,14 +265,84 @@ mod tests {
             path: dir,
         };
         let items = read(&store, "widget").expect("the store answered");
-        assert_eq!(items.len(), 2, "{items:#?}");
+        assert_eq!(items.len(), 1, "{items:#?}");
         assert_eq!(items[0].id, "rhei:work.1");
         assert_eq!(items[0].title, "Widen the retry window");
         assert_eq!(items[0].state.as_deref(), Some("pending"));
-        assert_eq!(items[1].state.as_deref(), Some("completed"));
         // Attribution is the checkout's project: nothing has to guess.
         assert!(items.iter().all(|item| item.project == "widget"));
         assert!(items.iter().all(|item| item.source == "rhei"));
+    }
+
+    /// Which states are final is the store's own machine to say, not a list of
+    /// spellings ephor carries: a store declaring `verified` final keeps its
+    /// verified work to itself, and its `completed` — a state its machine never
+    /// heard of — is as open as anything else (§FS-006-project-interface.7).
+    #[test]
+    fn the_stores_own_machine_says_which_tickets_are_over() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = plan_dir(
+            tmp.path(),
+            "panta",
+            "# Rhei: work\n\n\
+             ## Tasks\n\n\
+             ### Task 1: Widen the retry window\n**State:** todo\n\n\
+             Do the thing.\n\n\
+             ### Task 2: And the other\n**State:** verified\n\n\
+             Done it.\n\n\
+             ### Task 3: A third\n**State:** completed\n\n\
+             Not a state this machine has.\n",
+        );
+        std::fs::write(
+            dir.join("states.yaml"),
+            "name: custom\nstates:\n  todo:\n  verified:\n    final: true\n",
+        )
+        .unwrap();
+        let store = Store {
+            kind: Kind::Plans,
+            path: dir,
+        };
+        let items = read(&store, "widget").expect("the store answered");
+        let ids: Vec<&str> = items.iter().map(|item| item.id.as_str()).collect();
+        assert_eq!(ids, ["rhei:work.1", "rhei:work.3"], "{items:#?}");
+    }
+
+    /// A task with no state at all is open: nothing said it was over.
+    #[test]
+    fn a_ticket_with_no_state_is_read() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = plan_dir(
+            tmp.path(),
+            "panta",
+            "# Rhei: work\n\n## Tasks\n\n### Task 1: Nameless\n\nNo state line.\n",
+        );
+        let store = Store {
+            kind: Kind::Plans,
+            path: dir,
+        };
+        let items = read(&store, "widget").expect("the store answered");
+        assert_eq!(items.len(), 1, "{items:#?}");
+        assert_eq!(items[0].state, None);
+    }
+
+    /// A machine ephor cannot read is the store failing to answer, exactly like
+    /// a plan it cannot read: "no tickets" has to mean there are none
+    /// (§FS-001-forge-interface.6).
+    #[test]
+    fn a_store_whose_machine_cannot_be_read_says_so_rather_than_answering_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = plan_dir(
+            tmp.path(),
+            "panta",
+            "# Rhei: work\n\n## Tasks\n\n### Task 1: Widen it\n**State:** pending\n",
+        );
+        std::fs::write(dir.join("states.yaml"), "states:\n  todo:\n").unwrap();
+        let store = Store {
+            kind: Kind::Plans,
+            path: dir,
+        };
+        let err = read(&store, "widget").expect_err("the machine has no name");
+        assert!(err.contains("state machine"), "{err}");
     }
 
     #[test]

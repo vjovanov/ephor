@@ -216,6 +216,14 @@ impl World {
             .unwrap_or_default()
     }
 
+    /// Whether the feed holds a matter with this key at all — for a scenario
+    /// whose point is that something is *not* there.
+    pub fn has_matter(&self, key: &str) -> bool {
+        self.matters()
+            .iter()
+            .any(|matter| matter["key"] == key || matter["id"] == key)
+    }
+
     /// The matter with this key, or a panic naming what was there instead —
     /// a scenario that cannot find its subject has to say what it saw.
     pub fn matter(&self, key: &str) -> Value {

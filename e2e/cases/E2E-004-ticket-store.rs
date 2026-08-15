@@ -36,8 +36,8 @@ fn a_store_in_the_checkout_is_read_where_it_lives_and_keeps_its_own_ids() {
 
     world.ephor().args(["refresh", PROJECT]).assert().success();
 
-    // Two tickets, one matter each, keyed as the store keys them: the store
-    // named them and ephor does not get to rename them.
+    // The open ticket is a matter, keyed as the store keys it: the store named
+    // it and ephor does not get to rename it.
     let open = world.matter("rhei:window.1");
     assert_eq!(open["title"], "Widen the retry window");
     assert_eq!(open["state"], "pending");
@@ -49,8 +49,11 @@ fn a_store_in_the_checkout_is_read_where_it_lives_and_keeps_its_own_ids() {
     // someone is waiting on an answer.
     assert_eq!(open["needs_response"], false);
 
-    let finished = world.matter("rhei:window.2");
-    assert_eq!(finished["state"], "completed");
+    // And the finished one is not a matter at all: it is history the store
+    // keeps, not news the feed carries (§FS-006-project-interface.7). This
+    // store declares no machine of its own, so what counts as finished is the
+    // runtime's built-in default — `completed`, and final.
+    assert!(!world.has_matter("rhei:window.2"), "{:#?}", world.matters());
 
     // And it is in the feed a person reads, beside whatever the forges said.
     world
@@ -59,6 +62,44 @@ fn a_store_in_the_checkout_is_read_where_it_lives_and_keeps_its_own_ids() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Widen the retry window"));
+}
+
+/// Which of a store's tickets are over is the store's own machine to say, never
+/// a list of spellings ephor carries (§FS-006-project-interface.7): a store
+/// declaring `verified` final keeps its verified work to itself, and a state
+/// that machine never heard of is as open as anything else.
+#[test]
+fn the_stores_own_machine_says_which_of_its_tickets_are_over() {
+    let world = World::new();
+    world.file(
+        "panta/states.yaml",
+        "name: custom\nstates:\n  todo:\n  verified:\n    final: true\n",
+    );
+    world.file(
+        "panta/window.rhei.md",
+        "# Rhei: the retry window\n\n\
+## Tasks\n\n\
+### Task 1: Widen the retry window\n**State:** todo\n\n\
+The window resets per attempt.\n\n\
+### Task 2: Document the reset\n**State:** verified\n\n\
+Done.\n\n\
+### Task 3: Retire the flag\n**State:** completed\n\n\
+A word this machine never heard of.\n",
+    );
+
+    world.ephor().args(["refresh", PROJECT]).assert().success();
+
+    assert_eq!(
+        world.matter("rhei:window.1")["title"],
+        "Widen the retry window"
+    );
+    // Final by this store's own machine, so it is the store's record and not
+    // the feed's news.
+    assert!(!world.has_matter("rhei:window.2"), "{:#?}", world.matters());
+    // Not a state this machine declares at all, so nothing said the work was
+    // over — ephor does not read `completed` as final on a store that never
+    // declared it.
+    assert_eq!(world.matter("rhei:window.3")["title"], "Retire the flag");
 }
 
 /// A project that keeps its store somewhere else says so in its manifest, and
