@@ -216,7 +216,7 @@ gate is red — the check list as GitHub reports it, then `gh run view
 would work: the gate is failing, the item still names its pull request,
 and `gh` is installed.
 
-ephor offers two of its own, from what is on disk rather than from a source.
+ephor offers three of its own, from what is on disk rather than from a source.
 `⤴ rebase onto <main> (N behind)` on a pull request whose branch workspace has
 fallen behind the project's main branch
 ([§FS-004-quick-actions.6](requirements.md#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase)).
@@ -225,7 +225,12 @@ checkout, nothing stashed, nothing pushed — and where the replay stops in a
 conflict it opens the ticket about it, because that part is a question about
 the code and the rest never was
 ([§FS-005-dispatch.12](requirements.md#12-work-an-algorithm-can-finish-does-not-start-with-a-model)).
-And `⇣ check out <dir>` on an item whose branch workspace is not there yet
+`⤴ rebase onto <remote>/<branch> (N behind)` where the same checkout trails its
+own **published copy** instead — somebody else pushed to your branch
+([§FS-004-quick-actions.8](requirements.md#8-a-branch-that-trails-its-own-published-copy-is-offered-the-rebase-onto-it)):
+`ephor rebase --upstream` replays each repository onto its own copy, which is
+the branch bare `git rebase` refuses to touch when no tracking configuration
+names one. And `⇣ check out <dir>` on an item whose branch workspace is not there yet
 ([§FS-004-quick-actions.7](requirements.md#7-a-workspace-that-is-not-there-is-offered-the-checkout)):
 `ephor checkout` needs nothing configured — the registry says where the
 workspace goes, which repositories it holds, and what a new branch grows from —

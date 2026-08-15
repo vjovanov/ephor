@@ -67,45 +67,177 @@ impl StatusConfig {
 }
 
 /// One entry of the action menu, whoever it came from: ephor's own quick
-/// actions, the project's offers, and the person's configured commands are one
-/// shape (§FS-006-project-interface.9). The command runs via `sh -c` in the
-/// project's checkout, with the item's context exported as `EPHOR_*`
-/// environment variables.
+/// actions, the project's offers, the person's configured commands and the
+/// recipes are one shape (§FS-006-project-interface.9, §FS-005-dispatch.1).
+///
+/// An entry either **runs a command here** or **asks somebody for work**, and
+/// exactly one of the two is written: `command` runs via `sh -c` in the
+/// project's checkout with the item's context exported as `EPHOR_*`
+/// environment variables; [`ActionConfig::agent`] carries a brief instead, and
+/// is dispatched as the recipe it is.
 #[derive(Debug, Clone, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "RawAction")]
 pub struct ActionConfig {
     /// What an entry of the same name overrides, in provenance order — the
     /// person's beats the project's beats the shipped one. Empty is anonymous:
     /// it overrides nothing and nothing overrides it.
-    #[serde(default)]
     pub id: String,
     pub icon: String,
     pub description: String,
+    /// Empty on an entry that asks for work rather than running one.
     pub command: String,
+    /// The work this entry hands over, where it hands work over rather than
+    /// running a command (§FS-005-dispatch.1). It is a whole recipe, not a
+    /// description of one: an entry that carries a brief instead of a command
+    /// *is* a recipe under another name, so the menu dispatches it through the
+    /// one path the work screen uses and nothing it carries — its opening
+    /// move, its own hand — is lost on the way (§FS-005-dispatch.4).
+    pub agent: Option<crate::work::recipe::Recipe>,
+    /// Who this work would go to, filled in when the menu opens
+    /// (§FS-005-dispatch.14). Never configuration: nobody writes it, ephor
+    /// resolves it so the reader sees it before pressing the key.
+    pub hand: Option<Handed>,
     /// Where it runs — `workspace` (the default), `root`, or `repo:<name>`
     /// (§AR-002-summons.1).
-    #[serde(default)]
     pub cwd: Option<String>,
     /// Restrict to item kinds (`pr`, `ci`, `message`, `status`); empty
     /// offers the action on every kind. The older spelling of `when.kinds`,
     /// kept because it is what configurations say today.
-    #[serde(default)]
     pub kinds: Vec<String>,
     /// Which items this is offered on, in the language recipes use
     /// (§FS-006-project-interface.9).
-    #[serde(default)]
     pub when: crate::work::recipe::Selector,
     /// Capability rungs it needs (§FS-006-project-interface.10). A missing one
     /// leaves the entry visible with its reason, never removed.
-    #[serde(default)]
     pub requires: Vec<String>,
     /// The action needs the item's branch workspace on disk. When it is
-    /// missing, the project's `checkout` command runs first.
-    #[serde(default)]
+    /// missing, the project's `checkout` command runs first — and for an entry
+    /// that asks for work, it is the recipe's own `needs_checkout`, which is
+    /// answered by withholding the offer rather than by checking out first
+    /// (§FS-004-quick-actions.7).
     pub requires_checkout: bool,
     /// Ask before running it.
-    #[serde(default)]
     pub confirm: bool,
+}
+
+/// Who a piece of agent work would go to, resolved when the menu opens
+/// (§FS-005-dispatch.14): what the row says, and — where the choice cannot
+/// stand — the whole reason, which is what keeps a key from being advertised
+/// on an entry it cannot act on (§FS-004-quick-actions.2).
+#[derive(Debug, Clone)]
+pub struct Handed {
+    pub says: String,
+    pub refusal: Option<String>,
+}
+
+/// What an entry says when it asks for work instead of running a command
+/// (§FS-005-dispatch.1): the brief the ticket carries, the state it starts in,
+/// and the hand that does it. The entry's own id, icon, description and `when`
+/// are the recipe's — a project writing one agent entry writes one entry,
+/// not an entry and a recipe that have to agree.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AgentAsk {
+    brief: String,
+    #[serde(default)]
+    state: Option<String>,
+    #[serde(default)]
+    hand: Option<crate::work::recipe::HandPin>,
+}
+
+/// The parse of an entry, before the one rule that cannot be expressed in the
+/// shape: an entry runs a command or asks for work, never both and never
+/// neither (§FS-005-dispatch.1). Refused here, where the person can still see
+/// what they wrote.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawAction {
+    #[serde(default)]
+    id: String,
+    icon: String,
+    description: String,
+    #[serde(default)]
+    command: Option<String>,
+    #[serde(default)]
+    agent: Option<AgentAsk>,
+    #[serde(default)]
+    cwd: Option<String>,
+    #[serde(default)]
+    kinds: Vec<String>,
+    #[serde(default)]
+    when: crate::work::recipe::Selector,
+    #[serde(default)]
+    requires: Vec<String>,
+    #[serde(default)]
+    requires_checkout: bool,
+    #[serde(default)]
+    confirm: bool,
+}
+
+impl TryFrom<RawAction> for ActionConfig {
+    type Error = String;
+
+    fn try_from(raw: RawAction) -> std::result::Result<ActionConfig, String> {
+        let named = match raw.id.is_empty() {
+            true => format!("'{}'", raw.description),
+            false => format!("'{}'", raw.id),
+        };
+        let (command, ask) = match (raw.command, raw.agent) {
+            (Some(_), Some(_)) => {
+                return Err(format!(
+                    "action {named} carries both a 'command' and an 'agent': an entry either runs \
+                 something here or asks somebody for it, never both"
+                ))
+            }
+            (None, None) => {
+                return Err(format!(
+                "action {named} carries neither a 'command' nor an 'agent': an entry has to say \
+                 what it does"
+            ))
+            }
+            (Some(command), None) => (command, None),
+            (None, Some(ask)) => (String::new(), Some(ask)),
+        };
+        // The id is the ticket's name and the key a hands table answers by
+        // (§FS-006-project-interface.9), so work that asks for a hand has to
+        // have one.
+        if ask.is_some() && raw.id.is_empty() {
+            return Err(format!(
+                "action {named} asks for work and has no 'id': the id names its ticket and is what \
+                 a hands table answers by"
+            ));
+        }
+        let agent = ask.map(|ask| crate::work::recipe::Recipe {
+            id: raw.id.clone(),
+            icon: raw.icon.clone(),
+            description: raw.description.clone(),
+            state: ask.state.unwrap_or_else(crate::work::recipe::default_state),
+            when: raw.when.clone(),
+            needs_checkout: raw.requires_checkout,
+            brief: ask.brief,
+            // Ephor's own deterministic moves belong to the recipes that ship
+            // with them (§FS-005-dispatch.12); an entry a person wrote asks
+            // for what it says and nothing before it.
+            opens_with: None,
+            hand: ask.hand,
+            target: None,
+            model: None,
+        });
+        Ok(ActionConfig {
+            id: raw.id,
+            icon: raw.icon,
+            description: raw.description,
+            command,
+            agent,
+            hand: None,
+            cwd: raw.cwd,
+            kinds: raw.kinds,
+            when: raw.when,
+            requires: raw.requires,
+            requires_checkout: raw.requires_checkout,
+            confirm: raw.confirm,
+        })
+    }
 }
 
 impl ActionConfig {
@@ -249,6 +381,85 @@ mod tests {
         assert!(serde_json::from_str::<StatusConfig>(
             r#"{ "actions": [{ "icon": "x", "description": "d", "cmd": "true" }] }"#
         )
+        .is_err());
+    }
+
+    /// An entry may carry a brief instead of a command, and it is a recipe
+    /// under another name: the entry's own id, icon, description and `when`
+    /// are the recipe's, so a project writing one agent entry writes one entry
+    /// (§FS-005-dispatch.1).
+    #[test]
+    fn an_action_may_ask_for_work_instead_of_running_a_command() {
+        let config: StatusConfig = serde_json::from_str(
+            r#"{
+                "actions": [
+                    { "id": "changelog", "icon": "✎", "description": "write the changelog bullet",
+                      "when": { "kinds": ["pr"] },
+                      "agent": { "brief": "Write the bullet for {title}.",
+                                 "state": "fix", "hand": "luna:high" } }
+                ]
+            }"#,
+        )
+        .unwrap();
+        let entry = &config.actions[0];
+        assert!(entry.command.is_empty());
+        let recipe = entry.agent.as_ref().expect("it asks for work");
+        assert_eq!(recipe.id, "changelog");
+        assert_eq!(recipe.icon, "✎");
+        assert_eq!(recipe.description, "write the changelog bullet");
+        assert_eq!(recipe.brief, "Write the bullet for {title}.");
+        assert_eq!(recipe.state, "fix");
+        assert_eq!(recipe.when.kinds, ["pr"]);
+        assert_eq!(
+            recipe.hand,
+            Some(crate::work::recipe::HandPin::Named {
+                id: "luna".to_string(),
+                effort: Some("high".to_string()),
+            })
+        );
+        // Unwritten, the ticket starts where the recipes do.
+        let plain: ActionConfig = serde_json::from_value(serde_json::json!({
+            "id": "ask", "icon": "◆", "description": "d", "agent": { "brief": "b" }
+        }))
+        .unwrap();
+        assert_eq!(
+            plain.agent.unwrap().state,
+            crate::work::recipe::default_state()
+        );
+    }
+
+    /// An entry runs a command or asks for work, never both and never neither
+    /// — refused where the person can still see what they wrote
+    /// (§FS-005-dispatch.1). And work needs a name: the id is the ticket's and
+    /// the key a hands table answers by (§FS-006-project-interface.9).
+    #[test]
+    fn an_entry_that_neither_runs_nor_asks_is_refused() {
+        let both = serde_json::from_value::<ActionConfig>(serde_json::json!({
+            "id": "x", "icon": "◆", "description": "d",
+            "command": "true", "agent": { "brief": "b" }
+        }))
+        .unwrap_err()
+        .to_string();
+        assert!(both.contains("never both"), "{both}");
+
+        let neither = serde_json::from_value::<ActionConfig>(
+            serde_json::json!({ "icon": "◆", "description": "do a thing" }),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(neither.contains("has to say what it does"), "{neither}");
+
+        let nameless = serde_json::from_value::<ActionConfig>(serde_json::json!({
+            "icon": "◆", "description": "d", "agent": { "brief": "b" }
+        }))
+        .unwrap_err()
+        .to_string();
+        assert!(nameless.contains("no 'id'"), "{nameless}");
+
+        // And a typo inside the block is caught with the rest.
+        assert!(serde_json::from_value::<ActionConfig>(serde_json::json!({
+            "id": "x", "icon": "◆", "description": "d", "agent": { "breif": "b" }
+        }))
         .is_err());
     }
 }

@@ -1,6 +1,7 @@
 //! The git ephor does itself: how far a checkout trails its main branch,
-//! replaying it there (§FS-004-quick-actions.6), and making the workspace that
-//! is not there yet (§FS-004-quick-actions.7).
+//! replaying it there (§FS-004-quick-actions.6) or onto the branch's own
+//! published copy (§FS-004-quick-actions.8), and making the workspace that is
+//! not there yet (§FS-004-quick-actions.7).
 //!
 //! Nothing here knows what a forge is, or what the project is built with. A
 //! rebase is a fetch, a replay, and an answer per repository — the same
@@ -12,7 +13,32 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::forest::{under, Forest};
+use crate::forest::{under, Forest, Upstream, ORIGIN};
+
+/// What a replay puts the branch on top of. `Base` is one branch name for the
+/// whole forest — the project's main branch, or whatever the reader named —
+/// and `Upstream` is a different ref in every repository, each branch's own
+/// published copy (§FS-004-quick-actions.8).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Onto {
+    Base(String),
+    /// Resolved per repository from that repository's own `HEAD`
+    /// (§DA-003-upstream-is-the-published-copy), which is why the choice is a
+    /// kind rather than a second branch name: there is no one name to pass.
+    Upstream,
+}
+
+impl Onto {
+    /// What a report and a one-line summary call it. A per-repository ref has
+    /// no single name, so the whole rebase is named by what it aimed at and
+    /// each repository names the ref it actually used.
+    pub fn label(&self) -> &str {
+        match self {
+            Onto::Base(base) => base,
+            Onto::Upstream => "its published copy",
+        }
+    }
+}
 
 /// What became of one repository.
 #[derive(Debug, Clone, PartialEq)]
@@ -26,23 +52,31 @@ pub enum Replay {
     Conflicted(Vec<String>),
     /// Uncommitted work, so nothing was touched (§FS-004-quick-actions.6).
     Dirty(Vec<String>),
+    /// Nothing published: this branch has no copy on the remote, so there is
+    /// nothing to replay onto. An answer in the same register as an already
+    /// current repository, never a refusal (§FS-004-quick-actions.8) — only
+    /// [`Onto::Upstream`] can reach it.
+    Unpublished,
     /// git would not, and this is what it said.
     Refused(String),
-}
-
-impl Replay {
-    /// Whether this repository is now on top of the base.
-    pub fn is_clean(&self) -> bool {
-        matches!(self, Replay::Current | Replay::Rebased(_))
-    }
 }
 
 #[derive(Debug, Clone)]
 pub struct RepoReplay {
     /// The repository's path relative to the checkout (`.` for the root).
     pub repo: String,
+    /// The remote it was fetched from and measured against. Carried per
+    /// repository rather than per rebase because a forest's repositories need
+    /// not agree on one (§AR-004-forest.2), and a report naming a remote the
+    /// reader does not have sends them to look for a ref that is not there.
+    pub remote: String,
     /// The branch it was on, where git could say.
     pub branch: Option<String>,
+    /// The ref this repository was replayed onto, remote and all. Carried per
+    /// repository because under [`Onto::Upstream`] no two repositories need
+    /// name the same one (§FS-004-quick-actions.8); None where there was
+    /// nothing to replay onto.
+    pub onto: Option<String>,
     pub replay: Replay,
 }
 
@@ -50,8 +84,16 @@ pub struct RepoReplay {
 #[derive(Debug, Clone)]
 pub struct Rebase {
     pub checkout: PathBuf,
-    pub base: String,
+    /// What the whole rebase aimed at; each repository says which ref that
+    /// came out as for it.
+    pub onto: Onto,
     pub repos: Vec<RepoReplay>,
+    /// Declared repositories with no working tree on disk. Named rather than
+    /// dropped, so the answer never quietly speaks for fewer repositories
+    /// than the reader has (§AR-004-forest.1); they gate nothing, because a
+    /// workspace that is not there is a checkout question
+    /// (§FS-004-quick-actions.7).
+    pub absent: Vec<String>,
 }
 
 impl Rebase {
@@ -59,6 +101,15 @@ impl Rebase {
         self.repos
             .iter()
             .filter(|repo| matches!(repo.replay, Replay::Conflicted(_)))
+            .collect()
+    }
+
+    /// Repositories with no published copy to replay onto. Not stuck and not
+    /// a failure: there is simply nothing there (§FS-004-quick-actions.8).
+    pub fn unpublished(&self) -> Vec<&RepoReplay> {
+        self.repos
+            .iter()
+            .filter(|repo| matches!(repo.replay, Replay::Unpublished))
             .collect()
     }
 
@@ -85,10 +136,11 @@ impl Rebase {
         }
         let conflicted = self.conflicted().len();
         let stuck = self.stuck().len();
+        let unpublished = self.unpublished().len();
         let rebased = self.rebased();
         let mut parts = Vec::new();
         if rebased > 0 {
-            parts.push(format!("{rebased} rebased onto {}", self.base));
+            parts.push(format!("{rebased} rebased onto {}", self.onto.label()));
         }
         if conflicted > 0 {
             parts.push(format!("{conflicted} in conflict"));
@@ -96,8 +148,14 @@ impl Rebase {
         if stuck > 0 {
             parts.push(format!("{stuck} left alone"));
         }
+        if unpublished > 0 {
+            parts.push(format!("{unpublished} published nowhere"));
+        }
+        if !self.absent.is_empty() {
+            parts.push(format!("{} not on disk", self.absent.len()));
+        }
         if parts.is_empty() {
-            return format!("already on {}", self.base);
+            return format!("already on {}", self.onto.label());
         }
         parts.join(", ")
     }
@@ -107,24 +165,40 @@ impl Rebase {
     pub fn report(&self) -> String {
         let mut out = format!(
             "# rebase onto {} in {}\n\n",
-            self.base,
+            self.onto.label(),
             self.checkout.display()
         );
         if self.repos.is_empty() {
             out.push_str("No git repository under the checkout — nothing was done.\n");
+            self.report_absent(&mut out);
             return out;
         }
         for repo in &self.repos {
             let branch = repo.branch.as_deref().unwrap_or("(unknown branch)");
+            // The ref this repository used, which under §FS-004-quick-actions.8
+            // is its own and not the rebase's. The fallback is only for arms
+            // that never had a ref — a base rebase names the base it aimed at,
+            // and a per-repository ref that was never resolved has no
+            // `<remote>/…` spelling to fake.
+            let onto = repo.onto.clone().unwrap_or_else(|| match &self.onto {
+                Onto::Base(base) => format!("{}/{base}", repo.remote),
+                Onto::Upstream => self.onto.label().to_string(),
+            });
             out.push_str(&format!("## {} — {branch}\n\n", repo.repo));
             match &repo.replay {
                 Replay::Current => {
-                    out.push_str(&format!("Already on top of `origin/{}`.\n\n", self.base));
+                    out.push_str(&format!("Already on top of `{onto}`.\n\n"));
                 }
                 Replay::Rebased(commits) => {
                     out.push_str(&format!(
-                        "Replayed onto `origin/{}`; it had trailed by {commits} commit(s).\n\n",
-                        self.base
+                        "Replayed onto `{onto}`; it had trailed by {commits} commit(s).\n\n",
+                    ));
+                }
+                Replay::Unpublished => {
+                    out.push_str(&format!(
+                        "Nothing published — `{branch}` has no copy on `{}` to replay onto, \
+                         so this repository was left as it is.\n\n",
+                        repo.remote
                     ));
                 }
                 Replay::Conflicted(files) => {
@@ -156,7 +230,21 @@ impl Rebase {
                 }
             }
         }
+        self.report_absent(&mut out);
         out
+    }
+
+    /// The declared repositories that are not on disk, named in the report so
+    /// a fold over a partial workspace never quietly answers for fewer
+    /// repositories than the reader has (§AR-004-forest.1). Making them is a
+    /// checkout's move, not a rebase's (§FS-004-quick-actions.7).
+    fn report_absent(&self, out: &mut String) {
+        for name in &self.absent {
+            out.push_str(&format!(
+                "## {name}\n\nNo working tree here — the checkout is missing this repository, \
+                 so nothing was measured or replayed. Checking it out is its own move.\n\n"
+            ));
+        }
     }
 }
 
@@ -169,31 +257,267 @@ pub fn is_work_tree(path: &Path) -> bool {
             .is_some_and(|answer| answer.trim() == "true")
 }
 
-/// Commits `repo`'s HEAD is behind the base, preferring the last-fetched
-/// `origin/<base>`; None when not a git repository or no usable ref.
-pub fn commits_behind(repo: &Path, base: &str) -> Option<u64> {
-    if !is_work_tree(repo) {
-        return None;
+/// Which remote this repository's folds fetch from, push to and measure
+/// against. A fact that can be probed is probed, whatever a row says
+/// (§AR-004-forest.2): the branch's own upstream where git records one, the
+/// sole remote where the repository has exactly one, `origin` where it is
+/// among several, and otherwise the first git lists. [`ORIGIN`] is the answer
+/// only when there is no remote at all — a repository that calls its remote
+/// anything else is still measured and still replayed.
+pub fn remote(repo: &Path) -> String {
+    let remotes: Vec<String> = git(repo, &["remote"])
+        .into_iter()
+        .flat_map(|listed| {
+            listed
+                .lines()
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(String::from)
+                .collect::<Vec<String>>()
+        })
+        .collect();
+    match remotes.len() {
+        0 => ORIGIN.to_string(),
+        // A branch's upstream names a remote this repository has, so where it
+        // has one the second question could only give the same answer.
+        1 => remotes[0].clone(),
+        _ => upstream_remote(repo, &remotes)
+            .or_else(|| remotes.iter().find(|name| *name == ORIGIN).cloned())
+            .unwrap_or_else(|| remotes[0].clone()),
     }
-    for reference in [format!("origin/{base}"), base.to_string()] {
-        if let Some(count) = git(
-            repo,
-            &["rev-list", "--count", &format!("HEAD..{reference}")],
-        ) {
-            return count.trim().parse().ok();
+}
+
+/// Which of `remotes` the checked-out branch tracks, where git records one.
+/// The upstream is read as `<remote>/<branch>` and a remote name may itself
+/// carry a slash, so the prefix is matched against the names git just listed
+/// rather than split at the first separator.
+fn upstream_remote(repo: &Path, remotes: &[String]) -> Option<String> {
+    let upstream = git(
+        repo,
+        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    )?;
+    let upstream = upstream.trim().to_string();
+    remotes
+        .iter()
+        .find(|name| {
+            upstream
+                .strip_prefix(name.as_str())
+                .is_some_and(|rest| rest.starts_with('/'))
+        })
+        .cloned()
+}
+
+/// Commits `repo`'s HEAD is behind the base, preferring the last-fetched
+/// `<remote>/<base>`; None when no usable ref — a path that is not a
+/// repository answers the same way, because git itself fails there, so
+/// nothing spawns a subprocess to ask that separately (§AR-004-forest.3). The
+/// remote is handed in rather than spelled here: nothing under this module
+/// knows which remote a project uses (§AR-004-forest.2).
+pub fn commits_behind(repo: &Path, remote: &str, base: &str) -> Option<u64> {
+    for reference in [format!("{remote}/{base}"), base.to_string()] {
+        if let Some(count) = behind_ref(repo, &reference) {
+            return Some(count);
         }
     }
     None
 }
 
-/// What this repository's origin calls its default branch, where it recorded
-/// one. The fallback for a checkout no registry entry describes.
-pub fn default_base(repo: &Path) -> Option<String> {
+/// Commits `reference` carries that `HEAD` does not; None where there is no
+/// such ref. The one measurement behind every distance here, so a count in a
+/// report and a count in a menu cannot be computed two ways.
+fn behind_ref(repo: &Path, reference: &str) -> Option<u64> {
+    git(
+        repo,
+        &["rev-list", "--count", &format!("HEAD..{reference}")],
+    )
+    .and_then(|count| count.trim().parse().ok())
+}
+
+/// One repository's whole standing, measured in one pass so the counts on a
+/// row, the offer's gate and the replay cannot come from different
+/// measurements (§AR-004-forest.1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Measured {
+    /// The branch `HEAD` is on — read off the repository, never a workspace
+    /// directory's name (§DA-003-upstream-is-the-published-copy).
+    pub branch: Option<String>,
+    pub upstream: Upstream,
+    /// `(ahead, behind)` against the published copy; None where nothing is
+    /// published.
+    pub track: Option<(u64, u64)>,
+    /// Commits `HEAD` trails the base, against the last-fetched ref; None
+    /// where no base was named or nothing could be measured.
+    pub behind_base: Option<u64>,
+}
+
+/// Where `repo`'s checked-out branch is published, how far `HEAD` sits from
+/// that copy, and how far it trails `base`. The published copy is resolved in
+/// three steps (§DA-003-upstream-is-the-published-copy): the recorded
+/// `@{upstream}` where it is not `[gone]` and the resolved base says it does
+/// not name it — a base nobody could resolve cannot clear the record of
+/// naming it, so it fails closed (§FS-004-quick-actions.8); else
+/// `<remote>/<branch>` where the remote has one; else the branch is unpushed
+/// — an answer, not an error.
+///
+/// The whole answer costs two subprocesses on the recorded path: one
+/// `for-each-ref` over the local branches gives the checked-out branch (the
+/// `%(HEAD)` star), its recorded upstream and both distances to it at once,
+/// and one `rev-list` measures the base. Its failure is also the
+/// not-a-repository answer, so nothing probes that separately — the fold
+/// already trusts its own repositories (§AR-004-forest.3). Local refs only —
+/// no fetch — so distances are against what was last fetched.
+pub fn standing(repo: &Path, remote: &str, base: Option<&str>) -> Measured {
+    let Some(listed) = git(
+        repo,
+        &[
+            "for-each-ref",
+            "--format=%(HEAD)%09%(refname:short)%09%(upstream:short)%09%(upstream:track)",
+            "refs/heads",
+        ],
+    ) else {
+        return Measured {
+            branch: None,
+            upstream: Upstream::Unknown,
+            track: None,
+            behind_base: None,
+        };
+    };
+    let behind_base = base.and_then(|base| commits_behind(repo, remote, base));
+    // The starred line is the branch this working tree has checked out; no
+    // star is a detached HEAD — not on a branch, so there is no publication
+    // to speak of, though the distance to the base above still stands.
+    let Some(line) = listed.lines().find_map(|line| line.strip_prefix('*')) else {
+        return Measured {
+            branch: None,
+            upstream: Upstream::Unknown,
+            track: None,
+            behind_base,
+        };
+    };
+    let mut fields = line.split('\t');
+    fields.next(); // what remains of the %(HEAD) column after the star
+    let branch = fields.next().unwrap_or("").trim().to_string();
+    let upstream = fields.next().unwrap_or("").trim();
+    let track = fields.next().unwrap_or("").trim();
+    if branch.is_empty() {
+        return Measured {
+            branch: None,
+            upstream: Upstream::Unknown,
+            track: None,
+            behind_base,
+        };
+    }
+    let own_copy = format!("{remote}/{branch}");
+    if !upstream.is_empty() && track != "[gone]" {
+        // A record naming the pushed copy of the branch's own name is what
+        // the probe below could only re-derive — same ref, same distances —
+        // so it is taken whatever it says about the base: a branch parked on
+        // the base and tracking it lands here, and the fact is true
+        // (§DA-003-upstream-is-the-published-copy).
+        if upstream == own_copy {
+            return Measured {
+                branch: Some(branch.clone()),
+                upstream: Upstream::Published {
+                    remote: remote.to_string(),
+                    branch,
+                },
+                track: Some(parse_track(track)),
+                behind_base,
+            };
+        }
+        // Tracking that names the base records where the branch was cut, not
+        // where it is published, and it falls through to the pushed-copy
+        // probe — as does a base nobody could resolve, which cannot clear the
+        // record of naming it (§DA-003-upstream-is-the-published-copy).
+        if base.is_some_and(|base| format!("{remote}/{base}") != upstream) {
+            if let Some(published) = upstream.strip_prefix(&format!("{remote}/")) {
+                return Measured {
+                    branch: Some(branch),
+                    upstream: Upstream::Published {
+                        remote: remote.to_string(),
+                        branch: published.to_string(),
+                    },
+                    track: Some(parse_track(track)),
+                    behind_base,
+                };
+            }
+        }
+    }
+    // The pushed copy of the branch's own name — the shape `worktree add -b`
+    // leaves behind (§DA-003-upstream-is-the-published-copy). The ref's
+    // existence and its distances are one question, asked of git once: a
+    // count that fails is a copy that is not there.
+    match left_right(repo, &format!("refs/remotes/{own_copy}")) {
+        Some(track) => Measured {
+            branch: Some(branch.clone()),
+            upstream: Upstream::Published {
+                remote: remote.to_string(),
+                branch,
+            },
+            track: Some(track),
+            behind_base,
+        },
+        None => Measured {
+            branch: Some(branch),
+            upstream: Upstream::Unpushed {
+                remote: remote.to_string(),
+            },
+            track: None,
+            behind_base,
+        },
+    }
+}
+
+/// Commits on each side of `HEAD...reference`: `(ahead, behind)`. None where
+/// there is no such ref to measure.
+fn left_right(repo: &Path, reference: &str) -> Option<(u64, u64)> {
+    let counts = git(
+        repo,
+        &[
+            "rev-list",
+            "--left-right",
+            "--count",
+            &format!("HEAD...{reference}"),
+        ],
+    )?;
+    let mut counts = counts.split_whitespace();
+    Some((counts.next()?.parse().ok()?, counts.next()?.parse().ok()?))
+}
+
+/// `%(upstream:track)` as counts: `[ahead A, behind B]` with either half
+/// absent, and the empty string meaning level on both sides.
+fn parse_track(track: &str) -> (u64, u64) {
+    let mut ahead = 0;
+    let mut behind = 0;
+    for part in track
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .split(',')
+    {
+        let part = part.trim();
+        if let Some(count) = part.strip_prefix("ahead ") {
+            ahead = count.parse().unwrap_or(0);
+        } else if let Some(count) = part.strip_prefix("behind ") {
+            behind = count.parse().unwrap_or(0);
+        }
+    }
+    (ahead, behind)
+}
+
+/// What this repository's remote calls its default branch, where it recorded
+/// one. The fallback for a checkout no registry entry describes, and for one
+/// whose row named a base that is a template rather than a branch
+/// (§AR-004-forest.2).
+pub fn default_base(repo: &Path, remote: &str) -> Option<String> {
     let head = git(
         repo,
-        &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        &[
+            "symbolic-ref",
+            "--short",
+            &format!("refs/remotes/{remote}/HEAD"),
+        ],
     )?;
-    let name = head.trim().strip_prefix("origin/")?.to_string();
+    let name = head.trim().strip_prefix(&format!("{remote}/"))?.to_string();
     (!name.is_empty()).then_some(name)
 }
 
@@ -250,61 +574,119 @@ pub fn probe(checkout: &Path) -> Vec<PathBuf> {
     found
 }
 
-/// Replay every repository of the forest onto `base` — a fold with one answer
-/// per repository (§AR-004-forest.1).
-pub fn rebase(forest: &Forest, base: &str) -> Rebase {
+/// Replay every repository of the forest onto `onto` — a fold with one answer
+/// per repository (§AR-004-forest.1). Under [`Onto::Upstream`] that is a
+/// different ref in each of them, each branch's own published copy
+/// (§FS-004-quick-actions.8); under [`Onto::Base`] it is one branch name for
+/// all of them.
+pub fn rebase(forest: &Forest, onto: &Onto) -> Rebase {
     let outcomes = forest
         .repos
         .iter()
-        .map(|repo| RepoReplay {
-            repo: repo.name.clone(),
-            branch: git(&repo.path, &["rev-parse", "--abbrev-ref", "HEAD"])
-                .map(|name| name.trim().to_string()),
-            replay: replay_one(&repo.path, base),
+        .map(|repo| {
+            // The remote comes from the repository being folded over, so a
+            // forest whose repositories do not agree on one still replays
+            // (§AR-004-forest.2). Its base is asked for only where the
+            // published copy is being resolved, which is the one thing that
+            // needs it: tracking that names the base records where the branch
+            // was cut, not where it is published.
+            let base = match onto {
+                Onto::Base(_) => None,
+                Onto::Upstream => forest.base(repo),
+            };
+            let (reference, replay) = replay_one(&repo.path, &repo.remote, base.as_deref(), onto);
+            RepoReplay {
+                repo: repo.name.clone(),
+                remote: repo.remote.clone(),
+                branch: git(&repo.path, &["rev-parse", "--abbrev-ref", "HEAD"])
+                    .map(|name| name.trim().to_string()),
+                onto: reference,
+                replay,
+            }
         })
         .collect();
     Rebase {
         checkout: forest.root.clone(),
-        base: base.to_string(),
+        onto: onto.clone(),
         repos: outcomes,
+        // Declared and not on disk: nothing to fold over, and said so rather
+        // than quietly answering for fewer repositories (§AR-004-forest.1).
+        absent: forest.absent.clone(),
     }
 }
 
-fn replay_one(repo: &Path, base: &str) -> Replay {
+/// One repository: the ref it was replayed onto, and what came of it. Every
+/// guard is the same whichever ref that is — a rebase already stopped, an
+/// uncommitted working tree, and the conflict left where it stands
+/// (§FS-004-quick-actions.6).
+fn replay_one(
+    repo: &Path,
+    remote: &str,
+    base: Option<&str>,
+    onto: &Onto,
+) -> (Option<String>, Replay) {
     // A repository already stopped in a rebase is a conflict to finish, not a
     // rebase to start: starting a second one over it would lose the first.
     if let Some(files) = unmerged(repo) {
         if !files.is_empty() {
-            return Replay::Conflicted(files);
+            return (None, Replay::Conflicted(files));
         }
     }
     match git(repo, &["status", "--porcelain", "--untracked-files=no"]) {
         Some(status) if !status.trim().is_empty() => {
-            return Replay::Dirty(
-                status
-                    .lines()
-                    .map(|line| line.trim_end().to_string())
-                    .collect(),
+            return (
+                None,
+                Replay::Dirty(
+                    status
+                        .lines()
+                        .map(|line| line.trim_end().to_string())
+                        .collect(),
+                ),
             )
         }
-        None => return Replay::Refused("git status failed".to_string()),
+        None => return (None, Replay::Refused("git status failed".to_string())),
         _ => {}
     }
 
-    if let Err(message) = run(repo, &["fetch", "origin", "--prune"]) {
-        return Replay::Refused(message);
+    if let Err(message) = run(repo, &["fetch", remote, "--prune"]) {
+        return (None, Replay::Refused(message));
     }
-    let reference = format!("origin/{base}");
-    if git(repo, &["rev-parse", "--verify", "--quiet", &reference]).is_none() {
-        return Replay::Refused(format!(
-            "no '{reference}' — the base branch is not on this repository's origin"
-        ));
-    }
-    let behind = commits_behind(repo, base).unwrap_or(0);
+    // Resolved after the fetch, so a copy pushed since the last one is seen —
+    // and so "nothing published" means nothing is published now.
+    let reference = match onto {
+        Onto::Base(base) => {
+            let reference = format!("{remote}/{base}");
+            if git(repo, &["rev-parse", "--verify", "--quiet", &reference]).is_none() {
+                return (
+                    Some(reference.clone()),
+                    Replay::Refused(format!(
+                        "no '{reference}' — the base branch is not on this repository's remote"
+                    )),
+                );
+            }
+            reference
+        }
+        Onto::Upstream => match standing(repo, remote, base).upstream {
+            Upstream::Published { remote, branch } => format!("{remote}/{branch}"),
+            // Never pushed, or not on a branch at all: an answer, not a
+            // refusal (§FS-004-quick-actions.8).
+            Upstream::Unpushed { .. } | Upstream::Unknown => return (None, Replay::Unpublished),
+        },
+    };
+    // Unmeasurable is not zero: everything above has verified the ref, so
+    // this cannot happen today, but "could not measure" reported as "already
+    // on top of" is the one lie the None-not-zero rule everywhere else exists
+    // to prevent (§AR-004-forest.1).
+    let Some(behind) = behind_ref(repo, &reference) else {
+        return (
+            Some(reference.clone()),
+            Replay::Refused(format!("cannot measure {reference}")),
+        );
+    };
     if behind == 0 {
-        return Replay::Current;
+        return (Some(reference), Replay::Current);
     }
-    match run(repo, &["rebase", &reference]) {
+    let replay = match run(repo, &["rebase", &reference]) {
         Ok(_) => Replay::Rebased(behind),
         Err(message) => match unmerged(repo) {
             Some(files) if !files.is_empty() => Replay::Conflicted(files),
@@ -312,7 +694,8 @@ fn replay_one(repo: &Path, base: &str) -> Replay {
             // resolve; whatever git said is the whole answer.
             _ => Replay::Refused(message),
         },
-    }
+    };
+    (Some(reference), replay)
 }
 
 /// What became of one repository of a workspace being checked out.
@@ -344,6 +727,9 @@ impl Created {
 pub struct RepoCreated {
     /// The repository's path relative to the checkout (`.` for the root).
     pub repo: String,
+    /// The remote the branch was looked for on, and the base grown from
+    /// (§AR-004-forest.2).
+    pub remote: String,
     pub created: Created,
 }
 
@@ -422,8 +808,8 @@ impl Creation {
                     self.branch
                 )),
                 Created::Branched(base) => out.push_str(&format!(
-                    "The repository has no `{}`, so it was started from `origin/{base}`.\n\n",
-                    self.branch
+                    "The repository has no `{}`, so it was started from `{}/{base}`.\n\n",
+                    self.branch, repo.remote
                 )),
                 Created::Present => {
                     out.push_str("A working tree was already here; nothing was touched.\n\n")
@@ -444,18 +830,28 @@ impl Creation {
 /// — because a working tree is added *from* a repository and there is nothing
 /// else to add it from. `base` is what a repository that does not have the
 /// branch grows one from.
-pub fn create(
-    source: &Path,
-    target: &Path,
-    layout: &[String],
-    branch: &str,
-    base: &str,
-) -> Creation {
-    let repos = layout
+///
+/// The fold is over `forest.layout` and not over its repositories: what a
+/// checkout has to *make* includes the ones that are not on disk yet. The
+/// forest is what says which remote each one is grown from
+/// (§AR-004-forest.2).
+pub fn create(source: &Path, target: &Path, forest: &Forest, branch: &str, base: &str) -> Creation {
+    let repos = forest
+        .layout
         .iter()
-        .map(|name: &String| RepoCreated {
-            repo: name.clone(),
-            created: create_one(&under(source, name), &under(target, name), branch, base),
+        .map(|name: &String| {
+            let remote = forest.remote_of(name).to_string();
+            RepoCreated {
+                repo: name.clone(),
+                created: create_one(
+                    &under(source, name),
+                    &under(target, name),
+                    &remote,
+                    branch,
+                    base,
+                ),
+                remote,
+            }
         })
         .collect();
 
@@ -466,7 +862,7 @@ pub fn create(
     }
 }
 
-fn create_one(source: &Path, target: &Path, branch: &str, base: &str) -> Created {
+fn create_one(source: &Path, target: &Path, remote: &str, branch: &str, base: &str) -> Created {
     if is_work_tree(target) {
         return Created::Present;
     }
@@ -486,7 +882,7 @@ fn create_one(source: &Path, target: &Path, branch: &str, base: &str) -> Created
     }
     // The branch as the forge has it now, not as this clone last saw it: a
     // pull request opened since the last fetch is the ordinary case.
-    if let Err(message) = run(source, &["fetch", "origin", "--prune"]) {
+    if let Err(message) = run(source, &["fetch", remote, "--prune"]) {
         return Created::Refused(message);
     }
 
@@ -510,9 +906,9 @@ fn create_one(source: &Path, target: &Path, branch: &str, base: &str) -> Created
         };
     }
 
-    let remote = format!("refs/remotes/origin/{branch}");
-    if git(source, &["rev-parse", "--verify", "--quiet", &remote]).is_some() {
-        let start = format!("origin/{branch}");
+    let published = format!("refs/remotes/{remote}/{branch}");
+    if git(source, &["rev-parse", "--verify", "--quiet", &published]).is_some() {
+        let start = format!("{remote}/{branch}");
         return match run(
             source,
             &["worktree", "add", "--track", "-b", branch, &target, &start],
@@ -525,7 +921,7 @@ fn create_one(source: &Path, target: &Path, branch: &str, base: &str) -> Created
     // Not this repository's branch. In a poly-repo workspace that is the
     // normal case for every repository the change does not touch, and they
     // still have to be there — on a branch of the same name, off the base.
-    let start = format!("origin/{base}");
+    let start = format!("{remote}/{base}");
     if git(source, &["rev-parse", "--verify", "--quiet", &start]).is_none() {
         return Created::Refused(format!(
             "neither '{branch}' nor '{start}' is on this repository — nothing to grow a \
@@ -589,6 +985,11 @@ fn run(repo: &Path, args: &[&str]) -> Result<String, String> {
 mod tests {
     use super::*;
 
+    /// One base for the whole forest, the way every case here asks for it.
+    fn onto(base: &str) -> Onto {
+        Onto::Base(base.to_string())
+    }
+
     fn run_in(dir: &Path, args: &[&str]) {
         let status = Command::new("git")
             .arg("-C")
@@ -640,13 +1041,27 @@ mod tests {
         commit(&origin, file, contents, "master moves");
     }
 
+    /// Publish `feature` and then move the published copy on without this
+    /// clone: what a teammate, a second machine or the forge does to a branch.
+    /// The push records no tracking config — `checkout -b` off a local branch
+    /// sets none — which is the untracked-but-pushed shape bare `git rebase`
+    /// cannot replay (§DA-003-upstream-is-the-published-copy).
+    fn advance_published_feature(root: &Path, name: &str, file: &str) {
+        let origin = root.join(format!("{name}.git"));
+        let clone = root.join("work").join(name);
+        run_in(&clone, &["push", "-q", "origin", "feature"]);
+        run_in(&origin, &["checkout", "-q", "feature"]);
+        commit(&origin, file, "theirs\n", "somebody else pushed");
+        run_in(&origin, &["checkout", "-q", "master"]);
+    }
+
     #[test]
     fn a_branch_that_trails_is_replayed_and_one_that_does_not_is_current() {
         let temp = tempfile::tempdir().unwrap();
         let checkout = checkout_with_origin(temp.path(), "app");
         advance_master(temp.path(), "app", "theirs.txt", "theirs\n");
 
-        let replayed = super::rebase(&Forest::resolve(&checkout, None, &[]), "master");
+        let replayed = super::rebase(&Forest::resolve(&checkout, None, &[]), &onto("master"));
         assert_eq!(replayed.repos.len(), 1);
         assert_eq!(replayed.repos[0].replay, Replay::Rebased(1));
         assert_eq!(replayed.repos[0].branch.as_deref(), Some("feature"));
@@ -656,7 +1071,7 @@ mod tests {
 
         // Immediately again: there is nothing left to replay, and that is an
         // answer rather than a no-op (§FS-004-quick-actions.6).
-        let again = super::rebase(&Forest::resolve(&checkout, None, &[]), "master");
+        let again = super::rebase(&Forest::resolve(&checkout, None, &[]), &onto("master"));
         assert_eq!(again.repos[0].replay, Replay::Current);
         assert_eq!(again.summary(), "already on master");
     }
@@ -669,7 +1084,7 @@ mod tests {
         commit(&checkout, "shared.txt", "ours\n", "ours");
         advance_master(temp.path(), "app", "shared.txt", "theirs\n");
 
-        let stopped = super::rebase(&Forest::resolve(&checkout, None, &[]), "master");
+        let stopped = super::rebase(&Forest::resolve(&checkout, None, &[]), &onto("master"));
         assert_eq!(
             stopped.repos[0].replay,
             Replay::Conflicted(vec!["shared.txt".to_string()])
@@ -684,7 +1099,7 @@ mod tests {
 
         // Asked again, it reports the conflict it is standing in rather than
         // starting a second rebase over the first.
-        let again = super::rebase(&Forest::resolve(&checkout, None, &[]), "master");
+        let again = super::rebase(&Forest::resolve(&checkout, None, &[]), &onto("master"));
         assert!(matches!(again.repos[0].replay, Replay::Conflicted(_)));
     }
 
@@ -695,7 +1110,7 @@ mod tests {
         advance_master(temp.path(), "app", "theirs.txt", "theirs\n");
         std::fs::write(checkout.join("mine.txt"), "half-written\n").unwrap();
 
-        let refused = super::rebase(&Forest::resolve(&checkout, None, &[]), "master");
+        let refused = super::rebase(&Forest::resolve(&checkout, None, &[]), &onto("master"));
         match &refused.repos[0].replay {
             Replay::Dirty(paths) => assert!(paths[0].contains("mine.txt")),
             other => panic!("expected Dirty, got {other:?}"),
@@ -721,7 +1136,7 @@ mod tests {
         // A directory that is not a repository is not one of the answers.
         std::fs::create_dir_all(workspace.join("notes")).unwrap();
 
-        let both = super::rebase(&Forest::resolve(&workspace, None, &[]), "master");
+        let both = super::rebase(&Forest::resolve(&workspace, None, &[]), &onto("master"));
         let names: Vec<&str> = both.repos.iter().map(|r| r.repo.as_str()).collect();
         assert_eq!(names, ["ce", "ee"]);
         assert!(both.repos.iter().all(|r| r.replay == Replay::Rebased(1)));
@@ -730,16 +1145,43 @@ mod tests {
         // The registry's own repo list wins where there is one.
         let named = super::rebase(
             &Forest::resolve(&workspace, None, &[crate::forest::Declaration::at("ce")]),
-            "master",
+            &onto("master"),
         );
         assert_eq!(named.repos.len(), 1);
+    }
+
+    /// A declared repository that is not on disk is named by the fold's
+    /// answer rather than silently dropped (§AR-004-forest.1): a report must
+    /// not read as if the workspace held fewer repositories than the reader
+    /// has. It gates nothing — the missing tree is a checkout question, not
+    /// this rebase's (§FS-004-quick-actions.7).
+    #[test]
+    fn a_declared_repository_not_on_disk_is_named_not_dropped() {
+        let temp = tempfile::tempdir().unwrap();
+        let checkout = checkout_with_origin(temp.path(), "app");
+        let workspace = checkout.parent().unwrap().to_path_buf();
+        let declared = vec![
+            crate::forest::Declaration::at("app"),
+            crate::forest::Declaration::at("gone"),
+        ];
+
+        let outcome = super::rebase(
+            &Forest::resolve(&workspace, None, &declared),
+            &onto("master"),
+        );
+        assert_eq!(outcome.repos.len(), 1);
+        assert_eq!(outcome.absent, vec!["gone".to_string()]);
+        assert_eq!(outcome.summary(), "1 not on disk");
+        assert!(outcome.report().contains("## gone"));
+        assert!(outcome.report().contains("No working tree here"));
+        assert!(outcome.stuck().is_empty());
     }
 
     #[test]
     fn a_base_branch_that_is_not_on_origin_is_refused_by_name() {
         let temp = tempfile::tempdir().unwrap();
         let checkout = checkout_with_origin(temp.path(), "app");
-        let refused = super::rebase(&Forest::resolve(&checkout, None, &[]), "trunk");
+        let refused = super::rebase(&Forest::resolve(&checkout, None, &[]), &onto("trunk"));
         match &refused.repos[0].replay {
             Replay::Refused(message) => assert!(message.contains("origin/trunk")),
             other => panic!("expected Refused, got {other:?}"),
@@ -767,7 +1209,7 @@ mod tests {
         let made = super::create(
             &source,
             &target,
-            &Forest::resolve(&source, None, &[]).layout,
+            &Forest::resolve(&source, None, &[]),
             "feature",
             "master",
         );
@@ -809,7 +1251,7 @@ mod tests {
         let made = super::create(
             &source,
             &target,
-            &Forest::resolve(&source, None, &[]).layout,
+            &Forest::resolve(&source, None, &[]),
             "feature",
             "master",
         );
@@ -835,7 +1277,7 @@ mod tests {
         let first = super::create(
             &source,
             &target,
-            &Forest::resolve(&source, None, &[]).layout,
+            &Forest::resolve(&source, None, &[]),
             "feature",
             "master",
         );
@@ -844,7 +1286,7 @@ mod tests {
         let again = super::create(
             &source,
             &target,
-            &Forest::resolve(&source, None, &[]).layout,
+            &Forest::resolve(&source, None, &[]),
             "feature",
             "master",
         );
@@ -862,7 +1304,7 @@ mod tests {
         let made = super::create(
             &source,
             &target,
-            &Forest::resolve(&source, None, &[]).layout,
+            &Forest::resolve(&source, None, &[]),
             "nope",
             "trunk",
         );
@@ -874,16 +1316,188 @@ mod tests {
         }
     }
 
+    /// Nothing here spells `origin`: the fold is handed the remote the
+    /// repository it is folding over actually has (§AR-004-forest.2), so a
+    /// clone whose remote is called something else is still fetched, still
+    /// measured and still replayed — and the report names the ref it used.
+    #[test]
+    fn a_repository_whose_remote_is_not_called_origin_is_still_replayed() {
+        let temp = tempfile::tempdir().unwrap();
+        let checkout = checkout_with_origin(temp.path(), "app");
+        run_in(&checkout, &["remote", "rename", "origin", "upstream"]);
+        advance_master(temp.path(), "app", "theirs.txt", "theirs\n");
+
+        let forest = Forest::resolve(&checkout, None, &[]);
+        assert_eq!(forest.repos[0].remote, "upstream");
+        let replayed = super::rebase(&forest, &onto("master"));
+        assert_eq!(replayed.repos[0].replay, Replay::Rebased(1));
+        assert!(replayed.report().contains("`upstream/master`"));
+
+        // A base that is on no remote is refused by the name it was looked for
+        // under, which is the repository's own.
+        let missing = super::rebase(&forest, &onto("trunk"));
+        match &missing.repos[0].replay {
+            Replay::Refused(message) => assert!(message.contains("upstream/trunk")),
+            other => panic!("expected Refused, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_workspace_is_grown_from_the_remote_the_repository_actually_has() {
+        let temp = tempfile::tempdir().unwrap();
+        let ce = checkout_with_origin(temp.path(), "ce");
+        let source = ce.parent().unwrap().to_path_buf();
+        run_in(&ce, &["remote", "rename", "origin", "upstream"]);
+        run_in(&ce, &["checkout", "-q", "master"]);
+        run_in(&ce, &["branch", "-q", "-D", "feature"]);
+
+        let forest = Forest::resolve(&source, None, &[]);
+        assert_eq!(forest.remote_of("ce"), "upstream");
+        let target = temp.path().join("ws").join("nova");
+        let made = super::create(&source, &target, &forest, "nova", "master");
+        assert_eq!(
+            made.repos[0].created,
+            Created::Branched("master".to_string())
+        );
+        assert!(made.report().contains("`upstream/master`"));
+        assert!(made.is_ready());
+    }
+
+    /// The replay onto the branch's own published copy: a different ref from
+    /// the base, resolved per repository, and the one bare `git rebase` cannot
+    /// reach because this branch records no upstream
+    /// (§FS-004-quick-actions.8).
+    #[test]
+    fn a_branch_is_replayed_onto_its_own_published_copy() {
+        let temp = tempfile::tempdir().unwrap();
+        let checkout = checkout_with_origin(temp.path(), "app");
+        advance_published_feature(temp.path(), "app", "theirs.txt");
+        // Main moved too, and by a different distance: the two replays are two
+        // operations, and this one is not the other under another name.
+        advance_master(temp.path(), "app", "main-moved.txt", "main\n");
+
+        let forest = Forest::resolve(&checkout, None, &[]);
+        let replayed = super::rebase(&forest, &Onto::Upstream);
+        assert_eq!(replayed.repos[0].replay, Replay::Rebased(1));
+        assert_eq!(replayed.repos[0].onto.as_deref(), Some("origin/feature"));
+        assert_eq!(replayed.summary(), "1 rebased onto its published copy");
+        assert!(replayed.report().contains("`origin/feature`"));
+        // Their commit is underneath and the reader's is on top of it; main's
+        // is nowhere, because that is the other rebase.
+        assert!(checkout.join("theirs.txt").exists());
+        assert!(checkout.join("mine.txt").exists());
+        assert!(!checkout.join("main-moved.txt").exists());
+
+        // Asked again there is nothing left to replay, which is an answer.
+        let again = super::rebase(&forest, &Onto::Upstream);
+        assert_eq!(again.repos[0].replay, Replay::Current);
+        assert_eq!(again.summary(), "already on its published copy");
+        // And the base rebase still has its own work to do.
+        let onto_base = super::rebase(&forest, &onto("master"));
+        assert_eq!(onto_base.repos[0].replay, Replay::Rebased(1));
+        assert!(checkout.join("main-moved.txt").exists());
+    }
+
+    /// Never pushed: nothing published is an answer in the same register as an
+    /// already-current repository, never a refusal (§FS-004-quick-actions.8).
+    #[test]
+    fn a_branch_published_nowhere_is_reported_not_refused() {
+        let temp = tempfile::tempdir().unwrap();
+        let checkout = checkout_with_origin(temp.path(), "app");
+
+        let outcome = super::rebase(&Forest::resolve(&checkout, None, &[]), &Onto::Upstream);
+        assert_eq!(outcome.repos[0].replay, Replay::Unpublished);
+        assert_eq!(outcome.repos[0].onto, None);
+        // Not stuck and not a conflict: the command succeeds and says why
+        // there was nothing to do.
+        assert!(outcome.stuck().is_empty());
+        assert!(outcome.conflicted().is_empty());
+        assert_eq!(outcome.summary(), "1 published nowhere");
+        assert!(outcome.report().contains("Nothing published"));
+    }
+
+    /// One workspace, two repositories, two different answers — the whole
+    /// reason the ref is per repository rather than per rebase
+    /// (§AR-004-forest.1, §FS-004-quick-actions.8).
+    #[test]
+    fn each_repository_replays_onto_its_own_copy_and_the_unpublished_ones_say_so() {
+        let temp = tempfile::tempdir().unwrap();
+        let ce = checkout_with_origin(temp.path(), "ce");
+        let _ee = checkout_with_origin(temp.path(), "ee");
+        let workspace = ce.parent().unwrap().to_path_buf();
+        advance_published_feature(temp.path(), "ce", "theirs.txt");
+
+        let outcome = super::rebase(&Forest::resolve(&workspace, None, &[]), &Onto::Upstream);
+        let names: Vec<&str> = outcome
+            .repos
+            .iter()
+            .map(|repo| repo.repo.as_str())
+            .collect();
+        assert_eq!(names, ["ce", "ee"]);
+        assert_eq!(outcome.repos[0].replay, Replay::Rebased(1));
+        assert_eq!(outcome.repos[0].onto.as_deref(), Some("origin/feature"));
+        assert_eq!(outcome.repos[1].replay, Replay::Unpublished);
+        assert_eq!(
+            outcome.summary(),
+            "1 rebased onto its published copy, 1 published nowhere"
+        );
+    }
+
+    /// A branch parked on the base and tracking it: the tracking names the
+    /// base, so it publishes nothing, and the pushed copy of the branch's own
+    /// name is what answers — which here *is* the base
+    /// (§DA-003-upstream-is-the-published-copy). The fact is true and the fold
+    /// acts on it; not offering the reader the same replay twice is the
+    /// menu's job (§FS-004-quick-actions.8).
+    #[test]
+    fn a_branch_parked_on_the_base_replays_onto_the_base_under_either_name() {
+        let temp = tempfile::tempdir().unwrap();
+        let checkout = checkout_with_origin(temp.path(), "app");
+        run_in(&checkout, &["checkout", "-q", "master"]);
+        advance_master(temp.path(), "app", "theirs.txt", "theirs\n");
+
+        let outcome = super::rebase(&Forest::resolve(&checkout, None, &[]), &Onto::Upstream);
+        assert_eq!(outcome.repos[0].onto.as_deref(), Some("origin/master"));
+        assert_eq!(outcome.repos[0].replay, Replay::Rebased(1));
+    }
+
+    /// Every other guard is the rebase's own, whichever ref it aims at
+    /// (§FS-004-quick-actions.6): uncommitted work is reported and left alone,
+    /// and a repository standing in a conflict is that conflict.
+    #[test]
+    fn the_guards_hold_the_same_way_when_replaying_onto_the_copy() {
+        let temp = tempfile::tempdir().unwrap();
+        let checkout = checkout_with_origin(temp.path(), "app");
+        advance_published_feature(temp.path(), "app", "theirs.txt");
+        std::fs::write(checkout.join("mine.txt"), "half-written\n").unwrap();
+
+        let forest = Forest::resolve(&checkout, None, &[]);
+        let refused = super::rebase(&forest, &Onto::Upstream);
+        match &refused.repos[0].replay {
+            Replay::Dirty(paths) => assert!(paths[0].contains("mine.txt")),
+            other => panic!("expected Dirty, got {other:?}"),
+        }
+        assert_eq!(refused.stuck().len(), 1);
+
+        // Both sides wrote the same file, so the replay cannot decide and is
+        // left standing where it stopped.
+        run_in(&checkout, &["checkout", "-q", "--", "mine.txt"]);
+        commit(&checkout, "theirs.txt", "ours\n", "ours");
+        let stopped = super::rebase(&forest, &Onto::Upstream);
+        assert!(matches!(stopped.repos[0].replay, Replay::Conflicted(_)));
+        assert!(stopped.report().contains("mid-rebase"));
+    }
+
     #[test]
     fn behind_counts_against_the_last_fetched_origin() {
         let temp = tempfile::tempdir().unwrap();
         let checkout = checkout_with_origin(temp.path(), "app");
-        assert_eq!(commits_behind(&checkout, "master"), Some(0));
+        assert_eq!(commits_behind(&checkout, ORIGIN, "master"), Some(0));
         advance_master(temp.path(), "app", "theirs.txt", "theirs\n");
         // Local git only: until someone fetches, the count is what was known.
-        assert_eq!(commits_behind(&checkout, "master"), Some(0));
+        assert_eq!(commits_behind(&checkout, ORIGIN, "master"), Some(0));
         run_in(&checkout, &["fetch", "origin", "-q"]);
-        assert_eq!(commits_behind(&checkout, "master"), Some(1));
-        assert_eq!(commits_behind(temp.path(), "master"), None);
+        assert_eq!(commits_behind(&checkout, ORIGIN, "master"), Some(1));
+        assert_eq!(commits_behind(temp.path(), ORIGIN, "master"), None);
     }
 }

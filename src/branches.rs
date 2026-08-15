@@ -42,15 +42,14 @@ pub fn matches(item: &Item, branch: &BranchInfo) -> bool {
     }
     // Everything else is the one matching engine at its second scope
     // (§AR-003-attribution.3): the same evidence, the project's branches as
-    // the identity table.
-    let mut evidence = crate::matter::evidence_of(item);
-    // The id carries the ticket for sources that put it there and nowhere
-    // else, and it is evidence like any other.
-    evidence
-        .tickets
-        .extend(crate::ticket_ids::tickets_in(&item.id));
-    crate::attribution::branch(&evidence, &[(branch.branch.clone(), branch.ticket.clone())])
-        .is_some()
+    // the identity table. [`place`] is what the surfaces ask — it puts the
+    // whole table in front of the engine at once, which is both cheaper and
+    // the engine's own ranking rather than list order.
+    crate::attribution::branch(
+        &evidence(item),
+        &[(branch.branch.clone(), branch.ticket.clone())],
+    )
+    .is_some()
 }
 
 /// Which of a project's branches an item belongs to, by index. The branch the
@@ -61,6 +60,11 @@ pub fn matches(item: &Item, branch: &BranchInfo) -> bool {
 ///
 /// One answer for one item, so the group a row is filed under and the count
 /// the branch above it shows cannot disagree.
+///
+/// The engine is asked once for the whole table rather than once per branch.
+/// An item's evidence is its entire recorded conversation joined into one
+/// string, so building it per branch is the same answer at N times the price —
+/// and N is now every workspace on disk, not the handful somebody wrote down.
 pub fn place(item: &Item, branches: &[BranchInfo]) -> Option<usize> {
     let recorded = item
         .raw
@@ -72,7 +76,23 @@ pub fn place(item: &Item, branches: &[BranchInfo]) -> Option<usize> {
             return Some(exact);
         }
     }
-    branches.iter().position(|branch| matches(item, branch))
+    let table: Vec<(String, Option<String>)> = branches
+        .iter()
+        .map(|branch| (branch.branch.clone(), branch.ticket.clone()))
+        .collect();
+    let chosen = crate::attribution::branch(&evidence(item), &table)?;
+    branches.iter().position(|branch| branch.branch == chosen)
+}
+
+/// What the matching engine is given about an item, at the branch scope
+/// (§AR-003-attribution.3): everything the matter carries, plus the ticket the
+/// id names for sources that put it there and nowhere else.
+fn evidence(item: &Item) -> crate::attribution::Evidence {
+    let mut evidence = crate::matter::evidence_of(item);
+    evidence
+        .tickets
+        .extend(crate::ticket_ids::tickets_in(&item.id));
+    evidence
 }
 
 /// A branch name's workspace directory per the project's
@@ -759,6 +779,55 @@ mod tests {
                 ("you/DEF-9-spike", false, false),
             ]
         );
+    }
+
+    /// The graal-workspace shape: every repository of the project type
+    /// declares its base as `{branch}`, one per branch workspace, and nothing
+    /// expands it on the way into the forest. Read verbatim it sent every fold
+    /// looking for a ref called `{branch}`, so no branch of such a project ever
+    /// showed a count and nothing that depends on one was ever offered. The
+    /// declaration says where to look; the base is settled where it is used
+    /// (§AR-004-forest.2).
+    #[test]
+    fn a_project_type_whose_base_is_a_template_measures_against_the_projects_main() {
+        let tmp = tempfile::tempdir().unwrap();
+        for repo in ["ce", "ee"] {
+            let path = tmp.path().join("main").join(repo);
+            std::fs::create_dir_all(&path).unwrap();
+            assert!(std::process::Command::new("git")
+                .args(["init", "--quiet"])
+                .current_dir(&path)
+                .status()
+                .unwrap()
+                .success());
+        }
+        let doc = json!({
+            "project_types": [{
+                "id": "poly",
+                "repos": [
+                    { "id": "ce", "path": "ce", "default_branch": "{branch}" },
+                    { "id": "ee", "path": "ee", "default_branch": "{branch}" }
+                ]
+            }],
+            "projects": [{
+                "id": "widget",
+                "type": "poly",
+                "root": tmp.path().to_string_lossy(),
+                "branch_root_template": "{project_root}/{branch}",
+                "main_branch": "master"
+            }]
+        });
+
+        let placement = Placement::load(&doc, "widget").expect("a row");
+        // The row is read as it was written — the template is not laundered on
+        // the way in, so anything else reading it sees what the type said.
+        assert_eq!(placement.repos[0].main.as_deref(), Some("{branch}"));
+
+        let forest = placement.forest(&tmp.path().join("main"));
+        assert_eq!(forest.names(), vec!["ce", "ee"]);
+        for repo in &forest.repos {
+            assert_eq!(forest.base(repo).as_deref(), Some("master"));
+        }
     }
 
     #[test]

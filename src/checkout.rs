@@ -24,7 +24,7 @@ fn or_env(flag: &Option<String>, name: &str) -> Option<String> {
     flag.clone()
         .or_else(|| std::env::var(name).ok())
         .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty() && !value.contains('{'))
+        .filter(|value| crate::forest::is_branch_name(value))
 }
 
 pub fn checkout(args: &CheckoutArgs) -> Result<ExitCode> {
@@ -64,18 +64,41 @@ pub fn checkout(args: &CheckoutArgs) -> Result<ExitCode> {
              there is no workspace to make for {branch} — its root is the checkout."
         ))
     })?;
+    // A directory is not a workspace: the declared repositories are what make
+    // it one. This is the command whose exit code answers whether the
+    // workspace is whole (§AR-004-forest.1), so a directory that is there is
+    // asked which of them are — by path, which is what tells presence
+    // (§AR-004-forest.3) — and only a whole one stops here. A project that
+    // declares no forest has nothing to be missing and answers as it always
+    // did.
     if target.is_dir() {
-        println!("{} is already checked out.", target.display());
-        return Ok(ExitCode::SUCCESS);
+        let missing = placement.forest(&target).absent;
+        if missing.is_empty() {
+            println!("{} is already checked out.", target.display());
+            return Ok(ExitCode::SUCCESS);
+        }
+        println!(
+            "{} is missing {} — making {}.",
+            target.display(),
+            missing.join(", "),
+            if missing.len() == 1 { "it" } else { "them" }
+        );
     }
 
-    // A working tree is added from a repository, so one has to be on disk.
-    let source = placement.source_checkout().ok_or_else(|| {
-        EphorError::Command(format!(
-            "{project} has no checkout on disk to make {} from — clone the project first.",
-            target.display()
-        ))
-    })?;
+    // A working tree is added from a repository, so one has to be on disk —
+    // and not this one: a half-made workspace cannot supply the repositories it
+    // is itself missing, and taking it as the source would answer *no
+    // repository at* per repository instead of saying there is nothing to grow
+    // them from.
+    let source = placement
+        .source_checkout()
+        .filter(|source| source != &target)
+        .ok_or_else(|| {
+            EphorError::Command(format!(
+                "{project} has no checkout on disk to make {} from — clone the project first.",
+                target.display()
+            ))
+        })?;
 
     // The shape of the workspace being made is the shape of the one it is made
     // from: the declared forest where the row declares one, the source
@@ -86,7 +109,7 @@ pub fn checkout(args: &CheckoutArgs) -> Result<ExitCode> {
         None => forest
             .repos
             .first()
-            .and_then(|repo| git::default_base(&repo.path))
+            .and_then(|repo| git::default_base(&repo.path, &repo.remote))
             .ok_or_else(|| {
                 EphorError::Command(format!(
                     "Nothing says what to grow {branch} from — pass --from, or give \
@@ -95,7 +118,7 @@ pub fn checkout(args: &CheckoutArgs) -> Result<ExitCode> {
             })?,
     };
 
-    let outcome = git::create(&source, &target, &forest.layout, &branch, &base);
+    let outcome = git::create(&source, &target, &forest, &branch, &base);
     print!("{}", outcome.report());
     if let Some(path) = or_env(&args.report, "REPORT") {
         write_report(&path, &outcome.report())?;

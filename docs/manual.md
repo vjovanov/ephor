@@ -307,7 +307,7 @@ ephor status [PROJECT] [--refresh|--cached] [--max-age SECS] [--json] [--check]
 ephor feed [--project P ...] [--unread] [--kind pr|ci|issue|message|status] [--json]
 ephor mark-read PROJECT | --all | --id ITEM_ID [--kind K]
 ephor failures --project P --source S --repo R --number N
-ephor rebase [--checkout DIR] [--project P] [--onto BRANCH] [--item ID] [--dispatch] [--report PATH]
+ephor rebase [--checkout DIR] [--project P] [--onto BRANCH | --upstream] [--item ID] [--dispatch] [--report PATH]
 ephor checkout [--project P] [--branch B] [--item ID] [--from BRANCH] [--report PATH]
 ephor capabilities [PROJECT] [--json]      # what a project can do, rung by rung
 ephor doctor [--project P] [--skip-self|--self-only] [--json]
@@ -325,15 +325,20 @@ ephor doctor [--project P] [--skip-self|--self-only] [--json]
   A full `--all` sweep also prunes entries for items that no longer exist.
 - **`failures`** prints what went wrong under one red gate; it is what the
   quick action on a red gate runs.
-- **`rebase`** replays a checkout onto its main branch, and is what the quick
-  action on a branch that has fallen behind runs
+- **`rebase`** replays a checkout onto its main branch — or, with
+  `--upstream`, onto the branch's own published copy — and is what the quick
+  actions on a branch that has fallen behind run
   ([§8.11](#811-rebasing-a-branch-that-has-fallen-behind)). Its exit codes are
   its own — `3` is a conflict, not a failure.
 - **`checkout`** makes the branch workspace that is not there yet, one working
   tree per repository, and is what the quick action on a missing checkout runs
   ([§7.1](#71-quick-actions)). It needs nothing but the registry: the project
   says where the workspace goes, which repositories it holds, and what a new
-  branch grows from.
+  branch grows from. A workspace that is *partly* there is completed rather
+  than reported as already there — this is the one command whose exit code
+  answers "is this workspace whole", which is why every other fold can name a
+  repository that is not on disk and carry on
+  ([§8.11](#811-rebasing-a-branch-that-has-fallen-behind)).
 - **`capabilities`** prints the ladder of §7.5 for a project — held rungs, and
   missing ones with the reason a refused action would show ([§4.3.2](#432-what-a-project-can-do--capabilities)).
 - **`doctor`** asks whether any of this still works, and says so in its exit
@@ -676,6 +681,26 @@ widget
 It reads the last refresh rather than running one, so a project nobody has
 refreshed says exactly that rather than reporting its sources as silent.
 
+Under the ladder comes **who can be asked** — the roster the bound runtime
+enumerates, one entry per agent-and-model combination it can actually serve
+([§FS-005-dispatch.14](../requirements.md#14-who-does-the-work-is-chosen-and-defaulted-per-project)):
+
+```text
+who can be asked (rhei)
+  ✓ claude-code        claude-code · its own default model · efforts: yolo
+  ✗ codex              codex · its own default model · efforts: yolo — codex is not on PATH
+  ✓ pi                 pi · its own default model · efforts: high
+```
+
+ephor never builds that list itself. Which models an agent can carry, and
+which efforts it declares, are the runtime's knowledge, so a cross-product
+ephor assembled would be mostly combinations it could not know were invalid
+([§DA-004-roster-is-asked-not-configured](decisions/architectural/DA-004-roster-is-asked-not-configured.md)).
+An entry whose binary is missing is listed with that reason rather than
+dropped, and with no runtime bound the section says so in the workable rung's
+own words. `--json` carries the same two halves as `{ "projects": …,
+"roster": … }`.
+
 ### 4.4 What a failing source does
 
 A provider that cannot deliver **fails explicitly**
@@ -901,7 +926,18 @@ past the window. Finished work never awaits a response: it is news, not a task.
 ```
 
 Branch rows say whether they are checked out and how far they trail the main
-branch, summed across every repository in the workspace.
+branch, summed across every repository in the workspace. A checkout that also
+trails its own **published copy** — the pushed branch of the same name, read
+per repository from each checkout's `HEAD` — carries a second distance in a
+second color: `· 13 behind · ↓2` is thirteen commits behind the project's
+main branch and two behind what was pushed of this branch. They are different
+facts — main moved under you; someone (a teammate, another machine, the
+forge) moved the branch itself — and a rebase answers each onto a different
+ref. A tracking config that names the main branch is not a publication: it
+records where the branch was cut. A repository parked on the main branch and
+tracking it counts toward the first number alone — one distance never wears
+both. A copy that is level shows no arrow, and a
+branch never pushed shows none either — there is no copy to trail.
 
 **On a reviewing row the state also says where you stand.** Before the colon is
 the forge's word; after it is yours — `[open:approved]` is a change you have
@@ -929,10 +965,11 @@ does not report one simply never shows it.
 | `v` | thread screen, strictly |
 | `c` | the gate screen |
 | `w` | the work screen (§8) |
-| `x` | the action menu (§7) |
+| `x` | the action menu (§7) — commands and work alike, on an item and on a branch row |
 | `m` `d` `Space` | mark done |
 | `a` | mark everything visible done |
 | `u` | unread-only ↔ everything |
+| `;` | the operations board (§8.13) — from any screen |
 | `[` `]` | previous / next project (Detail) |
 | `Esc` `h` | back |
 | `r` | refresh underneath the screen (in Detail, only that project) |
@@ -961,7 +998,7 @@ its author, age, text and reactions:
 | `+` | react (`←`/`→` or `1`-`8` choose, `Enter` posts) |
 | `t` | tick the selected task |
 | `e` `p` | edit / post a drafted reply (§8.12) |
-| `x` | actions · `o` open · `m` done · `Esc` back |
+| `x` | actions · `o` open · `m` done · `;` ops · `Esc` back |
 
 `+` and `t` are offered on the selected message rather than on the screen, so
 the footer changes as you move: a message its forge will not take a reaction
@@ -991,6 +1028,17 @@ own reasons for refusing, verbatim: `j`/`k` scroll, `x` actions, `o` open,
 ## 7. Actions
 
 `x` on any item summons its menu: `j`/`k` + `Enter`, or `1`-`9`, `Esc` cancels.
+Everything that can be done about the row is on it — the commands that run
+here, and the work that can be handed to an agent (§7.6) — so *what can I do
+about this* has one answer rather than depending on which key you knew. The
+footer says what `Enter` would do on the entry you are standing on, because it
+is not the same thing on all of them.
+
+`x` on a **branch row** summons the branch's own: what ephor recognizes about
+the checkout — the two rebases (§7.1), and the checkout where the workspace is
+not there yet. Nothing else is on it, because a source's, a project's and a
+person's entries — and the recipes — are selected against an item, and a
+branch row has none.
 
 ### 7.1 Quick actions
 
@@ -998,20 +1046,39 @@ Entries ephor has without being told, on an item where it already knows what
 the problem is ([§FS-004-quick-actions](../requirements.md#fs-004-quick-actions-a-problem-ephor-recognizes-arrives-with-the-action-for-it)).
 They lead the menu, and configuration adds to them rather than replacing them.
 
-Today, three:
+Today, four:
 
 **`✗ see the CI failures`** on a pull request whose gate is red — the check
 list as the forge reports it, then every failed job's log, paged. It is offered
 only where it would work: the gate is failing, the item still names its pull
 request, and the tool that reaches it is installed.
 
-**`⤴ rebase onto <main> (N behind)`** on a pull request whose branch workspace
-is on disk and has fallen behind the project's `main_branch`
+**`⤴ rebase onto <main> (N behind)`** wherever there is a branch workspace on
+disk that has fallen behind the project's `main_branch`
 ([§FS-004-quick-actions.6](../requirements.md#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase)).
-It runs `ephor rebase` in that checkout — fetch, replay, and an answer per
-repository, every repository in a poly-repo workspace. Where the replay stops
-in a conflict, it opens the ticket about it instead of leaving you with a
-half-finished rebase and no record of it ([§8.11](#811-rebasing-a-branch-that-has-fallen-behind)).
+Any row that resolves to that workspace carries it — a pull request, an issue,
+a status a source filed about the same change — and **so does the branch row
+itself** in the detail view, which is where the `N behind` you are reacting to
+is written. It runs `ephor rebase` in that checkout — fetch, replay, and an
+answer per repository, every repository in a poly-repo workspace. Where the
+replay stops in a conflict, it opens the ticket about it instead of leaving you
+with a half-finished rebase and no record of it ([§8.11](#811-rebasing-a-branch-that-has-fallen-behind)).
+A project whose registry row names no `main_branch` is not offered this one:
+there is no base to name, and the entry would have nothing to say.
+
+**`⤴ rebase onto <remote>/<branch> (N behind)`** on the same checkouts and the
+same rows when it trails its own **published copy** instead — somebody else
+pushed to your branch ([§FS-004-quick-actions.8](../requirements.md#8-a-branch-that-trails-its-own-published-copy-is-offered-the-rebase-onto-it)).
+This one needs no `main_branch` at all: each repository resolves its own copy,
+so a project that names no main branch is still offered it.
+It runs `ephor rebase --upstream`, which replays each repository onto its own
+copy rather than onto one branch name for the whole workspace, and reports a
+repository that has published nothing as exactly that. A repository whose copy
+simply *is* its base — a workspace repository parked on the main branch and
+tracking it — has its distance counted by the entry above alone, so it neither
+inflates this entry's number nor names its ref; a workspace of nothing but
+such repositories is not offered this entry at all, because it would run the
+entry above under another name.
 
 **`⇣ check out <dir>`** on an item whose branch workspace is *not* on disk, for
 a project that keeps one checkout per branch
@@ -1023,7 +1090,11 @@ Each repository gets its own working tree: the branch itself where that
 repository has it, and a new branch of the same name off the main branch where
 it does not, which is what a change touching one repository of a tree looks
 like on disk. A repository whose branch another working tree is already holding
-is reported and left alone — git refuses that, and it is right to.
+is reported and left alone — git refuses that, and it is right to. Run it on a
+workspace that is already there and it says so and changes nothing; run it on
+one holding only some of the project's repositories and it makes the rest,
+because a directory is not a workspace and this is the command that answers
+whether one is whole.
 
 It is also the step that runs *before* any other action on a missing workspace.
 Pick `⧉ open the diff` on a branch you have never checked out and ephor checks
@@ -1060,6 +1131,7 @@ difference is only whether anyone expects to want their own.
 | `id` | what an entry of the same name overrides (§7.6); empty is anonymous |
 | `icon`, `description` | the menu row |
 | `command` | run with `sh -c` in the item's checkout |
+| `agent` | ask for work instead of running a command — see below |
 | `cwd` | where it runs: `workspace` (default), `root`, or `repo:<name>` |
 | `kinds` | restrict to item kinds; empty offers it everywhere |
 | `when` | which items it is offered on, in the language recipes use (§8.3) |
@@ -1071,14 +1143,43 @@ difference is only whether anyone expects to want their own.
 whole language — roles, gate, `needs_response`, sources, `behind` — so an
 action can be offered exactly where a recipe would be.
 
+**An entry may ask for work instead of running a command.** Write an `agent`
+block and no `command`, and the entry becomes a ticket rather than a process
+([§FS-005-dispatch.1](../requirements.md#1-a-recipe-decides-which-items-deserve-work-and-what-to-ask-for)):
+
+```jsonc
+{ "id": "changelog", "icon": "✎", "description": "write the changelog bullet",
+  "when": { "kinds": ["pr"], "roles": ["author"] },
+  "agent": {
+    "brief": "Write the changelog bullet for {title}, in house style.",
+    "state": "fix",          // optional; the shipped machine's working state
+    "hand": "luna:high"      // optional; who does it (§8.4)
+  } }
+```
+
+| Field | Meaning |
+|---|---|
+| `brief` | what the ticket asks for, with `{placeholders}` filled from the item (§8.2) |
+| `state` | the state a fresh ticket starts in; the shipped machine's working state unwritten |
+| `hand` | who does it — the second of the seven steps in §8.4 |
+
+That entry **is** a recipe (§8.3): the same selector, the same brief, the same
+hand, dispatched by the same path the work screen's key uses, into the same
+plan and the same ledger. It takes its id, icon, description and `when` from
+the entry, which is why an agent entry needs an `id` — the id names its ticket
+and is the key a `work.hands` table answers by. `command` and `agent` are
+mutually exclusive and one of them is required: an entry that has both, or
+neither, is refused when the file is read.
+
 **The checkout dependency.** A project may define one `checkout` command whose
 contract is to make `$EPHOR_WORKSPACE` exist — ephor verifies the directory
 afterwards rather than trusting it
 ([§FS-006-project-interface.8](../requirements.md#8-the-checkout-contract)). Actions marked `requires_checkout` are
 gated on it: when the workspace is missing the menu annotates them *(will check
-out first)* and running one chains checkout → action. Without a configured
-checkout command, or on an item linked to no branch, they show *(unavailable)*
-and refuse with the reason.
+out first)* and running one chains checkout → action. On an item linked to no
+branch there is no workspace to make, so they show *(unavailable)* with the
+reason on the row itself — and `Enter` there leaves the menu standing rather
+than taking it down to repeat in the header what you are already reading.
 
 **Where a command runs.** In the item's checkout, resolved org → project →
 branch: the item is matched to its registry branch, and if that branch
@@ -1146,7 +1247,7 @@ and an unmet one leaves the row where it is, marked with the ladder's own
 sentence. A word that is not a rung is *also* refused, by name: a requirement
 nobody checks would be worse than one nobody wrote.
 
-### 7.6 Three places a menu entry comes from
+### 7.6 Four places a menu entry comes from
 
 The menu is assembled in provenance order
 ([§FS-006-project-interface.9](../requirements.md#9-offers-the-projects-actions)):
@@ -1156,7 +1257,10 @@ The menu is assembled in provenance order
    there;
 2. **what the project offers** — the `actions` of its `ephor.json` (§4.2.1),
    under the trust your row extends to it;
-3. **what you configured** — `actions` and `projects.<id>.actions` (§7.2).
+3. **what you configured** — `actions` and `projects.<id>.actions` (§7.2);
+4. **what can be handed over** — the recipes that apply to this item (§8.3),
+   marked with `→` and the hand that would get them
+   ([§FS-005-dispatch.1](../requirements.md#1-a-recipe-decides-which-items-deserve-work-and-what-to-ask-for)).
 
 Where two entries share an `id`, the later one wins **in the place the earlier
 one held**: yours beats the project's beats the shipped one, and the key that
@@ -1164,7 +1268,16 @@ ran a thing goes on running that thing. An entry with no `id` overrides nothing
 and is overridden by nothing, which is what every action written before ids
 existed is.
 
-That is the whole difference between the three: an offer is selected, gated,
+Recipes are the exception to that rule, and in the other direction: a recipe
+whose id the menu already carries is **dropped**, because that entry is what
+hands the work over when it cannot finish. `rebase` is the case — the key runs
+the replay and opens the ticket only where git stops (§8.11) — so a stale
+branch shows one rebase row, not two. `x` and `w` therefore answer the same
+question: `w` is the whole work screen for an item, with the plan and what each
+ticket reached; `x` is the same recipes among everything else you could do
+about the row.
+
+That is the whole difference between the four: an offer is selected, gated,
 run, and refused exactly as your own action is — it is only invoked by you, and
 never runs on its own.
 
@@ -1257,7 +1370,12 @@ Five ship and apply with no configuration at all:
 | `answer` 💬 | anything owing a reply — pr, issue, message | no |
 | `review` 👓 | a pull request you are reviewing | no |
 | `implement` 🧩 | an issue you opened | no |
-| `rebase` ⤴ | a pull request of yours whose branch **trails main** | yes |
+| `rebase` ⤴ | anything whose branch is here and **trails main** | yes |
+
+Recipes are also entries of the action menu (§7.6): `x` on a row offers the
+work that can be handed over about it beside the commands that can be run on
+it, each saying who would get it. `w` is the same recipes with the plan and
+the tickets around them.
 
 Add your own, or replace a shipped one by reusing its id:
 
@@ -1275,7 +1393,9 @@ Add your own, or replace a shipped one by reusing its id:
         "needs_checkout": true,
         "when": { "kinds": ["pr"], "roles": ["author"], "gate": "failing" },
         "brief": "The gate on {title} is red. Run `just check` in {workspace} …",
-        "target": "claude-code[yolo]:anthropic:claude-sonnet-4-6"   // or "model": "…"
+        // The runtime's own words, unchecked — or "model": "…". Mutually
+        // exclusive with "hand" (§8.4): a recipe carrying both is refused.
+        "target": "claude-code[yolo]:anthropic:claude-sonnet-4-6"
       }
     ]
   }
@@ -1296,16 +1416,28 @@ Finished work never matches.
 | `needs_response` | `true` / `false` |
 | `sources` | provider names |
 | `behind` | `true` — the branch trails the project's `main_branch` · `false` — level with it |
+| `behind_upstream` | `true` — the branch trails its own **published copy** · `false` — level with it |
 
 `failing` and `blocked` are separate because they ask for different work: jobs
 that failed are something a checkout can fix, while a forge refusing an
 otherwise green change is usually waiting on a person.
 
-`behind` is measured in your own checkout, not asked of a forge: the branch
-workspace's repositories are counted against `origin/<main_branch>` as they
-were last fetched. An item ephor cannot measure — no branch, or nothing on
+`behind` is measured in your own checkout, not asked of a forge: each of the
+branch workspace's repositories is counted against `<its remote>/<its base>` as
+it was last fetched — the remote read off the repository, and the base its own
+`default_branch` where the row names one that is a branch rather than a
+template, the project's `main_branch` otherwise, and what its remote calls its
+default where neither says. An item ephor cannot measure — no branch, or nothing on
 disk — matches neither `true` nor `false`, so a recipe that asks is never
 offered blind.
+
+`behind_upstream` is the same measurement against the other ref: the branch's
+own published copy ([§6.2](#62-reading-a-row)), read per repository from its
+`HEAD`. A branch published nowhere matches neither value, for the same reason
+— and a repository whose copy is simply its base again counts toward `behind`,
+not here: one distance answers one question.
+The two are different questions — a branch level with main can be well behind
+what was pushed of it — and a recipe may ask both.
 
 **The brief** takes `{title}`, `{url}`, `{repo}`, `{number}`, `{branch}`,
 `{ticket}`, `{state}`, `{gate}`, `{workspace}`, `{root}`, `{project}`,
@@ -1325,11 +1457,116 @@ works differently points work at theirs
 ([§4.2.0](#420-pointing-work-at-a-different-runtime),
 [§DA-001-runtime-bound-default](decisions/architectural/DA-001-runtime-bound-default.md#da-001-runtime-bound-default-the-runtime-is-a-bound-default-not-a-named-coupling)).
 `ephor work run` invokes it as a summons from the checkout the work is about —
-`<runner> run <work root> --rhei <plan>…` — and reads its exit code the one way
-(`75` is parked, not failed). With nothing on `PATH` under that name, every
+`<runner> run <work root> --rhei <plan>… [--agent <agent> [--agent-mode
+<effort>]]` — and reads its exit code the one way (`75` is parked, not failed).
+The agent flags appear only when a chosen hand could not be written on the
+tickets themselves; see the hands paragraphs below. With nothing on `PATH` under that name, every
 part of dispatch except the running still holds: tickets are written, read and
 reopened, and only running refuses, naming the runner it looked for
 ([§7.5](#75-why-something-is-not-offered)).
+
+**Who does which action** — `work.hands` maps an action's id to the hand that
+does it, with `default` answering for every id it does not name
+([§FS-006-project-interface.9](../requirements.md#9-offers-the-projects-actions)).
+A hand id is one of the names the roster prints
+([§4.3.2](#432-what-a-project-can-do--capabilities)), optionally at one of the
+efforts it declares. Every printed id is unique: where a model profile in the
+runtime's settings claims an agent's very name, the profile holds it and the
+agent standing alone is listed as `@<agent>`:
+
+```jsonc
+{
+  "work": {
+    "hands": {
+      "default": "sonnet",
+      "rebase": "luna:high",
+      "fix-gate": { "agent": "our-agent", "model": "our-proxy-model" }
+    }
+  },
+  "projects": {
+    "widget": {
+      "work": {
+        "hands": { "default": "review-deep" },
+        "permitted_hands": ["review-deep", "sonnet"]
+      }
+    }
+  }
+}
+```
+
+Seven steps answer *who does this*, each displacing the ones under it: what
+you picked for this dispatch alone, the `hand` the action or recipe carries,
+this project's entry for the action id, this project's `default`, the site's
+entry for the action id, the site's `default`, and — where nobody named
+anyone — whatever the runtime picks unasked. That is the runtime's own
+resolution order mirrored deliberately, so the two cannot come to disagree
+about one configuration.
+
+The long form `{ "agent", "model", "effort" }` is for a pair the runtime's
+registry never listed — a proxy serving a model it does not know about. It is
+accepted **with a note** rather than refused, because ephor cannot prove such a
+pair invalid. A name the roster does have is checked against it: a typo, or an
+effort the hand does not declare, is refused before anything is written.
+
+**Naming a hand without an effort** is settled by what the hand declares. A
+hand declaring no efforts is asked plainly — there is nothing an ask could
+drop. One declaring exactly one is asked at it, and dispatch says so in a
+note: a single declared effort is a fact about the hand, not a choice left
+open. One declaring several is refused with the list — name one, as
+`<hand>:<effort>` — because the runtime's two spellings disagree about what
+an effort-less ask would mean: a per-ticket selector without a mode runs
+without one, silently, while a bare per-run `--agent` flag lets the state
+machine's own mode fall in and fails the run outright where the agent does
+not declare that mode. Neither is what you chose, so ephor never emits
+either.
+
+**A hand that names an agent and no model of its own** — which is every hand
+on a machine whose runtime settings declare no model profiles — has no line
+in the plan language, and the cheapest fix is not ephor's at all: **declare a
+model profile in the runtime's own settings**
+
+```jsonc
+// ~/.config/rhei/settings.json
+{
+  "models": {
+    "luna": { "provider": "openai", "model": "gpt-5", "default_agent": "pi" }
+  }
+}
+```
+
+and the agent-only hand becomes a model hand: `"rebase": "luna:high"` now
+writes the runtime's own target line onto each ticket it dispatches — per
+ticket, with no ephor machinery involved beyond what dispatch already does.
+If you stop reading here, that is the whole fix, and the better one.
+
+Without a model profile the hand still binds
+([§FS-005-dispatch.14](../requirements.md#14-who-does-the-work-is-chosen-and-defaulted-per-project)):
+the ticket pins nothing — dispatch says so in a note — and `ephor work run`
+carries the choice as the runtime's own `--agent` / `--agent-mode` flags,
+resolved when the run is invoked, which is the same moment the runtime reads
+its own settings. The two per-ticket lines rank differently against those
+flags, and ephor follows the runtime exactly. A ticket carrying a full
+`**Target:**` line cannot be re-aimed — the runtime resolves it from the
+line alone, and the run's agent flags are invisible to it — so such a ticket
+rides beside a flagged run untouched. A ticket carrying `**Model:**` alone
+can be: the flags would supply its carrier, and one run advances several
+tickets. So the flags ride a run only when every open, unclaimed ticket
+without a line of its own resolves to the same hand and none pins a bare
+model: a plan whose tickets disagree runs unflagged, and `work run` says the
+hand went unbound for that run. The inbox's run key does not carry the flags
+yet — running from the command line is what binds an agent-only hand today.
+
+`permitted_hands` narrows a project to the hands that may work on it at all,
+which is what a repository under a policy about which models may see its code
+needs. Anything outside the list is refused with that reason wherever it was
+named — the tables, the action's pin, your own choice at the moment of asking
+— never silently dropped. What a narrowing cannot bind is the runtime's unasked
+pick, so a project that narrows and names no `default` is told that much.
+
+With no table anywhere, nobody is named and the runtime picks exactly as it
+does today. With nothing on `PATH` under `work.runner` there is no roster to
+name a hand from: a configured hand resolves to nothing, says so in the
+workable rung's own words, and the ticket is written all the same.
 
 ephor creates it when it is missing: the manifest, a `.gitignore` that ignores
 the directory itself so your repository stays clean, and the shipped state
@@ -1616,13 +1853,17 @@ ledger goes on saying the item moved past it.
 | `R` | hand **this item's plan** to the runtime |
 | `e` | read the plan in `$EDITOR` |
 | `o` | open the item in the browser |
-| `j` `k` | move between recipes · `f`/`b` page · `Esc` back |
+| `j` `k` | move between recipes · `f`/`b` page · `;` ops · `Esc` back |
 
 The recipe rows show the words each would actually send, rendered against this
 item — dispatching is cheap to press and expensive to run.
 
 `R` leaves the interface entirely: the runtime's own dashboard takes the
-terminal while it works, and coming back re-reads the plans.
+terminal while it works, and coming back re-reads the plans. With no runtime
+bound it is not offered at all — the footer drops it, and pressing it says why
+rather than handing the terminal to a command that cannot start. Everything
+else on the screen is unchanged: the ticket is written, read, reopened and
+edited whether or not anything can run it.
 
 ### 8.8 By hand
 
@@ -1715,6 +1956,7 @@ over only the question ([§FS-005-dispatch.12](../requirements.md#12-work-an-alg
 ephor rebase                                  # the working directory
 ephor rebase --project widget --checkout ~/c/widget/you/ABC-42-retry
 ephor rebase --onto release/24 --checkout .   # some other base
+ephor rebase --upstream --checkout .          # onto the branch's published copy
 ephor rebase --item forge:widget/42 --dispatch    # and open a ticket on conflict
 ```
 
@@ -1722,19 +1964,42 @@ It fetches and replays **every repository in the checkout** — the project
 type's `repos` where the registry names them, otherwise every git working tree
 directly under it — onto the project's `main_branch`, and reports per
 repository. Nothing is stashed: a repository with uncommitted work is named and
-left alone. Nothing is pushed either; a replayed branch cannot fast-forward,
+left alone. A declared repository whose working tree is not on disk is named
+too — in the summary and per repository in the report — and gates nothing:
+retrying the rebase will never replay a tree that is not there, the missing one
+holds none of your change, and the condition was as true before you ran it as
+after. It is a fact about the checkout rather than an outcome of the run, and
+the command whose exit code answers for it is `ephor checkout`, which completes
+a workspace that is missing repositories. Nothing is pushed either; a replayed
+branch cannot fast-forward,
 and forcing is a decision that belongs to a state that says so
 ([§8.5](#85-a-script-in-front-of-the-agent)).
 
+**`--upstream`** replays onto the other ref: each branch's own published copy,
+resolved per repository from its `HEAD`
+([§FS-004-quick-actions.8](../requirements.md#8-a-branch-that-trails-its-own-published-copy-is-offered-the-rebase-onto-it)).
+That is a different ref in every repository, so it takes no branch name and
+excludes `--onto`. It is what answers the checkout a poly-repo workspace
+actually leaves behind: a branch grown with `git worktree add -b`, pushed, and
+carrying no tracking configuration — where bare `git rebase` refuses to start
+at all. A repository that has published nothing is reported as *nothing
+published* and the run still succeeds; there was simply nothing to replay onto.
+Replaying onto your own copy rewrites commits that copy already has, so landing
+it needs the same leased force push the rebase onto main does.
+
 | Exit | Means | The machine sends it to |
 |---|---|---|
-| `0` | every repository is on the base — replayed, or already there | land it |
+| `0` | every repository that is here is on the base — replayed, already there, or with nothing published; a declared one that is not here is named | land it |
 | `3` | one stopped in a conflict, left mid-rebase with the files named | an agent |
 | `1` | uncommitted work, no repository, or git refused | a person |
 
 Each argument can arrive as an environment variable instead — `CHECKOUT`,
-`PROJECT`, `ONTO`, `ITEM`, `REPORT` — which is how a program state passes it
-`{meta.*}`. `config/ci-green.example.states.yaml` wires the whole path:
+`PROJECT`, `ONTO`, `UPSTREAM` (set to any non-empty value), `ITEM`, `REPORT`
+— which is how a program state passes it `{meta.*}`. The refusal of
+`--upstream` with `--onto` holds in these spellings too: the flag parser
+cannot see the environment, and silently preferring one would run a different
+rebase than the state asked for. `config/ci-green.example.states.yaml` wires
+the whole path:
 
 ```
 rebase ──0──► land-rebase ──► rebased        (FORCE_WITH_LEASE=1 on land.sh)
@@ -1786,6 +2051,106 @@ forge declares the `replies` capability and puts a `reply` descriptor on the
 threads that take one ([§10.1](#101-a-forge-out-of-process)). Where it does
 not, the card is still there and names the file: the proposal is what you copy,
 which is the offer narrowing rather than the feature failing.
+
+### 8.13 The operations board
+
+`;` from anywhere in the interface opens the board; `Esc` (or `;` again)
+returns exactly where you were, and every screen's footer says so. The
+exceptions are the things you are already inside — a prompt, an open action
+menu, the thread screen's reaction picker — where `;` is a keystroke meant for
+them. It is the answer to "what is ephor doing right now", in one place
+([§FS-005-dispatch.15](../requirements.md#15-every-operation-is-visible-in-one-place)):
+
+```
+ ephor — operations
+  beneath the reading
+    ⟳ Refreshing graal (3/7)…
+
+  operations
+  ▸ ▶ demo · ~/c/demo/you/ABC-42-retry/panta   running · quiet 12m · dashboard (o)
+        ⚠ acmeforge-app-101.answer-2  · Retry window on app 101  [needs-human]  waiting on you
+        ⚙ acmeforge-app-101.fix-gate-1  · Retry window on app 101  [fix]  running
+        ‖ acmeforge-app-101.answer-1  · Retry window on app 101  [fix]  queued
+        ✓ 2 finished
+    ✋ demo · ~/c/demo/panta   claimed, not scheduled
+        ✋ forge-demo-17.fix-1  · Humanize durations  [fix]  claimed by luna — free it: rhei release forge-demo-17.fix-1
+```
+
+Within one operation the tickets read in order of urgency: what waits on you
+first — it is the one part of the work nobody else will move
+([§FS-005-dispatch.9](../requirements.md#9-work-that-stops-for-a-person-says-so-where-the-person-is-looking))
+— then what a dead run dropped, then what runs, then claims, then the queue.
+Each ticket line carries the matter's own title beside the ids, so a row
+means something before you open it. And a ticket is a ticket at any depth:
+a subtask the runtime split off reads from the plan like its parent —
+`widget-42.fix-gate-1.1` is a row of its own when it parks.
+
+**Watch-only.** The board starts nothing, stops nothing, and touches no run —
+those need machinery a watcher does not have, and belong to a later chapter.
+
+**Rows are execution roots, and liveness is the runtime's lock.** The runtime
+holds a lock per execution root for exactly as long as a run is live there,
+and the OS releases it if the run dies — so the board probes the lock (without
+ever waiting on it) instead of guessing from output. A run deep in a long tool
+call is legitimately silent: that is the `quiet` badge, never a death notice.
+Because the lock is per root and ephor's work root is per branch workspace,
+two items in one workspace are one operation, and a ticket in a root a run
+already holds reads as **queued**.
+
+**Claimed is not running.** An `**Assignee:**` on a ticket means somebody took
+it and the runtime skips it. With no run live on its root, the board shows it
+as *claimed, not scheduled*, with the runner's own release command beside it —
+reported, not offered as a key.
+
+**Work parked for you keeps its row.** The usual end of a run that parks a
+ticket is the run exiting — nothing else was schedulable — so the lock goes
+free and no assignee marks the spot: parking is a transition, not a taking.
+The ticket stays on the board all the same, *waiting on you*, until you move
+it ([§FS-005-dispatch.9](../requirements.md#9-work-that-stops-for-a-person-says-so-where-the-person-is-looking)).
+A run that died mid-slot leaves a row too, but not that one: the journal it
+left still names the ticket it was holding, and that ticket shows as
+**dropped by a run that died** — a parked ticket is a question about the
+work, a dropped one is a run that wants starting again, and conflating them
+would send you reading a plan when what it needs is a fresh run. What a
+dead run held is not trusted
+blindly, either — a journal entry no run ever released stops counting the
+moment the ticket's own state says it moved on, so a crashed run's ticket
+never reads *running* under a run that came later. And a work root whose
+`states.yaml` cannot be read is not guessed at: running, claimed, and
+dropped still show — the lock, the journal, and the plans carry those on
+their own — but nothing there is called queued or finished on the word of a
+machine that is not there, and the row says so itself: `no states.yaml —
+nothing judged queued or finished`.
+
+| Key | Does |
+|---|---|
+| `j` `k` | move between operations (the view follows the selection) |
+| `Enter` | the matter's thread — or the plan, where the operation has no matter |
+| `e` | read the plan in `$EDITOR` |
+| `o` | open the run's dashboard, where a live run published one |
+| `r` | refresh underneath, exactly as everywhere else |
+| `Esc` `;` `q` | back to where you were |
+
+The refresh reports here **additionally** — the header line on whatever screen
+you are reading keeps carrying it
+([§FS-001-forge-interface.7](../requirements.md#7-a-fetch-runs-beneath-the-reading-never-in-front-of-it)).
+With no runtime bound the board is the refresh row plus the workable rung's
+sentence, which is the shape most installations see — correct, not broken.
+
+The board, and every work badge in the feed, keeps itself current: between
+key reads ephor glances at the plans and run artifacts it already knows by
+name (a clock gates the stats, a changed timestamp gates the re-read), so a
+ticket the runtime parks for you resurfaces when it parks
+([§FS-005-dispatch.15.1](../requirements.md#151-the-board-keeps-itself-current))
+— no refresh needed, and no forge asked anything. A run *starting* writes no
+file that glance would notice — the OS takes its lock and that is the whole
+event — so while the board is open the locks are probed too, and a root that
+came alive gets its row. Rows arriving above the cursor do not move it: it
+stays on the operation it was on, not on the line number that operation had.
+
+Today's rows come from the ledger — operations about items ephor dispatched.
+A plan written by hand, or a run started in another terminal against a root
+ephor never wrote into, is not listed yet.
 
 ---
 
@@ -2029,9 +2394,10 @@ under `projects` in `status.json`, or the two spell its id differently.
 exist. Configure a `checkout` command for the project and the menu will offer
 to make it, or check it out by hand.
 
-**An action shows "(unavailable)".** It declares `requires_checkout`, and
-either the project has no `checkout` command or the item is linked to no
-branch.
+**An action shows "(unavailable)".** The reason is on the row: usually it
+declares `requires_checkout` and the item is linked to no branch, so there is
+no workspace to make. `Enter` on it does nothing on purpose — the menu stays
+where it is, with the reason still under your eye.
 
 **Dispatch says a recipe "starts in state 'x', which the machine … does not
 declare".** The work root's `states.yaml` governs. Either use a state it has,

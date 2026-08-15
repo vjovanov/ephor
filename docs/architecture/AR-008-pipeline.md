@@ -25,6 +25,14 @@ persists the store (§AR-006-matters.4). Unattributed remainders persist
 too — the bucket is part of the store, not a log line
 (§FS-008-attribution.4).
 
+Attribution runs here and nowhere else. It is the expensive stage — an
+item's evidence is its whole recorded conversation joined into one string,
+matched against a table — so a surface asking it again is asking a
+question that was already answered. A screen therefore settles every count
+and placement a row shows when it is rebuilt, and drawing reads what is
+already decided: a cursor moving does not rebuild, so anything left in the
+draw path is paid once per keystroke against the whole feed.
+
 ## 3. Offer and summon
 
 Offering is pure: matters × (quick actions, manifest offers, site

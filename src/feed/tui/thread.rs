@@ -179,8 +179,17 @@ impl ThreadScreen {
                 keys.push_str("  p post reply");
             }
         }
-        keys.push_str("  x actions  o open  m done  esc back");
+        keys.push_str("  x actions  o open  m done  ; ops  esc back");
         keys
+    }
+
+    /// Whether this screen has something of its own open over it. The shell
+    /// intercepts `;` for every screen (§FS-005-dispatch.15), and the picker
+    /// is a modal the reader is inside: opening the board over it would leave
+    /// it armed underneath, so the next `enter` after coming back posts a
+    /// reaction the reader stopped meaning to.
+    pub fn is_picking(&self) -> bool {
+        self.picker.is_some()
     }
 
     pub fn handle_key(&mut self, code: KeyCode) -> Action {

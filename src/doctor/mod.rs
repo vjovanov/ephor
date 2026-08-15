@@ -172,7 +172,9 @@ fn diagnose(
         checkout: project_config
             .and_then(|p| p.checkout.as_ref())
             .map(|checkout| checkout.command.as_str()),
-        runner: Some(crate::work::runtime::RUNNER),
+        // The bound runner, not the shipped word: the workable rung names
+        // what this person's work would actually run (§FS-005-dispatch.14).
+        runner: Some(crate::work::runtime::runner(&config.work)),
         gate_reported: feed.is_some_and(ProjectFeed::reports_a_gate),
         manifest: manifest.as_ref(),
     };
@@ -239,9 +241,13 @@ pub fn capabilities(args: &CapabilitiesArgs) -> Result<ExitCode> {
         let feed = crate::feed::cache::load_feed(&project)?;
         rows.push(diagnose(&registry_doc, &config, &project, feed.as_ref()));
     }
+    let roster = crate::work::runtime::roster::roster(&config.work, None);
 
     if args.json {
-        let out: Vec<Value> = rows.iter().map(Diagnosis::to_json).collect();
+        let out = json!({
+            "projects": rows.iter().map(Diagnosis::to_json).collect::<Vec<_>>(),
+            "roster": roster_json(&roster, &config),
+        });
         println!("{}", serde_json::to_string_pretty(&out).unwrap());
         return Ok(ExitCode::SUCCESS);
     }
@@ -251,7 +257,67 @@ pub fn capabilities(args: &CapabilitiesArgs) -> Result<ExitCode> {
         }
         render_ladder(row, &style);
     }
+    println!();
+    render_roster(&roster, &config, &style);
     Ok(ExitCode::SUCCESS)
+}
+
+/// The roster (§FS-005-dispatch.14): each hand, what it resolves to, and why
+/// an unavailable one is unavailable — shown with its reason, never hidden.
+/// The judgement is the runtime module's; this only renders it
+/// (§FS-010-doctor.1).
+fn render_roster(
+    roster: &crate::work::runtime::roster::Roster,
+    config: &StatusConfig,
+    style: &Style,
+) {
+    println!(
+        "{}",
+        style.bold(&format!(
+            "who can be asked ({})",
+            crate::work::runtime::runner(&config.work)
+        ))
+    );
+    if let Some(why) = &roster.refusal {
+        println!("  {}", style.dim(&format!("nobody — {why}")));
+        return;
+    }
+    for hand in &roster.hands {
+        let efforts = if hand.efforts.is_empty() {
+            String::new()
+        } else {
+            format!(" · efforts: {}", hand.efforts.join(", "))
+        };
+        match &hand.available {
+            None => println!(
+                "  ✓ {:<18} {}",
+                hand.id,
+                style.dim(&format!("{}{efforts}", hand.resolves_to()))
+            ),
+            Some(why) => println!(
+                "  {} {:<18} {}",
+                style.red("✗"),
+                hand.id,
+                style.dim(&format!("{}{efforts} — {why}", hand.resolves_to()))
+            ),
+        }
+    }
+}
+
+fn roster_json(roster: &crate::work::runtime::roster::Roster, config: &StatusConfig) -> Value {
+    json!({
+        "runner": crate::work::runtime::runner(&config.work),
+        "refusal": roster.refusal,
+        "hands": roster.hands.iter().map(|hand| json!({
+            "id": hand.id,
+            "agent": hand.agent,
+            "model": hand.model,
+            "provider": hand.provider,
+            "efforts": hand.efforts,
+            "available": hand.available.is_none(),
+            "why": hand.available,
+        })).collect::<Vec<_>>(),
+    })
 }
 
 /// One project's rungs, held first and then what is missing with its reason.
@@ -423,6 +489,7 @@ fn site(args: &DoctorArgs, style: &Style, say: &Narrator) -> Result<Health> {
         let feed = crate::feed::cache::load_feed(&project)?;
         rows.push(diagnose(&registry_doc, &config, &project, feed.as_ref()));
     }
+    let roster = crate::work::runtime::roster::roster(&config.work, None);
 
     let worst = rows
         .iter()
@@ -431,7 +498,10 @@ fn site(args: &DoctorArgs, style: &Style, say: &Narrator) -> Result<Health> {
         .unwrap_or(Health::Well);
 
     if args.json {
-        let out: Vec<Value> = rows.iter().map(Diagnosis::to_json).collect();
+        let out = json!({
+            "projects": rows.iter().map(Diagnosis::to_json).collect::<Vec<_>>(),
+            "roster": roster_json(&roster, &config),
+        });
         println!("{}", serde_json::to_string_pretty(&out).unwrap());
         return Ok(worst);
     }
@@ -446,6 +516,11 @@ fn site(args: &DoctorArgs, style: &Style, say: &Narrator) -> Result<Health> {
     for row in &rows {
         render_project(row, style);
     }
+    // Who could be asked to work any of it (§FS-005-dispatch.14). An empty
+    // roster is a choice, not a fault: it never moves the exit code, exactly
+    // as the workable rung it speaks for does not.
+    println!();
+    render_roster(&roster, &config, style);
     Ok(worst)
 }
 

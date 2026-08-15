@@ -30,6 +30,42 @@ ships, the previous "latest" section moves verbatim to
 
 ### Added
 
+- **The replay onto the published copy has its environment spelling**
+  ([§FS-004-quick-actions.8](../requirements.md#8-a-branch-that-trails-its-own-published-copy-is-offered-the-rebase-onto-it)).
+  Every argument of `ephor rebase` could arrive as an environment variable —
+  which is how a state machine passes `{meta.*}` — except the one that picks
+  the other rebase, so a program state could ask for `--onto` via `ONTO` and
+  could not ask for the published-copy replay at all. `UPSTREAM` set to any
+  non-empty value now asks for it. And because the flag parser's
+  `--upstream`/`--onto` conflict cannot see the environment, the same refusal
+  is repeated across both spellings: asked for together in any combination,
+  the rebase refuses rather than silently preferring one and running a
+  different rebase than the state asked for.
+
+- **An agent-only hand actually binds**
+  ([§FS-005-dispatch.14](../requirements.md#14-who-does-the-work-is-chosen-and-defaulted-per-project)).
+  A hand naming an agent and no model — which is every hand on a machine whose
+  runtime settings declare no model profiles — was chosen and then did
+  nothing: the plan language pins a model, so the ticket carried no line and
+  the runtime picked as if nobody had spoken. Now the choice binds in one of
+  two spellings, never both. A hand carrying a model is written on its ticket,
+  as before; a hand that cannot be rides the run instead, as the runtime's own
+  `--agent` / `--agent-mode` flags on `ephor work run`, resolved when the run
+  is invoked. An effort-less choice is settled by what the hand declares —
+  asked plainly where it declares no efforts, completed with a note where it
+  declares exactly one, refused with the list where several — so neither
+  spelling ever travels effort-less against an agent that has efforts: a bare
+  selector would run without any mode, and a bare `--agent` flag would fail
+  the run outright where the state machine's mode is not the agent's. The
+  flags ride only where they can re-aim nothing: a ticket with a full target
+  line is resolved from that line alone and rides beside them, one pinning a
+  bare model would take its carrier from them and runs the plan unflagged
+  with the reason said, and a claimed ticket is not the run's to advance at
+  all. **On a machine with no model profiles, `work.hands` now bites with no
+  further configuration — name a hand and run through `ephor work run`; or
+  declare a model profile in the runtime's own settings, which pins the hand
+  per ticket everywhere and needs none of this.** The inbox's run key does not
+  carry the flags yet.
 - **An issue nobody has taken can count as work waiting**
   ([§FS-001-forge-interface.1](../requirements.md#1-capabilities),
   [§FS-003-feed-categories.4](../requirements.md#4-a-conversation-is-answered-in-whatever-form-the-forge-recorded-it)).
@@ -756,6 +792,78 @@ ships, the previous "latest" section moves verbatim to
   with no pull request on it. A forge that cannot be reached is refused rather
   than reported green: silence and a clean gate have the same shape, and only
   the forge's exit code tells them apart.
+- **ephor learns who can be asked**
+  ([§FS-005-dispatch.14](../requirements.md#14-who-does-the-work-is-chosen-and-defaulted-per-project)).
+  The runtime binding grows a fourth verb beside writing, running and reading
+  back: the **roster** — every agent/model pairing the binding's own merged
+  settings declare, each a **hand** with an id configuration can name, the
+  agent and model it resolves to, the efforts it declares, and, where it
+  cannot be used, the computed reason why. The enumeration is read from the
+  binding rather than kept as a list of ephor's, which would drift the first
+  time an agent or model was added on the other side
+  ([§DA-004-roster-is-asked-not-configured](decisions/architectural/DA-004-roster-is-asked-not-configured.md));
+  the binding's `agent[mode]:provider:model` grammar is rendered inside
+  `work/runtime/` and nowhere else, and the read mirrors the binding's own
+  semantics exactly: settings overlays merge by field presence, so an
+  explicit `null` clears what it inherits; a model's carrier resolves
+  `defaults.agent`, then the older top-level `agent`, then the profile's own
+  `default_agent`; efforts keep the order the settings declare them in. Ids
+  are unique — the binding's model and agent registries are separate
+  namespaces, and where a model profile claims an agent's name the profile
+  holds it and the agent standing alone is listed as `@<agent>`. `ephor
+  doctor` and `ephor capabilities`
+  print the roster — an unavailable hand stays on the list with its reason —
+  and their `--json` output becomes an object with `projects` and `roster`
+  keys, where it was the projects array alone. With no runtime bound, or a
+  bound one not on `PATH`, the roster is empty and says so in the workable
+  rung's own sentence — a settings file that does not parse empties it too,
+  naming the file — and every other rung resolves as before. No action
+  chooses a hand yet: the resolution order is specced, and lands with the
+  configuration and the picker.
+- **A branch knows where it is published, and the row says both distances**
+  ([§DA-003-upstream-is-the-published-copy](decisions/architectural/DA-003-upstream-is-the-published-copy.md),
+  [§AR-004-forest.1](architecture/AR-004-forest.md#1-folds)). The upstream of
+  a branch, as ephor means it, is its **published copy** — resolved per
+  repository from that repository's own `HEAD`, never from the workspace
+  directory's name: the recorded `@{upstream}` where it does not name the
+  repository's base (tracking that names the base is `branch.autoSetupMerge`
+  recording where the branch was *cut*, and read at face value it would hand
+  the menu the rebase onto main a second time under another name), else the
+  remote's branch of the same name — the shape `worktree add -b` leaves, the
+  one bare `git rebase` fails on — else unpushed, which is an answer and not
+  an error. One `for-each-ref` per repository reads ref, upstream and both
+  distances at once, and the behind-main count is derived from the same fold
+  so the two numbers on a row cannot disagree about when they were measured.
+  A checked-out branch row now carries both, apart: `· 13 behind · ↓2` is
+  thirteen commits behind the project's main branch and two behind what was
+  pushed of this branch. A copy that is level, or a branch published nowhere,
+  adds no arrow. No offer reads the fact yet — the rebase onto the published
+  copy lands separately.
+- **A branch that trails its own published copy is offered the rebase onto it**
+  ([§FS-004-quick-actions.8](../requirements.md#8-a-branch-that-trails-its-own-published-copy-is-offered-the-rebase-onto-it)).
+  Somebody else pushing to your branch is a different fact from main moving
+  under it, and now it has its own move: a second quick action beside the
+  first, naming the ref and the count — `⤴ rebase onto origin/you/ABC-42-retry
+  (2 behind)` — and `ephor rebase --upstream`, which excludes `--onto` because
+  a per-repository ref has no branch name to give. The replay is a fold with a
+  different base in every repository, each branch's own copy read off its
+  `HEAD`; a repository that has published nothing is reported as *nothing
+  published* and the run still exits `0`, in the same register as one already
+  current, never as a refusal. Every other guard is unchanged: uncommitted work
+  reported and left alone, a rebase already stopped reported as the conflict it
+  is, and a conflict handed over rather than decided. This is the case bare
+  `git rebase` cannot do — a branch grown by `git worktree add -b` and pushed
+  carries no tracking configuration, and git refuses before it starts. The
+  offer is withheld in exactly one place: where the published copy *is* the
+  base for every repository under the checkout — a workspace repository parked
+  on the main branch and tracking it — because two entries running one
+  operation is the duplication the resolution exists to prevent; where the
+  repositories disagree, both are offered and the report says what happened to
+  each. Recipes and project offers gain a matching `behind_upstream` selector,
+  measured from the same fold as `behind` — on a project naming no main
+  branch, dispatch measures the fold all the same and nulls only `behind`,
+  the same split the rows make, so a `behind_upstream` recipe offered in the
+  menu is dispatchable everywhere it is offered.
 
 ### Removed
 
@@ -766,6 +874,148 @@ ships, the previous "latest" section moves verbatim to
 
 ### Fixed
 
+- **A parked subtask is visible on an idle root**
+  ([§FS-005-dispatch.15](../requirements.md#15-every-operation-is-visible-in-one-place),
+  [§FS-005-dispatch.9](../requirements.md#9-work-that-stops-for-a-person-says-so-where-the-person-is-looking)).
+  The plan floor read only `###` headings and refused the dots in the
+  runtime's subtask ids, so a subtask existed to the board only while a live
+  run's own listing named it — a run that split a ticket, parked the
+  question, and exited left a root that showed nothing at all. The floor now
+  reads the runtime's whole heading grammar, taken from its parser rather
+  than assumed: `###` through `######`, a dotted id with exactly one segment
+  per heading level — names or canonical numbers — and a kind word matched by
+  shape, since Title Case is the runtime's convention, not its grammar. A
+  parked subtask keeps its row with no run and no runner, like any other
+  ticket, and a new dispatch still follows the last dispatch: a subtask is
+  never the prior of a top-level ticket.
+- **A dead run's leavings are not a question**
+  ([§FS-005-dispatch.15](../requirements.md#15-every-operation-is-visible-in-one-place)).
+  A ticket parked for a person and a ticket a crashed run was holding
+  mid-slot both rendered *waiting on you*, and they ask different things:
+  one is a question about the work, the other a run that wants starting
+  again. The artifacts already told them apart — parked is the machine's
+  gating word on the ticket's own state, a dead run's hold is the journal's
+  unreleased slot under a lock nobody holds — so the board now says
+  **dropped by a run that died** for the second, listed right after what
+  waits on you.
+- **A root whose machine cannot be read says so on its row**
+  ([§FS-005-dispatch.15](../requirements.md#15-every-operation-is-visible-in-one-place)).
+  With no readable `states.yaml` the board already withheld *queued* and the
+  finished count — they are the machine's words — but withheld them
+  silently, leaving a zero that read as nothing done. The fact rides the
+  operation now and the row wears it in so many words: `no states.yaml —
+  nothing judged queued or finished`.
+- The board's ticket rows say what the work is about — the matter's own
+  title beside the ids — instead of carrying the title in the data and never
+  rendering it
+  ([§FS-005-dispatch.15](../requirements.md#15-every-operation-is-visible-in-one-place)).
+- An operation whose tickets were all filtered out still answers for the
+  plan behind it: the operation carries its root's plans, so the board's
+  `Enter` and `e` no longer depend on a surviving ticket to find one
+  ([§FS-005-dispatch.15](../requirements.md#15-every-operation-is-visible-in-one-place)).
+- **A base nobody could resolve no longer turns tracking config into a
+  publication**
+  ([§FS-004-quick-actions.8](../requirements.md#8-a-branch-that-trails-its-own-published-copy-is-offered-the-rebase-onto-it),
+  [§DA-003-upstream-is-the-published-copy](decisions/architectural/DA-003-upstream-is-the-published-copy.md)).
+  The rule that a recorded upstream naming the base publishes nothing was
+  written as *the base, where one resolved* — so in a repository where nothing
+  names a base (no row main, no project main, no `refs/remotes/<remote>/HEAD`;
+  the `~/c/g/master/master` shape) a branch cut from `origin/main` and never
+  pushed reported `origin/main` as its published copy: the row showed a `↓N`
+  that was really the distance to the base, and `--upstream` would have
+  replayed onto the very ref the resolution exists to keep it off. It fails
+  closed now — an unresolved base cannot clear the record of naming it, and
+  only a pushed copy of the branch's own name counts. Two smaller lies in the
+  same neighborhood: a replay distance that could not be measured was reported
+  as *Already on top of* (unreachable today, but None is not zero anywhere
+  else either — it is a refusal now that names the ref), and a declared
+  repository with no working tree on disk was silently absent from the
+  rebase's answer, which now names it per repository, gating nothing
+  ([§AR-004-forest.1](architecture/AR-004-forest.md#1-folds)).
+
+- **Keys and menu entries that could not do what they advertised**
+  ([§FS-004-quick-actions.2](../requirements.md#2-offered-only-where-it-would-work)).
+  Six of them, all the same shape — the offer was on the screen and the
+  keystroke was refused. The checkout offered on a branch row ran
+  `ephor checkout --item "$EPHOR_ITEM_ID"`, and a branch row has no matter
+  behind it
+  ([§FS-004-quick-actions.6](../requirements.md#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase)),
+  so the one row that offer was added for answered *Nothing says which branch
+  to check out*; it names the branch as well now, and either half may be empty.
+  That row also pointed `EPHOR_WORKSPACE` at the directory the checkout had not
+  made yet — it falls back to the project root, as an item's menu already did —
+  and left `EPHOR_ITEM_ID` unset, which is not empty but whatever the shell
+  that launched ephor happened to hold, so a stale one could have bound a
+  branch's rebase to somebody else's change; it is now said, and said empty. An
+  entry marked *(unavailable)* had no verb in the footer and still took the
+  menu down when chosen, to repeat in the header the reason the row was already
+  carrying: it now leaves the menu standing. The work screen advertised `R run
+  the runtime` on machines with no runtime bound; the screen is told the
+  runtime rung's answer
+  ([§AR-005-capabilities.2](architecture/AR-005-capabilities.md#ar-005-capabilities-availability-is-computed-once-and-consulted-everywhere))
+  and drops the key, saying why if you knew it anyway — everything else on that
+  screen goes on working, because writing the ticket and running it are
+  different capabilities. And `; ops` was taught only by the navigator's
+  footer though the key is read on every screen: the thread, gate, work and
+  board footers say it too, and the thread's reaction picker is excluded, since
+  a board opened over an armed picker leaves it armed underneath.
+- **An issue whose branch was on disk showed nothing saying so**
+  ([§FS-004-quick-actions.6](../requirements.md#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase)).
+  The `✓`/`∅` marker asked whether the item was a pull request before asking
+  whether its workspace was there, so an issue or a message about a change you
+  have checked out was offered the rebase from its own row and shown nothing
+  that said the branch was here. It follows the branch now, like the offer it
+  sits beside: what the marker reports is a change on this machine, and a forge
+  having filed a pull request about it is not that fact.
+- **Items arriving mid-refresh were filed under no branch**
+  ([§FS-008-attribution.2](../requirements.md#2-two-stages-one-engine),
+  [§FS-001-forge-interface.7](../requirements.md#7-a-fetch-runs-beneath-the-reading-never-in-front-of-it)).
+  Each project takes its place in the feed as its own sources answer, and that
+  landing did everything the full reload does except place the new items on
+  their branches — a pass the tree stopped doing for itself when the answer was
+  moved off the draw path. So everything a running refresh brought in sat under
+  *(not linked to a branch)*, and the count on the branch above undercounted,
+  until the whole run finished. The landing folds the placements too; it asks
+  the world nothing, which is why it belongs in the cheap half.
+- **The operations board lost your place, and the cursor could leave the
+  screen**
+  ([§FS-005-dispatch.15](../requirements.md#15-every-operation-is-visible-in-one-place),
+  [§FS-005-dispatch.15.1](../requirements.md#151-the-board-keeps-itself-current)).
+  A rebuild fires from the tick and from every refresh landing, and it kept
+  only the cursor's index — so a row appearing above it silently changed what
+  `Enter` and `o` acted on. The cursor now belongs to the execution root, which
+  is what a row of this board is. An operation is several lines, and `j`/`k`
+  moved the selection without moving the view, so the selected row could sit
+  off screen; the view follows it. A run *starting* on a root the board had no
+  row for writes no file the glance watches — the OS takes its lock and that is
+  the whole event — so the locks of roots without rows are probed too, and one
+  that came alive gets its row. The tick asked for a frame every two seconds
+  whether or not anything had moved; it now asks only when something did. `e`
+  on a live root whose tickets had all been filtered answered *No plan behind
+  this row*, and falls back to the plan the ledger knows for that root. And
+  finding each row's matter walked every project's feed once per row, rebuilding
+  every matter into a row each time — one walk answers them all.
+- **A project whose type declares a base per repository showed no branch a
+  distance, and was never offered the rebase**
+  ([§AR-004-forest.2](architecture/AR-004-forest.md#2-probes-not-declarations)).
+  Such a type writes that base as a template — `{branch}`, expanded per branch
+  workspace — and the forest carried it into the fold verbatim, so every
+  repository was measured against a ref literally called `{branch}`, which no
+  repository has. Every count came back unmeasurable, the checkout's total was
+  *nothing to ask* rather than a number, no branch row carried a distance, and
+  the quick action offered only on a branch that has fallen behind
+  ([§FS-004-quick-actions.6](../requirements.md#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase))
+  was therefore never offered on that project at all — silently, because a row
+  showing no count and a row that is up to date look the same. A declared base
+  that is still a template is passed over now, falling through to the project's
+  main branch and then to what the repository's own remote calls its default:
+  on the tree this was found in, one branch went from no count to
+  `33 behind (ce 17, ee 16)`, and twenty-four workspaces that had never been
+  measured are measured. The remote went the same way — it was the literal
+  `origin` in five places, and is read off each repository once where the
+  layout is already probed (the branch's own upstream, else the sole remote,
+  else `origin`), so a clone whose remote is called something else is fetched,
+  measured and replayed like any other, and the reports name the ref they used.
 - **A branch you had checked out was still "not linked to a branch"**
   ([§FS-008-attribution.2](../requirements.md#2-two-stages-one-engine)).
   The inbox measured whether an item's workspace was on disk by expanding the
@@ -784,6 +1034,21 @@ ships, the previous "latest" section moves verbatim to
   keeps one answer. The row still has the last word on a branch it also names,
   and a branch only the disk knows cannot widen what the project claims:
   identity is the row's alone (§FS-008-attribution.1).
+- **Moving the cursor in the inbox redrew at the price of a full attribution
+  pass.** Two counts a row shows — how many items a branch holds, and a
+  project's visible/unread/awaiting totals — were worked out while drawing,
+  and a cursor move redraws without rebuilding, so each keystroke paid for
+  them again. The branch count matched every item against every branch, and
+  the project totals walked the feed three times over; each walk rebuilds
+  every matter into a row, and each match joins an item's whole recorded
+  conversation into one string. Measured on a 46-item feed with 26 branches:
+  27 ms per branch row, about 273 ms for a screen holding ten of them. Both
+  are settled once when the view is rebuilt now, and a draw does no matching
+  and no counting
+  ([§AR-008-pipeline.2](architecture/AR-008-pipeline.md#2-attribute-and-merge)).
+  Placing an item also asks the matching engine once for the whole branch
+  table rather than once per branch, which is the engine's own ranking rather
+  than list order, and 46 items across 26 branches in 5.7 ms rather than 27.
 - **An item could be filed under a branch that merely resembled its own.** The
   inbox asked each branch in turn which rows matched it, so a pull request on
   `you/ABC-42-retry` was taken by `you/ABC-42` if that branch came first — both
@@ -950,6 +1215,154 @@ ships, the previous "latest" section moves verbatim to
 
 ### Changed
 
+- **A workspace missing one of the project's repositories is completed, not
+  called done**
+  ([§AR-004-forest.1](architecture/AR-004-forest.md#1-folds),
+  [§FS-004-quick-actions.7](../requirements.md#7-a-workspace-that-is-not-there-is-offered-the-checkout)).
+  A declared repository with no working tree on disk became visible last round
+  — every fold names it rather than quietly answering for fewer repositories
+  than you have — and what was left undecided was whether it should also
+  *fail*. It does not, in any fold over what is there: an exit code routes an
+  outcome to whoever acts next, and this one routes nowhere, since retrying
+  replays no tree that is not there, the missing one holds none of your change,
+  and the condition was as true before the command ran as after. `ephor
+  checkout` is where it does fail, because there it is exactly the outcome the
+  command was asked to change — so that is the exit code that answers *is this
+  workspace whole*. For it to answer that at all, `ephor checkout` on a
+  workspace that already exists now folds over the project's layout instead of
+  stopping at the directory: repositories already there are reported as already
+  there and left untouched, missing ones are made, and one that could not be
+  made exits `1`. A whole workspace still says *already checked out* and
+  changes nothing.
+
+- **A refresh landing places the project that landed, not every project**
+  ([§FS-001-forge-interface.7](../requirements.md#7-a-fetch-runs-beneath-the-reading-never-in-front-of-it),
+  [§FS-008-attribution.2](../requirements.md#2-two-stages-one-engine)).
+  Items arriving mid-refresh are filed under their branches as they land, and
+  that was done by re-running the whole site's placement pass on every arrival
+  — so a refresh over N projects paid the whole matching pass N times, and the
+  cheapest project's landing paid for the most expensive project's items. The
+  pass is scoped now, one implementation parameterised by what it answers for
+  rather than two that could file a row differently mid-scan and at the end: a
+  landing re-places its own project and leaves the rest of the site standing,
+  while the reload at the end of the run still places everything. Measured on a
+  seven-project cache — 228 items, 27 branch workspaces on the largest project
+  — a refresh drops from 2,009 placements to 228, about 15 ms of matching to
+  about 2 ms.
+
+- **A repository parked on the base counts toward the rebase onto main alone**
+  ([§FS-004-quick-actions.8](../requirements.md#8-a-branch-that-trails-its-own-published-copy-is-offered-the-rebase-onto-it)).
+  The copy-is-the-base duplication guard was all-or-nothing across the forest
+  while the copy-side count summed across it, so a workspace with one
+  repository on the change's branch and two parked on `master` tracking it —
+  the ordinary graal shape — showed both menu entries carrying the identical
+  number and doing the identical thing to the identical repositories. A
+  repository whose published copy is its base is now left out of the
+  copy-side sum entirely: its one distance belongs to the base count, the
+  copy entry counts and names only the repositories that trail a copy of
+  their own, and a checkout of nothing but parked repositories measures
+  nothing there and is offered only the rebase onto main. The standing fold
+  behind all of this also stopped re-deriving its own facts — the base is
+  resolved once and carried on the per-repository answer, one `for-each-ref`
+  reads branch, upstream and both distances at once, and presence on disk is
+  a path test rather than a subprocess
+  ([§AR-004-forest.1](architecture/AR-004-forest.md#1-folds)) — which cuts a
+  refresh landing on the inbox from ~8 git subprocesses per repository to ~3.
+
+- **Recipes and actions are one menu**
+  ([§FS-005-dispatch.1](../requirements.md#1-a-recipe-decides-which-items-deserve-work-and-what-to-ask-for),
+  [§FS-006-project-interface.9](../requirements.md#9-offers-the-projects-actions)).
+  What you could do about a row depended on which key you knew: `x` listed the
+  commands and `w` listed the work, and neither mentioned the other. `x` now
+  carries both — the recipes that apply to the item stand after the quick
+  actions, the project's offers and your own, each with the recipe's own icon
+  and a `→` naming the hand that would get it, resolved through the same six
+  steps the dispatch resolves, so an unavailable hand says why and a refused
+  one refuses the entry rather than being found out at the keystroke. Pressing
+  it hands the work over through the one path the work screen uses: same plan,
+  same ticket, same ledger entry. A configured action may now carry an
+  `agent` block — `brief`, and optionally `state` and `hand` — instead of a
+  `command`, which is a recipe under another name and lets a project write one
+  agent entry rather than an entry and a recipe that have to agree; an entry
+  with both, with neither, or asking for work under no `id` is refused when
+  the file is read. Work is offered only where it would work: never about a
+  finished item, and — where it edits the change — only where the change is on
+  this machine. The shipped `rebase` recipe drops its `kinds`/`roles`
+  selector, because the entry that dispatches it asks about a branch on disk
+  that trails its base and the two cannot be gated differently; a recipe whose
+  id the menu already carries is dropped from it, so a stale branch still
+  shows one rebase row and the recipe is what that row hands its conflict to.
+  The menu footer is built from the selected entry, and with no runner bound
+  the work is still offered — the ticket is written either way — with the
+  *workable* rung's own sentence where the hand would be.
+- **Every operation is visible in one place, and parked work resurfaces on
+  its own** ([§FS-005-dispatch.15](../requirements.md#15-every-operation-is-visible-in-one-place),
+  [§FS-005-dispatch.9](../requirements.md#9-work-that-stops-for-a-person-says-so-where-the-person-is-looking)).
+  Answering "what is ephor doing right now" meant visiting the work screen of
+  every item that might have an answer. `;` now opens a watch-only operations
+  board from any screen: rows are execution roots — the runtime locks one per
+  root, so two items in one branch workspace are one operation — with
+  liveness read from that lock by a non-blocking probe, never from a process
+  table, the held ticket from the run's own journal, the rest queued, a
+  `quiet` badge on a run that has written nothing for a while (silence is not
+  death: the OS releases the lock when a run dies), and a ticket claimed with
+  no run behind it shown as *claimed, not scheduled* beside the runner's own
+  release command. Work parked for a person keeps its row after the run
+  exits — the usual end of a parked ticket's run, since nothing else was
+  schedulable and parking writes no claim — and a run that died mid-slot
+  leaves its held ticket *waiting on you* rather than vanishing with the
+  lock; within one operation what waits on the reader lists ahead of what
+  runs, then claims, then the queue
+  ([§FS-005-dispatch.9](../requirements.md#9-work-that-stops-for-a-person-says-so-where-the-person-is-looking)).
+  The journal outlives every run and is believed accordingly: an assignment
+  no run released is held per invocation — fanout cannot mark a task free
+  while a sibling still runs it — and stops counting the moment the ticket's
+  own state moved on, so a crashed run's ticket never reads running under a
+  later run. A root whose `states.yaml` cannot be read says less instead of
+  guessing: running and claimed still show, nothing is called queued or
+  counted finished on a machine that is not there. `Enter` goes to the
+  matter, `o` opens a live run's
+  dashboard, `Esc` returns exactly where the reader was; the background
+  refresh reports on the board additionally to the header line it keeps
+  ([§FS-001-forge-interface.7](../requirements.md#7-a-fetch-runs-beneath-the-reading-never-in-front-of-it)).
+  Plan state and assignee read straight off the plan files as always — the
+  floor that stays with no runner bound, when the board is the refresh row
+  alone — and the runner's own `list --json` sharpens them where the binary
+  is there: it also surfaces a subtask a live run holds, which the plan read
+  alone cannot see, and it is asked only about roots that hold an operation
+  — an idle root costs stats, never a fork. The tick's change gate is the
+  journal and the lock, one stat each — never a sweep of the agent logs,
+  which grow for the life of a project and are read only to clock the
+  `quiet` badge on a live row. The side effect reaches past the board: work state used to be
+  re-read only on refresh landings and dispatch, and now an mtime-gated tick
+  between key reads re-reads what actually moved — so a ticket the runtime
+  parks for you resurfaces the moment it parks
+  ([§FS-005-dispatch.15.1](../requirements.md#151-the-board-keeps-itself-current)),
+  which is §FS-005-dispatch.9 finally holding without a refresh.
+- **A project says who does which action, and which hands may be used on it at
+  all** ([§FS-006-project-interface.9](../requirements.md#9-offers-the-projects-actions),
+  [§FS-005-dispatch.14](../requirements.md#14-who-does-the-work-is-chosen-and-defaulted-per-project)).
+  Every ticket ephor wrote went to whoever the runtime would have picked
+  unasked, so a trivial replay and the conflict that needed judgment were the
+  same request — and the only way to change that was to point the runtime
+  itself somewhere else, for everything. `work.hands` now maps an action's id
+  to a hand from the roster (`{ "default": "sonnet", "rebase": "luna:high" }`),
+  at site level and under `projects.<id>.work`, and the seven steps that answer
+  *who does this* run narrow before broad: what you picked for this dispatch,
+  the `hand` the recipe carries, the project's entry for this action, the
+  project's default, the site's entry for this action, the site's default,
+  then the runtime's own unasked pick. It is the runtime's resolution order mirrored, so the two
+  cannot disagree about one configuration. The long form
+  `{ "agent", "model", "effort" }` stays legal for a pair the runtime's
+  registry never listed — a proxy serving a model it does not know — and is
+  accepted with a note, since ephor cannot prove it invalid; a name the roster
+  does have is checked, and a typo or an undeclared effort is refused before
+  anything is written. `permitted_hands` narrows a project to the hands that
+  may work on it, for a repository under a policy about which models may see
+  its code: anything outside it is refused with that reason wherever it was
+  named, never quietly replaced. With no table anywhere nothing changes, and
+  with no runtime on `PATH` a configured hand resolves to nothing, says so in
+  the workable rung's own words, and the ticket is written all the same.
 - **A refresh no longer takes the screen**
   ([§FS-001-forge-interface.7](../requirements.md#7-a-fetch-runs-beneath-the-reading-never-in-front-of-it)).
   `r` ran the whole fetch on the thread that draws and reads keys, so the
@@ -1026,6 +1439,26 @@ ships, the previous "latest" section moves verbatim to
   extension has been uninstalled for months or a laptop is briefly off the VPN.
 - `ephor status` says what a failed provider cost — `NO DATA`, or that the
   items shown are the last good ones.
+- **The rebase is offered wherever there is a branch**
+  ([§FS-004-quick-actions.6](../requirements.md#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase)).
+  Both replays were offered only on pull requests, and only on projects whose
+  registry row named a `main_branch` — so an issue about the same change, a
+  status a source filed about it, and every branch row in the detail view got
+  nothing, and a project that names no main branch got nothing at all. What the
+  offer is about is a branch on disk that trails something, never the kind of
+  row that mentions it: any row resolving to a branch workspace now carries
+  both entries, and so does the branch row itself, which is where the `13
+  behind · ↓2` a reader is reacting to is actually written — `x` on it opens
+  the same menu, built by the same code, carrying ephor's own offers only,
+  since a source's, a project's and a person's entries are selected against an
+  item a branch row does not have. The two replays are also gated apart: the
+  one onto main has to name the branch it replays onto and is offered only
+  where the project declares one, while the one onto the branch's published
+  copy resolves its ref inside each repository and needs no such name, so a
+  project with no `main_branch` is offered it — and its rows show `↓2` alone
+  rather than nothing at all. Where a branch cannot be resolved to a checkout
+  the offer is withheld rather than made and left to fail on the keystroke
+  ([§FS-004-quick-actions.2](../requirements.md#2-offered-only-where-it-would-work)).
 
 ## 2. [0.1.0] — 2026-08-11
 

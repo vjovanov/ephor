@@ -226,7 +226,11 @@ Three things follow:
    tell a running refresh from a completed one reads a half-filled feed as the
    whole answer — §6's failure arriving by another road, an empty section that
    means "not asked yet". So the header names the run and its progress while
-   it is in flight, and the reader is told what it lost when it ends.
+   it is in flight, and the reader is told what it lost when it ends. Where a
+   screen collects every operation in one place (§FS-005-dispatch.15), the
+   run appears there *additionally* — the header line stays where it is,
+   because this point is about progress on the screen being read, and the
+   reader entitled to it is the one who never visits the board.
 3. **The reader's place is kept.** Rows arriving under a moving cursor must
    not change what the next key would act on: a selection follows the matter
    it was on rather than the position that matter happened to occupy.
@@ -494,13 +498,38 @@ wrong and not offering the move is the whole of what this section exists to
 stop, and here ephor is not even relying on a forge to tell it: the fact is on
 disk, in the reader's own checkout.
 
-So a pull request whose branch workspace is on disk and trails its main branch
-is offered the rebase, and no other item is
-([§2](#2-offered-only-where-it-would-work)): an item linked to no branch has
-nowhere to rebase, a branch that trails by nothing has nothing to replay, and a
-workspace that is not there is a checkout question
+So **a checkout that trails its project's main branch is offered the rebase
+onto that branch**. Which base this is about has to be said now that there are
+two: this one replays onto the branch the project declares as its main, and it
+is offered only where the project declares one — an entry has to name what it
+is about to replay onto, and where nothing names a main branch there is no
+answer to put in it. The other rebase
+([§8](#8-a-branch-that-trails-its-own-published-copy-is-offered-the-rebase-onto-it))
+resolves its ref inside each repository and so needs no base named anywhere:
+the two are gated apart, and a project that declares no main branch is still
+offered the replay onto its own published copy.
+
+What carries the offer is a branch on disk that trails something, not the kind
+of row that mentions it. **Any item that resolves to a branch workspace** is
+offered it — a pull request, an issue, a status a source filed about the same
+change — because the fact being acted on belongs to the checkout, and the item
+is only how the reader arrived at it. Restricting it to pull requests said that
+a branch is stale only when a forge has an opinion about it, which is the
+inverse of this section's whole argument: the fact is on disk.
+
+**And the branch rows carry it themselves**, with no item behind them at all.
+The row saying `13 behind` is where a reader looking at a stale branch is
+actually standing, and an offer reachable only by first finding something a
+source filed about that branch is an offer most readers never reach — including
+on every branch nothing has been filed about yet.
+
+Offered only where it would work ([§2](#2-offered-only-where-it-would-work)):
+something that resolves to no branch has nowhere to rebase, a workspace that is
+not there is a checkout question
 ([§7](#7-a-workspace-that-is-not-there-is-offered-the-checkout)) rather than a
-rebase one.
+rebase one, and a branch that trails by nothing has nothing to replay. Where a
+branch cannot be resolved to a checkout on disk the offer is withheld rather
+than made and left to fail on the keystroke.
 
 It is git and nothing else. Fetch, replay the branch on the base, say what
 moved — no forge, no vendor CLI, and no knowledge of what the project is built
@@ -557,6 +586,69 @@ the key the reader presses and the command a state machine runs are the same
 operation, since two of them would eventually disagree about what a checked-out
 workspace is.
 
+### 8. A branch that trails its own published copy is offered the rebase onto it
+
+Main moving under a branch is one thing that happens to it. The branch moving
+under the reader is another: a teammate pushes to it, a second machine of their
+own does, the forge writes something onto it — and the checkout on this disk is
+behind the copy everybody else can see. ephor measures that distance too, per
+repository, and shows it on the branch row beside the first one. Then, again, it
+leaves the reader to go elsewhere and do something about it.
+
+So **a branch whose published copy carries commits its checkout does not is
+offered the rebase onto that copy**, beside the rebase onto main
+([§6](#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase)). Two
+facts, two entries, two operations: one replays what the reader has onto where
+the project went, the other onto where their own branch already is.
+
+A branch's published copy is what was last pushed of it, read per repository
+from that repository's own `HEAD` rather than from the name of the directory the
+workspace sits in — a repository need not be on the branch its workspace is
+named for. Where git records where the branch is published, that is the copy;
+where it does not, the remote's branch of the same name is; and tracking
+configuration naming the repository's base records where the branch was *cut*,
+not where it is published, so it publishes nothing
+(§DA-003-upstream-is-the-published-copy) — and a base nobody could resolve
+cannot clear the record of naming it, so there too only a pushed copy of the
+branch's own name counts. The last rule is what keeps the two
+entries from being one entry twice, and the middle one is what makes the offer
+worth having at all: a branch that was pushed and has no tracking configuration
+is exactly what `git worktree add -b` leaves behind, and in such a checkout bare
+`git rebase` refuses to run.
+
+Offered only where it would do something
+([§2](#2-offered-only-where-it-would-work)), which here is five refusals. An
+item linked to no branch has nowhere to rebase, and a workspace that is not on
+disk is a checkout question
+([§7](#7-a-workspace-that-is-not-there-is-offered-the-checkout)). A branch level
+with its copy has nothing to replay. A branch never pushed has no copy at all —
+and *nothing published* is an answer, given in the same register as a repository
+already current and never as a failure: the reader is told what was found, not
+what went wrong. And a repository whose published copy **is** the base carries
+nothing of its own here — a branch parked on the main branch and tracking it
+has one distance wearing two names, and two menu entries counting one distance
+is the duplication the resolution above exists to prevent — so its distance
+belongs to the rebase onto main alone, and a checkout of nothing but such
+repositories is offered only that. The offer stands where some repository
+actually trails a copy that is not its base — one on a change's branch while
+another sits parked on the base — counting those repositories alone, and the
+answer says what happened to each, because a forest is not one branch.
+
+That per-repository answer is the difference this makes to the fold. The rebase
+onto main is one branch name for the whole checkout; the rebase onto the
+published copy is a different ref in every repository, resolved from each
+repository's own `HEAD`, and a repository that has published nothing is reported
+as such while the rest replay. Everything else is the rebase onto main's and
+unchanged: git and nothing else, an answer per repository, uncommitted work
+reported and left alone, a conflict handed over rather than decided.
+
+One property has to be said plainly, because it is why this is not simply
+*pull*. Replaying a branch onto its own published copy rewrites commits that are
+already published, so that copy can no longer be fast-forwarded and landing the
+result means a force push under a lease. The rebase onto main has exactly the
+same property, and the same answer: the replay itself never pushes, and the push
+is a decision belonging to whoever makes it.
+
 ## FS-005-dispatch: what ephor watches, it can hand to an agent runtime
 
 A watch that only watches hands its reader a list. Nearly every row on that
@@ -603,6 +695,51 @@ it ships quick actions
 a problem ephor already recognizes should not need to be described to it
 before anything can be done about it. Configuration adds recipes, and a
 configured recipe that reuses a shipped one's name replaces it.
+
+**A recipe is an action.** The recipes and the quick actions are one menu, not
+two lists behind two keys: *what can I do about this row* has one answer, and
+which half of it the reader sees does not depend on which key they happened to
+learn. A recipe stands among the entries a source, a project and the reader
+wrote
+([§FS-006-project-interface.9](#9-offers-the-projects-actions)),
+selected by the same language, ordered by the same provenance, and refused in
+the same sentence — marked as work to hand over and saying who would get it
+([§14](#14-who-does-the-work-is-chosen-and-defaulted-per-project))
+before the key is pressed, because that is the difference the reader is
+choosing between: an entry that runs something here, and an entry that opens a
+ticket asking somebody else.
+
+It runs both ways. An entry may carry a **brief instead of a command** — the
+same selector, the same brief, the same hand — which is how a project offers
+agent work of its own without writing a separate list; such an entry is a
+recipe under another name, and is dispatched as one. And an entry is offered
+only where it would work
+([§FS-004-quick-actions.2](#2-offered-only-where-it-would-work)):
+work about a change is offered where the change is on the machine, and never
+about an item that is finished
+([§6](#6-dispatch-is-offered-where-it-would-work-and-refuses-where-it-would-not)).
+
+Where an entry already in the menu carries a recipe's name, that recipe is
+what the entry hands over when it cannot finish, not a second thing to do
+about the row: the key that replays a branch and the ticket about the conflict
+it stops at are one operation under one name
+([§FS-004-quick-actions.6](#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase),
+[§12](#12-work-an-algorithm-can-finish-does-not-start-with-a-model)), and a
+menu offering both would be asking the reader to tell two spellings of one
+thing apart. Because they are one name, they are gated as one: what a recipe
+applies to and what the entry that dispatches it is offered on cannot be
+different sets, or the entry hands over work its own recipe says does not
+apply here.
+
+Handing work over from the menu is the same handing-over the work screen does
+— one plan, one ticket, one ledger entry
+([§3](#3-one-rhei-per-item-one-ticket-per-dispatch),
+[§4](#4-the-ledger-is-ephors-record-and-never-the-truth-about-the-work)) —
+because where the reader pressed is not a fact about the work. And with no
+runner bound the entries are still there: a ticket is written whether or not
+anything can run it, and where the entry would say who gets it, it says
+instead that nobody can be asked
+([§14](#14-who-does-the-work-is-chosen-and-defaulted-per-project)).
 
 ### 2. The ticket carries what ephor knows, not a link to it
 
@@ -878,6 +1015,221 @@ posting, edited or as it stands, exactly as a reaction is posted today; on
 a channel that does not, the proposal is what the person copies — a stated
 degrade (§REQ-001-boundary.1), not a failure.
 
+### 14. Who does the work is chosen, and defaulted per project
+
+Work is handed to an agent carrying a model at an effort, and two of those
+three follow from the first: which models an agent can carry and which
+efforts it declares are facts about the agent, not free choices beside it.
+A chooser built as `agent × model × effort` would be mostly cells nobody can
+run, and ephor has no way to know which — the runtime does. So the choice has
+one axis the reader picks and one dependent on it, and the set of choices is
+the **roster**: the runtime binding's own enumeration of who can be asked,
+read from the binding at the moment of asking rather than kept as a list in
+ephor's configuration, because a copy is wrong the first time an agent or a
+model is added on the other side
+(§DA-004-roster-is-asked-not-configured). Every id on the roster is unique —
+the runtime's model and agent namespaces are separate, and a model profile
+may claim an agent's very name, in which case the profile holds it and the
+agent stands alone under a marked spelling of its own — because one name
+over two rows can address only one of them.
+
+One entry is a **hand**: a name, the agent it summons and the model that
+agent will carry — shown together, because a reader choosing the name is
+choosing both — the **efforts** the entry declares, and whether it is
+available. An entry may declare no efforts at all, which is an answer rather
+than a gap: such a hand is simply asked plainly, in either spelling, because
+it has no effort an ask could drop. A hand that does declare efforts is
+always asked at one of them. A choice that names none is **completed** where
+the hand declares exactly one — a single declared effort is a fact about the
+hand, not a choice left open, and the completion is said in a note — and
+**refused** where it declares several, with the efforts listed, before
+anything is written: the runtime's two spellings do not agree on what an
+effort-less ask would mean — one drops the effort silently, the other lets
+the state machine's own choice fall in and fails outright where the hand
+does not declare it — and neither answer is the reader's choice.
+Configuration names a hand by its id and nothing else; the binding's own
+spelling of agent, mode, provider and model is the binding's, so a
+configuration written under one runtime reads unchanged under another
+(§REQ-001-boundary.1).
+
+An unavailable hand is **shown with its reason, never hidden**. This is the
+opposite of what a menu does (§FS-004-quick-actions.2), and deliberately so:
+a menu entry is an offer, and an offer that cannot work costs a keystroke —
+but the roster is the answer to "who could I ask", and a hand that silently
+vanished because its agent left `PATH` looks exactly like a hand that never
+existed, which is the one confusion a reader debugging a dispatch cannot
+resolve from the screen. The reason is computed where the roster is read —
+the agent's command is looked for, never spawned to fail — and it is one
+sentence beside the entry, the same sentence everywhere that hand appears.
+The roster is reportable before anything depends on it: `ephor doctor` and
+`ephor capabilities` print each hand, what it resolves to, and why an
+unavailable one is unavailable (§FS-010-doctor.2).
+
+**The hand for a piece of work resolves in seven steps**, each displacing
+the ones after it: what the reader picked for this dispatch alone; the pin
+the action or recipe itself carries; the project's hand for this action id;
+the project's default for everything; the site's hand for this action id;
+the site's default; and, where nobody chose at all, whatever the binding
+would pick unasked. The order mirrors the
+binding's own resolution deliberately, so ephor's answer and the runtime's
+cannot come to disagree about what one configuration means. A project may
+also narrow the roster — say which hands may be used on it at all, which is
+what a repository under a policy about which models may see its code needs —
+and a hand outside the narrowing is refused with that reason, never silently
+dropped.
+
+**A chosen hand binds in one of two spellings, never both.** A hand that
+carries a model is written onto its ticket, at dispatch, in the runtime's
+own per-ticket execution line (§REQ-001-boundary.1) — each ticket carrying
+its own choice, so two tickets in one plan can go to two hands and the
+choice survives every later run. A hand that names an agent and no model of
+its own — which is every hand on a machine whose runtime settings declare
+no model profiles — has no line in the plan language, so it rides the run
+instead: the run invocation carries the choice as the runtime's own per-run
+agent flags, the agent and the effort where one was settled, resolved again
+at the moment the run is invoked — the same moment the runtime reads its
+own configuration, so the two answers cannot drift apart. The two per-ticket
+lines rank differently against a run's flags, and ephor follows the
+runtime's own ranking exactly. A ticket carrying the full execution line
+cannot be re-aimed: the runtime resolves such a ticket from its line alone,
+and the run's agent flags are invisible to it — only a per-run model choice
+reaches past that line. A ticket carrying a model alone can be: the run's
+agent flags supply its carrier, and one run advances several tickets,
+including one a person pinned by hand. So the flags ride a run only where
+they can re-aim nothing — every ticket the run would advance and that has
+no line of its own resolves to the same spelling, and none pins a bare
+model. Where one plan's open tickets do not agree, that plan runs with no
+flags and the reader is told the hand went unbound for that run; plans that
+agree differently are run separately, each under its own spelling. A ticket
+somebody has claimed is not the run's to advance at all — a claim makes the
+runtime skip it (§FS-005-dispatch.15) — and enters none of this. The
+cheaper spelling is always available to the reader: a
+model profile declared in the runtime's own settings turns an agent-only
+hand into a model hand, and the ticket line then carries it everywhere,
+with no flags involved at all.
+
+With no runtime bound, or a bound one not on `PATH`, the roster is empty and
+says so in the *workable* rung's own words (§FS-006-project-interface.10):
+who can be asked is the runtime's knowledge, and where nobody can run work
+there is nobody to ask. A runtime settings file that exists and does not
+parse empties the roster too, in a sentence of its own that names the file:
+a roster read around it would be a list missing whatever the person just
+added, which is worse than no list. Nothing else changes — every other rung
+resolves, and tickets are still written and read on disk
+(§REQ-001-boundary.1).
+
+### 15. Every operation is visible in one place
+
+The watch can say what is being done about any one item — the badge on its
+row, the work screen behind `w` — but "what is ephor doing right now" should
+not require visiting every row that might hold a piece of the answer. So
+there is an **operations board**: one screen, reachable from anywhere in the
+interface, holding every operation beneath the reading — each live run, each
+claim somebody holds, each ticket waiting on a person, and the refresh
+itself, which already reports in the header of the screen being read and
+appears here *additionally* (§FS-001-forge-interface.7). It is where
+§FS-005-dispatch.9 pays off at the scale of the whole watch: work that
+stopped for a person is one glance away wherever the person happens to be
+looking — and within one operation, what asks something of the reader is
+listed ahead of anything else its work is doing — a parked question first,
+then what a dead run left holding — then what runs, then claims, then the
+queue.
+
+**Liveness is read from the runtime's artifacts, never from a process
+table.** The same reasoning that keeps work state out of the ledger
+(§FS-005-dispatch.4) applies to whether work is running at all: the runtime
+leaves the truth on disk. It holds a lock on an execution root for exactly
+as long as a run is live there, and the operating system lets go of that
+lock when a run dies, however it dies. The board probes the lock without
+ever waiting on it — the runtime acquires it blockingly, so a probe that
+queued would park the watch behind the very run it is asking about. Which
+tickets a live run holds is read from the journal and the logs the run
+writes as it works.
+
+**A row is an execution root, not a ticket.** The runtime schedules one run
+per root, and ephor's work root is per branch workspace — so two items whose
+work lives in one workspace are one operation, and a ticket written into a
+root a run already holds is shown as **queued**, never as running: a second
+run there would wait for the first. And a ticket is a ticket at whatever
+depth the runtime nests it — a subtask parked three headings deep is as much
+an operation as the ticket it was split from, run or no run.
+
+**A claim is not a run.** An assignee on a ticket is written when somebody
+takes it, and its effect is that the runtime skips it: it says *claimed and
+unschedulable*, never *live*. A ticket with an assignee on a root where no
+run holds the lock is its own flavour of row — **claimed, not scheduled** —
+shown with the bound runner's own command for releasing the claim. The board
+reports it; it does not act on it. And under a live run a claim stays a
+claim: the run skips it, so *queued* would promise a turn that never comes.
+
+**Parked work outlives the run that parked it.** The usual end of a run
+that parks a ticket is the run exiting: nothing else was schedulable, so
+the lock goes free — and the runtime wrote no claim on the way out, since
+parking is a transition, not a taking. The ticket is waiting on the reader
+all the same (§FS-005-dispatch.9), and it keeps its row — **waiting**,
+ahead of anything else its operation is doing — whether the run that parked
+it is still live, exited, or died. A root holding such a ticket is an
+operation with nothing running in it, exactly as a root holding a claim is.
+
+**Silence is a badge, not a verdict.** A long tool call is legitimately
+quiet, and the lock — not the last write — is the liveness signal. A live
+run that has written nothing for a while carries a **quiet** badge and
+nothing more; a run that died has released its lock, and its root simply
+stops being a live row — though not always a row: a ticket a dead run was
+still holding mid-slot is read out of the journal that run left behind and
+keeps a row of its own, **dropped by a run that died** — beside a parked
+ticket, deliberately not as one: nobody else will move either, but a parked
+ticket asks a question about the work, and a dropped one asks for the run
+back. The artifacts tell the two apart without guessing — parked is the
+machine's gating word on the ticket's own state, dropped is the journal's
+unreleased slot under a lock nobody holds. The journal
+outlives every run, so what it says is held is believed only while the
+world still agrees: an assignment no run ever released stops counting the
+moment the ticket's own state says it moved on, and is never read as
+running under a run that came later.
+
+**Watching only, and deliberately so.** The board starts nothing, stops
+nothing, and intervenes in nothing. Interfering with a live run, and
+starting one beneath the screen, are a later section: both need a summons
+mode this section does not have and a channel to the run that exists only
+while a run serves one, and a board that hinted at either would be promising
+what it cannot do.
+
+**With no runtime bound, the board is the refresh row** — and that is the
+board being right, not broken (§REQ-001-boundary.1): an operation is a run,
+and where nothing can run there are none, said in the workable rung's own
+words (§FS-006-project-interface.10). The tickets themselves stay readable
+exactly as everywhere else in dispatch: work state is read from the plan
+files on disk, that reading is the floor and is never removed, and where the
+bound runner itself can be asked for a sharper listing, its answer may
+refine what the files said — it never replaces them. And a work root whose
+own state machine cannot be read is reported at the same altitude: liveness,
+running, claims, and what a dead run dropped are facts the lock, the
+journal, and the plans carry on their own, and the board still says them —
+but nothing there is called queued or waiting and nothing is counted
+finished, because those are the machine's words and the machine is not
+there to say them. The row itself says the machine could not be read, in so
+many words: a count left silently at zero would read as nothing done, which
+is exactly the guess the withholding exists to avoid.
+
+#### 15.1 The board keeps itself current
+
+Nothing here is something the reader has to ask for twice: work that moves
+on disk — a ticket advanced, a question parked, a verdict written, a run
+starting or dying — surfaces on its own within moments, not at the next
+refresh. This is not the refresh (§FS-001-forge-interface.7) wearing a new
+name: a refresh asks the world's forges and costs what they cost, while this
+watches files ephor already knows by name and asks nothing of any forge
+(§GOAL-005-costless). It is cheap by construction — nothing is re-read while
+nothing has changed, a timestamp answers that, and the timestamp asked is
+one the runtime moves on every slot it takes or releases, never a sweep of
+everything it ever wrote; the bound runner is asked to list its plans only
+about a root that holds an operation, and nothing is ever read while a
+frame is being put on screen — and it holds everywhere work is
+shown, not only on the board: a ticket the runtime parks resurfaces on the
+reader's rows when it parks (§FS-005-dispatch.9), instead of waiting for a
+refresh that was never going to be about it.
+
 ## FS-006-project-interface: a project and ephor meet over one interface, in three homes
 
 ephor requires capabilities of a project, never artifacts in it
@@ -1046,6 +1398,55 @@ project's offers, then the person's own — and where two entries share an id,
 the person's beats the project's beats the shipped one. An offer is invoked
 by a person, runs as a summons (§3), and is refused with its reason where
 its requirements do not hold (§FS-004-quick-actions.2).
+
+**Who does an action is the project's to default.** Work that needs judgment
+goes to a hand (§FS-005-dispatch.14), and `work.hands` maps an action's id to
+the one that does it — `{ "default": "sonnet", "rebase": "luna:high",
+"fix-gate": "gpt-5:high" }` — with `default` answering for every id the table
+does not name. The id is the menu's own, so an offer, a configured action and
+a recipe are all named the same way and a project learns no second vocabulary.
+The table exists per project and at site level, because the alternative — one
+hand for everything — is either the deep hand on every trivial replay or the
+cheap one on the conflict that actually needed judgment, and that choice is
+being made today anyway, silently, by whatever the runtime would pick.
+
+A hand is named `<hand-id>[:<effort>]`, both the roster's own words
+(§FS-005-dispatch.14). The long form `{ "agent", "model", "effort" }` stays
+legal for a pair the runtime's registry never enumerated — a proxy serving a
+model it does not list — and is **accepted with a note, never refused**: ephor
+cannot prove such a pair invalid, and refusing it would make ephor's
+configuration a smaller world than the runtime's, which sends the person back
+to configuring the runtime directly and defeats the table. A name the roster
+does list is checked against it: an effort the hand does not declare is
+refused with the ones it does, and a name carrying no effort is settled by
+what the hand declares — completed, refused, or asked plainly
+(§FS-005-dispatch.14).
+
+The project's table is read before the site's, each narrow before broad: this
+action's id, then `default`, then the site's the same way. That is the middle
+of the seven steps §FS-005-dispatch.14 sets, and neither end moves — what the
+reader picked for this dispatch alone still displaces every table, and what
+nobody chose at all is still the runtime's to pick unasked.
+
+**A project may narrow the roster.** `work.permitted_hands` lists the hands
+that may be used on it at all, which is what a repository under a policy about
+which models may see its code needs. A hand outside the list is refused with
+that reason wherever it was named — the project's own table, the site's, the
+pin an action carries, the reader's choice at the moment of asking — and never
+silently dropped or silently replaced, because a policy that fails quietly is
+indistinguishable from a typo and the person would learn which it was from the
+other side. The check is against the name, not against the roster, so it holds
+with no runtime bound too. A hand spelled out in full is refused under a
+narrowing for the same reason a name outside it is: nothing in the list
+authorized it. What a narrowing cannot bind is the runtime's own unasked pick,
+so a project that narrows and names no `default` is told that much.
+
+Absence is the ordinary case: with no table anywhere nobody is named and the
+runtime picks exactly as it does now. With no runtime bound there is no roster
+to name a hand from, so a configured hand resolves to nothing and says so in
+the *workable* rung's own words (§10) rather than failing the dispatch — the
+ticket is written as it would have been, because who does the work is not what
+makes a ticket (§FS-005-dispatch.4).
 
 ### 10. Capability, rung by rung
 

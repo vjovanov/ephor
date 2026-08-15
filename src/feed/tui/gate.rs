@@ -45,7 +45,7 @@ impl GateScreen {
     }
 
     pub fn footer(&self) -> &'static str {
-        " j/k scroll  x actions  o open  esc back"
+        " j/k scroll  x actions  o open  ; ops  esc back"
     }
 
     pub fn handle_key(&mut self, code: KeyCode) -> Action {

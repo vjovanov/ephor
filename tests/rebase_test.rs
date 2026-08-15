@@ -140,6 +140,71 @@ fn uncommitted_work_stops_it_rather_than_being_stashed() {
     );
 }
 
+/// A repository the project declares and the disk has not got is named in the
+/// answer and changes no exit code (§AR-004-forest.1): the replay did what it
+/// was asked of every repository that is there, and the missing tree is a
+/// question for `ephor checkout` rather than an outcome of this run
+/// (§FS-004-quick-actions.7). A machine reading the code alone sends this to
+/// `land`, and the report it was handed says which repository is not here.
+#[test]
+fn a_declared_repository_that_is_not_on_disk_does_not_fail_the_rebase() {
+    let tmp = tempdir();
+    let template = write_template(tmp.path());
+    let root = tmp.path().join("widget");
+    write_registry(
+        &tmp.path().join("workspaces.json"),
+        &serde_json::json!({
+            "project_types": base_project_types(&template),
+            "hook_sets": [],
+            "projects": [required_project(&root)],
+        }),
+    );
+
+    // The project type declares `app`, `plugins` and `docs-site`; this
+    // workspace holds the first and nothing else — the ordinary shape of a
+    // poly-repo checkout somebody made by hand.
+    let ws = root.join("feature");
+    std::fs::create_dir_all(&ws).unwrap();
+    let origin = tmp.path().join("app.git");
+    std::fs::create_dir_all(&origin).unwrap();
+    git(&origin, &["init", "--initial-branch=master", "-q"]);
+    git(&origin, &["config", "user.email", "t@example.com"]);
+    git(&origin, &["config", "user.name", "t"]);
+    commit(&origin, "shared.txt", "one\n", "one");
+    let app = ws.join("app");
+    let status = Command::new("git")
+        .args(["clone", "-q"])
+        .arg(&origin)
+        .arg(&app)
+        .stderr(Stdio::null())
+        .status()
+        .unwrap();
+    assert!(status.success());
+    git(&app, &["config", "user.email", "t@example.com"]);
+    git(&app, &["config", "user.name", "t"]);
+    git(&app, &["checkout", "-q", "-b", "feature"]);
+    commit(&app, "mine.txt", "mine\n", "mine");
+    commit(&origin, "theirs.txt", "theirs\n", "master moves");
+
+    ephor_cmd()
+        .env("EPHOR_REGISTRY", tmp.path().join("workspaces.json"))
+        .args([
+            "rebase",
+            "--project",
+            "widget",
+            "--onto",
+            "master",
+            "--checkout",
+        ])
+        .arg(&ws)
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Replayed onto `origin/master`"))
+        .stdout(predicates::str::contains("## plugins"))
+        .stdout(predicates::str::contains("## docs-site"))
+        .stdout(predicates::str::contains("No working tree here"));
+}
+
 #[test]
 fn a_directory_that_is_not_a_checkout_is_refused_by_name() {
     let tmp = tempdir();

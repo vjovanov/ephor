@@ -32,17 +32,27 @@ pub(crate) struct WorkScreen {
     pub item: Item,
     status: Option<WorkStatus>,
     offers: Vec<Offer>,
+    /// Why nothing here can run a plan, where nothing can — the runtime rung's
+    /// own sentence (§AR-005-capabilities.2), handed in because the screen has
+    /// to know before it advertises the key, not after it is pressed.
+    refusal: Option<String>,
     selected: usize,
     scroll: u16,
     viewport: u16,
 }
 
 impl WorkScreen {
-    pub fn new(item: Item, status: Option<WorkStatus>, offers: Vec<Offer>) -> Self {
+    pub fn new(
+        item: Item,
+        status: Option<WorkStatus>,
+        offers: Vec<Offer>,
+        refusal: Option<String>,
+    ) -> Self {
         WorkScreen {
             item,
             status,
             offers,
+            refusal,
             selected: 0,
             scroll: 0,
             viewport: 0,
@@ -54,8 +64,17 @@ impl WorkScreen {
         format!(" ephor — work — {title}")
     }
 
+    /// The keys this screen can act on. `R` is dropped where no runtime is
+    /// bound: writing the ticket and running it are different capabilities,
+    /// and a footer that teaches a key nothing can answer spends the reader's
+    /// keystroke to refuse them (§FS-004-quick-actions.2). Everything else on
+    /// this screen goes on working with nothing bound — the plan is written,
+    /// read, reopened and edited either way (§FS-005-dispatch lead).
     pub fn footer(&self) -> &'static str {
-        " j/k move  enter/1-9 open work  s reopen  R run the runtime  e read the plan  o browser  esc back"
+        match self.refusal {
+            Some(_) => " j/k move  enter/1-9 open work  s reopen  e read the plan  o browser  ; ops  esc back",
+            None => " j/k move  enter/1-9 open work  s reopen  R run the runtime  e read the plan  o browser  ; ops  esc back",
+        }
     }
 
     fn plan(&self) -> Option<PathBuf> {
@@ -102,15 +121,19 @@ impl WorkScreen {
             },
             // This item's plan, not everything the root holds: the reader is
             // on one item, and the root may carry another item's work about
-            // the same checkout.
-            KeyCode::Char('R') => match &self.status {
-                Some(status) => Action::RunWork {
+            // the same checkout. Refused here rather than by handing the
+            // terminal over to a command that cannot start: the footer already
+            // stopped teaching the key, and this is what answers a reader who
+            // knew it anyway (§AR-005-capabilities.2).
+            KeyCode::Char('R') => match (&self.refusal, &self.status) {
+                (Some(refusal), _) => Action::SetMessage(refusal.clone()),
+                (None, Some(status)) => Action::RunWork {
                     root: status.root.clone(),
                     checkout: status.checkout.clone(),
                     plan_id: status.plan_id.clone(),
                     label: self.item.title.clone(),
                 },
-                None => Action::SetMessage("No work to run yet".to_string()),
+                (None, None) => Action::SetMessage("No work to run yet".to_string()),
             },
             KeyCode::Char('e') => match self.plan() {
                 Some(plan) => Action::ReadPlan(plan),
@@ -331,6 +354,8 @@ mod tests {
                 state: Some("done".to_string()),
                 finished: true,
                 waiting: false,
+                assignee: None,
+                pinned: None,
                 verdict: Some("done — the change is right".to_string()),
             }],
             changes: if stale {
@@ -371,7 +396,7 @@ mod tests {
     #[test]
     fn the_screen_says_what_was_asked_what_it_reached_and_what_else_could_be() {
         let shown = offers();
-        let screen = WorkScreen::new(item(), Some(status(true)), offers());
+        let screen = WorkScreen::new(item(), Some(status(true)), offers(), None);
         let text = text(&screen);
         assert!(text.contains("forge-demo-17.rhei.md"), "{text}");
         assert!(text.contains("fix-gate-1"), "{text}");
@@ -394,7 +419,7 @@ mod tests {
 
     #[test]
     fn an_item_with_no_work_still_shows_what_could_be_asked_for() {
-        let screen = WorkScreen::new(item(), None, offers());
+        let screen = WorkScreen::new(item(), None, offers(), None);
         let text = text(&screen);
         assert!(text.contains("nothing has been handed over"), "{text}");
         assert!(text.contains("what can be asked for"), "{text}");
@@ -403,7 +428,7 @@ mod tests {
     #[test]
     fn keys_dispatch_by_number_and_refuse_what_there_is_nothing_to_do() {
         let ids: Vec<String> = offers().into_iter().map(|o| o.recipe.id).collect();
-        let mut screen = WorkScreen::new(item(), None, offers());
+        let mut screen = WorkScreen::new(item(), None, offers(), None);
         match screen.handle_key(KeyCode::Char('2')) {
             Action::DispatchWork { recipe, .. } => assert_eq!(recipe, ids[1]),
             _ => panic!("expected a dispatch"),
@@ -424,13 +449,53 @@ mod tests {
         ));
 
         // With work that is current, reopening says so rather than doing it.
-        let mut screen = WorkScreen::new(item(), Some(status(false)), offers());
+        let mut screen = WorkScreen::new(item(), Some(status(false)), offers(), None);
         assert!(matches!(
             screen.handle_key(KeyCode::Char('s')),
             Action::SetMessage(_)
         ));
         assert!(matches!(
             screen.handle_key(KeyCode::Char('R')),
+            Action::RunWork { .. }
+        ));
+    }
+
+    /// With no runtime bound there is nothing `R` could start, so the screen
+    /// stops teaching it and answers a reader who knew it anyway with the
+    /// rung's own sentence rather than handing the terminal to a command that
+    /// cannot run (§FS-004-quick-actions.2, §AR-005-capabilities.2). The rest
+    /// of the screen is unchanged: the plan is still written, read and
+    /// reopened (§FS-005-dispatch lead).
+    #[test]
+    fn with_no_runtime_bound_the_run_key_is_neither_offered_nor_pretended() {
+        let unbound = crate::work::runtime::refusal(&crate::work::recipe::WorkConfig {
+            runner: Some("no-such-runtime-anywhere".to_string()),
+            ..crate::work::recipe::WorkConfig::default()
+        })
+        .expect("a runner that is not on PATH is refused");
+
+        let mut screen =
+            WorkScreen::new(item(), Some(status(false)), offers(), Some(unbound.clone()));
+        assert!(!screen.footer().contains("R run"), "{}", screen.footer());
+        match screen.handle_key(KeyCode::Char('R')) {
+            Action::SetMessage(said) => assert_eq!(said, unbound),
+            _ => panic!("nothing can run it, so nothing is handed the terminal"),
+        }
+        // Everything else the screen does is unaffected.
+        assert!(matches!(
+            screen.handle_key(KeyCode::Char('e')),
+            Action::ReadPlan(_)
+        ));
+        assert!(matches!(
+            screen.handle_key(KeyCode::Char('1')),
+            Action::DispatchWork { .. }
+        ));
+
+        // Bound: the key is advertised and acts.
+        let mut bound = WorkScreen::new(item(), Some(status(false)), offers(), None);
+        assert!(bound.footer().contains("R run"), "{}", bound.footer());
+        assert!(matches!(
+            bound.handle_key(KeyCode::Char('R')),
             Action::RunWork { .. }
         ));
     }

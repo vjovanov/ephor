@@ -14,9 +14,20 @@ row does not override.
 Every git-facing feature is a fold over the forest, per-repository answers
 aggregated and reported per repository — never silently collapsed:
 
-- **staleness** — sum of `rev-list --count HEAD..origin/<main>` over repos;
+- **staleness** — commits each repo's `HEAD` trails its base, counted
+  against the last-fetched `<remote>/<base>` of that repo and summed;
+- **standing** — where each repo's checked-out branch is published and how
+  far `HEAD` sits from that copy, one `for-each-ref` per repo answering
+  ref, upstream and ahead/behind at once; the published copy is resolved by
+  §DA-003-upstream-is-the-published-copy, the branch is `HEAD`'s and never
+  the workspace directory's name, and a branch never pushed is an answer,
+  not an error;
 - **rebase** — fetch and replay each repo, nothing stashed, a conflict
-  stopping that repo and reported as it (§FS-004-quick-actions.6);
+  stopping that repo and reported as it (§FS-004-quick-actions.6); what it
+  replays onto is one base for the whole forest, or each repo's own
+  published copy — a different ref per repo, with one that has published
+  nothing reported as such rather than refused
+  (§FS-004-quick-actions.8);
 - **checkout** — a working tree per repo under the workspace directory,
   branch where the forge has it, grown from main where not
   (§FS-004-quick-actions.7);
@@ -24,11 +35,43 @@ aggregated and reported per repository — never silently collapsed:
 - **gate counts** — the per-repository breakdown a gate event carries
   (§FS-006-project-interface.6).
 
+A repository the layout declares and the disk has not got is **named by every
+fold and fails one**. Named, because the alternative is the collapse this
+section forbids: the summary says how many are not on disk and the report says
+which, so no answer reads as if the workspace held fewer repositories than the
+reader has. Not fatal to a fold over what is there, because an exit code routes
+an outcome to whoever acts next — `3` sends a conflict to an agent, `1` sends
+uncommitted work to a person who clears it and retries — and this routes
+nowhere: retrying replays no repository that is not on disk, the missing tree
+holds none of the change, and the condition was as true before the command ran
+as after. It is a fact about the checkout, not an outcome of the run.
+
+`checkout` is where it does fail, and that is the same rule rather than an
+exception: there, a declared repository that is not on disk is exactly the
+outcome the command was asked to change (§FS-004-quick-actions.7), so its exit
+code is the one that answers *is this workspace whole* — which is also what
+gives a caller a way to ask at all. So `ephor checkout` on a workspace that
+already exists folds over the layout instead of stopping at the directory: it
+makes the repositories that are missing, reports the ones already there as
+already there, and fails on what it could not make. Asking the question and
+fixing what it finds are one move. `ephor update`, which maintains a managed
+workspace rather than folding over one, belongs to the same family and already
+behaves this way: a repository the layout marks `required` and the disk has not
+got is an error there.
+
+The ethic that a partial answer must never be reported as success
+(§FS-001-forge-interface.6) is not weakened by this. That rule is about an
+answer that cannot show its own gap — an empty feed section is indistinguishable
+from a source that was never read, so only the exit code can carry it. This gap
+is in the answer, by name, per repository, every time it is folded over.
+
 ## 2. Probes, not declarations
 
 Because git is assumed, facts are derived rather than configured: which
 branches exist, which branch workspaces are on disk, what ticket key a
-branch name carries, how far a checkout trails. The registry row keeps only
+branch name carries, how far a checkout trails, which remote each
+repository fetches from and pushes to, what base each is measured against,
+and where each checked-out branch is published. The registry row keeps only
 what probing cannot find — where the root is, the workspace template, and
 overrides. A fact that can be probed and is also declared is probed anyway;
 the declaration only says where to look.

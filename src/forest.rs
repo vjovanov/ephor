@@ -46,18 +46,28 @@ pub struct Repo {
     /// is the name every report and answer uses.
     pub name: String,
     pub path: PathBuf,
-    /// The remote a fold fetches from and pushes to. `origin` until something
-    /// says otherwise.
+    /// The remote a fold fetches from, pushes to and measures against, read
+    /// off the repository itself (§AR-004-forest.2).
     pub remote: String,
     /// What this repository's branches are measured against.
     pub main: Option<String>,
     pub role: Option<String>,
 }
 
-/// The default remote. Nothing has ever declared another one, but the folds
-/// ask the repository rather than assuming, so that the day one does is a
-/// field and not a rewrite.
+/// The last-resort remote: what a repository with no remote at all, or a
+/// declared repository with nothing on disk to ask, is folded over as. Every
+/// repository that is there is asked instead (§AR-004-forest.2).
 pub const ORIGIN: &str = "origin";
+
+/// Whether a name is a branch rather than a template nothing expanded. A
+/// project type may declare its per-repository base as `{branch}`, and a state
+/// machine may hand a program a `{meta.branch}` its runtime could not fill;
+/// either way an unexpanded placeholder is not a branch name, and measuring
+/// against one asks git for a ref no repository has (§AR-004-forest.2).
+pub fn is_branch_name(name: &str) -> bool {
+    let name = name.trim();
+    !name.is_empty() && !name.contains('{')
+}
 
 /// A checkout's repositories, in order.
 #[derive(Debug, Clone)]
@@ -93,8 +103,10 @@ impl Forest {
                 layout.push(name.clone());
                 repos.push(Repo {
                     name,
+                    // Asked once per repository, here where the probe already
+                    // runs (§AR-004-forest.2).
+                    remote: crate::git::remote(&path),
                     path,
-                    remote: ORIGIN.to_string(),
                     main: main.map(String::from),
                     role: None,
                 });
@@ -103,14 +115,23 @@ impl Forest {
             for declaration in declared {
                 layout.push(declaration.path.clone());
                 let path = under(checkout, &declaration.path);
-                if !crate::git::is_work_tree(&path) {
+                // Present means a `.git` marker — a directory for a clone, a
+                // file for a linked working tree. Tested through the path
+                // rather than by asking git: a fold resolves every declared
+                // repository on every refresh, and a subprocess per presence
+                // check answers what the path already answers
+                // (§AR-004-forest.3).
+                if !path.join(".git").exists() {
                     absent.push(declaration.path.clone());
                     continue;
                 }
                 repos.push(Repo {
                     name: declaration.path.clone(),
+                    // A row may declare where a repository is; which remote it
+                    // has is a fact on disk, so it is probed anyway
+                    // (§AR-004-forest.2).
+                    remote: crate::git::remote(&path),
                     path,
-                    remote: ORIGIN.to_string(),
                     main: declaration.main.clone().or_else(|| main.map(String::from)),
                     role: declaration.role.clone(),
                 });
@@ -135,15 +156,33 @@ impl Forest {
         self.repos.iter().map(|repo| repo.name.clone()).collect()
     }
 
+    /// What the repository called `name` fetches from and is measured against.
+    /// [`ORIGIN`] where the layout names one that is not on disk: there is no
+    /// repository to ask, and nothing to fold over either.
+    pub fn remote_of(&self, name: &str) -> &str {
+        self.repos
+            .iter()
+            .find(|repo| repo.name == name)
+            .map(|repo| repo.remote.as_str())
+            .unwrap_or(ORIGIN)
+    }
+
     /// What this repository is measured and replayed against: its own main
     /// where it has one, the project's otherwise, and what its remote calls
     /// its default branch as the last resort — a checkout no row describes
     /// still knows where it came from.
+    ///
+    /// A declared base that is still a template is not a value and is passed
+    /// over (§AR-004-forest.2): a project type that declares its
+    /// per-repository base as `{branch}` would otherwise have every fold ask
+    /// git for `{branch}`, which no repository has, so nothing was ever
+    /// measured and no offer that depends on a count was ever made.
     pub fn base(&self, repo: &Repo) -> Option<String> {
         repo.main
             .clone()
-            .or_else(|| self.main.clone())
-            .or_else(|| crate::git::default_base(&repo.path))
+            .filter(|name| is_branch_name(name))
+            .or_else(|| self.main.clone().filter(|name| is_branch_name(name)))
+            .or_else(|| crate::git::default_base(&repo.path, &repo.remote))
     }
 
     /// How far each repository trails its base, per repository and then
@@ -155,12 +194,138 @@ impl Forest {
             .iter()
             .map(|repo| RepoStale {
                 name: repo.name.clone(),
-                behind: self
-                    .base(repo)
-                    .and_then(|base| crate::git::commits_behind(&repo.path, &base)),
+                behind: self.behind_base(repo),
             })
             .collect();
         Staleness { repos }
+    }
+
+    /// Commits this repository's `HEAD` trails its base, against the
+    /// last-fetched ref.
+    fn behind_base(&self, repo: &Repo) -> Option<u64> {
+        self.base(repo)
+            .and_then(|base| crate::git::commits_behind(&repo.path, &repo.remote, &base))
+    }
+
+    /// Where each repository's checked-out branch stands — against its base
+    /// and against its own published copy — per repository, aggregated only
+    /// by the callers that need one number (§AR-004-forest.1). The branch is
+    /// each repository's own `HEAD`'s, and the published copy is resolved by
+    /// §DA-003-upstream-is-the-published-copy.
+    pub fn standing(&self) -> Standing {
+        let repos = self
+            .repos
+            .iter()
+            .map(|repo| {
+                // Resolved once and carried on the answer, so everything that
+                // asks whether a copy is the base again reads this fact
+                // rather than resolving its own (§AR-004-forest.1).
+                let base = self.base(repo);
+                let measured = crate::git::standing(&repo.path, &repo.remote, base.as_deref());
+                RepoStanding {
+                    name: repo.name.clone(),
+                    branch: measured.branch,
+                    upstream: measured.upstream,
+                    ahead: measured.track.map(|(ahead, _)| ahead),
+                    behind_upstream: measured.track.map(|(_, behind)| behind),
+                    behind_base: measured.behind_base,
+                    base,
+                }
+            })
+            .collect();
+        Standing { repos }
+    }
+}
+
+/// Where a branch is published — its copy on the remote, resolved from the
+/// repository's own `HEAD` (§DA-003-upstream-is-the-published-copy).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Upstream {
+    /// `<remote>/<branch>` holds what was last pushed of this branch.
+    Published { remote: String, branch: String },
+    /// Never pushed to `remote`: no copy to measure against and nothing to
+    /// replay onto. An answer, not an error
+    /// (§DA-003-upstream-is-the-published-copy).
+    Unpushed { remote: String },
+    /// Nothing to read: not a working tree, or `HEAD` is not on a branch.
+    Unknown,
+}
+
+/// One repository's whole standing: the branch its `HEAD` is on, where that
+/// branch is published, and its two distances — from its own published copy
+/// and from its base. The two are different facts, replayed onto different
+/// things, and are kept apart all the way to the reader.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepoStanding {
+    pub name: String,
+    /// The branch `HEAD` is on — read per repository, never the workspace
+    /// directory's name (§DA-003-upstream-is-the-published-copy).
+    pub branch: Option<String>,
+    pub upstream: Upstream,
+    /// Commits `HEAD` carries that its published copy does not.
+    pub ahead: Option<u64>,
+    /// Commits the published copy carries that `HEAD` does not.
+    pub behind_upstream: Option<u64>,
+    /// Commits `HEAD` trails the base — the count [`Staleness`] carries.
+    pub behind_base: Option<u64>,
+    /// The base this repository was measured against, resolved once in the
+    /// fold and carried here so a reader asking whether the published copy is
+    /// simply the base again reads the fold's own fact.
+    pub base: Option<String>,
+}
+
+impl RepoStanding {
+    /// Whether this repository's published copy is its base again — a branch
+    /// parked on the main branch and tracking it has one distance wearing two
+    /// names, and the copy-side sums leave that distance to the base's own
+    /// count (§FS-004-quick-actions.8).
+    pub fn copies_the_base(&self) -> bool {
+        match &self.upstream {
+            Upstream::Published { branch, .. } => self.base.as_deref() == Some(branch.as_str()),
+            Upstream::Unpushed { .. } | Upstream::Unknown => false,
+        }
+    }
+}
+
+/// The fold of [`Forest::standing`], with the per-repository answers kept
+/// (§AR-004-forest.1).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Standing {
+    pub repos: Vec<RepoStanding>,
+}
+
+impl Standing {
+    /// The behind-base half in the shape everything above already reads —
+    /// derived rather than folded again, so the two counts on a row cannot
+    /// come from different measurements.
+    pub fn staleness(&self) -> Staleness {
+        Staleness {
+            repos: self
+                .repos
+                .iter()
+                .map(|repo| RepoStale {
+                    name: repo.name.clone(),
+                    behind: repo.behind_base,
+                })
+                .collect(),
+        }
+    }
+
+    /// Commits the checkout trails its own published copies, in total. None
+    /// when nothing was measured — a checkout published nowhere is not the
+    /// same answer as one level with its copy
+    /// (§DA-003-upstream-is-the-published-copy). A repository whose copy is
+    /// its base again contributes nothing: that distance is the base count's
+    /// own, and summing it here would put one distance under two names
+    /// (§FS-004-quick-actions.8).
+    pub fn behind_upstream(&self) -> Option<u64> {
+        self.repos
+            .iter()
+            .filter(|repo| !repo.copies_the_base())
+            .filter_map(|repo| repo.behind_upstream)
+            .fold(None, |total: Option<u64>, count| {
+                Some(total.unwrap_or(0) + count)
+            })
     }
 }
 
@@ -251,6 +416,53 @@ mod tests {
             .success());
     }
 
+    fn git_in(path: &Path, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(path)
+            .args(args)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(
+            status.success(),
+            "git {args:?} failed in {}",
+            path.display()
+        );
+    }
+
+    /// A repository on `branch`, with a remote of its own whose
+    /// `<remote>/<branch>` is `ahead` commits in front of the checkout — the
+    /// shape of a branch that trails its base, with no network in it. The
+    /// remote's `HEAD` names `<branch>`, so the repository can say what its
+    /// default is when nothing else does.
+    fn tracked(path: &Path, remote: &str, branch: &str, ahead: usize) {
+        work_tree(path);
+        git_in(path, &["config", "user.email", "t@example.com"]);
+        git_in(path, &["config", "user.name", "t"]);
+        git_in(path, &["checkout", "-q", "-b", branch]);
+        for step in 0..=ahead {
+            std::fs::write(path.join("log.txt"), format!("{step}\n")).unwrap();
+            git_in(path, &["add", "log.txt"]);
+            git_in(path, &["commit", "-q", "-m", &format!("step {step}")]);
+        }
+        let published = format!("refs/remotes/{remote}/{branch}");
+        git_in(path, &["update-ref", &published, "HEAD"]);
+        if ahead > 0 {
+            git_in(path, &["reset", "--hard", "-q", &format!("HEAD~{ahead}")]);
+        }
+        git_in(path, &["remote", "add", remote, "."]);
+        git_in(
+            path,
+            &[
+                "symbolic-ref",
+                &format!("refs/remotes/{remote}/HEAD"),
+                &published,
+            ],
+        );
+    }
+
     #[test]
     fn a_declared_layout_keeps_the_rows_order_and_roles() {
         let tmp = tempfile::tempdir().unwrap();
@@ -267,6 +479,8 @@ mod tests {
         let forest = Forest::resolve(tmp.path(), Some("master"), &declared);
         assert_eq!(forest.names(), vec!["ee", "ce"]);
         assert_eq!(forest.repos[0].role.as_deref(), Some("enterprise"));
+        // Nothing to ask: a repository with no remote at all is folded over as
+        // [`ORIGIN`], which is the last resort and not the assumption.
         assert_eq!(forest.repos[0].remote, ORIGIN);
         // The project's main branch reaches every repository that has none.
         assert_eq!(forest.repos[1].main.as_deref(), Some("master"));
@@ -306,6 +520,405 @@ mod tests {
         }];
         let forest = Forest::resolve(tmp.path(), Some("master"), &declared);
         assert_eq!(forest.base(&forest.repos[0]).as_deref(), Some("release/24"));
+    }
+
+    /// §AR-004-forest.2: which remote a repository has is a fact on disk, so
+    /// it is read there rather than spelled `origin` in the fold.
+    #[test]
+    fn the_remote_is_read_off_each_repository() {
+        let tmp = tempfile::tempdir().unwrap();
+        tracked(&tmp.path().join("solo"), "upstream", "master", 1);
+
+        let forest = Forest::resolve(tmp.path(), Some("master"), &[Declaration::at("solo")]);
+        assert_eq!(forest.repos[0].remote, "upstream");
+        assert_eq!(forest.remote_of("solo"), "upstream");
+        // A repository whose remote is not called `origin` is still measured:
+        // the count came from `upstream/master`, which is the only one there.
+        assert_eq!(forest.staleness().total(), Some(1));
+        // The layout names one that is not on disk, so there is nothing to ask.
+        assert_eq!(forest.remote_of("absent"), ORIGIN);
+    }
+
+    #[test]
+    fn among_several_remotes_the_branchs_own_upstream_is_taken_before_origin() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("ce");
+        tracked(&repo, ORIGIN, "master", 0);
+        git_in(&repo, &["remote", "add", "fork", "."]);
+        git_in(&repo, &["update-ref", "refs/remotes/fork/master", "HEAD"]);
+
+        // Nothing tracked: `origin` is the one among several a fold means.
+        assert_eq!(crate::git::remote(&repo), ORIGIN);
+
+        // Once git records where this branch is published, that is the answer —
+        // it is the repository's own word, and `origin` was only a guess.
+        git_in(
+            &repo,
+            &["branch", "--set-upstream-to=fork/master", "master"],
+        );
+        assert_eq!(crate::git::remote(&repo), "fork");
+    }
+
+    /// The graal shape: the project type declares one base per repository and
+    /// writes it `{branch}`, which nothing expands before a fold reads it. Left
+    /// verbatim it asked git for a ref called `{branch}`, so every repository
+    /// answered "cannot measure" and no count was ever shown
+    /// (§AR-004-forest.2).
+    #[test]
+    fn a_declared_base_that_is_a_template_is_not_a_base() {
+        let tmp = tempfile::tempdir().unwrap();
+        tracked(&tmp.path().join("ce"), ORIGIN, "master", 2);
+        let declared = vec![Declaration {
+            path: "ce".to_string(),
+            role: None,
+            main: Some("{branch}".to_string()),
+        }];
+
+        // The project's own main answers where the repository's is a template.
+        let forest = Forest::resolve(tmp.path(), Some("master"), &declared);
+        assert_eq!(forest.base(&forest.repos[0]).as_deref(), Some("master"));
+        assert_eq!(forest.staleness().total(), Some(2));
+        assert_eq!(forest.staleness().summary().as_deref(), Some("2 behind"));
+
+        // With no project main either, what the remote calls its default does.
+        let forest = Forest::resolve(tmp.path(), None, &declared);
+        assert_eq!(forest.base(&forest.repos[0]).as_deref(), Some("master"));
+        assert_eq!(forest.staleness().total(), Some(2));
+
+        // And a project main that is itself a template is no more a base than
+        // the repository's was.
+        let forest = Forest::resolve(tmp.path(), Some("{branch}"), &declared);
+        assert_eq!(forest.base(&forest.repos[0]).as_deref(), Some("master"));
+        assert_eq!(forest.staleness().total(), Some(2));
+    }
+
+    /// A project-wide main branch does not hold across a forest: the workspace
+    /// repository of `~/c/g` is on `main` and has no `master` at all. It is one
+    /// repository that cannot be measured, not a checkout that cannot be
+    /// (§AR-004-forest.1).
+    #[test]
+    fn a_repository_without_the_base_does_not_silence_the_ones_that_have_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        tracked(&tmp.path().join("ce"), ORIGIN, "master", 3);
+        tracked(&tmp.path().join("root"), ORIGIN, "main", 0);
+        let declared = vec![Declaration::at("ce"), Declaration::at("root")];
+
+        let forest = Forest::resolve(tmp.path(), Some("master"), &declared);
+        let stale = forest.staleness();
+        assert_eq!(stale.repos[0].behind, Some(3));
+        assert_eq!(stale.repos[1].behind, None);
+        assert_eq!(stale.total(), Some(3));
+        assert_eq!(stale.summary().as_deref(), Some("3 behind"));
+
+        // Asked with nothing declared, each repository answers for itself: the
+        // one with no `master` is measured against the default its own remote
+        // records (§AR-004-forest.2).
+        let forest = Forest::resolve(tmp.path(), None, &declared);
+        assert_eq!(forest.base(&forest.repos[1]).as_deref(), Some("main"));
+        let stale = forest.staleness();
+        assert_eq!(stale.repos[1].behind, Some(0));
+        assert_eq!(stale.total(), Some(3));
+    }
+
+    /// The tracked shape: git records where the branch is published, and one
+    /// read answers ref and both distances (§DA-003-upstream-is-the-published-copy).
+    #[test]
+    fn a_tracked_branch_stands_against_its_recorded_copy() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("solo");
+        tracked(&repo, ORIGIN, "feature", 2);
+        git_in(
+            &repo,
+            &["branch", "--set-upstream-to=origin/feature", "feature"],
+        );
+        // The reader also committed locally, so both distances are non-zero.
+        std::fs::write(repo.join("mine.txt"), "mine\n").unwrap();
+        git_in(&repo, &["add", "mine.txt"]);
+        git_in(&repo, &["commit", "-q", "-m", "mine"]);
+
+        let forest = Forest::resolve(tmp.path(), Some("master"), &[Declaration::at("solo")]);
+        let standing = forest.standing();
+        assert_eq!(standing.repos[0].branch.as_deref(), Some("feature"));
+        assert_eq!(
+            standing.repos[0].upstream,
+            Upstream::Published {
+                remote: ORIGIN.to_string(),
+                branch: "feature".to_string(),
+            }
+        );
+        assert_eq!(standing.repos[0].ahead, Some(1));
+        assert_eq!(standing.repos[0].behind_upstream, Some(2));
+        assert_eq!(standing.behind_upstream(), Some(2));
+    }
+
+    /// The untracked-but-pushed shape `worktree add -b` leaves behind: no
+    /// tracking config, but the remote has the branch — the case bare
+    /// `git rebase` fails on and this must not
+    /// (§DA-003-upstream-is-the-published-copy).
+    #[test]
+    fn an_untracked_branch_the_remote_has_is_published_all_the_same() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("ce");
+        tracked(&repo, ORIGIN, "feature", 3);
+        std::fs::write(repo.join("mine.txt"), "mine\n").unwrap();
+        git_in(&repo, &["add", "mine.txt"]);
+        git_in(&repo, &["commit", "-q", "-m", "mine"]);
+
+        let forest = Forest::resolve(tmp.path(), Some("master"), &[Declaration::at("ce")]);
+        let standing = forest.standing();
+        assert_eq!(
+            standing.repos[0].upstream,
+            Upstream::Published {
+                remote: ORIGIN.to_string(),
+                branch: "feature".to_string(),
+            }
+        );
+        assert_eq!(standing.repos[0].ahead, Some(1));
+        assert_eq!(standing.repos[0].behind_upstream, Some(3));
+    }
+
+    /// The never-pushed shape: an answer, not an error — the fold completes,
+    /// says [`Upstream::Unpushed`], and measures no distance, because there
+    /// is no copy to measure against
+    /// (§DA-003-upstream-is-the-published-copy). And the branch is `HEAD`'s:
+    /// the workspace directory's name says nothing about it.
+    #[test]
+    fn a_branch_never_pushed_is_unpushed_not_an_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("jdk");
+        tracked(&repo, ORIGIN, "master", 0);
+        git_in(&repo, &["checkout", "-q", "-b", "debug-of-the-day"]);
+
+        let forest = Forest::resolve(tmp.path(), Some("master"), &[Declaration::at("jdk")]);
+        let standing = forest.standing();
+        assert_eq!(
+            standing.repos[0].branch.as_deref(),
+            Some("debug-of-the-day")
+        );
+        assert_eq!(
+            standing.repos[0].upstream,
+            Upstream::Unpushed {
+                remote: ORIGIN.to_string(),
+            }
+        );
+        assert_eq!(standing.repos[0].behind_upstream, None);
+        // Nothing measured is not the same answer as level with a copy.
+        assert_eq!(standing.behind_upstream(), None);
+        // The base half still measured: the two distances are separate facts.
+        assert_eq!(standing.repos[0].behind_base, Some(0));
+    }
+
+    /// A recorded upstream that names the base is where the branch was cut
+    /// (`branch.autoSetupMerge`), not where it is published: it is read as no
+    /// publication, and only a pushed copy of the branch's own name counts
+    /// (§DA-003-upstream-is-the-published-copy).
+    #[test]
+    fn an_upstream_naming_the_base_is_read_as_no_publication() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("root");
+        tracked(&repo, ORIGIN, "master", 0);
+        git_in(&repo, &["checkout", "-q", "-b", "feature"]);
+        git_in(
+            &repo,
+            &["branch", "--set-upstream-to=origin/master", "feature"],
+        );
+
+        // Never pushed: the tracking config alone publishes nothing.
+        let forest = Forest::resolve(tmp.path(), Some("master"), &[Declaration::at("root")]);
+        let standing = forest.standing();
+        assert_eq!(
+            standing.repos[0].upstream,
+            Upstream::Unpushed {
+                remote: ORIGIN.to_string(),
+            }
+        );
+
+        // Once pushed, the copy of the branch's own name is the answer — the
+        // tracking config still says `origin/master` and still does not.
+        git_in(
+            &repo,
+            &["update-ref", "refs/remotes/origin/feature", "HEAD"],
+        );
+        let standing = forest.standing();
+        assert_eq!(
+            standing.repos[0].upstream,
+            Upstream::Published {
+                remote: ORIGIN.to_string(),
+                branch: "feature".to_string(),
+            }
+        );
+        assert_eq!(standing.repos[0].behind_upstream, Some(0));
+    }
+
+    /// Staleness is derived from the standing, so the count on the row and
+    /// the count in the fold are the same measurement (§AR-004-forest.1).
+    #[test]
+    fn staleness_derived_from_the_standing_is_the_staleness_measured_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        tracked(&tmp.path().join("ce"), ORIGIN, "master", 2);
+        tracked(&tmp.path().join("ee"), ORIGIN, "master", 3);
+        let declared = vec![Declaration::at("ce"), Declaration::at("ee")];
+
+        let forest = Forest::resolve(tmp.path(), Some("master"), &declared);
+        let standing = forest.standing();
+        assert_eq!(standing.staleness(), forest.staleness());
+        assert_eq!(standing.staleness().total(), Some(5));
+        // The copies here are the bases, so the copy-side sum leaves the
+        // whole distance to the base count rather than carrying the same 5
+        // under a second name (§FS-004-quick-actions.8) — the per-repository
+        // answers keep it whole.
+        assert!(standing.repos.iter().all(RepoStanding::copies_the_base));
+        assert_eq!(standing.behind_upstream(), None);
+    }
+
+    /// The mixed forest: one repository on the change's own published branch,
+    /// one parked on the base and tracking it. The copy-side sum counts only
+    /// the first — the parked repository's distance is the base count's own —
+    /// so the two offers can never carry one distance under two names
+    /// (§FS-004-quick-actions.8), while each repository's answer is kept
+    /// whole (§AR-004-forest.1).
+    #[test]
+    fn a_repository_parked_on_the_base_is_left_out_of_the_copy_side_sum() {
+        let tmp = tempfile::tempdir().unwrap();
+        tracked(&tmp.path().join("ce"), ORIGIN, "feature", 2);
+        tracked(&tmp.path().join("ee"), ORIGIN, "master", 3);
+        git_in(
+            &tmp.path().join("ee"),
+            &["branch", "--set-upstream-to=origin/master", "master"],
+        );
+        let declared = vec![Declaration::at("ce"), Declaration::at("ee")];
+
+        let forest = Forest::resolve(tmp.path(), Some("master"), &declared);
+        let standing = forest.standing();
+        assert!(!standing.repos[0].copies_the_base());
+        assert!(standing.repos[1].copies_the_base());
+        assert_eq!(standing.repos[0].behind_upstream, Some(2));
+        assert_eq!(standing.repos[1].behind_upstream, Some(3));
+        assert_eq!(standing.behind_upstream(), Some(2));
+        // The parked repository's distance is not lost: it is the base's.
+        assert_eq!(standing.staleness().total(), Some(3));
+    }
+
+    /// A tracking upstream whose remote ref is gone (`[gone]`) holds no copy
+    /// any more: it publishes nothing, and only a pushed copy of the branch's
+    /// own name could answer (§DA-003-upstream-is-the-published-copy).
+    #[test]
+    fn a_gone_upstream_publishes_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("ce");
+        tracked(&repo, ORIGIN, "feature", 0);
+        git_in(
+            &repo,
+            &["branch", "--set-upstream-to=origin/feature", "feature"],
+        );
+        git_in(&repo, &["update-ref", "-d", "refs/remotes/origin/feature"]);
+
+        let forest = Forest::resolve(tmp.path(), Some("master"), &[Declaration::at("ce")]);
+        let standing = forest.standing();
+        assert_eq!(
+            standing.repos[0].upstream,
+            Upstream::Unpushed {
+                remote: ORIGIN.to_string(),
+            }
+        );
+        assert_eq!(standing.repos[0].behind_upstream, None);
+        assert_eq!(standing.behind_upstream(), None);
+    }
+
+    /// The `~/c/g/master/master` shape: a branch cut from a remote branch and
+    /// never pushed, in a repository where nothing names a base — no
+    /// repository main, no project main, and no `refs/remotes/<remote>/HEAD`.
+    /// A base nobody could resolve cannot clear the recorded upstream of
+    /// naming it, so the record is not taken at face value: the branch is
+    /// unpushed, not published at where it was cut
+    /// (§DA-003-upstream-is-the-published-copy) — no `↓N` that is really the
+    /// base's distance, and nothing for a replay onto the copy to aim at the
+    /// wrong ref.
+    #[test]
+    fn an_unresolvable_base_fails_closed_rather_than_trusting_the_record() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("root");
+        work_tree(&repo);
+        git_in(&repo, &["config", "user.email", "t@example.com"]);
+        git_in(&repo, &["config", "user.name", "t"]);
+        git_in(&repo, &["checkout", "-q", "-b", "main"]);
+        std::fs::write(repo.join("log.txt"), "0\n").unwrap();
+        git_in(&repo, &["add", "log.txt"]);
+        git_in(&repo, &["commit", "-q", "-m", "base"]);
+        git_in(&repo, &["remote", "add", ORIGIN, "."]);
+        git_in(&repo, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        git_in(&repo, &["checkout", "-q", "-b", "feature"]);
+        git_in(
+            &repo,
+            &["branch", "--set-upstream-to=origin/main", "feature"],
+        );
+
+        let forest = Forest::resolve(tmp.path(), None, &[Declaration::at("root")]);
+        assert_eq!(forest.base(&forest.repos[0]), None);
+        let standing = forest.standing();
+        assert_eq!(
+            standing.repos[0].upstream,
+            Upstream::Unpushed {
+                remote: ORIGIN.to_string(),
+            }
+        );
+        assert_eq!(standing.repos[0].behind_upstream, None);
+        assert_eq!(standing.behind_upstream(), None);
+    }
+
+    /// `standing` against a remote not called `origin`: both resolution steps
+    /// answer with the repository's own remote (§AR-004-forest.2,
+    /// §DA-003-upstream-is-the-published-copy).
+    #[test]
+    fn the_standing_is_read_off_a_remote_not_called_origin() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("solo");
+        tracked(&repo, "upstream", "feature", 3);
+
+        // The pushed-copy probe: no tracking config, and the copy lives on
+        // `upstream`, the only remote there is.
+        let forest = Forest::resolve(tmp.path(), Some("master"), &[Declaration::at("solo")]);
+        assert_eq!(forest.repos[0].remote, "upstream");
+        let standing = forest.standing();
+        assert_eq!(
+            standing.repos[0].upstream,
+            Upstream::Published {
+                remote: "upstream".to_string(),
+                branch: "feature".to_string(),
+            }
+        );
+        assert_eq!(standing.repos[0].behind_upstream, Some(3));
+        assert_eq!(standing.behind_upstream(), Some(3));
+
+        // And the recorded path, once git says where the branch is published.
+        git_in(
+            &repo,
+            &["branch", "--set-upstream-to=upstream/feature", "feature"],
+        );
+        let standing = forest.standing();
+        assert_eq!(
+            standing.repos[0].upstream,
+            Upstream::Published {
+                remote: "upstream".to_string(),
+                branch: "feature".to_string(),
+            }
+        );
+        assert_eq!(standing.repos[0].behind_upstream, Some(3));
+    }
+
+    /// Not a repository, or not on a branch: nothing to read, said as such.
+    #[test]
+    fn a_detached_head_has_no_standing_to_speak_of() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("solo");
+        tracked(&repo, ORIGIN, "master", 0);
+        git_in(&repo, &["checkout", "-q", "--detach"]);
+
+        let forest = Forest::resolve(tmp.path(), Some("master"), &[Declaration::at("solo")]);
+        let standing = forest.standing();
+        assert_eq!(standing.repos[0].branch, None);
+        assert_eq!(standing.repos[0].upstream, Upstream::Unknown);
+        assert_eq!(standing.behind_upstream(), None);
     }
 
     #[test]

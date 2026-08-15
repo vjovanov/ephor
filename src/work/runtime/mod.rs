@@ -15,6 +15,8 @@
 
 pub mod plan;
 pub mod results;
+pub mod roster;
+pub mod watch;
 
 use std::path::Path;
 
@@ -58,8 +60,22 @@ pub fn advance_command(
 /// The verb this seam fills, for messages.
 pub const VERB: &str = "work.run";
 
-/// `<runner> run <root> [--rhei <plan>]… [extra…]`, quoted for `sh`.
-pub fn invocation_with(runner: &str, root: &Path, plans: &[String], extra: &[String]) -> String {
+/// `<runner> run <root> [--rhei <plan>]… [--agent <agent> [--agent-mode
+/// <effort>]] [extra…]`, quoted for `sh`. The hand flags carry a chosen hand
+/// the plan language cannot spell — one naming an agent and no model
+/// (§FS-005-dispatch.14); a hand carrying a model is pinned on its ticket
+/// instead and never travels here: one choice binds in one spelling, and the
+/// ticket's full line is the stronger one — the runner resolves such a ticket
+/// from the line alone, with these flags invisible to it, while a bare model
+/// line would take its carrier from them. `extra` stays last, so what the
+/// reader passed through can still have the final word.
+pub fn invocation_with(
+    runner: &str,
+    root: &Path,
+    plans: &[String],
+    hand: Option<&roster::HandFlags>,
+    extra: &[String],
+) -> String {
     let mut words = vec![
         runner.to_string(),
         "run".to_string(),
@@ -69,6 +85,14 @@ pub fn invocation_with(runner: &str, root: &Path, plans: &[String], extra: &[Str
         words.push(PLAN_FLAG.to_string());
         words.push(quote(plan));
     }
+    if let Some(hand) = hand {
+        words.push(AGENT_FLAG.to_string());
+        words.push(quote(&hand.agent));
+        if let Some(effort) = &hand.effort {
+            words.push(AGENT_MODE_FLAG.to_string());
+            words.push(quote(effort));
+        }
+    }
     words.extend(extra.iter().map(|arg| quote(arg)));
     words.join(" ")
 }
@@ -76,6 +100,13 @@ pub fn invocation_with(runner: &str, root: &Path, plans: &[String], extra: &[Str
 /// How the runner is told which plan to run. Part of the coupling, and so
 /// part of this module (§AR-007-runtime).
 const PLAN_FLAG: &str = "--rhei";
+
+/// How the runner is told which agent a run's tickets go to, and at which of
+/// its modes — the spelling for the hand the plan language has no line for
+/// (§FS-005-dispatch.14). Part of the same coupling as the plan flag
+/// (§AR-007-runtime.1).
+const AGENT_FLAG: &str = "--agent";
+const AGENT_MODE_FLAG: &str = "--agent-mode";
 
 /// A work ledger written before the plan's field was named for the plan spells
 /// it for the runtime instead. The word is this module's, so the migration
@@ -104,9 +135,9 @@ pub fn migrate_ledger(document: &mut serde_json::Value) {
     }
 }
 
-/// The invocation with the shipped default runner.
+/// The invocation with the shipped default runner and no hand riding it.
 pub fn invocation(root: &Path, plans: &[String], extra: &[String]) -> String {
-    invocation_with(RUNNER, root, plans, extra)
+    invocation_with(RUNNER, root, plans, None, extra)
 }
 
 /// Why running is refused, or None where the runtime is there
@@ -116,14 +147,31 @@ pub fn refusal(config: &crate::work::recipe::WorkConfig) -> Option<String> {
     capabilities::workable(Some(runner(config)))
 }
 
-/// The summons that runs one work root's plans.
+/// The summons that runs one work root's plans, with no hand riding it.
 pub fn summons(
     config: &crate::work::recipe::WorkConfig,
     root: &Path,
     plans: &[String],
     extra: &[String],
 ) -> Summons {
-    Summons::new(VERB, invocation_with(runner(config), root, plans, extra))
+    summons_with(config, root, plans, None, extra)
+}
+
+/// The summons that runs one work root's plans under a chosen hand the plan
+/// language cannot spell (§FS-005-dispatch.14). `hand` is None where every
+/// ticket carries its own line, or where the run's tickets do not agree on
+/// one spelling — flags ride a run only where they can contradict nothing.
+pub fn summons_with(
+    config: &crate::work::recipe::WorkConfig,
+    root: &Path,
+    plans: &[String],
+    hand: Option<&roster::HandFlags>,
+    extra: &[String],
+) -> Summons {
+    Summons::new(
+        VERB,
+        invocation_with(runner(config), root, plans, hand, extra),
+    )
 }
 
 /// Run it from the checkout the work is about — not from wherever this was
@@ -136,10 +184,11 @@ pub fn run(
     root: &Path,
     checkout: &Path,
     plans: &[String],
+    hand: Option<&roster::HandFlags>,
     extra: &[String],
 ) -> Result<Answer> {
     summons::run(
-        &summons(config, root, plans, extra),
+        &summons_with(config, root, plans, hand, extra),
         &Site::root(checkout),
         Mode::Interactive,
     )
@@ -160,6 +209,42 @@ mod tests {
             command,
             "rhei run '/w/panta' --rhei 'a.rhei.md' --rhei 'b.rhei.md'"
         );
+    }
+
+    /// An agent-only hand rides the run as the runner's own agent flags —
+    /// the spelling for the choice the plan language cannot carry
+    /// (§FS-005-dispatch.14) — with the effort alongside where one was
+    /// chosen, and the reader's passthrough still last.
+    #[test]
+    fn an_agent_only_hand_rides_the_run_as_agent_flags() {
+        let hand = roster::HandFlags {
+            agent: "pi".to_string(),
+            effort: Some("high".to_string()),
+        };
+        let command = invocation_with(
+            RUNNER,
+            Path::new("/w/panta"),
+            &["a.rhei.md".to_string()],
+            Some(&hand),
+            &["--dry-run".to_string()],
+        );
+        assert_eq!(
+            command,
+            "rhei run '/w/panta' --rhei 'a.rhei.md' --agent 'pi' --agent-mode 'high' '--dry-run'"
+        );
+
+        // A hand declaring no efforts rides as the agent flag alone — asked
+        // plainly, with no mode for the runtime to apply; a hand that does
+        // declare efforts always arrives here with one settled
+        // (§FS-005-dispatch.14), because the bare flag would let the state
+        // machine's own mode fall in, refused where the agent does not
+        // declare it.
+        let plain = roster::HandFlags {
+            agent: "pi".to_string(),
+            effort: None,
+        };
+        let command = invocation_with(RUNNER, Path::new("/w/panta"), &[], Some(&plain), &[]);
+        assert_eq!(command, "rhei run '/w/panta' --agent 'pi'");
     }
 
     /// The runtime is a binding: pointing work at another one is

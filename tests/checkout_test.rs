@@ -206,6 +206,48 @@ fn a_workspace_that_is_already_there_says_so_and_succeeds() {
     );
 }
 
+/// A directory is not a workspace. This is the one command whose exit code
+/// answers whether a workspace is whole (§AR-004-forest.1) — every other fold
+/// names a declared repository that is not on disk and carries on — so a
+/// workspace holding some of the project's repositories is completed rather
+/// than reported as already there. The shape is ordinary: a workspace somebody
+/// made by hand, or a repository the project gained after the workspace was
+/// made.
+#[test]
+fn a_workspace_missing_a_declared_repository_is_completed() {
+    let tmp = tempdir();
+    let root = fixture(tmp.path());
+    let ce = repo(tmp.path(), "ce");
+    let _ee = repo(tmp.path(), "ee");
+
+    // Half a workspace, made by hand: `ce` has a working tree on the branch
+    // and `ee` was never added.
+    let target = root.join("feature");
+    git(
+        &ce,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "feature",
+            &target.join("ce").to_string_lossy(),
+            "master",
+        ],
+    );
+    assert!(target.join("ce/.git").exists());
+    assert!(!target.join("ee").exists());
+
+    ephor(tmp.path())
+        .args(["checkout", "--project", "demo", "--branch", "feature"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("is missing ee"))
+        .stdout(predicates::str::contains("A working tree was already here"));
+
+    assert!(target.join("ee/.git").exists(), "ee was not made");
+    assert!(target.join("ce/.git").exists(), "ce was disturbed");
+}
+
 /// Everything a flag says, a program state's `env:` says too — the same
 /// handover `ephor rebase` takes (§FS-005-dispatch.12).
 #[test]

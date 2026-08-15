@@ -110,6 +110,12 @@ pub struct TicketStatus {
     /// The runtime has stopped on this ticket and a person has to answer it
     /// (§FS-005-dispatch.9).
     pub waiting: bool,
+    /// Who claimed the ticket, where anyone has — a claimed ticket is not a
+    /// run's to advance (§FS-005-dispatch.15).
+    pub assignee: Option<String>,
+    /// The execution line the ticket carries, where it carries one
+    /// (§FS-005-dispatch.14).
+    pub pinned: Option<plan::Pin>,
     /// What the review left behind, where the work reached one.
     pub verdict: Option<String>,
 }
@@ -202,8 +208,16 @@ pub struct Dispatcher {
     global: WorkConfig,
     projects: BTreeMap<String, ProjectWorkConfig>,
     placements: BTreeMap<String, Option<Placement>>,
-    /// Commits behind main per (project, branch), measured on demand.
-    behind: BTreeMap<(String, String), Option<u64>>,
+    /// What the checkout of each (project, branch) says about itself —
+    /// both distances, from one fold — measured on demand.
+    behind: BTreeMap<(String, String), recipe::Facts>,
+    /// Who can be asked, per work root — the roster is read from the runtime's
+    /// merged settings, and a sweep asks about the same handful of roots over
+    /// and over (§FS-005-dispatch.14).
+    rosters: BTreeMap<PathBuf, runtime::roster::Roster>,
+    /// What the reader should know about the hands this dispatcher resolved,
+    /// each said once (§FS-006-project-interface.9).
+    notes: Vec<String>,
     pub ledger: Ledger,
 }
 
@@ -219,8 +233,15 @@ impl Dispatcher {
                 .collect(),
             placements: BTreeMap::new(),
             behind: BTreeMap::new(),
+            rosters: BTreeMap::new(),
+            notes: Vec::new(),
             ledger: ledger::load()?,
         })
+    }
+
+    /// What the reader should know about who got this work, each note once.
+    pub fn notes(&self) -> &[String] {
+        &self.notes
     }
 
     /// The recipes offered on a project: shipped, then configured
@@ -248,9 +269,6 @@ impl Dispatcher {
         let Some(placement) = self.placement(&item.project).cloned() else {
             return recipe::Facts::default();
         };
-        if placement.main_branch.is_none() {
-            return recipe::Facts::default();
-        }
         let checkout = placement.checkout(item);
         let Some(branch) = checkout.branch.clone() else {
             return recipe::Facts::default();
@@ -261,15 +279,29 @@ impl Dispatcher {
             return recipe::Facts::default();
         }
         let key = (item.project.clone(), branch);
-        if let Some(behind) = self.behind.get(&key) {
-            return recipe::Facts { behind: *behind };
+        if let Some(facts) = self.behind.get(&key) {
+            return *facts;
         }
         // Summed across the workspace's forest, like the inbox's own count:
         // one repository trailing is the workspace trailing
-        // (§AR-004-forest.1).
-        let behind = placement.forest(&checkout.workspace).staleness().total();
-        self.behind.insert(key, behind);
-        recipe::Facts { behind }
+        // (§AR-004-forest.1). Both distances come off the one standing fold,
+        // so a recipe asking about either is answered from one measurement
+        // (§FS-004-quick-actions.8). A distance to a base nobody named is not
+        // a fact anything acts on (§FS-004-quick-actions.6), so on a project
+        // with no main branch only `behind` is nulled — the other distance is
+        // to the branch's own copy, and needs no base — the same split the
+        // rows and their menus make of the same measurement.
+        let standing = placement.forest(&checkout.workspace).standing();
+        let facts = recipe::Facts {
+            behind: placement
+                .main_branch
+                .is_some()
+                .then(|| standing.staleness().total())
+                .flatten(),
+            behind_upstream: standing.behind_upstream(),
+        };
+        self.behind.insert(key, facts);
+        facts
     }
 
     /// What a recipe would actually ask for about this item — the brief with
@@ -282,6 +314,163 @@ impl Dispatcher {
             Ok(site) => dossier::render(&recipe.brief, &site.values),
             Err(_) => recipe.brief.clone(),
         }
+    }
+
+    /// Who does one action on one project, in the order §FS-005-dispatch.14
+    /// sets (§FS-006-project-interface.9). `picked` is what the reader chose
+    /// for this dispatch alone — the first of the seven steps, which nothing
+    /// feeds yet: choosing at the moment of asking belongs to the picker, and
+    /// this is the signature it will call.
+    pub fn hand(
+        &mut self,
+        project: &str,
+        action: &str,
+        picked: Option<&recipe::HandPin>,
+        pinned: Option<&recipe::HandPin>,
+        root: &std::path::Path,
+    ) -> runtime::roster::Choice {
+        if !self.rosters.contains_key(root) {
+            let roster = runtime::roster::roster(&self.global, Some(root));
+            self.rosters.insert(root.to_path_buf(), roster);
+        }
+        runtime::roster::resolve(
+            &self.rosters[root],
+            &self.global,
+            self.projects.get(project),
+            action,
+            picked,
+            pinned,
+        )
+    }
+
+    /// What this ticket pins, and what the reader is told about it. Refuses
+    /// where the choice cannot stand, so nothing is written and no opening
+    /// move is made under a hand that may not have it
+    /// (§FS-006-project-interface.9).
+    fn pin(
+        &mut self,
+        item: &Item,
+        recipe: &Recipe,
+        root: &std::path::Path,
+    ) -> Result<(Option<String>, Option<String>)> {
+        // One spelling per recipe: a hand is the checkable name for exactly
+        // what `target`/`model` spell raw, and a recipe carrying both would
+        // have one of them silently lose (§FS-006-project-interface.9).
+        if recipe.hand.is_some() && (recipe.target.is_some() || recipe.model.is_some()) {
+            return Err(EphorError::Command(format!(
+                "recipe '{}' names both a hand and the runtime's own execution identity \
+                 (target/model) — say one or the other",
+                recipe.id
+            )));
+        }
+        // A recipe spelling the runtime's own execution identity has pinned
+        // itself — the second step — and the tables below do not displace it.
+        // A project that narrows the roster binds it all the same: a selector
+        // no hand named is not authorized by a list of names.
+        if recipe.hand.is_none() && (recipe.target.is_some() || recipe.model.is_some()) {
+            if let Some(why) = runtime::roster::refuse_unnamed(
+                self.projects.get(&item.project),
+                &format!(
+                    "recipe '{}' pins the runtime's own execution identity",
+                    recipe.id
+                ),
+            ) {
+                return Err(EphorError::Command(why));
+            }
+            return Ok((recipe.target.clone(), recipe.model.clone()));
+        }
+        let choice = self.hand(&item.project, &recipe.id, None, recipe.hand.as_ref(), root);
+        if let runtime::roster::Choice::Refused(why) = choice {
+            return Err(EphorError::Command(why));
+        }
+        if let Some(note) = choice.note() {
+            self.note_once(note);
+        }
+        Ok(choice.pin())
+    }
+
+    /// Say one thing about who got the work once, however many tickets raise
+    /// it (§FS-006-project-interface.9).
+    fn note_once(&mut self, note: &str) {
+        if !self.notes.iter().any(|have| have == note) {
+            self.notes.push(note.to_string());
+        }
+    }
+
+    /// The one flag spelling a run over this entry's plan may carry
+    /// (§FS-005-dispatch.14): the chosen hand the plan language could not
+    /// spell — an agent and no model — resolved again at the moment the run
+    /// is invoked, the same moment the runtime reads its own configuration.
+    /// `status` is the same entry's, as [`Dispatcher::status_of`] just read
+    /// it — the plan is not read twice for one run.
+    ///
+    /// Flags are per-run, and what they can touch differs by what a ticket
+    /// carries (§FS-005-dispatch.14): one with the full execution line is
+    /// resolved from that line alone, the flags invisible to it, while one
+    /// pinning a model alone would take its carrier from them; a claimed
+    /// ticket is not the run's to advance at all (§FS-005-dispatch.15). So
+    /// the flags ride only where they can re-aim nothing: every ticket the
+    /// run would advance resolves to the same spelling, and none pins a
+    /// model. None otherwise — and where a hand wanted flags the run cannot
+    /// carry, the reader is told it went unbound.
+    pub fn run_hand(
+        &mut self,
+        entry: &Entry,
+        status: &WorkStatus,
+    ) -> Option<runtime::roster::HandFlags> {
+        if status.missing {
+            return None;
+        }
+        let recipes = self.recipes(&entry.project);
+        let mut wants: Vec<Option<runtime::roster::HandFlags>> = Vec::new();
+        for ticket in &status.tickets {
+            // Not this run's to advance: finished, or claimed by somebody
+            // (§FS-005-dispatch.15) — flags can re-aim neither.
+            if ticket.finished || ticket.assignee.is_some() {
+                continue;
+            }
+            match ticket.pinned {
+                // Its own full line: the runtime resolves it from the line
+                // alone, and a run's flags are invisible to it.
+                Some(plan::Pin::Target) => continue,
+                // A model alone would take its carrier from the flags, so its
+                // presence keeps them off this run.
+                Some(plan::Pin::Model) => {
+                    wants.push(None);
+                    continue;
+                }
+                None => {}
+            }
+            // The recipe the ticket was dispatched under, already resolved by
+            // `status_of` — its own id where no dispatch recorded one.
+            let action = &ticket.recipe;
+            let pinned = recipes
+                .iter()
+                .find(|recipe| &recipe.id == action)
+                .and_then(|recipe| recipe.hand.clone());
+            let choice = self.hand(&entry.project, action, None, pinned.as_ref(), &entry.root);
+            // At dispatch a refusal blocks the ticket; here the ticket
+            // already exists, so the run goes unflagged and the reason is
+            // said rather than swallowed (§FS-006-project-interface.9).
+            if let runtime::roster::Choice::Refused(why) = &choice {
+                self.note_once(why);
+            }
+            if let Some(note) = choice.note() {
+                let note = note.to_string();
+                self.note_once(&note);
+            }
+            wants.push(choice.flags());
+        }
+        let first = wants.iter().flatten().next()?.clone();
+        if wants.iter().all(|want| want.as_ref() == Some(&first)) {
+            return Some(first);
+        }
+        self.note_once(&format!(
+            "the open tickets of {} do not agree on one hand — the run carries no \
+             agent flags, and each ticket runs as it stands",
+            entry.plan.display()
+        ));
+        None
     }
 
     fn placement(&mut self, project: &str) -> Option<&Placement> {
@@ -394,7 +583,10 @@ impl Dispatcher {
         if forest.repos.is_empty() {
             return Ok(Opening::None);
         }
-        let outcome = crate::git::rebase(&forest, &base);
+        // The opening move a recipe declares is the rebase onto the project's
+        // main branch; a replay onto the branch's own copy is the reader's
+        // move and has its own entry (§FS-004-quick-actions.8).
+        let outcome = crate::git::rebase(&forest, &crate::git::Onto::Base(base));
         // What the replay measured is now stale: the branch it was offered for
         // has moved under the cached answer.
         if let Some(branch) = checkout.branch.clone() {
@@ -411,6 +603,10 @@ impl Dispatcher {
     /// item has none, and appends to it when it has.
     pub fn dispatch(&mut self, item: &Item, recipe: &Recipe, dry_run: bool) -> Result<Outcome> {
         let site = self.site(item, recipe)?;
+        // Who does it, before anything is written and before the opening move
+        // is made: a refusal leaves nothing behind
+        // (§FS-006-project-interface.9).
+        let (target, model) = self.pin(item, recipe, &site.dir)?;
         let states = self.states_yaml(&item.project)?;
         let plan_id = plan::plan_id(&item.id);
 
@@ -502,8 +698,8 @@ impl Dispatcher {
                     title: format!("{} — {}", recipe.description, item.title),
                     state: recipe.state.clone(),
                     prior: None,
-                    target: recipe.target.clone(),
-                    model: recipe.model.clone(),
+                    target: target.clone(),
+                    model: model.clone(),
                     body: brief,
                 };
                 let mut plan =
@@ -537,8 +733,8 @@ impl Dispatcher {
                     title: format!("{} — {}", recipe.description, item.title),
                     state: recipe.state.clone(),
                     prior,
-                    target: recipe.target.clone(),
-                    model: recipe.model.clone(),
+                    target: target.clone(),
+                    model: model.clone(),
                     body,
                 });
                 existing.set_metadata(&ticket_id, &site.metadata);
@@ -609,6 +805,9 @@ impl Dispatcher {
             // What was asked for is what is written down: ephor does not make
             // a move of its own in front of somebody's own words.
             opens_with: None,
+            // An ask pins nobody of its own, so `hands` answers for it under
+            // the id 'ask' like any other action (§FS-006-project-interface.9).
+            hand: None,
             target: None,
             model: None,
         };
@@ -711,6 +910,8 @@ impl Dispatcher {
                             })
                             .unwrap_or(false),
                         verdict: runtime::results::verdict(&entry.root, &entry.plan_id, &ticket.id),
+                        assignee: ticket.assignee,
+                        pinned: ticket.pinned,
                         id: ticket.id,
                         title: ticket.title,
                         state: ticket.state,

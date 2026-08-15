@@ -165,6 +165,10 @@
         "behind": {
           "type": "boolean",
           "description": "The matter's branch trails its main branch (true) or is level with it (false), measured in the checkout. An unmeasurable checkout matches neither (FS-004-quick-actions.6)."
+        },
+        "behind_upstream": {
+          "type": "boolean",
+          "description": "The matter's branch trails its own published copy (true) or is level with it (false), measured in the checkout. A branch published nowhere matches neither (FS-004-quick-actions.8)."
         }
       }
     }

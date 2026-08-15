@@ -406,12 +406,13 @@ pub struct FailuresArgs {
 }
 
 /// `ephor rebase` (§FS-004-quick-actions.6): fetch, and replay every
-/// repository under a checkout onto its main branch.
+/// repository under a checkout onto its main branch — or, with `--upstream`,
+/// onto the branch's own published copy (§FS-004-quick-actions.8).
 ///
-/// It exits `0` where every repository is on the base — replayed or already
-/// there — `3` where one stopped in a conflict, and `1` where it could not
-/// run at all. A state machine reads those to decide who works next
-/// (§FS-005-dispatch.12).
+/// It exits `0` where every repository is on the base — replayed, already
+/// there, or with nothing published to replay onto — `3` where one stopped in
+/// a conflict, and `1` where it could not run at all. A state machine reads
+/// those to decide who works next (§FS-005-dispatch.12).
 ///
 /// Every argument can arrive as the environment variable named beside it
 /// instead, which is how a program state passes it `{meta.*}`.
@@ -430,6 +431,17 @@ pub struct RebaseArgs {
     /// Replay onto this branch instead of the project's main branch (`ONTO`).
     #[arg(long)]
     pub onto: Option<String>,
+
+    /// Replay each repository onto its own branch's published copy rather
+    /// than onto a base (`UPSTREAM`, set to any non-empty value)
+    /// (§FS-004-quick-actions.8). A different ref per repository, so it takes
+    /// no branch name — and none to give, which is why it excludes `--onto`
+    /// rather than being one of its values. clap sees only the flags, so the
+    /// same refusal is repeated where the two arrive as `UPSTREAM` and
+    /// `ONTO`: asked for together in any spelling, the rebase refuses rather
+    /// than silently picking one.
+    #[arg(long, conflicts_with = "onto")]
+    pub upstream: bool,
 
     /// The feed item this is about (`ITEM`), so a conflict can be handed over
     /// as work.

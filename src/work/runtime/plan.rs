@@ -281,12 +281,31 @@ impl Ticket {
     }
 }
 
+/// The execution line a ticket carries, where it carries one
+/// (§FS-005-dispatch.14). The two rank differently against a run's flags: a
+/// full line is resolved on its own, with the flags invisible to it, while a
+/// model line takes its carrier from them — so only the latter keeps flags
+/// off a run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pin {
+    /// `**Target:**` — the full execution identity, the ticket's alone.
+    Target,
+    /// `**Model:**` — a model with no carrier of its own.
+    Model,
+}
+
 /// A ticket as the plan currently has it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanTicket {
     pub id: String,
     pub title: String,
     pub state: Option<String>,
+    /// Who claimed the ticket, where anyone has. A claim makes the runtime
+    /// skip the ticket — it is never a liveness signal (§FS-005-dispatch.15).
+    pub assignee: Option<String>,
+    /// The execution line the ticket carries, where it carries one
+    /// (§FS-005-dispatch.14).
+    pub pinned: Option<Pin>,
 }
 
 pub struct Plan {
@@ -325,28 +344,72 @@ impl Plan {
         &self.text
     }
 
-    /// Every ticket in the plan, in the order it was written. Fenced blocks
+    /// Every ticket in the plan, in the order it was written — at every
+    /// depth: the runtime nests a subtask one heading deeper per level, up to
+    /// `######`, and a parked subtask is as much a ticket as its parent
+    /// (§FS-005-dispatch.15). Fenced blocks
     /// are skipped: a dossier quotes conversations, and a conversation about a
-    /// plan contains headings that are not this plan's.
+    /// plan contains headings that are not this plan's. Metadata is read only
+    /// from a ticket's header block — the `**Field:**` lines between its
+    /// heading and its first content line, blank lines not closing it — which
+    /// is exactly as far as the runtime reads them, so a dossier or a report
+    /// quoted into a body cannot pin a ticket it merely mentions.
     pub fn tickets(&self) -> Vec<PlanTicket> {
         let mut tickets: Vec<PlanTicket> = Vec::new();
+        let mut in_header = false;
         for line in unfenced(&self.text) {
-            if let Some(rest) = line.strip_prefix("### ") {
-                if let Some((id, title)) = ticket_heading(rest) {
-                    tickets.push(PlanTicket {
-                        id,
-                        title,
-                        state: None,
-                    });
+            let trimmed = line.trim();
+            if trimmed.starts_with("###") {
+                match ticket_heading(trimmed) {
+                    Some((id, title)) => {
+                        tickets.push(PlanTicket {
+                            id,
+                            title,
+                            state: None,
+                            assignee: None,
+                            pinned: None,
+                        });
+                        in_header = true;
+                    }
+                    // A heading that is not a ticket is content, and content
+                    // closes the header block it lands in.
+                    None => in_header = false,
                 }
                 continue;
             }
-            if let Some(state) = line.trim().strip_prefix("**State:**") {
-                if let Some(last) = tickets.last_mut() {
-                    if last.state.is_none() {
-                        last.state = Some(state.trim().to_string());
-                    }
+            if !in_header {
+                continue;
+            }
+            if trimmed.is_empty() {
+                continue;
+            }
+            let Some(last) = tickets.last_mut() else {
+                in_header = false;
+                continue;
+            };
+            if let Some(state) = trimmed.strip_prefix("**State:**") {
+                if last.state.is_none() {
+                    last.state = Some(state.trim().to_string());
                 }
+            } else if let Some(assignee) = trimmed.strip_prefix("**Assignee:**") {
+                let assignee = assignee.trim();
+                if last.assignee.is_none() && !assignee.is_empty() {
+                    last.assignee = Some(assignee.to_string());
+                }
+            } else if let Some(value) = trimmed.strip_prefix("**Target:**") {
+                // The full line makes the ticket its own authority on who
+                // runs it, whatever else it carries (§FS-005-dispatch.14).
+                if !value.trim().is_empty() {
+                    last.pinned = Some(Pin::Target);
+                }
+            } else if let Some(value) = trimmed.strip_prefix("**Model:**") {
+                if !value.trim().is_empty() && last.pinned.is_none() {
+                    last.pinned = Some(Pin::Model);
+                }
+            } else if !(trimmed.starts_with("**") && trimmed.contains(":**")) {
+                // The first content line ends the header; any other
+                // `**Field:**` line keeps it open, as the runtime reads it.
+                in_header = false;
             }
         }
         tickets
@@ -371,9 +434,14 @@ impl Plan {
         format!("{recipe}-{}", highest + 1)
     }
 
-    /// The last ticket in the plan, which a new one follows.
+    /// The last top-level ticket in the plan, which a new one follows: a new
+    /// dispatch orders itself after the previous dispatch, never after a
+    /// subtask the runtime nested under one.
     pub fn last_ticket(&self) -> Option<PlanTicket> {
-        self.tickets().into_iter().next_back()
+        self.tickets()
+            .into_iter()
+            .filter(|ticket| !ticket.id.contains('.'))
+            .next_back()
     }
 
     pub fn append(&mut self, ticket: &Ticket) {
@@ -474,28 +542,57 @@ impl Plan {
     }
 }
 
-/// `Task fix-1: title` out of a heading, ignoring headings that are not
-/// tickets. The runtime's node kinds start with a capital and are followed by
-/// an identifier and a colon.
-fn ticket_heading(rest: &str) -> Option<(String, String)> {
-    let (kind, rest) = rest.split_once(' ')?;
+/// `Task fix-1: title` out of a node heading, ignoring headings that are not
+/// tickets. The grammar is the runtime's own parser's: three to six hashes —
+/// `###` is depth 1 — then a kind word (matched by shape alone: Title Case is
+/// the runtime's convention, its matching is case-insensitive), then a dotted
+/// id with exactly as many segments as the heading is deep, a colon, a title.
+/// The depth match is what keeps a prose heading out of the tickets: the
+/// runtime enforces it, so a heading that fails it is a ticket nowhere.
+fn ticket_heading(line: &str) -> Option<(String, String)> {
+    let hashes = line.bytes().take_while(|byte| *byte == b'#').count();
+    if !(3..=6).contains(&hashes) {
+        return None;
+    }
+    let rest = &line[hashes..];
+    let body = rest.trim_start();
+    if body.len() == rest.len() {
+        // Nothing separated the hashes from the words: not a heading.
+        return None;
+    }
+    let (kind, rest) = body.split_once(char::is_whitespace)?;
     if !kind
-        .chars()
+        .bytes()
         .next()
-        .is_some_and(|first| first.is_ascii_uppercase())
+        .is_some_and(|first| first.is_ascii_alphabetic())
+        || !kind
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
     {
         return None;
     }
-    let (id, title) = rest.split_once(':')?;
-    let id = id.trim();
-    if id.is_empty()
-        || !id
-            .chars()
-            .all(|ch| ch.is_alphanumeric() || ch == '-' || ch == '_')
-    {
+    let (id, title) = rest.trim_start().split_once(':')?;
+    let id = id.trim_end();
+    let depth = hashes - 2;
+    if id.split('.').count() != depth || !id.split('.').all(id_segment) {
         return None;
     }
     Some((id.to_string(), title.trim().to_string()))
+}
+
+/// One id segment, as the runtime's grammar has it: a name — a letter, then
+/// letters, digits, `-`, `_` — or a canonical number, `0` or digits without a
+/// leading zero, fitting in 32 bits.
+fn id_segment(segment: &str) -> bool {
+    match segment.bytes().next() {
+        Some(first) if first.is_ascii_alphabetic() => segment
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'),
+        Some(first) if first.is_ascii_digit() => {
+            (segment.len() == 1 || first != b'0') && segment.parse::<u32>().is_ok()
+        }
+        _ => false,
+    }
 }
 
 /// The lines of a document that are not inside a fenced block.
@@ -785,6 +882,135 @@ mod tests {
         );
         assert_eq!(text.matches("metadata:").count(), 1, "{text}");
         assert_eq!(text.matches("  tasks:").count(), 1, "{text}");
+    }
+
+    /// A claim is read where the runtime wrote one, and an unclaimed ticket
+    /// answers None rather than an empty word (§FS-005-dispatch.15).
+    #[test]
+    fn a_claim_is_read_beside_the_state() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("plan.rhei.md");
+        let mut plan = Plan::create(
+            &path,
+            "ephor-work",
+            "t",
+            "## The item\n",
+            &ticket("fix-gate-1", "fix", "work"),
+        );
+        plan.append(&ticket("fix-gate-2", "fix", "more work"));
+        // The runtime's `next` wrote the claim; ephor only reads it.
+        plan.text = plan.text.replacen(
+            "**State:** fix\n",
+            "**State:** fix\n**Assignee:** luna\n",
+            1,
+        );
+        let tickets = plan.tickets();
+        assert_eq!(tickets[0].assignee.as_deref(), Some("luna"));
+        assert_eq!(tickets[1].assignee, None);
+    }
+
+    /// An execution line is a ticket's own only in its header — the
+    /// `**Field:**` lines between the heading and the first content line,
+    /// which is as far as the runtime reads metadata (§FS-005-dispatch.14). A
+    /// body that merely mentions one, quoting a report or a dossier, pins
+    /// nothing.
+    #[test]
+    fn an_execution_line_pins_only_from_the_tickets_header() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("plan.rhei.md");
+        let mut plan = Plan::create(
+            &path,
+            "ephor-work",
+            "t",
+            "## The item\n",
+            &Ticket {
+                target: Some("codex[yolo]:openai:gpt-5".to_string()),
+                ..ticket("fix-gate-1", "fix", "work")
+            },
+        );
+        plan.append(&Ticket {
+            model: Some("sonnet".to_string()),
+            ..ticket("answer-1", "fix", "reply")
+        });
+        plan.append(&ticket(
+            "review-1",
+            "fix",
+            "The report said:\n\n**Target:** codex[yolo]:openai:gpt-5\n\nand stopped there.",
+        ));
+        let tickets = plan.tickets();
+        assert_eq!(tickets[0].pinned, Some(Pin::Target));
+        assert_eq!(tickets[1].pinned, Some(Pin::Model));
+        // The quote sits past the header — the blank line after the body's
+        // first content line has long closed it — so it pins nothing, and the
+        // state past it is not re-read either.
+        assert_eq!(tickets[2].pinned, None);
+        assert_eq!(tickets[2].state.as_deref(), Some("fix"));
+    }
+
+    /// The floor reads every depth the runtime's language nests
+    /// (§FS-005-dispatch.15): a subtask is a heading one level deeper with a
+    /// dotted id, one segment per level, numeric or named — the runtime's own
+    /// parser is the authority on that grammar.
+    #[test]
+    fn a_subtask_is_a_ticket_at_every_depth() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("plan.rhei.md");
+        let mut plan = Plan::create(
+            &path,
+            "ephor-work",
+            "t",
+            "## The item\n",
+            &ticket("fix-gate-1", "fix", "work"),
+        );
+        plan.text.push_str(concat!(
+            "\n#### Task fix-gate-1.1: split off\n**State:** needs-human\n\nchild\n",
+            "\n##### Task fix-gate-1.1.re-check: deeper\n**State:** fix\n\ngrandchild\n",
+            "\n###### Task fix-gate-1.1.re-check.0: as deep as the language goes\n",
+            "**State:** fix\n\nleaf\n",
+        ));
+        let tickets = plan.tickets();
+        let ids: Vec<&str> = tickets.iter().map(|ticket| ticket.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "fix-gate-1",
+                "fix-gate-1.1",
+                "fix-gate-1.1.re-check",
+                "fix-gate-1.1.re-check.0"
+            ]
+        );
+        assert_eq!(tickets[1].state.as_deref(), Some("needs-human"));
+        // A new dispatch follows the last dispatch, never a subtask of one.
+        assert_eq!(plan.last_ticket().unwrap().id, "fix-gate-1");
+    }
+
+    /// What the runtime's parser refuses is not a ticket here either: the
+    /// heading's depth must match the id's segment count, a segment is a name
+    /// or a canonical number, and seven hashes is past the language. Kind
+    /// matching is case-insensitive — Title Case is the runtime's convention,
+    /// not its grammar.
+    #[test]
+    fn a_heading_the_runtime_would_refuse_is_not_a_ticket() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("plan.rhei.md");
+        let mut plan = Plan::create(
+            &path,
+            "ephor-work",
+            "t",
+            "## The item\n",
+            &ticket("fix-gate-1", "fix", "work"),
+        );
+        plan.text.push_str(concat!(
+            "\n#### Task fix-gate-1-a: one segment, two headings deep\n**State:** fix\n\nx\n",
+            "\n### Task a.b: two segments, one heading deep\n**State:** fix\n\nx\n",
+            "\n#### Task fix-gate-1.01: a leading zero is not canonical\n**State:** fix\n\nx\n",
+            "\n#### Task fix-gate-1.: an empty segment\n**State:** fix\n\nx\n",
+            "\n####### Task d.d.d.d.d: past the language\n**State:** fix\n\nx\n",
+            "\n#### The plan: prose, not a node\n\nx\n",
+            "\n### task 9: a lowercase kind is valid grammar\n**State:** fix\n\nx\n",
+        ));
+        let ids: Vec<String> = plan.tickets().into_iter().map(|ticket| ticket.id).collect();
+        assert_eq!(ids, ["fix-gate-1", "9"]);
     }
 
     #[test]

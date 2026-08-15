@@ -361,6 +361,39 @@ fn a_recipe_naming_a_state_the_machine_does_not_have_is_refused() {
         .stderr(predicate::str::contains("fix, review, done"));
 }
 
+/// A recipe carrying both a hand and the runtime's own execution identity is
+/// refused rather than having one of them silently lose
+/// (§FS-006-project-interface.9): the hand is the checkable name for exactly
+/// what `target` spells raw, and nothing is written under the ambiguity.
+#[test]
+fn a_recipe_naming_both_a_hand_and_a_target_is_refused() {
+    let tmp = tempdir();
+    fixture(
+        tmp.path(),
+        json!({
+            "recipes": [{
+                "id": "fix-gate",
+                "description": "fix it",
+                "brief": "b",
+                "when": { "kinds": ["pr"] },
+                "hand": "sonnet",
+                "target": "claude-code[yolo]:anthropic:claude-sonnet-4-6"
+            }]
+        }),
+    );
+    ephor(tmp.path())
+        .args(["refresh", "demo"])
+        .assert()
+        .success();
+    ephor(tmp.path())
+        .args(["work", "dispatch", "--item", "github-prs:acme/widget#42"])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains(
+            "names both a hand and the runtime's own execution identity",
+        ));
+}
+
 /// What no recipe covers can still be asked for, in the reader's own words
 /// (§FS-005-dispatch.8) — and asking is refused for nothing but being
 /// unrunnable.
@@ -762,4 +795,259 @@ fn work_run_summons_the_runner_from_the_checkout() {
         .assert()
         .success()
         .stdout(predicate::str::contains("parked"));
+}
+
+/// Who does the work is the project's to default
+/// (§FS-006-project-interface.9): its table names a hand for this action, the
+/// roster turns that name into what the runtime will execute, and the ticket
+/// carries it. Then the same project narrows the roster, and the hand it no
+/// longer permits is refused with that reason rather than quietly replaced.
+#[test]
+fn a_project_defaults_the_hand_per_action_and_narrows_who_may_be_asked() {
+    let tmp = tempdir();
+    fixture(
+        tmp.path(),
+        json!({ "runner": "runner-of-ours", "hands": { "default": "sonnet" } }),
+    );
+    project_hands(tmp.path(), json!({ "fix-gate": "impl-fast:high" }), &[]);
+
+    // The runtime's own registry, and a PATH holding exactly what it names:
+    // which hands exist here is this fixture's fact, not the machine's.
+    let home = tmp.path().join("home");
+    let settings = home.join(".config/rhei/settings.json");
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    fs::write(
+        &settings,
+        r#"{
+            "agents": { "our-agent": { "command": ["sh"], "modes": { "high": [] } } },
+            "models": {
+                "impl-fast": { "provider": "acme", "model": "m-fast", "default_agent": "our-agent" },
+                "sonnet": { "provider": "acme", "model": "m-slow", "default_agent": "our-agent" }
+            }
+        }"#,
+    )
+    .unwrap();
+    fs::create_dir_all(tmp.path().join("fakebin")).unwrap();
+    make_executable(
+        &tmp.path().join("fakebin/runner-of-ours"),
+        "#!/bin/sh\nexit 0\n",
+    );
+    let run = |args: &[&str]| {
+        let mut command = ephor(tmp.path());
+        command.env("HOME", &home).args(args);
+        command
+    };
+
+    run(&["refresh", "demo"]).assert().success();
+    run(&["work", "dispatch"]).assert().success();
+    let plan_path = tmp
+        .path()
+        .join("demo/panta/github-prs-acme-widget-42.rhei.md");
+    let plan = fs::read_to_string(&plan_path).unwrap();
+    // The project's entry for this action, not the site's default for
+    // everything — and rendered into the runtime's own selector.
+    assert!(
+        plan.contains("**Target:** our-agent[high]:acme:m-fast"),
+        "{plan}"
+    );
+    assert!(!plan.contains("m-slow"), "{plan}");
+
+    // Narrowed to hands that do not include it: refused with the reason, and
+    // nothing is written under a hand the project does not permit.
+    project_hands(
+        tmp.path(),
+        json!({ "fix-gate": "impl-fast:high" }),
+        &["sonnet"],
+    );
+    run(&[
+        "work",
+        "dispatch",
+        "--item",
+        "github-prs:acme/widget#42",
+        "--again",
+    ])
+    .assert()
+    .code(1)
+    .stderr(predicate::str::contains("impl-fast"))
+    .stderr(predicate::str::contains("does not permit"))
+    .stderr(predicate::str::contains("sonnet"));
+    assert_eq!(
+        fs::read_to_string(&plan_path)
+            .unwrap()
+            .matches("### Task")
+            .count(),
+        1
+    );
+
+    // With nothing on `PATH` under the bound runner there is nobody to ask:
+    // the configured hand resolves to nothing, says so in the workable rung's
+    // own words, and the ticket is written all the same
+    // (§FS-006-project-interface.9).
+    project_hands(tmp.path(), json!({ "fix-gate": "impl-fast:high" }), &[]);
+    fs::remove_file(tmp.path().join("fakebin/runner-of-ours")).unwrap();
+    run(&[
+        "work",
+        "dispatch",
+        "--item",
+        "github-prs:acme/widget#42",
+        "--again",
+    ])
+    .assert()
+    .success()
+    .stdout(predicate::str::contains("runner-of-ours is not on PATH"));
+    let plan = fs::read_to_string(&plan_path).unwrap();
+    assert_eq!(plan.matches("### Task").count(), 2);
+    assert_eq!(plan.matches("**Target:**").count(), 1);
+}
+
+/// A hand the plan language cannot spell binds anyway (§FS-005-dispatch.14).
+/// On a machine whose runtime settings declare agents and no model profiles —
+/// so every hand is agent-only — the choice pins nothing on the ticket and
+/// rides `work run` as the runtime's own agent flags, resolved when the run
+/// is invoked; an effort-less choice of a hand declaring exactly one effort
+/// is completed to it, so the flags never travel bare — a bare `--agent`
+/// would let the state machine's own mode fall in, refused where the agent
+/// does not declare it. And the flags ride only where they can re-aim
+/// nothing: a ticket with the full execution line is resolved from that line
+/// alone and rides beside them, while one pinning a model would take its
+/// carrier from them, so its presence runs the plan unflagged and the reader
+/// is told the hand went unbound — until somebody claims that ticket, which
+/// takes it out of the run entirely (§FS-005-dispatch.15).
+#[test]
+fn an_agent_only_hand_binds_as_flags_on_the_run() {
+    let tmp = tempdir();
+    fixture(tmp.path(), json!({ "hands": { "default": "our-agent" } }));
+
+    // The runtime's registry the way this machine's actually is — agents and
+    // no model profiles — plus one profile used only to pin a later ticket.
+    let home = tmp.path().join("home");
+    let settings = home.join(".config/rhei/settings.json");
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    fs::write(
+        &settings,
+        r#"{
+            "agents": { "our-agent": { "command": ["sh"], "modes": { "high": [] } } },
+            "models": {
+                "carried": { "provider": "acme", "model": "m-carried", "default_agent": "our-agent" }
+            }
+        }"#,
+    )
+    .unwrap();
+    // A stub runner that records what it was asked for.
+    let log = tmp.path().join("runner.log");
+    fs::create_dir_all(tmp.path().join("fakebin")).unwrap();
+    make_executable(
+        &tmp.path().join("fakebin/rhei"),
+        &format!(
+            "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" > {}\nexit 0\n",
+            log.to_string_lossy()
+        ),
+    );
+    let run = |args: &[&str]| {
+        let mut command = ephor(tmp.path());
+        command.env("HOME", &home).args(args);
+        command
+    };
+
+    run(&["refresh", "demo"]).assert().success();
+    run(&["work", "dispatch"])
+        .assert()
+        .success()
+        // The choice is made, and the note says how it will bind.
+        .stdout(predicate::str::contains("names no model of its own"))
+        .stdout(predicate::str::contains("agent flags"));
+    // Nothing is pinned on the ticket: the plan language has no line for it.
+    let plan_path = tmp
+        .path()
+        .join("demo/panta/github-prs-acme-widget-42.rhei.md");
+    let plan = fs::read_to_string(&plan_path).unwrap();
+    assert!(!plan.contains("**Target:**"), "{plan}");
+    assert!(!plan.contains("**Model:**"), "{plan}");
+
+    // The run carries the choice as the runtime's own flags instead —
+    // resolved at the moment the run is invoked, exactly once, with the
+    // reader's own passthrough still last.
+    run(&["work", "run", "--", "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("agent our-agent at high"));
+    let args = fs::read_to_string(&log).unwrap();
+    assert!(
+        args.trim_end()
+            .ends_with("--agent our-agent --agent-mode high --dry-run"),
+        "{args}"
+    );
+    assert!(!args.contains("--model"), "{args}");
+
+    // A second ticket dispatched under a model hand carries its own line —
+    // with the carrier's one effort completed into it, because an effort-less
+    // selector would run without any of the hand's efforts.
+    project_hands(tmp.path(), json!({ "fix-gate": "carried" }), &[]);
+    run(&["work", "dispatch", "--again"]).assert().success();
+    let plan = fs::read_to_string(&plan_path).unwrap();
+    assert!(
+        plan.contains("**Target:** our-agent[high]:acme:m-carried"),
+        "{plan}"
+    );
+
+    // Back on the agent-only default, the flags still ride: the pinned
+    // ticket is resolved from its own full line, and the run's flags are
+    // invisible to it — nothing to contradict.
+    project_hands(tmp.path(), json!({}), &[]);
+    run(&["work", "run"]).assert().success();
+    let args = fs::read_to_string(&log).unwrap();
+    assert!(
+        args.trim_end()
+            .ends_with("--agent our-agent --agent-mode high"),
+        "{args}"
+    );
+
+    // A ticket pinning a model alone is different: it would take its carrier
+    // from the run's flags, so its presence runs the plan unflagged and the
+    // reader is told the hand went unbound for that run.
+    let mut plan = fs::read_to_string(&plan_path).unwrap();
+    plan.push_str(
+        "\n### Task manual-1: pinned to a model by hand\n\
+         **State:** fix\n**Model:** carried\n\n\
+         Work under whatever carries 'carried'.\n",
+    );
+    fs::write(&plan_path, &plan).unwrap();
+    run(&["work", "run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("do not agree on one hand"));
+    let args = fs::read_to_string(&log).unwrap();
+    assert!(!args.contains("--agent"), "{args}");
+
+    // A claim takes that ticket out of the run entirely — the runtime will
+    // not schedule it (§FS-005-dispatch.15) — and the flags ride again.
+    let plan = fs::read_to_string(&plan_path).unwrap();
+    fs::write(
+        &plan_path,
+        plan.replacen(
+            "**State:** fix\n**Model:** carried\n",
+            "**State:** fix\n**Assignee:** somebody\n**Model:** carried\n",
+            1,
+        ),
+    )
+    .unwrap();
+    run(&["work", "run"]).assert().success();
+    let args = fs::read_to_string(&log).unwrap();
+    assert!(
+        args.trim_end()
+            .ends_with("--agent our-agent --agent-mode high"),
+        "{args}"
+    );
+}
+
+/// Rewrite `projects.demo.work` with a hands table and a narrowing, the way a
+/// person editing status.json would.
+fn project_hands(tmp: &Path, hands: Value, permitted: &[&str]) {
+    let path = tmp.join("status.json");
+    let mut config: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    config["projects"]["demo"]["work"] = json!({
+        "hands": hands,
+        "permitted_hands": permitted,
+    });
+    fs::write(&path, serde_json::to_string_pretty(&config).unwrap()).unwrap();
 }

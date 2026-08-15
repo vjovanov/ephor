@@ -290,6 +290,13 @@ fn dispatch_work(config: &StatusConfig, args: &crate::cli::WorkDispatchArgs) -> 
     if !args.dry_run {
         dispatcher.save()?;
     }
+    // What the reader should know about who got the work: a hand nobody could
+    // be named to, a pair ephor cannot check, an agent with no model of its
+    // own (§FS-006-project-interface.9). Said once, after the sweep, because a
+    // sweep resolves the same table over and over.
+    for note in dispatcher.notes() {
+        println!("note: {}", style.dim(note));
+    }
     if args.item.is_some() && !asked_for_one {
         return Err(EphorError::Command(format!(
             "{} is not in any cached feed — run `ephor refresh` first.",
@@ -353,12 +360,17 @@ fn ask_work(config: &StatusConfig, args: &crate::cli::WorkAskArgs) -> Result<Exi
     if !args.dry_run {
         dispatcher.save()?;
     }
+    let style = Style::detect();
     println!(
         "{} {}\n  {}",
         if args.dry_run { "would ask" } else { "asked" },
         title(&item.title),
-        Style::detect().dim(&outcome.describe())
+        style.dim(&outcome.describe())
     );
+    // Who got it, where that is worth saying (§FS-006-project-interface.9).
+    for note in dispatcher.notes() {
+        println!("note: {}", style.dim(note));
+    }
     Ok(ExitCode::SUCCESS)
 }
 
@@ -416,40 +428,62 @@ fn sync_work(config: &StatusConfig, args: &crate::cli::WorkSyncArgs) -> Result<E
 /// root at a time: the tickets in a root are about one checkout, and two
 /// agents in one working tree are two agents editing the same files.
 fn run_work(config: &StatusConfig, args: &crate::cli::WorkRunArgs) -> Result<ExitCode> {
-    let dispatcher = Dispatcher::load(config)?;
+    let mut dispatcher = Dispatcher::load(config)?;
     // The runtime is a rung like every other capacity ephor leans on, and the
     // refusal is the table's sentence rather than this command's own
     // (§AR-005-capabilities.2).
     if let Some(refusal) = runtime::refusal(&config.work) {
         return Err(EphorError::Command(refusal));
     }
+    let entries: Vec<Entry> = dispatcher
+        .ledger
+        .entries
+        .iter()
+        .filter(|(id, entry)| {
+            (args.project.is_empty() || args.project.contains(&entry.project))
+                && args.item.as_ref().is_none_or(|item| item == *id)
+        })
+        .map(|(_, entry)| entry.clone())
+        .collect();
     // Grouped by root, because the tickets in one root are about one checkout
     // and two agents in one working tree edit the same files — but named plan
     // by plan, so a runtime project the reader keeps there for their own work
-    // is not swept up by ephor's.
-    // (work root, checkout to run from, the plans ephor opened there)
-    let mut roots: Vec<(std::path::PathBuf, std::path::PathBuf, Vec<String>)> = Vec::new();
-    for (id, entry) in &dispatcher.ledger.entries {
-        if !args.project.is_empty() && !args.project.contains(&entry.project) {
-            continue;
-        }
-        if let Some(item) = &args.item {
-            if id != item {
-                continue;
-            }
-        }
+    // is not swept up by ephor's. A hand the plan language could not spell
+    // rides the run as agent flags (§FS-005-dispatch.14), so plans wanting
+    // different flags run separately: flags are per-run, and one flag over
+    // two hands would re-aim one of them.
+    // (work root, checkout to run from, the hand riding the run, the plans)
+    type Group = (
+        std::path::PathBuf,
+        std::path::PathBuf,
+        Option<runtime::roster::HandFlags>,
+        Vec<String>,
+    );
+    let mut roots: Vec<Group> = Vec::new();
+    for entry in &entries {
         let status = dispatcher.status_of(entry, None);
         if status.missing || status.open_tickets() == 0 {
             continue;
         }
-        match roots.iter_mut().find(|(root, _, _)| root == &entry.root) {
-            Some((_, _, plans)) => plans.push(entry.plan_id.clone()),
+        let hand = dispatcher.run_hand(entry, &status);
+        match roots
+            .iter_mut()
+            .find(|(root, _, flags, _)| root == &entry.root && flags == &hand)
+        {
+            Some((_, _, _, plans)) => plans.push(entry.plan_id.clone()),
             None => roots.push((
                 entry.root.clone(),
                 entry.checkout(),
+                hand,
                 vec![entry.plan_id.clone()],
             )),
         }
+    }
+    // What the reader should know about who gets this run — a hand that went
+    // unbound, a name nothing resolves — said once, before the terminal is
+    // handed over (§FS-006-project-interface.9).
+    for note in dispatcher.notes() {
+        println!("note: {}", Style::detect().dim(note));
     }
     if roots.is_empty() {
         println!("Nothing to run: no dispatched ticket is still open.");
@@ -457,14 +491,32 @@ fn run_work(config: &StatusConfig, args: &crate::cli::WorkRunArgs) -> Result<Exi
     }
 
     let mut failed = 0usize;
-    for (root, checkout, plans) in &roots {
+    for (root, checkout, hand, plans) in &roots {
         println!(
-            "\n▶ {} {} ({} plan(s))",
+            "\n▶ {} {} ({} plan(s){})",
             runtime::label(&config.work),
             root.display(),
-            plans.len()
+            plans.len(),
+            match hand {
+                Some(hand) => format!(
+                    ", agent {}{}",
+                    hand.agent,
+                    hand.effort
+                        .as_deref()
+                        .map(|effort| format!(" at {effort}"))
+                        .unwrap_or_default()
+                ),
+                None => String::new(),
+            }
         );
-        match runtime::run(&config.work, root, checkout, plans, &args.runner_args) {
+        match runtime::run(
+            &config.work,
+            root,
+            checkout,
+            plans,
+            hand.as_ref(),
+            &args.runner_args,
+        ) {
             Ok(answer) => match answer.outcome {
                 SummonsOutcome::Done => {}
                 // The runtime declining for now is not a failed run

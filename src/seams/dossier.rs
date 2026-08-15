@@ -65,6 +65,49 @@ pub fn of_project(
     with_forest(place(project, root, workspace), forest)
 }
 
+/// A summons about a branch rather than a matter — what a branch row's menu
+/// tells the command it runs (§FS-004-quick-actions.6).
+///
+/// Every name [`of_item`] sets is set here too, empty where a branch has no
+/// answer for it. A summons does not start from a cleared environment
+/// (§AR-002-summons.1), so a name left unset is not absent — it is inherited
+/// from whatever launched ephor, and a command on a branch row would read some
+/// other matter's title, url or number as if they were this row's. The empties
+/// are the point; `assert_eq!` on the two vocabularies keeps them that way.
+pub fn of_branch(
+    project: &str,
+    root: &Path,
+    workspace: &Path,
+    branch: Option<&BranchInfo>,
+    forest: Option<&Forest>,
+) -> Vec<(String, String)> {
+    let mut pairs = place(project, root, workspace);
+    pairs.extend([
+        ("EPHOR_ITEM_ID".to_string(), String::new()),
+        ("EPHOR_SOURCE".to_string(), String::new()),
+        ("EPHOR_KIND".to_string(), String::new()),
+        ("EPHOR_TITLE".to_string(), String::new()),
+        ("EPHOR_URL".to_string(), String::new()),
+        ("EPHOR_STATE".to_string(), String::new()),
+        (
+            "EPHOR_BRANCH".to_string(),
+            branch
+                .map(|branch| branch.branch.clone())
+                .unwrap_or_default(),
+        ),
+        (
+            "EPHOR_TICKET".to_string(),
+            branch
+                .and_then(|branch| branch.ticket.clone())
+                .unwrap_or_default(),
+        ),
+        ("EPHOR_REPO".to_string(), String::new()),
+        ("EPHOR_NUMBER".to_string(), String::new()),
+        ("EPHOR_RAW".to_string(), String::new()),
+    ]);
+    with_forest(pairs, forest)
+}
+
 /// A summons about one matter. `branch` is the registry branch the item was
 /// matched to (org → project → branch, the same grouping the tree shows);
 /// `workspace` is the resolved checkout the command runs in.
@@ -117,6 +160,30 @@ mod tests {
     use super::*;
     use crate::feed::model::ItemKind;
     use serde_json::json;
+
+    /// A branch row answers every name a matter does, so nothing an item would
+    /// have named is left to be inherited from the process that launched ephor.
+    /// This is the whole guard: add a name to [`of_item`] and this fails until
+    /// [`of_branch`] answers it too.
+    #[test]
+    fn a_branch_answers_every_name_a_matter_does() {
+        let root = Path::new("/w");
+        let names = |pairs: Vec<(String, String)>| {
+            pairs
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect::<std::collections::BTreeSet<_>>()
+        };
+        let matter = names(of_item(
+            &item(ItemKind::Pr, "test:1", json!({})),
+            root,
+            root,
+            None,
+            None,
+        ));
+        let branch = names(of_branch("widget", root, root, None, None));
+        assert_eq!(matter, branch);
+    }
 
     fn item(kind: ItemKind, id: &str, raw: serde_json::Value) -> Item {
         Item {

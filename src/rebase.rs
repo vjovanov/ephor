@@ -1,5 +1,6 @@
 //! `ephor rebase` — the deterministic move, run on its own
-//! (§FS-004-quick-actions.6).
+//! (§FS-004-quick-actions.6), onto the project's main branch or onto the
+//! branch's own published copy (§FS-004-quick-actions.8).
 //!
 //! The reader presses a key for it and a state machine runs it as a program;
 //! both arrive here, so there is one answer to what a clean rebase is
@@ -24,14 +25,15 @@ const CONFLICT: u8 = 3;
 /// An argument, or what a program state put in the environment for it. A
 /// state machine hands its program everything through `env:` (the manual's
 /// §8.5), so the flags a reader types and the names a state sets are the same
-/// four inputs spelled two ways.
+/// inputs spelled two ways.
 fn or_env(flag: &Option<String>, name: &str) -> Option<String> {
     flag.clone()
         .or_else(|| std::env::var(name).ok())
         .map(|value| value.trim().to_string())
         // A `{meta.branch}` the runtime could not fill arrives as itself; an
-        // unresolved placeholder is not a value.
-        .filter(|value| !value.is_empty() && !value.contains('{'))
+        // unresolved placeholder is not a value, and the same guard settles
+        // what a project type declares (§AR-004-forest.2).
+        .filter(|value| crate::forest::is_branch_name(value))
 }
 
 pub fn rebase(args: &RebaseArgs) -> Result<ExitCode> {
@@ -64,29 +66,52 @@ pub fn rebase(args: &RebaseArgs) -> Result<ExitCode> {
         Some(placement) => placement.forest(&checkout),
         None => crate::forest::Forest::resolve(&checkout, None, &[]),
     };
-    let base = match or_env(&args.onto, "ONTO").or_else(|| {
-        placement
-            .as_ref()
-            .and_then(|placement| placement.main_branch.clone())
-    }) {
-        Some(base) => base,
-        // No registry to ask: what origin itself calls its default is the
-        // closest thing to an answer, and saying which one was chosen is what
-        // makes a wrong guess visible.
-        None => forest
-            .repos
-            .first()
-            .and_then(|repo| git::default_base(&repo.path))
-            .ok_or_else(|| {
-                EphorError::Command(format!(
-                    "Nothing says what to rebase {} onto — pass --onto, or --project for a \
-                     registry entry with a main_branch.",
-                    checkout.display()
-                ))
-            })?,
+    // What to replay onto. `--upstream` asks for each branch's own published
+    // copy, which is a different ref in every repository and so is named by
+    // nothing here (§FS-004-quick-actions.8); otherwise it is one branch name
+    // for the whole forest. The flag has the environment spelling every other
+    // argument has — a program state cannot press `--upstream` — and because
+    // clap's `conflicts_with` sees only the flags, the refusal of the two
+    // together is repeated here across both spellings: silently preferring
+    // one would run a different rebase than the state asked for.
+    let upstream = args.upstream || or_env(&None, "UPSTREAM").is_some();
+    let onto_named = or_env(&args.onto, "ONTO");
+    if upstream && onto_named.is_some() {
+        return Err(EphorError::Command(
+            "--upstream (UPSTREAM) and --onto (ONTO) name two different things to replay \
+             onto — pass one of them."
+                .to_string(),
+        ));
+    }
+    let onto = if upstream {
+        git::Onto::Upstream
+    } else {
+        git::Onto::Base(
+            match onto_named.or_else(|| {
+                placement
+                    .as_ref()
+                    .and_then(|placement| placement.main_branch.clone())
+            }) {
+                Some(base) => base,
+                // No registry to ask: what origin itself calls its default is
+                // the closest thing to an answer, and saying which one was
+                // chosen is what makes a wrong guess visible.
+                None => forest
+                    .repos
+                    .first()
+                    .and_then(|repo| git::default_base(&repo.path, &repo.remote))
+                    .ok_or_else(|| {
+                        EphorError::Command(format!(
+                            "Nothing says what to rebase {} onto — pass --onto or --upstream, \
+                             or --project for a registry entry with a main_branch.",
+                            checkout.display()
+                        ))
+                    })?,
+            },
+        )
     };
 
-    let outcome = git::rebase(&forest, &base);
+    let outcome = git::rebase(&forest, &onto);
     print!("{}", outcome.report());
     if let Some(path) = or_env(&args.report, "REPORT") {
         write_report(&path, &outcome.report())?;

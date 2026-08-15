@@ -45,6 +45,12 @@ fn ephor(tmp: &Path) -> assert_cmd::Command {
 /// A site with two projects: one whose root is on disk, one whose registry row
 /// points at a directory that is not there.
 fn fixture(tmp: &Path, providers: Value) {
+    fixture_with_work(tmp, providers, json!({}));
+}
+
+/// The same site, with the work configuration said explicitly — the roster
+/// tests bind their own runner so the machine's does not answer for them.
+fn fixture_with_work(tmp: &Path, providers: Value, work: Value) {
     let bin = tmp.join("bin");
     fs::create_dir_all(&bin).unwrap();
     make_executable(&bin.join("ephor-forge-demo"), FORGE);
@@ -79,6 +85,7 @@ fn fixture(tmp: &Path, providers: Value) {
         tmp.join("status.json"),
         serde_json::to_string_pretty(&json!({
             "defaults": { "ttl_seconds": 0, "provider_timeout_seconds": 10 },
+            "work": work,
             "projects": {
                 "widget": { "providers": providers },
                 "ghost": { "providers": [{ "provider": "demo" }] }
@@ -210,8 +217,16 @@ fn the_ladder_and_the_diagnosis_give_the_same_sentence() {
         .unwrap();
     let diagnosed: Value = serde_json::from_slice(&diagnosed.stdout).unwrap();
 
-    assert_eq!(ladder[0]["missing"], diagnosed[0]["missing"]);
-    assert_eq!(ladder[0]["held"], diagnosed[0]["held"]);
+    assert_eq!(
+        ladder["projects"][0]["missing"],
+        diagnosed["projects"][0]["missing"]
+    );
+    assert_eq!(
+        ladder["projects"][0]["held"],
+        diagnosed["projects"][0]["held"]
+    );
+    // And the roster both print is the same one (§FS-005-dispatch.14).
+    assert_eq!(ladder["roster"], diagnosed["roster"]);
 }
 
 /// A refresh nobody has run is not every source having failed. The two ask
@@ -228,8 +243,8 @@ fn a_project_nobody_has_refreshed_says_so_rather_than_claiming_silence() {
         .output()
         .unwrap();
     let rows: Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(rows[0]["sources"]["answering"], Value::Null);
-    let why = rows[0]["missing"]
+    assert_eq!(rows["projects"][0]["sources"]["answering"], Value::Null);
+    let why = rows["projects"][0]["missing"]
         .as_array()
         .unwrap()
         .iter()
@@ -253,8 +268,8 @@ fn a_project_nobody_has_refreshed_says_so_rather_than_claiming_silence() {
         .output()
         .unwrap();
     let rows: Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(rows[0]["sources"]["answering"], 1);
-    assert!(rows[0]["held"]
+    assert_eq!(rows["projects"][0]["sources"]["answering"], 1);
+    assert!(rows["projects"][0]["held"]
         .as_array()
         .unwrap()
         .contains(&json!("observable")));
@@ -336,17 +351,17 @@ fn a_lost_source_is_named_with_its_kind_and_the_run_exits_degraded() {
         .output()
         .unwrap();
     let rows: Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(rows[0]["health"], "degraded");
-    assert_eq!(rows[0]["sources"]["answering"], 1);
-    assert_eq!(rows[0]["sources"]["configured"], 2);
+    assert_eq!(rows["projects"][0]["health"], "degraded");
+    assert_eq!(rows["projects"][0]["sources"]["answering"], 1);
+    assert_eq!(rows["projects"][0]["sources"]["configured"], 2);
     // Asked, not configured: a project's sources are what wrote a slot, which
     // includes a probed ticket store and a site-level shared source. Reporting
     // the configured count as the denominator said more answered than were
     // asked (§FS-006-project-interface.7).
-    assert_eq!(rows[0]["sources"]["asked"], 2);
+    assert_eq!(rows["projects"][0]["sources"]["asked"], 2);
     // The distinction is the whole point: a network to wait out asks nothing
     // of the reader, where every other failure sends them to change something.
-    assert_eq!(rows[0]["silent"][0]["unreachable"], true);
+    assert_eq!(rows["projects"][0]["silent"][0]["unreachable"], true);
 }
 
 /// Losing every source is its own condition, not a worse degrade
@@ -460,4 +475,119 @@ fn the_self_pass_leaves_nothing_behind() {
     // And what it made for itself is gone.
     let leftovers: Vec<_> = fs::read_dir(&scratch).unwrap().flatten().collect();
     assert!(leftovers.is_empty(), "{leftovers:?}");
+}
+
+/// The roster is reportable before anything depends on it
+/// (§FS-005-dispatch.14): each hand, what it resolves to, and why an
+/// unavailable one is unavailable — shown with its reason, never hidden.
+#[test]
+fn the_roster_prints_each_hand_and_why_an_unavailable_one_is_unavailable() {
+    let tmp = tempdir();
+    fixture_with_work(
+        tmp.path(),
+        json!([{ "provider": "demo" }]),
+        json!({ "runner": "runner-of-ours" }),
+    );
+    // A PATH of exactly this test's making: the runner and one agent's
+    // command are there, every other agent's is not — so which hand is
+    // available is this fixture's fact, not the machine's.
+    let bin = tmp.path().join("bin");
+    make_executable(&bin.join("runner-of-ours"), "#!/bin/sh\nexit 0\n");
+    make_executable(&bin.join("claude"), "#!/bin/sh\nexit 0\n");
+    let home = tmp.path().join("home");
+    fs::create_dir_all(&home).unwrap();
+
+    let out = ephor(tmp.path())
+        .env("PATH", bin.to_string_lossy().to_string())
+        .env("HOME", &home)
+        .args(["capabilities", "widget"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let report = String::from_utf8_lossy(&out.stdout);
+    // The section names the bound runner, since the roster is its knowledge.
+    assert!(
+        report.contains("who can be asked (runner-of-ours)"),
+        "{report}"
+    );
+    // A hand whose agent is there resolves, with its efforts beside it.
+    assert!(report.contains("✓ claude-code"), "{report}");
+    assert!(report.contains("its own default model"), "{report}");
+    assert!(report.contains("efforts: yolo"), "{report}");
+    // One whose agent is not stays on the list with the computed reason.
+    assert!(report.contains("✗ codex"), "{report}");
+    assert!(report.contains("codex is not on PATH"), "{report}");
+
+    // The same roster, as the JSON a program reads.
+    let out = ephor(tmp.path())
+        .env("PATH", bin.to_string_lossy().to_string())
+        .env("HOME", &home)
+        .args(["capabilities", "widget", "--json"])
+        .output()
+        .unwrap();
+    let rows: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(rows["roster"]["runner"], "runner-of-ours");
+    assert_eq!(rows["roster"]["refusal"], Value::Null);
+    let hands = rows["roster"]["hands"].as_array().unwrap();
+    let by_id = |id: &str| {
+        hands
+            .iter()
+            .find(|hand| hand["id"] == id)
+            .unwrap_or_else(|| panic!("no hand '{id}': {hands:?}"))
+    };
+    assert_eq!(by_id("claude-code")["available"], true);
+    assert_eq!(by_id("claude-code")["efforts"], json!(["yolo"]));
+    assert_eq!(by_id("codex")["available"], false);
+    assert_eq!(by_id("codex")["why"], "codex is not on PATH");
+}
+
+/// The degrade (§FS-005-dispatch.14): with the bound runtime not on `PATH`
+/// the roster is empty and says so in the workable rung's own words — the
+/// very sentence the rung shows — and every other rung still resolves, so a
+/// site nobody hands work to is diagnosed, not broken.
+#[test]
+fn a_site_with_no_runtime_still_resolves_every_other_rung() {
+    let tmp = tempdir();
+    fixture_with_work(
+        tmp.path(),
+        json!([{ "provider": "demo" }]),
+        json!({ "runner": "no-such-runtime-anywhere" }),
+    );
+
+    let out = ephor(tmp.path())
+        .args(["capabilities", "widget"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let report = String::from_utf8_lossy(&out.stdout);
+    // The empty roster is said, in the workable rung's words, naming the
+    // bound runner rather than the shipped one.
+    assert!(report.contains("who can be asked"), "{report}");
+    assert!(
+        report.contains("nobody — no-such-runtime-anywhere is not on PATH"),
+        "{report}"
+    );
+    // And the ladder is still the ladder: every other rung resolved.
+    assert!(report.contains("observable"), "{report}");
+
+    let out = ephor(tmp.path())
+        .args(["capabilities", "widget", "--json"])
+        .output()
+        .unwrap();
+    let rows: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(rows["roster"]["hands"], json!([]));
+    // One sentence, twice shown: the roster's refusal is the workable rung's
+    // reason, because two sentences would drift (§FS-010-doctor.1).
+    let workable = rows["projects"][0]["missing"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["rung"] == "workable")
+        .expect("the workable rung is missing with the runner gone");
+    assert_eq!(rows["roster"]["refusal"], workable["why"]);
+    // Rungs that owe nothing to the runtime still hold.
+    assert!(rows["projects"][0]["held"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("placed")));
 }

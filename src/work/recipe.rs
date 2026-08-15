@@ -7,6 +7,8 @@
 //! (§FS-001-forge-interface.3). The brief is the reader's, rendered with the
 //! item's fields where it names them.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::feed::gate::Gate;
@@ -33,6 +35,12 @@ pub struct WorkConfig {
     /// replaces it (§FS-005-dispatch.1).
     #[serde(default)]
     pub recipes: Vec<Recipe>,
+    /// Who does which action, by the action's own id, with [`DEFAULT_HAND`]
+    /// answering for every id the table does not name
+    /// (§FS-006-project-interface.9). The site's answer, which a project's
+    /// table displaces.
+    #[serde(default)]
+    pub hands: BTreeMap<String, HandPin>,
 }
 
 impl Default for WorkConfig {
@@ -42,6 +50,7 @@ impl Default for WorkConfig {
             states: None,
             runner: None,
             recipes: Vec::new(),
+            hands: BTreeMap::new(),
         }
     }
 }
@@ -60,6 +69,156 @@ pub struct ProjectWorkConfig {
     pub states: Option<String>,
     #[serde(default)]
     pub recipes: Vec<Recipe>,
+    /// Who does which action on this project — read before the site's table,
+    /// this action's id before [`DEFAULT_HAND`] (§FS-006-project-interface.9).
+    #[serde(default)]
+    pub hands: BTreeMap<String, HandPin>,
+    /// The hands that may be used on this project at all. Empty asks nothing;
+    /// a non-empty list refuses everything outside it with that reason,
+    /// wherever it was named (§FS-006-project-interface.9) — which is what a
+    /// repository under a policy about which models may see its code needs.
+    #[serde(default)]
+    pub permitted_hands: Vec<String>,
+}
+
+/// The key a hands table answers every unnamed action with
+/// (§FS-006-project-interface.9).
+pub const DEFAULT_HAND: &str = "default";
+
+/// Who a piece of work is meant for, as configuration names them
+/// (§FS-006-project-interface.9): a hand the roster knows, or — for a pair the
+/// runtime's registry never enumerated — the agent and the model it carries,
+/// spelled out. Nothing here is the runtime's own grammar: a hand is an id and
+/// an effort, and rendering one into whatever the binding executes happens in
+/// the runtime adapter alone (§REQ-001-boundary.5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HandPin {
+    /// `<hand-id>[:<effort>]`.
+    Named { id: String, effort: Option<String> },
+    /// `{ "agent": …, "model": …, "effort": … }` — both halves of the pair
+    /// named, because half of one is a hand the roster already has an id for.
+    Spelled {
+        agent: String,
+        model: String,
+        effort: Option<String>,
+    },
+}
+
+impl HandPin {
+    /// The effort asked for, where one was.
+    pub fn effort(&self) -> Option<&str> {
+        match self {
+            HandPin::Named { effort, .. } | HandPin::Spelled { effort, .. } => effort.as_deref(),
+        }
+    }
+
+    /// How a message names this pin back to the person who wrote it.
+    pub fn describe(&self) -> String {
+        let effort = match self.effort() {
+            Some(effort) => format!(" at effort '{effort}'"),
+            None => String::new(),
+        };
+        match self {
+            HandPin::Named { id, .. } => format!("'{id}'{effort}"),
+            HandPin::Spelled { agent, model, .. } => format!("{agent} carrying {model}{effort}"),
+        }
+    }
+
+    /// `<hand-id>[:<effort>]`, refusing what cannot be one. A selector in the
+    /// runtime's own words is not a hand: it is spelled out in full instead,
+    /// so that what configuration names is checkable against the roster.
+    /// Public because the same words are typed at a command line as written in
+    /// configuration, and one grammar cannot be read two ways.
+    pub fn parse(text: &str) -> std::result::Result<HandPin, String> {
+        let text = text.trim();
+        if text.is_empty() {
+            return Err("a hand is named '<hand>' or '<hand>:<effort>'; this one is empty".into());
+        }
+        let mut parts = text.splitn(2, ':');
+        let id = parts.next().unwrap_or_default().trim();
+        let effort = parts.next().map(str::trim);
+        if id.is_empty() {
+            return Err(format!("hand '{text}' names no hand before the ':'"));
+        }
+        match effort {
+            Some(effort) if effort.is_empty() || effort.contains(':') => Err(format!(
+                "hand '{text}' is not '<hand>:<effort>'; to name an agent and a model that the \
+                 runtime's registry does not list, spell them out as \
+                 {{ \"agent\": …, \"model\": … }}"
+            )),
+            effort => Ok(HandPin::Named {
+                id: id.to_string(),
+                effort: effort.map(str::to_string),
+            }),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for HandPin {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<HandPin, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Long {
+            #[serde(default)]
+            agent: Option<String>,
+            #[serde(default)]
+            model: Option<String>,
+            #[serde(default)]
+            effort: Option<String>,
+        }
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Short(String),
+            Long(Long),
+        }
+        match Raw::deserialize(deserializer)? {
+            Raw::Short(text) => HandPin::parse(&text).map_err(serde::de::Error::custom),
+            Raw::Long(long) => match (long.agent, long.model) {
+                (Some(agent), Some(model)) => Ok(HandPin::Spelled {
+                    agent,
+                    model,
+                    effort: long.effort,
+                }),
+                // Half a pair is a hand the roster names on its own, and
+                // naming it by id is what lets ephor check it.
+                _ => Err(serde::de::Error::custom(
+                    "a hand spelled out in full names both 'agent' and 'model'; \
+                     to name one of them alone, use the roster's id for it",
+                )),
+            },
+        }
+    }
+}
+
+impl Serialize for HandPin {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        match self {
+            HandPin::Named { id, effort } => match effort {
+                Some(effort) => serializer.serialize_str(&format!("{id}:{effort}")),
+                None => serializer.serialize_str(id),
+            },
+            HandPin::Spelled {
+                agent,
+                model,
+                effort,
+            } => {
+                use serde::ser::SerializeMap;
+                let mut map = serializer.serialize_map(None)?;
+                map.serialize_entry("agent", agent)?;
+                map.serialize_entry("model", model)?;
+                if let Some(effort) = effort {
+                    map.serialize_entry("effort", effort)?;
+                }
+                map.end()
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -96,7 +255,16 @@ pub struct Recipe {
     /// clean rebase is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opens_with: Option<String>,
-    /// Pin the runtime's execution identity for this ticket.
+    /// Whose work this is, when it is not whoever the tables would default to
+    /// — the second of the seven steps, and the portable spelling: a hand id
+    /// the roster knows, checked against it (§FS-006-project-interface.9).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hand: Option<HandPin>,
+    /// Pin the runtime's execution identity for this ticket. The runtime's own
+    /// words rather than a hand, so nothing checks it — it pins this recipe
+    /// the same way `hand` does, and a project's tables do not displace it. A
+    /// recipe carrying both this and `hand` is refused at dispatch: one of
+    /// them would silently lose (§FS-006-project-interface.9).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -112,7 +280,11 @@ fn default_icon() -> String {
     "◆".to_string()
 }
 
-fn default_state() -> String {
+/// Where a ticket starts when nothing says otherwise: the shipped machine's
+/// working state. Public because a menu entry that carries a brief instead of
+/// a command is a recipe under another name (§FS-005-dispatch.1), and it
+/// starts where the recipes do.
+pub fn default_state() -> String {
     "fix".to_string()
 }
 
@@ -152,6 +324,13 @@ pub struct Selector {
     /// asks about the checkout and gets no answer is being offered blind.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub behind: Option<bool>,
+    /// The item's branch trails its own **published copy** (`true`), or is
+    /// level with it (`false`) — the other distance, and a different question
+    /// from the one above (§FS-004-quick-actions.8). A branch published
+    /// nowhere matches neither, for the same reason an unmeasurable checkout
+    /// does not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub behind_upstream: Option<bool>,
 }
 
 /// What a selector asks about that the item does not carry: facts measured in
@@ -161,6 +340,9 @@ pub struct Facts {
     /// Commits the item's branch trails its main branch; None where it could
     /// not be measured.
     pub behind: Option<u64>,
+    /// Commits it trails its own published copy; None where there is no copy
+    /// to measure against (§FS-004-quick-actions.8).
+    pub behind_upstream: Option<u64>,
 }
 
 impl Selector {
@@ -170,6 +352,19 @@ impl Selector {
     pub fn matches(&self, item: &Item, facts: &Facts) -> bool {
         if let Some(want) = self.behind {
             match facts.behind {
+                Some(behind) => {
+                    if (behind > 0) != want {
+                        return false;
+                    }
+                }
+                None => return false,
+            }
+        }
+        // The same shape for the other distance, and asked the same way: a
+        // branch with no published copy answers neither `true` nor `false`
+        // (§FS-004-quick-actions.8).
+        if let Some(want) = self.behind_upstream {
+            match facts.behind_upstream {
                 Some(behind) => {
                     if (behind > 0) != want {
                         return false;
@@ -253,6 +448,10 @@ pub fn shipped() -> Vec<Recipe> {
         needs_checkout,
         brief: brief.to_string(),
         opens_with: None,
+        // The shipped recipes name nobody: who does them is the reader's
+        // table to write, and unwritten is the runtime's to pick
+        // (§FS-006-project-interface.9).
+        hand: None,
         target: None,
         model: None,
     };
@@ -359,18 +558,28 @@ pub fn shipped() -> Vec<Recipe> {
             ..recipe(
                 "rebase",
                 "⤴",
-                "rebase onto the main branch",
+                "rebase onto the main branch, handing over what conflicts",
                 // Replaying a branch happens where the branch is.
                 true,
                 Selector {
-                    kinds: vec!["pr".to_string()],
-                    roles: vec!["author".to_string()],
                     // Only where the branch has actually fallen behind: a
                     // recipe offered on a change that is already current is a
                     // ticket to do nothing (§FS-004-quick-actions.6). It is
                     // last of the shipped recipes because a red gate or an
                     // owed answer is the more urgent thing about the same
                     // pull request.
+                    //
+                    // And nothing else. This is the one recipe an entry of the
+                    // menu dispatches by name — the replay hands its conflict
+                    // to `rebase` (§FS-005-dispatch.12) — so what the entry is
+                    // offered on and what the recipe applies to have to be the
+                    // same set (§FS-005-dispatch.1). The entry asks about a
+                    // branch on disk that trails its base and nothing else
+                    // (§FS-004-quick-actions.6), so neither does this: the
+                    // kind of row that mentions the branch, and whose change
+                    // the forge says it is, are facts about how the reader
+                    // arrived, not about the checkout being replayed — and a
+                    // distance can only be measured where the branch is here.
                     behind: Some(true),
                     ..Selector::default()
                 },
@@ -551,25 +760,79 @@ mod tests {
         // invitation to guess.
         assert!(!ids(&recipes, &mine).contains(&rebase));
         // Level with main: replaying it would be a ticket to do nothing.
-        assert!(!ids_with(&recipes, &mine, Facts { behind: Some(0) }).contains(&rebase));
-        assert!(ids_with(&recipes, &mine, Facts { behind: Some(3) }).contains(&rebase));
+        assert!(!ids_with(
+            &recipes,
+            &mine,
+            Facts {
+                behind: Some(0),
+                ..Facts::default()
+            }
+        )
+        .contains(&rebase));
+        assert!(ids_with(
+            &recipes,
+            &mine,
+            Facts {
+                behind: Some(3),
+                ..Facts::default()
+            }
+        )
+        .contains(&rebase));
 
-        // Someone else's change is not mine to replay.
-        let theirs = item(ItemKind::Pr, Some(ItemRole::Reviewer));
-        assert!(!ids_with(&recipes, &theirs, Facts { behind: Some(3) }).contains(&rebase));
+        // The kind of row that mentions the branch, and whose change the forge
+        // says it is, do not enter it: this is the one recipe a menu entry
+        // dispatches by name, and the entry asks about a branch on disk that
+        // trails its base and nothing else (§FS-005-dispatch.1,
+        // §FS-004-quick-actions.6). Gating the two differently would mean the
+        // key handing over work its own recipe says does not apply here.
+        for (kind, role) in [
+            (ItemKind::Pr, Some(ItemRole::Reviewer)),
+            (ItemKind::Issue, Some(ItemRole::Author)),
+            (ItemKind::Message, None),
+            (ItemKind::Status, None),
+        ] {
+            assert!(
+                ids_with(
+                    &recipes,
+                    &item(kind, role),
+                    Facts {
+                        behind: Some(3),
+                        ..Facts::default()
+                    }
+                )
+                .contains(&rebase),
+                "{kind:?} {role:?}"
+            );
+        }
 
         // A red gate on the same pull request is the more urgent thing about
         // it, and a sweep takes the first match.
         let failing = with_gate(item(ItemKind::Pr, Some(ItemRole::Author)), 2, false);
         assert_eq!(
-            ids_with(&recipes, &failing, Facts { behind: Some(3) }).first(),
+            ids_with(
+                &recipes,
+                &failing,
+                Facts {
+                    behind: Some(3),
+                    ..Facts::default()
+                }
+            )
+            .first(),
             Some(&"fix-gate".to_string())
         );
 
         // Merged, and behind by a mile: there is nothing to replay onto.
         let mut merged = item(ItemKind::Pr, Some(ItemRole::Author));
         merged.state = Some("merged".to_string());
-        assert!(ids_with(&recipes, &merged, Facts { behind: Some(9) }).is_empty());
+        assert!(ids_with(
+            &recipes,
+            &merged,
+            Facts {
+                behind: Some(9),
+                ..Facts::default()
+            }
+        )
+        .is_empty());
     }
 
     #[test]
@@ -579,10 +842,71 @@ mod tests {
             ..Selector::default()
         };
         let pr = item(ItemKind::Pr, None);
-        assert!(level.matches(&pr, &Facts { behind: Some(0) }));
-        assert!(!level.matches(&pr, &Facts { behind: Some(2) }));
+        assert!(level.matches(
+            &pr,
+            &Facts {
+                behind: Some(0),
+                ..Facts::default()
+            }
+        ));
+        assert!(!level.matches(
+            &pr,
+            &Facts {
+                behind: Some(2),
+                ..Facts::default()
+            }
+        ));
         // Unmeasurable answers neither question.
         assert!(!level.matches(&pr, &Facts::default()));
+    }
+
+    /// The other distance is asked about in the same words, and answered from
+    /// the same fold (§FS-004-quick-actions.8). The two are separate
+    /// questions: a branch level with main can be well behind its own copy.
+    #[test]
+    fn a_selector_can_ask_about_the_published_copy_instead_of_main() {
+        let trails_copy = Selector {
+            behind_upstream: Some(true),
+            ..Selector::default()
+        };
+        let pr = item(ItemKind::Pr, None);
+        assert!(trails_copy.matches(
+            &pr,
+            &Facts {
+                behind: Some(0),
+                behind_upstream: Some(2),
+            }
+        ));
+        assert!(!trails_copy.matches(
+            &pr,
+            &Facts {
+                behind: Some(9),
+                behind_upstream: Some(0),
+            }
+        ));
+        // Published nowhere answers neither, like an unmeasurable checkout.
+        assert!(!trails_copy.matches(&pr, &Facts::default()));
+
+        // And both at once ask for both.
+        let both = Selector {
+            behind: Some(true),
+            behind_upstream: Some(true),
+            ..Selector::default()
+        };
+        assert!(both.matches(
+            &pr,
+            &Facts {
+                behind: Some(1),
+                behind_upstream: Some(2),
+            }
+        ));
+        assert!(!both.matches(
+            &pr,
+            &Facts {
+                behind: Some(0),
+                behind_upstream: Some(2),
+            }
+        ));
     }
 
     #[test]
@@ -602,6 +926,89 @@ mod tests {
         // The replacement's own selector applies — no gate condition now.
         let plain = item(ItemKind::Pr, None);
         assert!(ids(&resolved, &plain).contains(&"fix-gate".to_string()));
+    }
+
+    /// The table a project writes to say who does what
+    /// (§FS-006-project-interface.9): action id to hand, `default` for the
+    /// rest, the short form for a hand the roster names and the long one for a
+    /// pair it never enumerated.
+    #[test]
+    fn who_does_which_action_is_a_table_of_hands() {
+        let work: ProjectWorkConfig = serde_json::from_value(json!({
+            "hands": {
+                "default": "sonnet",
+                "rebase": "luna:high",
+                "fix-gate": { "agent": "claude-code", "model": "our-proxy-model", "effort": "high" }
+            },
+            "permitted_hands": ["sonnet", "luna"]
+        }))
+        .unwrap();
+        assert_eq!(
+            work.hands["default"],
+            HandPin::Named {
+                id: "sonnet".to_string(),
+                effort: None
+            }
+        );
+        assert_eq!(
+            work.hands["rebase"],
+            HandPin::Named {
+                id: "luna".to_string(),
+                effort: Some("high".to_string())
+            }
+        );
+        assert_eq!(
+            work.hands["fix-gate"],
+            HandPin::Spelled {
+                agent: "claude-code".to_string(),
+                model: "our-proxy-model".to_string(),
+                effort: Some("high".to_string())
+            }
+        );
+        assert_eq!(work.permitted_hands, ["sonnet", "luna"]);
+        assert_eq!(work.hands["rebase"].describe(), "'luna' at effort 'high'");
+
+        // The same table at site level, and a recipe pinning its own hand.
+        let site: WorkConfig = serde_json::from_value(json!({
+            "hands": { "default": "sonnet" },
+            "recipes": [{ "id": "bench", "description": "d", "brief": "b", "hand": "gpt-5:high" }]
+        }))
+        .unwrap();
+        assert_eq!(site.hands.len(), 1);
+        assert_eq!(
+            site.recipes[0].hand.as_ref().unwrap().effort(),
+            Some("high")
+        );
+        // And it survives the round trip a recipe makes through JSON.
+        assert_eq!(
+            serde_json::to_value(&site.recipes[0]).unwrap()["hand"],
+            json!("gpt-5:high")
+        );
+
+        // Absence is the ordinary case: no table anywhere names nobody.
+        assert!(WorkConfig::default().hands.is_empty());
+        assert!(ProjectWorkConfig::default().permitted_hands.is_empty());
+    }
+
+    /// What a hand is not: the runtime's own selector, half a pair, or a
+    /// spelling with nothing after the colon. Each fails at the parse, where
+    /// the person can still see what they wrote.
+    #[test]
+    fn what_cannot_be_a_hand_fails_loudly() {
+        for text in [
+            "claude-code[yolo]:anthropic:sonnet",
+            "sonnet:",
+            ":high",
+            "  ",
+        ] {
+            assert!(HandPin::parse(text).is_err(), "{text}");
+        }
+        assert!(serde_json::from_value::<HandPin>(json!({ "agent": "codex" })).is_err());
+        assert!(serde_json::from_value::<HandPin>(json!({ "model": "m5" })).is_err());
+        assert!(
+            serde_json::from_value::<HandPin>(json!({ "agent": "codex", "modle": "m5" })).is_err()
+        );
+        assert!(serde_json::from_value::<ProjectWorkConfig>(json!({ "hand": "sonnet" })).is_err());
     }
 
     #[test]

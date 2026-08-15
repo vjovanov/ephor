@@ -15,6 +15,7 @@
 mod actions;
 mod gate;
 mod navigator;
+mod operations;
 mod prompt;
 mod thread;
 mod work;
@@ -37,12 +38,12 @@ use crate::branches::{Checkout, Placement};
 use crate::capabilities::{Bindings, CapabilitySet, Rung};
 use crate::error::{EphorError, Result};
 use crate::feed::cache::{self, ProjectFeed, Seen};
-use crate::feed::config::{load_config, ActionConfig, CheckoutConfig, StatusConfig};
-use crate::feed::model::{Item, ItemKind};
+use crate::feed::config::{load_config, ActionConfig, CheckoutConfig, Handed, StatusConfig};
+use crate::feed::model::Item;
 use crate::feed::react::{self, ReactTarget};
 use crate::feed::reply::{self, ReplyTarget};
 use crate::feed::task::Task;
-use crate::forest::Staleness;
+use crate::forest::{Staleness, Standing, Upstream};
 use crate::paths;
 use crate::registry;
 use crate::seams::dossier;
@@ -51,6 +52,7 @@ use crate::seams::summons::{self, Outcome, Place, Site};
 use actions::{ActionMenu, MenuOutcome};
 use gate::GateScreen;
 use navigator::NavigatorState;
+use operations::OperationsScreen;
 use prompt::{Asking, Prompt, PromptOutcome};
 use thread::ThreadScreen;
 use work::WorkScreen;
@@ -90,6 +92,22 @@ pub(crate) struct Ctx {
     /// How far each checked-out branch trails main, per repository and summed
     /// (§AR-004-forest.1); computed at load and refresh time.
     pub behind: BTreeMap<(String, String), Staleness>,
+    /// Where each checked-out branch stands against its own published copy
+    /// (§DA-003-upstream-is-the-published-copy) — a different fact from
+    /// [`Ctx::behind`]'s distance to main, kept beside it and never summed
+    /// with it. Keyed and recomputed the same way.
+    pub standing: BTreeMap<(String, String), Standing>,
+    /// Which branch each item is on, by `(project, item id)` → index into that
+    /// project's branches, and how many items each branch holds. Worked out
+    /// when the feeds are read, never while drawing: placing an item means
+    /// matching its whole recorded conversation against every branch, and a
+    /// frame that does that once per branch row costs a third of a second to
+    /// move the cursor one line.
+    pub on_branch: BTreeMap<(String, String), usize>,
+    pub linked: BTreeMap<(String, String), usize>,
+    /// Per project: visible items, unread, and unread awaiting a response.
+    /// Counted per rebuild, for the same reason.
+    pub stats: BTreeMap<String, (usize, usize, usize)>,
     /// What each project can do (§AR-005-capabilities). Resolved at load and
     /// whenever the world may have moved, and consulted by everything that
     /// offers, gates, or refuses — nothing here runs its own check.
@@ -125,8 +143,20 @@ impl Ctx {
     /// The item's menu, in provenance order (§FS-006-project-interface.9):
     /// what its source offers on it unasked (§FS-004-quick-actions.3), then
     /// what the project offers of itself, then the person's own — an id
-    /// repeated later replacing the entry where it already sits.
-    pub fn actions_for(&self, item: &Item) -> Vec<ActionConfig> {
+    /// repeated later replacing the entry where it already sits — and then the
+    /// work that can be handed over about it, because the recipes and the
+    /// actions are one menu (§FS-005-dispatch.1).
+    ///
+    /// `recipes` is the project's resolved list, shipped and configured. It is
+    /// handed in rather than read here so that all four sources are selected
+    /// against the same measurement of the same checkout: two folds a moment
+    /// apart would eventually offer a rebase entry beside a recipe that says
+    /// the branch is current.
+    pub fn actions_for(
+        &self,
+        item: &Item,
+        recipes: &[crate::work::recipe::Recipe],
+    ) -> Vec<ActionConfig> {
         let project = self
             .project_actions
             .get(&item.project)
@@ -137,23 +167,81 @@ impl Ctx {
             .get(&item.project)
             .map(Vec::as_slice)
             .unwrap_or_default();
-        let facts = crate::work::recipe::Facts {
-            behind: self.item_behind(item),
-        };
+        // One fold of the item's checkout answers both rebase offers and every
+        // selector that asks about it (§FS-004-quick-actions.8).
+        let trailing = self.item_trailing(item);
+        let facts = trailing
+            .as_ref()
+            .map(actions::Trailing::facts)
+            .unwrap_or_default();
         let mut recognized = crate::feed::providers::quick_actions(blocks, item);
-        // ephor's own quick action, offered because of what is on disk rather
+        // ephor's own quick actions, offered because of what is on disk rather
         // than because a source said something (§FS-004-quick-actions.6).
-        if let (Some(main_branch), Some(behind)) = (
-            self.main_branch(&item.project),
-            facts.behind.filter(|behind| *behind > 0),
-        ) {
-            recognized.push(actions::rebase_action(main_branch, behind));
+        if let Some(trailing) = &trailing {
+            recognized.extend(self.rebase_offers(&item.project, trailing));
         }
-        actions::merge(vec![
+        let mut menu = actions::merge(vec![
             recognized,
             self.offers(item, &facts),
             actions::applicable(&self.actions, project, item, &facts),
-        ])
+        ]);
+        actions::add_unclaimed(
+            &mut menu,
+            recipes
+                .iter()
+                .filter(|recipe| recipe.matches(item, &facts))
+                .map(actions::agent_entry)
+                .collect(),
+        );
+        // What work is offered on, for every entry that asks for it whoever
+        // wrote it: never about an item that is finished
+        // (§FS-005-dispatch.6), and — where the work edits the change — only
+        // where the change is on this machine, which is the checkout's
+        // question rather than the work's (§FS-004-quick-actions.7). An offer
+        // that would be refused on the keystroke is worse than no offer
+        // (§FS-004-quick-actions.2).
+        let here = matches!(
+            self.checkout(item).map(|checkout| checkout.state),
+            Some(WorkspaceState::Ready)
+        );
+        menu.retain(|entry| match &entry.agent {
+            Some(recipe) => !item.is_finished() && (here || !recipe.needs_checkout),
+            None => true,
+        });
+        menu
+    }
+
+    /// What ephor offers on one checkout that trails something: the replay
+    /// onto the project's main branch, and the replay onto the branch's own
+    /// published copy (§FS-004-quick-actions.6, §FS-004-quick-actions.8).
+    ///
+    /// The two are gated apart, because they need different things. The first
+    /// has to name the branch it replays onto, so it is offered only where the
+    /// project declares a main branch; the second resolves its ref inside each
+    /// repository and needs no base named anywhere, so a project that declares
+    /// none is still offered it. One implementation, called from an item's
+    /// menu and from a branch row's, so the two cannot come to disagree about
+    /// what is on offer.
+    fn rebase_offers(&self, project: &str, trailing: &actions::Trailing) -> Vec<ActionConfig> {
+        let mut offers = Vec::new();
+        if let (Some(main_branch), Some(behind)) = (
+            self.main_branch(project),
+            trailing.behind.filter(|behind| *behind > 0),
+        ) {
+            offers.push(actions::rebase_action(main_branch, behind));
+        }
+        // The count already leaves out every repository whose copy is simply
+        // its base — that distance is the first entry's — so a checkout of
+        // nothing but such repositories measures nothing here and the entry
+        // never carries the first one's number under another name
+        // (§FS-004-quick-actions.8).
+        if let Some(behind) = trailing.behind_upstream.filter(|behind| *behind > 0) {
+            offers.push(actions::upstream_rebase_action(
+                trailing.published.as_deref(),
+                behind,
+            ));
+        }
+        offers
     }
 
     /// What the project says it can do on this item, where it speaks and the
@@ -175,25 +263,58 @@ impl Ctx {
             .unwrap_or_default()
     }
 
-    /// Commits the item's own checkout trails the project's main branch,
-    /// summed across its forest (§AR-004-forest.1). None where there is
-    /// nothing on disk to measure: not a pull request, no branch, or a
-    /// workspace that was never checked out.
-    pub fn item_behind(&self, item: &Item) -> Option<u64> {
-        if item.kind != ItemKind::Pr {
-            return None;
-        }
-        let placement = self.placements.get(&item.project)?;
-        placement.main_branch.as_ref()?;
+    /// Where the item's own checkout stands. What decides this is whether the
+    /// item resolves to a branch workspace on disk, never what kind of row it
+    /// is (§FS-004-quick-actions.6): a change is stale or it is not, and a
+    /// forge having filed a pull request about it is not the fact being acted
+    /// on. None where nothing resolves — no branch, or a workspace that was
+    /// never checked out — because an offer that would fail on the keystroke
+    /// is worse than no offer (§FS-004-quick-actions.2).
+    fn item_trailing(&self, item: &Item) -> Option<actions::Trailing> {
         let (name, _) = self.effective_branch(item);
+        self.branch_trailing(&item.project, &name?)
+    }
+
+    /// How far one branch's checkout trails: the project's main branch and its
+    /// own published copy, summed across its forest (§AR-004-forest.1), what
+    /// that copy is called, and whether it is the base again
+    /// (§FS-004-quick-actions.8). One fold, read fresh — a menu is opened
+    /// rarely enough to measure rather than remember. None where the workspace
+    /// is not on disk, which is the checkout's question rather than the
+    /// rebase's (§FS-004-quick-actions.7).
+    fn branch_trailing(&self, project: &str, branch: &str) -> Option<actions::Trailing> {
+        let placement = self.placements.get(project)?;
         let workspace = placement
-            .workspace_for(&name?)
+            .workspace_for(branch)
             // A project without branch workspaces works in its root.
             .unwrap_or_else(|| placement.root.clone());
         if !workspace.is_dir() {
             return None;
         }
-        placement.forest(&workspace).staleness().total()
+        let mut trailing = actions::Trailing::of(&placement.forest(&workspace));
+        // A distance to a base nobody named is not a fact anything here acts
+        // on: the row does not show it and the entry has nothing to put in
+        // "rebase onto …" (§FS-004-quick-actions.6), so a selector asking
+        // whether this branch is behind must not be answered `true` from it
+        // either — an entry and the work it hands over cannot be gated on
+        // different measurements of the same checkout (§FS-005-dispatch.1).
+        if placement.main_branch.is_none() {
+            trailing.behind = None;
+        }
+        Some(trailing)
+    }
+
+    /// The menu a branch row opens: ephor's own offers about the branch, with
+    /// no matter behind them (§FS-004-quick-actions.6). Only what ephor
+    /// recognizes on disk — an item's own menu is where a source's, a
+    /// project's and a person's entries belong, since those are selected
+    /// against an item and a branch row has none to select against
+    /// (§FS-004-quick-actions.2).
+    pub fn branch_actions(&self, project: &str, branch: &str) -> Vec<ActionConfig> {
+        match self.branch_trailing(project, branch) {
+            Some(trailing) => self.rebase_offers(project, &trailing),
+            None => Vec::new(),
+        }
     }
 
     /// One matter by its key, across every project's feed — for the moments
@@ -300,22 +421,37 @@ impl Ctx {
     }
 
     pub fn unread_stats(&self, project: &str) -> (usize, usize, usize) {
-        let Some(feed) = self.feed(project) else {
-            return (0, 0, 0);
-        };
+        self.stats.get(project).copied().unwrap_or((0, 0, 0))
+    }
+
+    /// Count each project's visible, unread, and awaiting-response items.
+    /// One walk of the feed for all three — `items()` rebuilds every matter
+    /// into a row, so asking three times costs three times — and one walk per
+    /// rebuild rather than per frame, since a draw that counts is a draw whose
+    /// cost is paid again every time the cursor moves.
+    pub fn recompute_stats(&mut self) {
         let now = Utc::now();
-        let visible = || {
-            feed.items()
-                .filter(|item| item.is_visible(now, self.recent_days))
-        };
-        let total = visible().count();
-        let unread = visible()
-            .filter(|item| cache::is_unread(&self.seen, item))
-            .count();
-        let respond = visible()
-            .filter(|item| item.needs_response && cache::is_unread(&self.seen, item))
-            .count();
-        (total, unread, respond)
+        let mut stats = BTreeMap::new();
+        for project in self.projects.clone() {
+            let Some(feed) = self.feed(&project) else {
+                continue;
+            };
+            let (mut total, mut unread, mut respond) = (0, 0, 0);
+            for item in feed.items() {
+                if !item.is_visible(now, self.recent_days) {
+                    continue;
+                }
+                total += 1;
+                if cache::is_unread(&self.seen, &item) {
+                    unread += 1;
+                    if item.needs_response {
+                        respond += 1;
+                    }
+                }
+            }
+            stats.insert(project, (total, unread, respond));
+        }
+        self.stats = stats;
     }
 
     /// One project's placement, or nothing where the registry does not
@@ -359,30 +495,35 @@ impl Ctx {
         )
     }
 
-    /// Whether a PR item's branch workspace is on disk. None when the state
-    /// is unknowable: not a PR, no branch workspaces, or no branch name.
+    /// Whether an item's branch workspace is on disk. None when the state is
+    /// unknowable: no branch workspaces, or no branch name.
+    ///
+    /// Any kind, for the reason the rebase offer is any kind
+    /// (§FS-004-quick-actions.6): what the marker reports is a change on this
+    /// machine, and a forge having filed a pull request about it is not that
+    /// fact. Restricted to pull requests, an issue whose workspace is on disk
+    /// was offered the rebase from its own row and shown nothing saying the
+    /// branch was there.
     pub fn item_checked_out(&self, item: &Item) -> Option<bool> {
-        if item.kind != ItemKind::Pr {
-            return None;
-        }
         let placement = self.placements.get(&item.project)?;
         let workspace = placement.workspace_for(&placement.branch_name(item)?)?;
         Some(workspace.is_dir())
     }
 
-    /// Re-measure how far each checked-out branch trails its project's main
-    /// branch — a fold over the branch workspace's forest, per repository and
-    /// then summed (§AR-004-forest.1). Local refs only (no fetch), so counts
-    /// are relative to what was last fetched.
+    /// Re-measure where each checked-out branch stands: how far it trails its
+    /// project's main branch, and how far its own published copy
+    /// (§DA-003-upstream-is-the-published-copy) — one fold over the branch
+    /// workspace's forest, per repository and then summed (§AR-004-forest.1),
+    /// with the behind-main half derived from the standing so the two counts
+    /// on a row cannot come from different measurements. Local refs only (no
+    /// fetch), so counts are relative to what was last fetched.
     pub fn recompute_behind(&mut self) {
         let mut behind = BTreeMap::new();
+        let mut standing = BTreeMap::new();
         for project in &self.projects {
             let Some(placement) = self.placements.get(project) else {
                 continue;
             };
-            if placement.main_branch.is_none() {
-                continue;
-            }
             for branch in &placement.branches {
                 if !self.branch_checked_out(project, branch) {
                     continue;
@@ -390,19 +531,42 @@ impl Ctx {
                 let workspace = placement
                     .workspace_for(&branch.branch)
                     .unwrap_or_else(|| placement.root.clone());
-                let staleness = placement.forest(&workspace).staleness();
-                if staleness.total().is_some() {
+                let stand = placement.forest(&workspace).standing();
+                let staleness = stand.staleness();
+                // The two facts are gated apart, the same way the two offers
+                // are: the distance to main is only a distance to something a
+                // project named, while the distance to the branch's own copy
+                // is answered inside each repository and needs no such name
+                // (§FS-004-quick-actions.6). A project that declares no main
+                // branch shows, and is offered, the second alone.
+                if placement.main_branch.is_some() && staleness.total().is_some() {
                     behind.insert((project.clone(), branch.branch.clone()), staleness);
+                }
+                if stand
+                    .repos
+                    .iter()
+                    .any(|repo| repo.upstream != Upstream::Unknown)
+                {
+                    standing.insert((project.clone(), branch.branch.clone()), stand);
                 }
             }
         }
         self.behind = behind;
+        self.standing = standing;
     }
 
     /// How far one branch's checkout trails, per repository. None where it was
     /// never measured — no checkout, or nothing measurable in it.
     pub fn branch_behind(&self, project: &str, branch: &str) -> Option<&Staleness> {
         self.behind.get(&(project.to_string(), branch.to_string()))
+    }
+
+    /// Where one branch's checkout stands against its published copies, per
+    /// repository. None where nothing was read — no checkout, or nothing on a
+    /// branch in it (§DA-003-upstream-is-the-published-copy).
+    pub fn branch_standing(&self, project: &str, branch: &str) -> Option<&Standing> {
+        self.standing
+            .get(&(project.to_string(), branch.to_string()))
     }
 
     /// Whether a registry branch has its checkout on disk.
@@ -423,12 +587,92 @@ impl Ctx {
         Some(self.placements.get(&item.project)?.checkout(item))
     }
 
-    /// The project's items that belong to this branch. Placed against the
-    /// project's whole branch list, so a branch row counts and links exactly
-    /// the items the group under it holds (§FS-008-attribution.2).
+    /// Place every item on a branch, once, for every project. Each item is
+    /// matched against the project's whole branch list — so a row's group and
+    /// the count on the branch above it are the same answer — and the result
+    /// is kept, because matching is the expensive thing here and a draw must
+    /// not do it (§FS-008-attribution.2).
+    pub fn recompute_placements(&mut self) {
+        self.place_scope(None);
+    }
+
+    /// The same pass over one project. A refresh lands one project at a time
+    /// (§FS-001-forge-interface.7), and a landing changes that project's feed
+    /// and no other, so re-placing the whole site pays for every project on
+    /// every arrival — the same matching N times over a run of N projects,
+    /// where one project's worth is the whole of what moved.
+    pub fn recompute_placements_for(&mut self, project: &str) {
+        self.place_scope(Some(project));
+    }
+
+    /// One pass, scoped to every project or to one. Both go through this,
+    /// rather than being written twice: a row filed one way while the reader
+    /// is mid-scan and another way when the run finishes is the disagreement
+    /// keeping one answer exists to prevent (§AR-004-forest.3).
+    fn place_scope(&mut self, only: Option<&str>) {
+        let scope: Vec<String> = match only {
+            Some(project) => vec![project.to_string()],
+            None => self.projects.clone(),
+        };
+        let mut on_branch = BTreeMap::new();
+        let mut linked = BTreeMap::new();
+        for project in &scope {
+            let (Some(placement), Some(feed)) = (self.placements.get(project), self.feed(project))
+            else {
+                continue;
+            };
+            for item in feed.items() {
+                let Some(index) = crate::branches::place(&item, &placement.branches) else {
+                    continue;
+                };
+                on_branch.insert((project.clone(), item.id.clone()), index);
+                let key = (project.clone(), placement.branches[index].branch.clone());
+                *linked.entry(key).or_insert(0) += 1;
+            }
+        }
+        match only {
+            // Everything was re-placed, so everything the maps held is
+            // replaced: a project the registry has stopped describing takes
+            // its rows out with it.
+            None => {
+                self.on_branch = on_branch;
+                self.linked = linked;
+            }
+            // Only this project was answered for, so only its entries go —
+            // dropped first, because an item that left its feed must not keep
+            // the branch it had — and the rest of the site stands untouched.
+            Some(project) => {
+                self.on_branch
+                    .retain(|(owner, _), _| owner.as_str() != project);
+                self.linked
+                    .retain(|(owner, _), _| owner.as_str() != project);
+                self.on_branch.extend(on_branch);
+                self.linked.extend(linked);
+            }
+        }
+    }
+
+    /// Which of the project's branches this item is on, as an index into
+    /// [`Ctx::branches`]. None for an item on no branch of this project.
+    pub fn item_branch(&self, project: &str, item: &Item) -> Option<usize> {
+        self.on_branch
+            .get(&(project.to_string(), item.id.clone()))
+            .copied()
+    }
+
+    /// How many of the project's items are on this branch — the size of the
+    /// group the branch row heads.
+    pub fn branch_linked(&self, project: &str, branch: &BranchInfo) -> usize {
+        self.linked
+            .get(&(project.to_string(), branch.branch.clone()))
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// The project's items that belong to this branch, in feed order.
     pub fn items_on_branch(&self, project: &str, branch: &BranchInfo) -> Vec<Item> {
-        let branches = self.branches(project);
-        let Some(position) = branches
+        let Some(position) = self
+            .branches(project)
             .iter()
             .position(|other| other.branch == branch.branch)
         else {
@@ -437,7 +681,7 @@ impl Ctx {
         match self.feed(project) {
             Some(feed) => feed
                 .items()
-                .filter(|item| crate::branches::place(item, branches) == Some(position))
+                .filter(|item| self.item_branch(project, item) == Some(position))
                 .collect(),
             None => Vec::new(),
         }
@@ -509,6 +753,12 @@ pub(crate) enum Action {
     },
     /// Summon the configured action menu for an item.
     OpenActionMenu(Item),
+    /// The same menu on a branch row, which has no item behind it: what ephor
+    /// offers about the branch itself (§FS-004-quick-actions.6).
+    OpenBranchActions {
+        project: String,
+        branch: BranchInfo,
+    },
     /// Show what is being done about an item, and what could be
     /// (§FS-005-dispatch).
     OpenWork(Item),
@@ -541,12 +791,24 @@ enum Screen {
     Thread(ThreadScreen),
     Gate(GateScreen),
     Work(WorkScreen),
+    /// The operations board, watch-only (§FS-005-dispatch.15).
+    Operations(OperationsScreen),
 }
+
+/// How often the interface glances at the work artifacts between key reads
+/// (§FS-005-dispatch.15.1): a clock gates stat calls, a changed timestamp
+/// gates the re-read, and nothing is ever read while drawing.
+const WORK_TICK: Duration = Duration::from_secs(2);
 
 struct App {
     ctx: Ctx,
     navigator: NavigatorState,
     screen: Screen,
+    /// The screen the reader was on when the operations board opened over
+    /// it — one modal layer, restored by Esc. What the board's Enter opens
+    /// replaces the pair rather than nesting (§FS-005-dispatch.15): only a
+    /// Back from the board itself restores this.
+    saved: Option<Screen>,
     /// Open action menu, drawn over the active screen.
     menu: Option<ActionMenu>,
     /// A line the reader is typing, drawn over everything else.
@@ -557,7 +819,75 @@ struct App {
     /// A refresh running underneath this screen, where one is
     /// (§FS-001-forge-interface.7).
     refresh: Option<crate::feed::refresh::BackgroundRefresh>,
+    /// The work configuration, kept for the board and the tick: both read
+    /// the runtime's artifacts through the binding (§AR-007-runtime.1).
+    work: crate::work::recipe::WorkConfig,
+    /// When the work artifacts were last glanced at, and the newest write
+    /// seen then (§FS-005-dispatch.15.1).
+    ticked_at: std::time::Instant,
+    work_seen: Option<std::time::SystemTime>,
     message: String,
+}
+
+/// What a menu entry's summons is told it is about: a matter where there is
+/// one, and otherwise the project and the branch, because a branch row has no
+/// matter and a stand-in one would put a kind, a source and an id into the
+/// contract that nothing filed (§AR-002-summons.1).
+///
+/// The branch subject says the item id too, and says it empty. A summons
+/// inherits the environment it was started in (§AR-002-summons), so a variable
+/// left unset is whatever the shell that launched ephor happened to hold — and
+/// an entry reading `$EPHOR_ITEM_ID` would bind this branch's rebase to
+/// somebody else's matter.
+fn menu_dossier(
+    menu: &ActionMenu,
+    workspace: &Path,
+    forest: Option<&crate::forest::Forest>,
+) -> Vec<(String, String)> {
+    match menu.subject.item() {
+        Some(item) => dossier::of_item(item, &menu.root, workspace, menu.branch.as_ref(), forest),
+        None => dossier::of_branch(
+            menu.subject.project(),
+            &menu.root,
+            workspace,
+            menu.branch.as_ref(),
+            forest,
+        ),
+    }
+}
+
+/// What an entry says about who gets its work, out of the answer the seven steps
+/// gave (§FS-005-dispatch.14). A hand that cannot be asked right now is named
+/// with the reason rather than hidden; a choice that cannot stand is the whole
+/// reason and refuses the entry; and where nobody named anybody the sentence
+/// is the runtime's own — with no runner bound, the *workable* rung's, because
+/// there is nobody to ask and the ticket is written all the same.
+fn who_gets_it(choice: &crate::work::runtime::roster::Choice, unbound: Option<&str>) -> Handed {
+    use crate::work::runtime::roster::Choice;
+    let says = match choice {
+        Choice::Chosen { hand, effort, .. } => {
+            let at = match effort {
+                Some(effort) => format!(" at {effort}"),
+                None => String::new(),
+            };
+            match &hand.available {
+                Some(why) => format!("{}{at} (unavailable: {why})", hand.id),
+                None => format!("{}{at}", hand.id),
+            }
+        }
+        Choice::Refused(why) => why.clone(),
+        Choice::Unasked { note: Some(note) } => note.clone(),
+        Choice::Unasked { note: None } => unbound
+            .map(str::to_string)
+            .unwrap_or_else(|| "whoever the runtime picks".to_string()),
+    };
+    Handed {
+        says,
+        refusal: match choice {
+            Choice::Refused(why) => Some(why.clone()),
+            _ => None,
+        },
+    }
 }
 
 pub fn run() -> Result<ExitCode> {
@@ -658,6 +988,10 @@ impl App {
                 project_org: info.project_org,
                 placements: info.placements,
                 behind: BTreeMap::new(),
+                standing: BTreeMap::new(),
+                on_branch: BTreeMap::new(),
+                linked: BTreeMap::new(),
+                stats: BTreeMap::new(),
                 capabilities: BTreeMap::new(),
                 resurfacing: BTreeMap::new(),
                 unattributed: Vec::new(),
@@ -688,13 +1022,21 @@ impl App {
             },
             navigator: NavigatorState::new(),
             screen: Screen::Navigator,
+            saved: None,
             menu: None,
             prompt: None,
             dispatcher: crate::work::Dispatcher::load(config).ok(),
             refresh: None,
+            work: config.work.clone(),
+            ticked_at: std::time::Instant::now(),
+            work_seen: None,
             message: String::new(),
         };
         app.reload_feeds()?;
+        // What is on disk now is the baseline the tick moves from: the load
+        // just read it, and re-reading it two seconds in would be a glance
+        // at nothing (§FS-005-dispatch.15.1).
+        app.work_seen = app.work_wrote();
         if !app.navigator.has_stream_entries()
             && app.ctx.feeds.iter().all(|feed| feed.fetched_at.is_none())
         {
@@ -720,10 +1062,11 @@ impl App {
             }
         }
         self.ctx.recompute_behind();
+        self.ctx.recompute_placements();
         self.ctx.recompute_capabilities();
         self.ctx.recompute_resurfacing();
         self.reload_work();
-        self.navigator.rebuild(&self.ctx);
+        self.rebuild_view();
         Ok(())
     }
 
@@ -769,6 +1112,14 @@ impl App {
             // beneath this screen has finished lands here, and the screen goes
             // back to being the reader's (§FS-001-forge-interface.7).
             if self.collect_refresh()? {
+                self.reload_operations();
+                continue;
+            }
+
+            // Also between key reads: the clock-gated glance at the work
+            // artifacts, so what the runtime moved on disk surfaces without
+            // waiting for a refresh (§FS-005-dispatch.15.1).
+            if self.tick() {
                 continue;
             }
 
@@ -819,6 +1170,12 @@ impl App {
                                 "run a command here",
                                 "runs in the item's checkout, with its EPHOR_* environment  ·  enter runs  ·  esc cancels",
                             ));
+                        // An entry that carries a brief is handed over rather
+                        // than run: the terminal stays where it is, because
+                        // nothing runs in front of the reader
+                        // (§FS-005-dispatch.1).
+                        } else if entry.action.agent.is_some() {
+                            self.dispatch_entry(&menu, &entry);
                         } else {
                             self.run_menu_entry(terminal, &menu, &entry)?;
                         }
@@ -826,11 +1183,25 @@ impl App {
                 }
                 continue;
             }
+            // The operations board opens from anywhere over whatever is on
+            // screen, and closes back to it (§FS-005-dispatch.15). Below the
+            // prompt and the menu: a `;` typed into either is theirs — and
+            // below a screen's own modal for the same reason, since a board
+            // opened over an armed reaction picker leaves it armed beneath.
+            let inside = match &self.screen {
+                Screen::Thread(thread) => thread.is_picking(),
+                _ => false,
+            };
+            if key.code == KeyCode::Char(';') && !inside {
+                self.toggle_operations();
+                continue;
+            }
             let action = match &mut self.screen {
                 Screen::Navigator => self.navigator.handle_key(&self.ctx, key.code),
                 Screen::Thread(thread) => thread.handle_key(key.code),
                 Screen::Gate(gate) => gate.handle_key(key.code),
                 Screen::Work(work) => work.handle_key(key.code),
+                Screen::Operations(board) => board.handle_key(key.code),
             };
             if self.apply(action, terminal, config)? {
                 return Ok(ExitCode::SUCCESS);
@@ -864,10 +1235,19 @@ impl App {
                 Some(screen) => self.screen = Screen::Gate(screen),
                 None => self.message = "No gate recorded for this item".to_string(),
             },
-            Action::Back => self.screen = Screen::Navigator,
+            Action::Back => {
+                // The board is one modal layer: leaving it restores the
+                // screen it opened over, and leaving anything else drops any
+                // stale slot on the way to the navigator
+                // (§FS-005-dispatch.15).
+                self.screen = match self.saved.take() {
+                    Some(previous) if matches!(self.screen, Screen::Operations(_)) => previous,
+                    _ => Screen::Navigator,
+                }
+            }
             Action::ToggleUnread => {
                 self.ctx.unread_only = !self.ctx.unread_only;
-                self.navigator.rebuild(&self.ctx);
+                self.rebuild_view();
             }
             Action::MarkDone { marks, pop } => {
                 self.mark_done(marks)?;
@@ -958,7 +1338,16 @@ impl App {
                 }
             }
             Action::OpenActionMenu(item) => {
-                let applicable = self.ctx.actions_for(&item);
+                // The recipes this project offers, so the menu carries the
+                // work that can be handed over about the item beside the
+                // commands that can be run on it (§FS-005-dispatch.1).
+                let recipes = self
+                    .dispatcher
+                    .as_ref()
+                    .map(|dispatcher| dispatcher.recipes(&item.project))
+                    .unwrap_or_default();
+                let mut applicable = self.ctx.actions_for(&item, &recipes);
+                self.name_the_hands(&item, &mut applicable, config);
                 // An empty menu is no longer empty: the last entry is always
                 // "run a command here…" (§FS-005-dispatch.10), and refusing
                 // to open would hide it exactly where nothing is configured.
@@ -981,7 +1370,7 @@ impl App {
                         // same sentence (§AR-005-capabilities.2).
                         let can = self.ctx.can(&item.project);
                         self.menu = Some(ActionMenu::new(
-                            item,
+                            actions::Subject::Item(Box::new(item)),
                             root.clone(),
                             placed.workspace,
                             branch,
@@ -995,6 +1384,56 @@ impl App {
                         self.message = refusal.unwrap_or_else(|| {
                             format!("{} has no root in the registry", item.project)
                         });
+                    }
+                }
+            }
+            // The same menu, opened from the row the fact is shown on
+            // (§FS-004-quick-actions.6). It carries ephor's own offers only:
+            // there is no item here for a source's, a project's or a person's
+            // entries to be selected against.
+            // A branch row carries no recipes for the same reason it carries
+            // no configured entries: work is asked for about a matter, and
+            // there is none here (§FS-005-dispatch.2).
+            Action::OpenBranchActions { project, branch } => {
+                let applicable = self.ctx.branch_actions(&project, &branch.branch);
+                let refusal = self.ctx.can(&project).refusal(&[Rung::Placed]);
+                match self.ctx.placement(&project).cloned() {
+                    Some(placement) if refusal.is_none() => {
+                        let root = placement.root.clone();
+                        // A branch whose workspace the project puts somewhere
+                        // and has not got there yet is the checkout's question
+                        // first (§FS-004-quick-actions.7); a project that keeps
+                        // one checkout at its root is always ready. Where the
+                        // target is not there the commands run in the root —
+                        // the same fallback [`Placement::checkout`] makes for
+                        // an item (§AR-004-forest.3), because pointing
+                        // `EPHOR_WORKSPACE` at a directory that does not exist
+                        // is an offer that fails on the keystroke
+                        // (§FS-004-quick-actions.2).
+                        let (workspace, state) = match placement.workspace_for(&branch.branch) {
+                            None => (root.clone(), WorkspaceState::Ready),
+                            Some(target) if target.is_dir() => (target, WorkspaceState::Ready),
+                            Some(target) => (root.clone(), WorkspaceState::Missing(target)),
+                        };
+                        let checkout = self.ctx.checkouts.get(&project).cloned();
+                        let can = self.ctx.can(&project);
+                        self.menu = Some(ActionMenu::new(
+                            actions::Subject::Branch {
+                                project: project.clone(),
+                                branch: branch.branch.clone(),
+                            },
+                            root,
+                            workspace,
+                            Some(branch),
+                            state,
+                            checkout,
+                            &can,
+                            applicable,
+                        ));
+                    }
+                    _ => {
+                        self.message = refusal
+                            .unwrap_or_else(|| format!("{project} has no root in the registry"));
                     }
                 }
             }
@@ -1016,9 +1455,13 @@ impl App {
                 // The runtime is a rung: refused here in the same words the
                 // command line uses, instead of handing the terminal over to a
                 // command that cannot start (§AR-005-capabilities.2).
+                // False, not true: this arm refuses the run, it does not end the
+                // session. Returning quit here shut the inbox down on a machine
+                // with no runtime bound — the one machine where the refusal is
+                // the whole point of the message.
                 if let Some(refusal) = crate::work::runtime::refusal(&config.work) {
                     self.message = refusal;
-                    return Ok(true);
+                    return Ok(false);
                 }
                 // The checkout, not the plan directory: it is where the work
                 // is, and where the runtime falls back to when a workspace has
@@ -1037,7 +1480,7 @@ impl App {
                 )?;
                 // The runtime just advanced the plans this reads.
                 self.reload_work();
-                self.navigator.rebuild(&self.ctx);
+                self.rebuild_view();
                 if let Screen::Work(screen) = &self.screen {
                     let item = screen.item.clone();
                     self.open_work(item);
@@ -1052,7 +1495,9 @@ impl App {
             }
             Action::ReadPlan(path) => {
                 self.edit_file(terminal, &path)?;
+                // The reader may have edited what the screens read.
                 self.reload_work();
+                self.reload_operations();
             }
             Action::Refresh => self.start_refresh(config),
         }
@@ -1082,7 +1527,7 @@ impl App {
                     Err(err) => err.to_string(),
                 };
                 self.reload_work();
-                self.navigator.rebuild(&self.ctx);
+                self.rebuild_view();
                 self.open_work(item);
             }
             Asking::Command(menu) => {
@@ -1146,7 +1591,11 @@ impl App {
                 recipe,
             })
             .collect();
-        self.screen = Screen::Work(WorkScreen::new(item, status, offers));
+        // Whether anything here can run a plan, answered before the screen
+        // advertises the key rather than when it is pressed
+        // (§FS-004-quick-actions.2).
+        let refusal = crate::work::runtime::refusal(&self.work);
+        self.screen = Screen::Work(WorkScreen::new(item, status, offers, refusal));
     }
 
     fn dispatch_work(&mut self, item: &Item, recipe_id: &str) {
@@ -1161,9 +1610,41 @@ impl App {
             self.message = format!("'{recipe_id}' does not apply to this item any more");
             return;
         };
+        self.hand_over(item, &recipe);
+    }
+
+    /// An agent entry of the action menu, handed over
+    /// (§FS-005-dispatch.1). The recipe rides on the entry, so this dispatches
+    /// what the row was built from rather than looking something up by name
+    /// and hoping it is the same thing — and it goes through
+    /// [`App::hand_over`], the one implementation, so the ledger sees a menu
+    /// dispatch and a work-screen dispatch alike (§FS-005-dispatch.4).
+    fn dispatch_entry(&mut self, menu: &ActionMenu, entry: &actions::MenuEntry) {
+        if let actions::Gate::Blocked(reason) = &entry.gate {
+            self.message = reason.clone();
+            return;
+        }
+        let (Some(item), Some(recipe)) = (menu.subject.item().cloned(), entry.action.agent.clone())
+        else {
+            self.message = "There is no matter here to open work about".to_string();
+            return;
+        };
+        self.hand_over(&item, &recipe);
+        // Where the reader pressed is not a fact about the work: they land on
+        // the same screen the work key would have shown them.
+        self.open_work(item);
+    }
+
+    /// Handing one recipe over about one item, and saying what landed. Both
+    /// keys that dispatch come through here (§FS-005-dispatch.4).
+    fn hand_over(&mut self, item: &Item, recipe: &crate::work::recipe::Recipe) {
+        let Some(dispatcher) = &mut self.dispatcher else {
+            self.message = "Work needs the registry, which could not be read".to_string();
+            return;
+        };
         // The screen below already shows the plan and its tickets, so the
         // header says what was asked for rather than repeating a long path.
-        self.message = match dispatcher.dispatch(item, &recipe, false) {
+        self.message = match dispatcher.dispatch(item, recipe, false) {
             Ok(crate::work::Outcome::Opened { ticket, .. })
             | Ok(crate::work::Outcome::Reopened { ticket, .. }) => match dispatcher.save() {
                 Ok(()) => format!("{} {} — {ticket}", recipe.icon, recipe.description),
@@ -1173,7 +1654,81 @@ impl App {
             Err(err) => err.to_string(),
         };
         self.reload_work();
-        self.navigator.rebuild(&self.ctx);
+        self.rebuild_view();
+    }
+
+    /// Who would get each piece of work in this menu, before the key is
+    /// pressed (§FS-005-dispatch.14). Resolved through the one implementation
+    /// that answers it at dispatch, and against the work root the dispatch
+    /// will use, so what the row says and what the ticket gets cannot come
+    /// apart. A choice that cannot stand rides along as its whole reason, and
+    /// the entry is shown unable to run (§FS-006-project-interface.9).
+    fn name_the_hands(&mut self, item: &Item, menu: &mut [ActionConfig], config: &StatusConfig) {
+        if !menu.iter().any(|entry| entry.agent.is_some()) {
+            return;
+        }
+        let Some(root) = self.work_root(item, config) else {
+            return;
+        };
+        // With no runner bound there is nobody to ask, and the entry says so
+        // in the workable rung's own words rather than naming a hand it does
+        // not have (§FS-005-dispatch.14). The ticket is written all the same.
+        let unbound = crate::work::runtime::refusal(&self.work);
+        let work = config
+            .projects
+            .get(&item.project)
+            .map(|project| project.work.clone());
+        let Some(dispatcher) = &mut self.dispatcher else {
+            return;
+        };
+        for entry in menu.iter_mut() {
+            let Some(recipe) = &entry.agent else {
+                continue;
+            };
+            // A recipe spelling the runtime's own execution identity has
+            // pinned itself and no table displaces it, narrowing included
+            // (§FS-006-project-interface.9). The row says that rather than
+            // naming a hand the dispatch will not use.
+            if recipe.hand.is_none() && (recipe.target.is_some() || recipe.model.is_some()) {
+                let what = format!(
+                    "recipe '{}' pins the runtime's own execution identity",
+                    recipe.id
+                );
+                let refusal = crate::work::runtime::roster::refuse_unnamed(work.as_ref(), &what);
+                entry.hand = Some(Handed {
+                    says: refusal.clone().unwrap_or(what),
+                    refusal,
+                });
+                continue;
+            }
+            let pinned = recipe.hand.clone();
+            let choice = dispatcher.hand(&item.project, &recipe.id, None, pinned.as_ref(), &root);
+            entry.hand = Some(who_gets_it(&choice, unbound.as_deref()));
+        }
+    }
+
+    /// Where this item's work root would be: the template the dispatcher and
+    /// `ephor checkout` both resolve (§FS-006-project-interface.7), rendered
+    /// from the item's own checkout. Read rather than created — a menu that
+    /// opened would otherwise make a work root on every item it was opened on.
+    fn work_root(&self, item: &Item, config: &StatusConfig) -> Option<PathBuf> {
+        let checkout = self.ctx.checkout(item)?;
+        let root = self.ctx.root(&item.project)?.to_path_buf();
+        let template = crate::work::root_template(
+            &self.work,
+            config
+                .projects
+                .get(&item.project)
+                .map(|project| &project.work),
+        );
+        let subject = crate::work::dossier::Subject {
+            item,
+            checkout: &checkout,
+            root: &root,
+        };
+        Some(PathBuf::from(crate::paths::resolve_path(
+            &crate::work::dossier::render(&template, &subject.placeholders()),
+        )))
     }
 
     fn sync_work(&mut self, item: &Item) {
@@ -1191,7 +1746,7 @@ impl App {
             Err(err) => err.to_string(),
         };
         self.reload_work();
-        self.navigator.rebuild(&self.ctx);
+        self.rebuild_view();
     }
 
     /// Leave the interface, run something the reader watches, and come back.
@@ -1262,17 +1817,13 @@ impl App {
             // The forest of the place it runs in, so a command that folds
             // over repositories folds over the same ones ephor does
             // (§AR-004-forest.1).
+            let project = menu.subject.project();
             let forest = self
                 .ctx
-                .placement(&menu.item.project)
+                .placement(project)
                 .map(|placement| placement.forest(workspace));
-            let summons = summons::Summons::new(description, command).carrying(dossier::of_item(
-                &menu.item,
-                &menu.root,
-                workspace,
-                menu.branch.as_ref(),
-                forest.as_ref(),
-            ));
+            let carrying = menu_dossier(menu, workspace, forest.as_ref());
+            let summons = summons::Summons::new(description, command).carrying(carrying);
             let answer = summons::run(&summons, site, summons::Mode::Interactive)
                 .map_err(|err| err.to_string())?;
             match answer.outcome {
@@ -1347,7 +1898,7 @@ impl App {
             self.ctx.recompute_behind();
             self.ctx.recompute_capabilities();
         }
-        self.navigator.rebuild(&self.ctx);
+        self.rebuild_view();
         Ok(())
     }
 
@@ -1368,6 +1919,16 @@ impl App {
         }
     }
 
+    /// Rebuild the view, having first settled everything a row shows that
+    /// would otherwise be worked out again on every frame. A draw reads what
+    /// is already decided and does no matching and no counting: the cursor
+    /// moves without rebuilding, so anything left in the draw path is paid
+    /// once per keystroke.
+    fn rebuild_view(&mut self) {
+        self.ctx.recompute_stats();
+        self.navigator.rebuild(&self.ctx);
+    }
+
     fn mark_done(&mut self, marks: Vec<(String, DateTime<Utc>, String)>) -> Result<()> {
         self.message = match marks.as_slice() {
             [(_, _, title)] => format!("Done: {title}"),
@@ -1385,7 +1946,7 @@ impl App {
             self.ctx.seen.insert(id, mark);
         }
         cache::store_seen(&self.ctx.seen)?;
-        self.navigator.rebuild(&self.ctx);
+        self.rebuild_view();
         Ok(())
     }
 
@@ -1465,9 +2026,210 @@ impl App {
         };
         *slot = landed;
         self.ctx.recompute_resurfacing();
+        // Where each new item sits, in the same pass. This is the cheap half —
+        // an in-memory fold over what just landed, asking the world nothing —
+        // and the tree reads the answer rather than placing rows itself, so
+        // skipping it files every item that arrives mid-run under *not linked
+        // to a branch* and undercounts the branch above it until the whole run
+        // finishes (§FS-001-forge-interface.7, §FS-008-attribution.2). Over
+        // this project alone: it is the only one whose feed moved, and the
+        // whole-site pass would re-match every other project's items again on
+        // every arrival.
+        self.ctx.recompute_placements_for(project);
         self.reload_work();
-        self.navigator.rebuild(&self.ctx);
+        self.rebuild_view();
         Ok(())
+    }
+
+    /// Open the operations board over whatever is on screen, or close it
+    /// back to where the reader was (§FS-005-dispatch.15).
+    fn toggle_operations(&mut self) {
+        if matches!(self.screen, Screen::Operations(_)) {
+            self.screen = self.saved.take().unwrap_or(Screen::Navigator);
+            return;
+        }
+        let (rows, refusal) = self.board_rows();
+        let board = Screen::Operations(OperationsScreen::new(rows, refusal));
+        self.saved = Some(std::mem::replace(&mut self.screen, board));
+    }
+
+    /// The board's rows, built off the draw path (§FS-005-dispatch.15):
+    /// every execution root the ledger knows, grouped — rhei locks per root
+    /// and ephor's work root is per branch workspace, so two items in one
+    /// workspace are one operation — with the runtime's artifacts answering
+    /// what is live there. From the ledger for now, which is every operation
+    /// about an item ephor dispatched; enumerating the work roots themselves
+    /// is a later task.
+    fn board_rows(&self) -> (Vec<operations::OpRow>, Option<String>) {
+        use crate::work::runtime::watch;
+        let Some(dispatcher) = &self.dispatcher else {
+            return (
+                Vec::new(),
+                Some("Work needs the registry, which could not be read at startup".to_string()),
+            );
+        };
+        let mut groups: BTreeMap<PathBuf, watch::RootPlans> = BTreeMap::new();
+        for (item_id, entry) in &dispatcher.ledger.entries {
+            let group = groups
+                .entry(entry.root.clone())
+                .or_insert_with(|| watch::RootPlans {
+                    root: entry.root.clone(),
+                    plans: Vec::new(),
+                });
+            group.plans.push(watch::PlanRef {
+                project: entry.project.clone(),
+                plan_id: entry.plan_id.clone(),
+                path: entry.plan.clone(),
+                item: Some(item_id.clone()),
+                title: entry.title.clone(),
+            });
+        }
+        let groups: Vec<watch::RootPlans> = groups.into_values().collect();
+        let watch::Board {
+            operations,
+            refusal,
+        } = watch::board(&self.work, &groups);
+        // Every row's matter in one walk of the feeds, rather than a walk per
+        // row: `items()` rebuilds each matter into a row, so asking it once
+        // per operation pays for the whole feed once per operation.
+        let wanted: std::collections::BTreeSet<String> = operations
+            .iter()
+            .filter_map(|op| op.item().map(str::to_string))
+            .collect();
+        let mut matters: BTreeMap<String, Item> = BTreeMap::new();
+        if !wanted.is_empty() {
+            for feed in &self.ctx.feeds {
+                for item in feed.items() {
+                    if wanted.contains(&item.id) {
+                        matters.insert(item.id.clone(), item);
+                    }
+                }
+            }
+        }
+        let rows = operations
+            .into_iter()
+            .map(|op| operations::OpRow {
+                item: op.item().and_then(|id| matters.get(id).cloned()),
+                // The operation's own plan where a ticket of it names one, and
+                // the ledger's for this root otherwise: a live run whose
+                // tickets were all filtered out still has a plan behind it,
+                // and `e` on that row would otherwise answer that there is
+                // none (§FS-005-dispatch.15).
+                plan: op.plan().map(Path::to_path_buf).or_else(|| {
+                    groups
+                        .iter()
+                        .find(|group| group.root == op.root)
+                        .and_then(|group| group.plans.first())
+                        .map(|plan| plan.path.clone())
+                }),
+                op,
+            })
+            .collect();
+        (rows, refusal)
+    }
+
+    /// Rebuild the open board's rows; a closed board costs nothing.
+    fn reload_operations(&mut self) {
+        if !matches!(self.screen, Screen::Operations(_)) {
+            return;
+        }
+        let (rows, refusal) = self.board_rows();
+        if let Screen::Operations(board) = &mut self.screen {
+            board.replace(rows, refusal);
+        }
+    }
+
+    /// The tick (§FS-005-dispatch.15.1): every couple of seconds between key
+    /// reads — never in the draw path — glance at what the ledger points at.
+    /// A moved timestamp re-reads the plans, so a ticket the runtime parked
+    /// resurfaces when it parks (§FS-005-dispatch.9) instead of at the next
+    /// refresh; an unmoved one costs stat calls and nothing else. The open
+    /// board also probes liveness: neither a run dying nor a run starting
+    /// moves a file — the OS takes and releases the lock — so the lock is
+    /// probed rather than watched, on the roots the board shows and on the
+    /// ones it does not.
+    ///
+    /// Returns true when something on screen changed, and only then: a board
+    /// asking for a frame every couple of seconds regardless is paying to
+    /// show the reader what they are already looking at.
+    fn tick(&mut self) -> bool {
+        if self.ticked_at.elapsed() < WORK_TICK {
+            return false;
+        }
+        self.ticked_at = std::time::Instant::now();
+        let newest = self.work_wrote();
+        let moved = match (newest, self.work_seen) {
+            (Some(now), Some(seen)) => now > seen,
+            (Some(_), None) => true,
+            (None, _) => false,
+        };
+        if moved {
+            self.work_seen = newest;
+            self.reload_work();
+            self.rebuild_view();
+            self.reload_operations();
+            return true;
+        }
+        let shown = match &self.screen {
+            Screen::Operations(board) => board.roots(),
+            _ => return false,
+        };
+        // A run *starting* on a root the board has no row for writes nothing
+        // the timestamp above watches — the OS takes its lock, and that is the
+        // whole event. So the roots the ledger knows and the board is not
+        // showing are probed for exactly that, and one that came alive asks
+        // for the rebuild that would give it a row (§FS-005-dispatch.15.1).
+        let appeared = self.dispatcher.as_ref().is_some_and(|dispatcher| {
+            let mut probed: std::collections::BTreeSet<&Path> = std::collections::BTreeSet::new();
+            dispatcher.ledger.entries.values().any(|entry| {
+                probed.insert(entry.root.as_path())
+                    && !shown.contains(&entry.root)
+                    && crate::work::runtime::watch::live(&self.work, &entry.root)
+            })
+        });
+        let work = &self.work;
+        let found = match &mut self.screen {
+            Screen::Operations(board) => {
+                board.repulse(|root| crate::work::runtime::watch::pulse(work, root))
+            }
+            _ => return false,
+        };
+        if found.flipped || appeared {
+            self.reload_operations();
+            return true;
+        }
+        // Only where something actually moved: a board that redrew itself
+        // every couple of seconds regardless would be paying for a frame to
+        // show the reader what they are already looking at.
+        found.changed
+    }
+
+    /// The newest write across everything the ledger points at: each plan
+    /// file, and each execution root's own run artifacts. Stat calls only —
+    /// the gate in front of every re-read (§FS-005-dispatch.15.1).
+    fn work_wrote(&self) -> Option<std::time::SystemTime> {
+        let dispatcher = self.dispatcher.as_ref()?;
+        let mut newest: Option<std::time::SystemTime> = None;
+        let mut fold = |at: Option<std::time::SystemTime>| {
+            if let Some(at) = at {
+                if newest.map(|seen| at > seen).unwrap_or(true) {
+                    newest = Some(at);
+                }
+            }
+        };
+        let mut roots: std::collections::BTreeSet<&Path> = std::collections::BTreeSet::new();
+        for entry in dispatcher.ledger.entries.values() {
+            fold(
+                std::fs::metadata(&entry.plan)
+                    .and_then(|meta| meta.modified())
+                    .ok(),
+            );
+            roots.insert(&entry.root);
+        }
+        for root in roots {
+            fold(crate::work::runtime::watch::wrote_at(&self.work, root));
+        }
+        newest
     }
 
     fn draw(&mut self, frame: &mut ratatui::Frame) {
@@ -1483,6 +2245,7 @@ impl App {
             Screen::Thread(thread) => thread.title(),
             Screen::Gate(gate) => gate.title(),
             Screen::Work(work) => work.title(),
+            Screen::Operations(board) => board.title(),
         };
         // A screen that stays live during a fetch is also a screen that looks
         // finished, so a run in flight says so and says where it has got to —
@@ -1504,6 +2267,15 @@ impl App {
             Screen::Thread(thread) => thread.draw(frame, body_area),
             Screen::Gate(gate) => gate.draw(frame, body_area),
             Screen::Work(work) => work.draw(frame, body_area),
+            // The refresh reports on the board additionally — the header
+            // above keeps its line (§FS-001-forge-interface.7).
+            Screen::Operations(board) => {
+                let line = self
+                    .refresh
+                    .as_ref()
+                    .map(crate::feed::refresh::BackgroundRefresh::progress);
+                board.draw(frame, body_area, line)
+            }
         }
         if let Some(menu) = &self.menu {
             menu.draw(frame, body_area);
@@ -1514,8 +2286,11 @@ impl App {
 
         let footer = if self.prompt.is_some() {
             " type  ·  enter sends  ·  esc cancels  ·  ^w word back  ·  ^u clear".to_string()
-        } else if self.menu.is_some() {
-            " j/k move  1-9 run  enter run  esc cancel".to_string()
+        // Built from what is selected, not fixed for the menu: an entry that
+        // hands work over and an entry that runs a command are not the same
+        // key (§FS-004-quick-actions.2).
+        } else if let Some(menu) = &self.menu {
+            menu.footer()
         } else {
             match &self.screen {
                 Screen::Navigator => self.navigator.footer().to_string(),
@@ -1524,6 +2299,7 @@ impl App {
                 Screen::Thread(thread) => thread.footer(),
                 Screen::Gate(gate) => gate.footer().to_string(),
                 Screen::Work(work) => work.footer().to_string(),
+                Screen::Operations(board) => board.footer().to_string(),
             }
         };
         frame.render_widget(
@@ -1539,7 +2315,7 @@ mod tests {
     use crate::feed::model::ItemKind;
     use serde_json::json;
 
-    fn ctx_with_branch(root: &Path, template: Option<&str>) -> Ctx {
+    pub(super) fn ctx_with_branch(root: &Path, template: Option<&str>) -> Ctx {
         let branch = BranchInfo {
             branch: "you/ABC-42-retry-window".to_string(),
             ticket: Some("ABC-42".to_string()),
@@ -1566,6 +2342,10 @@ mod tests {
             project_org: BTreeMap::new(),
             placements: BTreeMap::from([("widget".to_string(), placement)]),
             behind: BTreeMap::new(),
+            standing: BTreeMap::new(),
+            on_branch: BTreeMap::new(),
+            linked: BTreeMap::new(),
+            stats: BTreeMap::new(),
             capabilities: BTreeMap::new(),
             resurfacing: BTreeMap::new(),
             unattributed: Vec::new(),
@@ -1607,6 +2387,102 @@ mod tests {
         }
     }
 
+    /// One project's cached feed, holding one matter the forge put on `branch`.
+    fn feed_on(project: &str, key: &str, branch: &str) -> ProjectFeed {
+        let matter = crate::matter::Matter {
+            key: crate::matter::SubjectKey::stated(key),
+            kind: ItemKind::Pr,
+            placement: crate::matter::Placement::on(project),
+            source: "github-prs".to_string(),
+            title: "Retry window".to_string(),
+            role: None,
+            url: None,
+            state: None,
+            needs_response: false,
+            updated_at: Utc::now(),
+            links: Vec::new(),
+            discussions: Vec::new(),
+            events: Vec::new(),
+            fingerprint: Default::default(),
+            raw: json!({ "branch": branch }),
+        };
+        ProjectFeed {
+            project: project.to_string(),
+            providers: BTreeMap::from([(
+                "github-prs".to_string(),
+                crate::feed::cache::ProviderSlot {
+                    ok: true,
+                    matters: vec![matter],
+                    ..Default::default()
+                },
+            )]),
+            ..ProjectFeed::default()
+        }
+    }
+
+    /// A second project beside the fixture's, with a branch and a feed of its
+    /// own, so a pass scoped to one has something to leave alone.
+    fn with_second_project(ctx: &mut Ctx) {
+        let placement = Placement {
+            project: "gadget".to_string(),
+            branches: vec![BranchInfo {
+                branch: "you/XYZ-7-widen".to_string(),
+                ticket: Some("XYZ-7".to_string()),
+                active: true,
+                is_release: false,
+                declared: true,
+            }],
+            ..ctx.placements["widget"].clone()
+        };
+        ctx.projects.push("gadget".to_string());
+        ctx.placements.insert("gadget".to_string(), placement);
+        ctx.feeds = vec![
+            feed_on(
+                "widget",
+                "github-prs:acme/widget#42",
+                "you/ABC-42-retry-window",
+            ),
+            feed_on("gadget", "github-prs:acme/gadget#7", "you/XYZ-7-widen"),
+        ];
+    }
+
+    /// A refresh lands one project at a time, and the placement pass it runs
+    /// per landing answers for that project alone: the rest of the site keeps
+    /// the rows it had, and what the scoped pass leaves behind is what the
+    /// whole-site pass would have left there — one implementation, so the
+    /// mid-scan answer and the end-of-run answer cannot disagree
+    /// (§FS-001-forge-interface.7, §FS-008-attribution.2).
+    #[test]
+    fn a_landing_places_its_own_project_and_leaves_the_rest_standing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut ctx = ctx_with_branch(tmp.path(), None);
+        with_second_project(&mut ctx);
+        ctx.recompute_placements();
+
+        let widget = ctx.branches("widget")[0].clone();
+        let gadget = ctx.branches("gadget")[0].clone();
+        assert_eq!(ctx.branch_linked("widget", &widget), 1);
+        assert_eq!(ctx.branch_linked("gadget", &gadget), 1);
+
+        // Widget's feed lands again, this time with the item on no branch the
+        // project knows. Only widget is re-placed.
+        ctx.feeds[0] = feed_on("widget", "github-prs:acme/widget#42", "you/ABC-99-other");
+        ctx.recompute_placements_for("widget");
+        assert_eq!(ctx.branch_linked("widget", &widget), 0);
+        assert_eq!(ctx.branch_linked("gadget", &gadget), 1);
+        // The row that left the branch left the map with it — a stale entry
+        // would keep filing it under a branch it is no longer on.
+        assert!(ctx
+            .on_branch
+            .keys()
+            .all(|(project, _)| project.as_str() != "widget"));
+
+        // And the two scopes agree about the whole site.
+        let scoped = (ctx.on_branch.clone(), ctx.linked.clone());
+        ctx.recompute_placements();
+        assert_eq!(scoped, (ctx.on_branch.clone(), ctx.linked.clone()));
+    }
+
     #[test]
     fn a_sources_own_action_leads_the_menu() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1637,7 +2513,7 @@ mod tests {
         // The configured action keeps its place and the source's own goes
         // ahead of it (§FS-004-quick-actions.3) — where `gh` is installed for
         // it to be offered at all.
-        let menu = ctx.actions_for(&ci);
+        let menu = ctx.actions_for(&ci, &[]);
         let quick = usize::from(crate::feed::provider::command_exists("gh"));
         assert_eq!(menu.len(), quick + 1);
         assert_eq!(menu.last().unwrap().description, "run the gate");
@@ -1671,7 +2547,7 @@ mod tests {
         }))
         .unwrap()];
 
-        let menu = ctx.actions_for(&ticket_item());
+        let menu = ctx.actions_for(&ticket_item(), &[]);
         let described: Vec<&str> = menu
             .iter()
             .map(|action| action.description.as_str())
@@ -1692,7 +2568,7 @@ mod tests {
             .get_mut("widget")
             .expect("the fixture project")
             .trust = crate::manifest::Trust::Descriptions;
-        let menu = ctx.actions_for(&ticket_item());
+        let menu = ctx.actions_for(&ticket_item(), &[]);
         assert_eq!(menu.len(), 1, "only the person's own is left");
         assert_eq!(menu[0].description, "my benchmark");
     }
@@ -1724,6 +2600,12 @@ mod tests {
             .status()
             .expect("git runs");
         assert!(status.success(), "git {args:?} failed in {}", dir.display());
+    }
+
+    /// How far the item's checkout trails the project's main branch, out of
+    /// the one fold the offers read.
+    fn behind(ctx: &Ctx, item: &Item) -> Option<u64> {
+        ctx.item_trailing(item).and_then(|trailing| trailing.behind)
     }
 
     /// A repo whose `feature` branch is `commits` commits behind `master`.
@@ -1797,6 +2679,60 @@ mod tests {
         );
     }
 
+    /// The standing rides beside the behind count, from the same fold: two
+    /// distances, two facts — one against the project's main branch, one
+    /// against the branch's own published copy, and the branch is read off
+    /// each repository's `HEAD`, never the workspace directory's name
+    /// (§DA-003-upstream-is-the-published-copy).
+    #[test]
+    fn the_standing_is_measured_beside_behind() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let workspace = root.join("you/ABC-42-retry-window");
+        let repo = workspace.join("ce");
+        repo_behind(&repo, 3);
+        // The branch was pushed, then its copy grew two commits this
+        // checkout has not pulled — no tracking config, the worktree shape.
+        for step in 0..2 {
+            git(
+                &repo,
+                &[
+                    "commit",
+                    "-q",
+                    "--allow-empty",
+                    "-m",
+                    &format!("pushed {step}"),
+                ],
+            );
+        }
+        git(
+            &repo,
+            &["update-ref", "refs/remotes/origin/feature", "HEAD"],
+        );
+        git(&repo, &["reset", "-q", "--hard", "HEAD~2"]);
+
+        let mut ctx = ctx_with_branch(root, Some("{project_root}/{branch}"));
+        declare(&mut ctx, &["ce"]);
+        ctx.recompute_behind();
+        assert_eq!(
+            ctx.branch_behind("widget", "you/ABC-42-retry-window")
+                .and_then(Staleness::total),
+            Some(3)
+        );
+        let standing = ctx
+            .branch_standing("widget", "you/ABC-42-retry-window")
+            .expect("the copy was read");
+        assert_eq!(standing.behind_upstream(), Some(2));
+        assert_eq!(standing.repos[0].branch.as_deref(), Some("feature"));
+        assert_eq!(
+            standing.repos[0].upstream,
+            Upstream::Published {
+                remote: "origin".to_string(),
+                branch: "feature".to_string(),
+            }
+        );
+    }
+
     /// The rebase is in the menu because of what is on disk, and only then
     /// (§FS-004-quick-actions.6).
     #[test]
@@ -1810,8 +2746,8 @@ mod tests {
         let mut ctx = ctx_with_branch(root, Some("{project_root}/{branch}"));
         declare(&mut ctx, &["ce", "ee"]);
         let pr = ticket_item();
-        assert_eq!(ctx.item_behind(&pr), Some(5));
-        let menu = ctx.actions_for(&pr);
+        assert_eq!(behind(&ctx, &pr), Some(5));
+        let menu = ctx.actions_for(&pr, &[]);
         assert_eq!(menu[0].description, "rebase onto master (5 behind)");
         assert!(menu[0].command.contains("rebase --project"));
         assert!(menu[0].requires_checkout);
@@ -1820,8 +2756,8 @@ mod tests {
         for repo in ["ce", "ee"] {
             git(&workspace.join(repo), &["checkout", "-q", "master"]);
         }
-        assert_eq!(ctx.item_behind(&pr), Some(0));
-        assert!(ctx.actions_for(&pr).is_empty());
+        assert_eq!(behind(&ctx, &pr), Some(0));
+        assert!(ctx.actions_for(&pr, &[]).is_empty());
     }
 
     #[test]
@@ -1831,13 +2767,405 @@ mod tests {
         let ctx = ctx_with_branch(root, Some("{project_root}/{branch}"));
 
         // The branch workspace was never checked out.
-        assert_eq!(ctx.item_behind(&ticket_item()), None);
-        assert!(ctx.actions_for(&ticket_item()).is_empty());
+        assert_eq!(behind(&ctx, &ticket_item()), None);
+        assert!(ctx.actions_for(&ticket_item(), &[]).is_empty());
 
-        // An item that is not a pull request has no branch to replay.
-        let mut message = ticket_item();
-        message.kind = ItemKind::Message;
-        assert_eq!(ctx.item_behind(&message), None);
+        // An item that resolves to no branch at all has nowhere to rebase,
+        // whatever kind it is (§FS-004-quick-actions.2).
+        let mut nowhere = ticket_item();
+        nowhere.title = "Nothing about any branch".to_string();
+        assert_eq!(behind(&ctx, &nowhere), None);
+        assert!(ctx.actions_for(&nowhere, &[]).is_empty());
+    }
+
+    /// The offer follows the branch on disk, not the kind of the row that
+    /// mentions it: an issue and a message about the same change are offered
+    /// exactly what the pull request is (§FS-004-quick-actions.6).
+    #[test]
+    fn any_item_that_resolves_to_a_workspace_is_offered_the_rebase() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let workspace = root.join("you/ABC-42-retry-window");
+        repo_behind(&workspace.join("ce"), 4);
+
+        let mut ctx = ctx_with_branch(root, Some("{project_root}/{branch}"));
+        declare(&mut ctx, &["ce"]);
+        let offered = "rebase onto master (4 behind)";
+        for kind in [
+            ItemKind::Pr,
+            ItemKind::Issue,
+            ItemKind::Message,
+            ItemKind::Ci,
+            ItemKind::Status,
+        ] {
+            let mut item = ticket_item();
+            item.kind = kind;
+            let menu = ctx.actions_for(&item, &[]);
+            assert_eq!(menu.len(), 1, "{kind:?}: {menu:?}");
+            assert_eq!(menu[0].description, offered, "{kind:?}");
+            // And the entry says nothing about kinds any more, so nothing
+            // downstream can narrow it back to pull requests.
+            assert!(menu[0].kinds.is_empty(), "{kind:?}");
+        }
+    }
+
+    /// The two offers are gated apart: replaying onto the published copy
+    /// resolves its ref inside each repository, so a project that declares no
+    /// main branch is still offered it — and is offered nothing to replay onto
+    /// a base nothing names (§FS-004-quick-actions.6).
+    #[test]
+    fn a_project_with_no_main_branch_is_still_offered_the_copy() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let repo = root.join("you/ABC-42-retry-window/ce");
+        repo_behind(&repo, 3);
+        published_ahead(&repo, "feature", 2);
+
+        let mut ctx = ctx_with_branch(root, Some("{project_root}/{branch}"));
+        declare(&mut ctx, &["ce"]);
+        ctx.placements
+            .get_mut("widget")
+            .expect("the fixture project")
+            .main_branch = None;
+
+        let menu = ctx.actions_for(&ticket_item(), &[]);
+        assert_eq!(menu.len(), 1, "{menu:?}");
+        assert_eq!(menu[0].id, "rebase-upstream");
+        assert_eq!(menu[0].description, "rebase onto origin/feature (2 behind)");
+
+        // The row is gated the same way, so what it shows and what the menu
+        // offers cannot disagree: the copy's distance, and no distance to a
+        // main branch the project never named.
+        ctx.recompute_behind();
+        assert!(ctx
+            .branch_behind("widget", "you/ABC-42-retry-window")
+            .is_none());
+        assert_eq!(
+            ctx.branch_standing("widget", "you/ABC-42-retry-window")
+                .and_then(Standing::behind_upstream),
+            Some(2)
+        );
+    }
+
+    /// The branch row carries the same offers, built by the same code: this is
+    /// where a reader looking at a stale branch is standing
+    /// (§FS-004-quick-actions.6).
+    #[test]
+    fn a_branch_row_carries_the_same_offers_as_the_items_on_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let workspace = root.join("you/ABC-42-retry-window");
+        repo_behind(&workspace.join("ce"), 2);
+        published_ahead(&workspace.join("ce"), "feature", 1);
+
+        let mut ctx = ctx_with_branch(root, Some("{project_root}/{branch}"));
+        declare(&mut ctx, &["ce"]);
+        let offered = ctx.branch_actions("widget", "you/ABC-42-retry-window");
+        assert_eq!(offered.len(), 2, "{offered:?}");
+        assert_eq!(offered[0].description, "rebase onto master (2 behind)");
+        assert_eq!(
+            offered[1].description,
+            "rebase onto origin/feature (1 behind)"
+        );
+
+        // The same entries the item's menu carries — one implementation, so a
+        // reader cannot be told two different things about one checkout.
+        let menu = ctx.actions_for(&ticket_item(), &[]);
+        let described = |actions: &[ActionConfig]| -> Vec<(String, String)> {
+            actions
+                .iter()
+                .map(|action| (action.id.clone(), action.command.clone()))
+                .collect()
+        };
+        assert_eq!(described(&offered), described(&menu));
+
+        // A branch whose workspace is not on disk is a checkout question
+        // (§FS-004-quick-actions.7), so the rebase is withheld rather than
+        // offered and left to fail.
+        assert!(ctx
+            .branch_actions("widget", "you/never-checked-out")
+            .is_empty());
+    }
+
+    /// Publish the branch this repository is on and move that copy `commits`
+    /// ahead of the checkout — somebody else pushed to it, and no tracking
+    /// config was ever written (§DA-003-upstream-is-the-published-copy).
+    fn published_ahead(dir: &Path, branch: &str, commits: usize) {
+        for index in 0..commits {
+            git(
+                dir,
+                &[
+                    "commit",
+                    "-q",
+                    "--allow-empty",
+                    "-m",
+                    &format!("pushed {index}"),
+                ],
+            );
+        }
+        git(
+            dir,
+            &[
+                "update-ref",
+                &format!("refs/remotes/origin/{branch}"),
+                "HEAD",
+            ],
+        );
+        if commits > 0 {
+            git(dir, &["reset", "-q", "--hard", &format!("HEAD~{commits}")]);
+        }
+    }
+
+    /// A repository parked on the base itself and tracking it, whose copy is
+    /// `commits` ahead: the workspace repository a change does not touch. Its
+    /// published copy *is* its base, so both distances are the same distance.
+    fn repo_on_the_base(dir: &Path, commits: usize) {
+        std::fs::create_dir_all(dir).unwrap();
+        git(dir, &["init", "-q", "-b", "master"]);
+        git(dir, &["commit", "-q", "--allow-empty", "-m", "base"]);
+        published_ahead(dir, "master", commits);
+        git(dir, &["remote", "add", "origin", "."]);
+        git(
+            dir,
+            &["branch", "--set-upstream-to=origin/master", "master"],
+        );
+    }
+
+    /// The second offer: onto the branch's own published copy, naming the ref
+    /// so the two entries differ in the word that matters
+    /// (§FS-004-quick-actions.8).
+    #[test]
+    fn the_rebase_onto_the_published_copy_is_offered_and_names_the_ref() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let repo = root.join("you/ABC-42-retry-window/ce");
+        // Level with main, so only the published copy has anything to replay.
+        repo_behind(&repo, 0);
+        published_ahead(&repo, "feature", 2);
+
+        let mut ctx = ctx_with_branch(root, Some("{project_root}/{branch}"));
+        declare(&mut ctx, &["ce"]);
+        let pr = ticket_item();
+        let menu = ctx.actions_for(&pr, &[]);
+        assert_eq!(menu.len(), 1);
+        assert_eq!(menu[0].id, "rebase-upstream");
+        assert_eq!(menu[0].description, "rebase onto origin/feature (2 behind)");
+        assert!(menu[0].command.contains("rebase --upstream --project"));
+        assert!(menu[0].requires_checkout);
+
+        // Level with the copy: nothing to replay, so nothing offered — and a
+        // branch published nowhere is the same silence for the same reason.
+        git(
+            &repo,
+            &["update-ref", "refs/remotes/origin/feature", "HEAD"],
+        );
+        assert!(ctx.actions_for(&pr, &[]).is_empty());
+        git(&repo, &["update-ref", "-d", "refs/remotes/origin/feature"]);
+        assert!(ctx.actions_for(&pr, &[]).is_empty());
+    }
+
+    /// A forest where the repositories disagree — one on the change's branch,
+    /// one parked on the base — is offered both, because a forest is not one
+    /// branch (§FS-004-quick-actions.8). The copy entry counts, and names,
+    /// only the repository that trails a copy of its own: the parked one's
+    /// distance is the first entry's, not this one's twice.
+    #[test]
+    fn both_rebases_are_offered_where_the_forest_disagrees() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let workspace = root.join("you/ABC-42-retry-window");
+        repo_behind(&workspace.join("ce"), 0);
+        published_ahead(&workspace.join("ce"), "feature", 2);
+        repo_on_the_base(&workspace.join("ee"), 1);
+
+        let mut ctx = ctx_with_branch(root, Some("{project_root}/{branch}"));
+        declare(&mut ctx, &["ce", "ee"]);
+        let menu = ctx.actions_for(&ticket_item(), &[]);
+        assert_eq!(menu.len(), 2);
+        assert_eq!(menu[0].description, "rebase onto master (1 behind)");
+        // `ee`'s copy is its base, so it neither counts here nor keeps the
+        // entry from naming the one ref the counted repositories share.
+        assert_eq!(menu[1].id, "rebase-upstream");
+        assert_eq!(menu[1].description, "rebase onto origin/feature (2 behind)");
+    }
+
+    /// And where every repository's published copy *is* its base, the copy
+    /// entry has nothing of its own to count: only the first is offered
+    /// (§FS-004-quick-actions.8).
+    #[test]
+    fn the_rebase_onto_the_copy_is_not_offered_where_the_copy_is_the_base() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let workspace = root.join("you/ABC-42-retry-window");
+        repo_on_the_base(&workspace.join("ce"), 1);
+        repo_on_the_base(&workspace.join("ee"), 1);
+
+        let mut ctx = ctx_with_branch(root, Some("{project_root}/{branch}"));
+        declare(&mut ctx, &["ce", "ee"]);
+        // The distance is real, and the base count carries it; the copy sum
+        // leaves it out entirely, so no gate anywhere reads one distance
+        // under two names.
+        let trailing = ctx
+            .item_trailing(&ticket_item())
+            .expect("the checkout was measured");
+        assert_eq!(trailing.behind, Some(2));
+        assert_eq!(trailing.behind_upstream, None);
+        let menu = ctx.actions_for(&ticket_item(), &[]);
+        assert_eq!(menu.len(), 1);
+        assert_eq!(menu[0].id, "rebase");
+        assert_eq!(menu[0].description, "rebase onto master (2 behind)");
+    }
+
+    /// A red gate on my own change, on a checkout that trails: the commands
+    /// and the work stand in one menu (§FS-005-dispatch.1), each carrying its
+    /// own icon, and the replay appears once — the recipe named `rebase` is
+    /// what that entry hands its conflict to, not a second row saying the same
+    /// thing.
+    #[test]
+    fn the_menu_carries_the_work_that_can_be_handed_over() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let workspace = root.join("you/ABC-42-retry-window");
+        repo_behind(&workspace.join("ce"), 2);
+
+        let mut ctx = ctx_with_branch(root, Some("{project_root}/{branch}"));
+        declare(&mut ctx, &["ce"]);
+        let mut mine = ticket_item();
+        mine.role = Some(crate::feed::model::ItemRole::Author);
+        mine.raw = json!({ "gate": { "repos": [
+            { "repo": "ce", "passed": 1, "failed": 2, "running": 0 }
+        ] } });
+
+        let recipes = crate::work::recipe::shipped();
+        let menu = ctx.actions_for(&mine, &recipes);
+        let described: Vec<(&str, &str, bool)> = menu
+            .iter()
+            .map(|entry| {
+                (
+                    entry.icon.as_str(),
+                    entry.description.as_str(),
+                    entry.agent.is_some(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            described,
+            [
+                ("⤴", "rebase onto master (2 behind)", false),
+                ("🛠", "fix the red gate", true),
+            ],
+            "{described:?}"
+        );
+        // The work rides on the entry whole, so what is dispatched from the
+        // menu is the recipe itself (§FS-005-dispatch.4).
+        let work = menu[1].agent.as_ref().expect("the recipe rides along");
+        assert_eq!(work.id, "fix-gate");
+        assert!(work.brief.starts_with("The gate on {title} is red."));
+        // And the replay is one entry, the deterministic one.
+        assert_eq!(menu.iter().filter(|entry| entry.id == "rebase").count(), 1);
+    }
+
+    /// Offered only where it would work (§FS-004-quick-actions.2): work that
+    /// edits the change waits on the change being here, work that reads one
+    /// does not, and nothing is asked about an item that is finished
+    /// (§FS-005-dispatch.6).
+    #[test]
+    fn work_is_offered_where_it_would_work_and_nowhere_else() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Nothing checked out: the branch workspace the template names is not
+        // on disk.
+        let ctx = ctx_with_branch(tmp.path(), Some("{project_root}/{branch}"));
+        let recipes = crate::work::recipe::shipped();
+        let ids = |ctx: &Ctx, item: &Item| -> Vec<String> {
+            ctx.actions_for(item, &recipes)
+                .into_iter()
+                .filter(|entry| entry.agent.is_some())
+                .map(|entry| entry.id)
+                .collect()
+        };
+
+        // Fixing a gate edits the change, so it is the checkout's question
+        // first (§FS-004-quick-actions.7).
+        let mut mine = ticket_item();
+        mine.role = Some(crate::feed::model::ItemRole::Author);
+        mine.raw = json!({ "gate": { "repos": [
+            { "repo": "ce", "passed": 1, "failed": 2, "running": 0 }
+        ] } });
+        assert!(ids(&ctx, &mine).is_empty());
+
+        // Reviewing one reads it, and fetches what it needs: offered with
+        // nothing on disk at all.
+        let mut theirs = ticket_item();
+        theirs.role = Some(crate::feed::model::ItemRole::Reviewer);
+        assert_eq!(ids(&ctx, &theirs), ["review"]);
+
+        // Merged: there is nothing to ask for about it any more.
+        let mut done = theirs.clone();
+        done.state = Some("merged".to_string());
+        assert!(ids(&ctx, &done).is_empty());
+    }
+
+    /// With no runner bound the work is still offered — a ticket is written
+    /// whether or not anything can run it — and where the entry would say who
+    /// gets it, it says instead that nobody can be asked, in the *workable*
+    /// rung's own words (§FS-005-dispatch.14).
+    #[test]
+    fn with_no_runner_bound_the_work_is_still_offered_and_says_nobody_can_be_asked() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = ctx_with_branch(tmp.path(), Some("{project_root}/{branch}"));
+        let mut theirs = ticket_item();
+        theirs.role = Some(crate::feed::model::ItemRole::Reviewer);
+        let offered = ctx.actions_for(&theirs, &crate::work::recipe::shipped());
+        assert_eq!(
+            offered.iter().filter(|entry| entry.agent.is_some()).count(),
+            1
+        );
+
+        // The rung's own sentence about a runner that is not there.
+        let unbound = crate::work::runtime::refusal(&crate::work::recipe::WorkConfig {
+            runner: Some("no-such-runner-here".to_string()),
+            ..crate::work::recipe::WorkConfig::default()
+        })
+        .expect("a runner that is not on PATH is refused");
+        assert!(unbound.contains("no-such-runner-here"), "{unbound}");
+
+        use crate::work::runtime::roster::{Choice, Hand};
+        let nobody = who_gets_it(&Choice::Unasked { note: None }, Some(&unbound));
+        assert_eq!(nobody.says, unbound);
+        // Said, not refused: the ticket is written all the same.
+        assert!(nobody.refusal.is_none());
+
+        // With a runner there and nobody named, the runtime picks unasked.
+        let unasked = who_gets_it(&Choice::Unasked { note: None }, None);
+        assert_eq!(unasked.says, "whoever the runtime picks");
+
+        // A chosen hand names itself, and carries why it cannot be asked right
+        // now rather than vanishing (§FS-005-dispatch.14).
+        let chosen = who_gets_it(
+            &Choice::Chosen {
+                hand: Hand {
+                    id: "luna".to_string(),
+                    agent: Some("claude-code".to_string()),
+                    model: None,
+                    provider: None,
+                    efforts: vec!["high".to_string()],
+                    available: Some("'claude-code' is not on PATH".to_string()),
+                },
+                effort: Some("high".to_string()),
+                whence: "the site's default hand".to_string(),
+                note: None,
+            },
+            None,
+        );
+        assert_eq!(
+            chosen.says,
+            "luna at high (unavailable: 'claude-code' is not on PATH)"
+        );
+        assert!(chosen.refusal.is_none());
+
+        // And a choice that cannot stand is the whole reason, and refuses.
+        let refused = who_gets_it(&Choice::Refused("permits only sonnet".to_string()), None);
+        assert_eq!(refused.refusal.as_deref(), Some("permits only sonnet"));
     }
 
     #[test]
@@ -1889,6 +3217,74 @@ mod tests {
         // A project the registry says nothing about holds nothing, and the
         // table answers rather than being absent.
         assert!(ctx.can("ghost").held().is_empty());
+    }
+
+    /// The checkout offered on a branch row can actually run. The entry runs
+    /// `ephor checkout`, which needs to be told a branch or a matter it can
+    /// read one off (§FS-004-quick-actions.7); a branch row has no matter
+    /// (§FS-004-quick-actions.6), so the dossier says the branch and says the
+    /// item id empty rather than leaving a stale inherited one to bind the
+    /// command to somebody else's change. An offer refused on the keystroke is
+    /// worse than no offer (§FS-004-quick-actions.2).
+    #[test]
+    fn a_branch_rows_checkout_is_told_the_branch_and_no_matter() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = ctx_with_branch(tmp.path(), Some("{project_root}/{branch}"));
+        let branch = ctx.branches("widget")[0].clone();
+        let target = tmp.path().join(&branch.branch);
+        let entry = actions::checkout_action(&target);
+        // Both are named, so the one command serves an item row and a branch
+        // row alike.
+        assert!(entry.command.contains("--item \"$EPHOR_ITEM_ID\""));
+        assert!(entry.command.contains("--branch \"$EPHOR_BRANCH\""));
+
+        let menu = ActionMenu::new(
+            actions::Subject::Branch {
+                project: "widget".to_string(),
+                branch: branch.branch.clone(),
+            },
+            tmp.path().to_path_buf(),
+            tmp.path().to_path_buf(),
+            Some(branch.clone()),
+            WorkspaceState::Missing(target),
+            None,
+            &ctx.can("widget"),
+            Vec::new(),
+        );
+        let carried = menu_dossier(&menu, tmp.path(), None);
+        let value = |key: &str| {
+            carried
+                .iter()
+                .find(|(name, _)| name == key)
+                .map(|(_, value)| value.as_str())
+        };
+        assert_eq!(value("EPHOR_BRANCH"), Some(branch.branch.as_str()));
+        assert_eq!(value("EPHOR_TICKET"), Some("ABC-42"));
+        assert_eq!(value("EPHOR_PROJECT"), Some("widget"));
+        // Said, and said empty: an unset variable is whatever the shell that
+        // launched ephor held.
+        assert_eq!(value("EPHOR_ITEM_ID"), Some(""));
+
+        // An item row is unchanged: its own id, and its own branch.
+        let item_menu = ActionMenu::new(
+            actions::Subject::Item(Box::new(ticket_item())),
+            tmp.path().to_path_buf(),
+            tmp.path().to_path_buf(),
+            Some(branch.clone()),
+            WorkspaceState::Ready,
+            None,
+            &ctx.can("widget"),
+            Vec::new(),
+        );
+        let carried = menu_dossier(&item_menu, tmp.path(), None);
+        let value = |key: &str| {
+            carried
+                .iter()
+                .find(|(name, _)| name == key)
+                .map(|(_, value)| value.as_str())
+        };
+        assert_eq!(value("EPHOR_ITEM_ID"), Some(ticket_item().id.as_str()));
+        assert_eq!(value("EPHOR_BRANCH"), Some(branch.branch.as_str()));
     }
 
     #[test]

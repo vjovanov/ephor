@@ -1,0 +1,751 @@
+//! The operations board: every operation beneath the reading, in one place
+//! (§FS-005-dispatch.15).
+//!
+//! Watch-only. Rows are execution roots read from the runtime's artifacts —
+//! a live run, or a claim with no run behind it — plus the refresh, which
+//! reports here *additionally* to the header line it already owns
+//! (§FS-001-forge-interface.7). Nothing here starts, stops, or touches a
+//! run; the rows are built by the shell off the draw path, and a draw only
+//! renders what was already decided.
+
+use std::path::PathBuf;
+
+use ratatui::crossterm::event::KeyCode;
+use ratatui::layout::Rect;
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::Paragraph;
+
+use crate::feed::model::Item;
+use crate::work::runtime::watch::{Doing, Operation};
+
+use super::Action;
+
+/// One operation with the matter behind it, where the feed still carries
+/// one — resolved by the shell when the board is built, never while drawing.
+pub(crate) struct OpRow {
+    pub op: Operation,
+    pub item: Option<Item>,
+    /// The plan this row reads and edits: the operation's own where one of
+    /// its tickets names it, the ledger's for this execution root otherwise.
+    /// Resolved by the shell for the same reason the matter is.
+    pub plan: Option<PathBuf>,
+}
+
+/// What one re-probe found: whether anything the reader can see moved, and
+/// whether a row's liveness flipped — which is the caller's cue to rebuild
+/// the whole board, because a run that died leaves tickets whose flavour
+/// depends on the lock it just released.
+#[derive(Default)]
+pub(crate) struct Repulsed {
+    pub changed: bool,
+    pub flipped: bool,
+}
+
+pub(crate) struct OperationsScreen {
+    rows: Vec<OpRow>,
+    /// Why there are no operations, where a runtime cannot run any — the
+    /// workable rung's own sentence, shown rather than an empty screen that
+    /// looks broken (§FS-005-dispatch.15).
+    refusal: Option<String>,
+    selected: usize,
+    scroll: u16,
+    viewport: u16,
+}
+
+impl OperationsScreen {
+    pub fn new(rows: Vec<OpRow>, refusal: Option<String>) -> Self {
+        OperationsScreen {
+            rows,
+            refusal,
+            selected: 0,
+            scroll: 0,
+            viewport: 0,
+        }
+    }
+
+    pub fn title(&self) -> String {
+        " ephor — operations".to_string()
+    }
+
+    /// `;` is the key that opened this, and it is the key that closes it
+    /// again — said here rather than left for the reader to guess, the way
+    /// every other screen now says `; ops` (§FS-005-dispatch.15).
+    pub fn footer(&self) -> &'static str {
+        " j/k move  enter matter/plan  e plan  o dashboard  r refresh  esc/; back"
+    }
+
+    /// Fresh rows from a rebuild, with the cursor still on the operation it
+    /// was on. A rebuild fires from the tick and from every refresh landing
+    /// (§FS-001-forge-interface.7), so a row appearing above the cursor would
+    /// otherwise silently change what the next `enter` or `o` acts on — the
+    /// same rule the tree keeps, keyed on the execution root, which is what a
+    /// row of this board *is* (§FS-005-dispatch.15).
+    pub fn replace(&mut self, rows: Vec<OpRow>, refusal: Option<String>) {
+        let was = self.selected_row().map(|row| row.op.root.clone());
+        self.rows = rows;
+        self.refusal = refusal;
+        self.selected = was
+            .and_then(|root| self.rows.iter().position(|row| row.op.root == root))
+            .unwrap_or_else(|| self.selected.min(self.rows.len().saturating_sub(1)));
+        self.follow_selection();
+    }
+
+    /// Re-probe every row's liveness and the badges riding on it, in place —
+    /// the cheap half of the tick (§FS-005-dispatch.15.1).
+    pub fn repulse(
+        &mut self,
+        probe: impl Fn(&std::path::Path) -> crate::work::runtime::watch::Pulse,
+    ) -> Repulsed {
+        let mut found = Repulsed::default();
+        for row in &mut self.rows {
+            let pulse = probe(&row.op.root);
+            if pulse.live != row.op.live {
+                found.flipped = true;
+            }
+            if pulse.live != row.op.live
+                || pulse.dashboard != row.op.dashboard
+                || pulse.quiet != row.op.quiet
+            {
+                found.changed = true;
+            }
+            row.op.live = pulse.live;
+            row.op.dashboard = pulse.dashboard;
+            row.op.quiet = pulse.quiet;
+        }
+        found
+    }
+
+    /// The execution roots the board has a row for. What the tick needs to
+    /// tell "a run whose badges moved" from "a run that started somewhere
+    /// this board is not showing" (§FS-005-dispatch.15.1).
+    pub fn roots(&self) -> Vec<PathBuf> {
+        self.rows.iter().map(|row| row.op.root.clone()).collect()
+    }
+
+    fn selected_row(&self) -> Option<&OpRow> {
+        self.rows.get(self.selected)
+    }
+
+    fn selected_plan(&self) -> Option<PathBuf> {
+        self.selected_row().and_then(|row| row.plan.clone())
+    }
+
+    /// Lines above the first operation, in the order [`OperationsScreen::lines`]
+    /// pushes them: the heading, the refresh line, the refusal where there is
+    /// one, a blank, and the operations heading.
+    fn head_lines(&self) -> usize {
+        4 + usize::from(self.refusal.is_some())
+    }
+
+    /// Lines one operation takes: its own, one per ticket, and the finished
+    /// count where there is one.
+    fn row_lines(row: &OpRow) -> usize {
+        1 + row.op.tickets.len() + usize::from(row.op.done > 0)
+    }
+
+    /// Where an operation's first line sits in what [`OperationsScreen::lines`]
+    /// builds.
+    fn row_offset(&self, index: usize) -> usize {
+        self.head_lines()
+            + self.rows[..index]
+                .iter()
+                .map(Self::row_lines)
+                .sum::<usize>()
+    }
+
+    /// Bring the selected operation into the viewport. An operation is several
+    /// lines, so a selection moved without the scroll following it puts the
+    /// cursor off screen and leaves the reader pressing `enter` on something
+    /// they cannot see (§FS-004-quick-actions.2).
+    fn follow_selection(&mut self) {
+        let Some(row) = self.rows.get(self.selected) else {
+            return;
+        };
+        // Nothing has been drawn yet, so there is no viewport to be inside.
+        if self.viewport == 0 {
+            return;
+        }
+        let top = self.row_offset(self.selected) as u16;
+        let height = Self::row_lines(row) as u16;
+        let viewport = self.viewport;
+        if top < self.scroll {
+            self.scroll = top;
+        } else if top.saturating_add(height) > self.scroll.saturating_add(viewport) {
+            self.scroll = top.saturating_add(height).saturating_sub(viewport);
+        }
+    }
+
+    pub fn handle_key(&mut self, code: KeyCode) -> Action {
+        match code {
+            KeyCode::Char('q') | KeyCode::Esc | KeyCode::Char('h') | KeyCode::Backspace => {
+                Action::Back
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                if self.selected + 1 < self.rows.len() {
+                    self.selected += 1;
+                }
+                self.follow_selection();
+                Action::None
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.selected = self.selected.saturating_sub(1);
+                self.follow_selection();
+                Action::None
+            }
+            KeyCode::Char('g') | KeyCode::Home => {
+                self.selected = 0;
+                self.scroll = 0;
+                Action::None
+            }
+            KeyCode::Char('G') | KeyCode::End => {
+                self.selected = self.rows.len().saturating_sub(1);
+                self.follow_selection();
+                Action::None
+            }
+            KeyCode::Char('f') | KeyCode::PageDown => {
+                self.scroll = self.scroll.saturating_add(self.viewport.max(1));
+                Action::None
+            }
+            KeyCode::Char('b') | KeyCode::PageUp => {
+                self.scroll = self.scroll.saturating_sub(self.viewport.max(1));
+                Action::None
+            }
+            // The matter, where the feed still carries it; the plan where the
+            // operation has none (§FS-005-dispatch.15).
+            KeyCode::Enter | KeyCode::Char('l') => match self.selected_row() {
+                Some(row) => match &row.item {
+                    Some(item) => Action::OpenThread {
+                        item: item.clone(),
+                        or_url: true,
+                    },
+                    None => match self.selected_plan() {
+                        Some(plan) => Action::ReadPlan(plan),
+                        None => Action::None,
+                    },
+                },
+                None => Action::None,
+            },
+            KeyCode::Char('e') => match self.selected_plan() {
+                Some(plan) => Action::ReadPlan(plan),
+                None => Action::SetMessage("No plan behind this row".to_string()),
+            },
+            KeyCode::Char('o') => match self.selected_row() {
+                Some(row) => match &row.op.dashboard {
+                    Some(url) => Action::OpenUrl(Some(url.clone())),
+                    None => Action::SetMessage(
+                        "No dashboard — a live run publishes one only while it serves one"
+                            .to_string(),
+                    ),
+                },
+                None => Action::SetMessage("Nothing is running".to_string()),
+            },
+            KeyCode::Char('r') => Action::Refresh,
+            _ => Action::None,
+        }
+    }
+
+    /// Everything on the board, phrased. `progress` is the running refresh's
+    /// own line, where one is in flight — the run appears here additionally
+    /// to the header (§FS-001-forge-interface.7).
+    fn lines(&self, progress: Option<&str>) -> Vec<Line<'static>> {
+        let dim = Style::default().fg(Color::DarkGray);
+        let heading = dim.add_modifier(Modifier::BOLD);
+        let mut lines = Vec::new();
+
+        lines.push(Line::from(Span::styled(
+            "  beneath the reading".to_string(),
+            heading,
+        )));
+        lines.push(Line::from(Span::styled(
+            match progress {
+                Some(line) => format!("    ⟳ {line}"),
+                None => "    ⟳ refresh — idle · r starts one".to_string(),
+            },
+            Style::default(),
+        )));
+        if let Some(refusal) = &self.refusal {
+            lines.push(Line::from(Span::styled(format!("    {refusal}"), dim)));
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  operations".to_string(),
+            heading,
+        )));
+
+        if self.rows.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "    nothing is running — a live run appears here on its own".to_string(),
+                dim,
+            )));
+        }
+        for (index, row) in self.rows.iter().enumerate() {
+            let selected = index == self.selected;
+            let op = &row.op;
+            let mut badges: Vec<String> = Vec::new();
+            // What the row is, read off what its tickets say rather than off
+            // liveness alone: a root is an operation while work waits on the
+            // reader, and the run that parked it has usually exited
+            // (§FS-005-dispatch.15). Calling that "claimed" would name a
+            // person who never claimed it — and calling a dead run's leavings
+            // either would hide that a run wants starting again.
+            badges.push(if op.live {
+                "running".to_string()
+            } else if op
+                .tickets
+                .iter()
+                .any(|ticket| matches!(ticket.doing, Doing::Waiting))
+            {
+                "waiting on you".to_string()
+            } else if op
+                .tickets
+                .iter()
+                .any(|ticket| matches!(ticket.doing, Doing::Dropped))
+            {
+                "a run died here".to_string()
+            } else {
+                "claimed, not scheduled".to_string()
+            });
+            // The machine could not be read: queued and finished are
+            // withheld in the data, and the row says so rather than letting
+            // the zero read as nothing done (§FS-005-dispatch.15).
+            if let Some(unread) = &op.machine_unread {
+                badges.push(unread.clone());
+            }
+            if let Some(minutes) = op.quiet {
+                badges.push(format!("quiet {minutes}m"));
+            }
+            if op.dashboard.is_some() {
+                badges.push("dashboard (o)".to_string());
+            }
+            let marker = if op.live { "▶" } else { "✋" };
+            let root = super::display_root(&op.root.to_string_lossy());
+            lines.push(Line::from(vec![
+                Span::styled(format!("  {} ", if selected { "▸" } else { " " }), dim),
+                Span::styled(
+                    format!("{marker} {} · {root}", op.project),
+                    if selected {
+                        Style::default().add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default()
+                    },
+                ),
+                Span::styled(format!("   {}", badges.join(" · ")), dim),
+            ]));
+            for ticket in &op.tickets {
+                let state = ticket.state.as_deref().unwrap_or("?");
+                let name = format!("{}.{}", ticket.plan_id, ticket.ticket);
+                let (mark, style, saying) = match &ticket.doing {
+                    Doing::Running => (
+                        "⚙",
+                        Style::default().fg(Color::Yellow),
+                        "running".to_string(),
+                    ),
+                    Doing::Queued => ("‖", dim, "queued".to_string()),
+                    Doing::Waiting => (
+                        "⚠",
+                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                        "waiting on you".to_string(),
+                    ),
+                    // Not a question about the work, a run that wants
+                    // starting again — never conflated with waiting
+                    // (§FS-005-dispatch.15).
+                    Doing::Dropped => (
+                        "✗",
+                        Style::default().fg(Color::Red),
+                        "dropped by a run that died — a new run takes it up".to_string(),
+                    ),
+                    Doing::Claimed { assignee, free } => (
+                        "✋",
+                        Style::default().fg(Color::Yellow),
+                        format!("claimed by {assignee} — free it: {free}"),
+                    ),
+                };
+                // The matter's own words beside the ids: a reader should not
+                // need to decode a plan id to know what the work is about.
+                let title = if ticket.title.is_empty() {
+                    String::new()
+                } else {
+                    format!("· {}  ", ticket.title)
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(format!("        {mark} "), style),
+                    Span::raw(format!("{name}  ")),
+                    Span::styled(title, dim),
+                    Span::styled(format!("[{state}]  "), dim),
+                    Span::raw(saying),
+                ]));
+            }
+            if op.done > 0 {
+                lines.push(Line::from(Span::styled(
+                    format!("        ✓ {} finished", op.done),
+                    Style::default().fg(Color::Green),
+                )));
+            }
+        }
+        lines
+    }
+
+    pub fn draw(&mut self, frame: &mut ratatui::Frame, area: Rect, progress: Option<String>) {
+        self.viewport = area.height;
+        let lines = self.lines(progress.as_deref());
+        let max_scroll = lines.len().saturating_sub(area.height as usize);
+        self.scroll = self.scroll.min(max_scroll as u16);
+        frame.render_widget(Paragraph::new(lines).scroll((self.scroll, 0)), area);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::feed::model::ItemKind;
+    use crate::work::runtime::watch::BoardTicket;
+
+    fn item() -> Item {
+        Item {
+            id: "forge:demo/17".to_string(),
+            project: "demo".to_string(),
+            source: "forge".to_string(),
+            kind: ItemKind::Pr,
+            role: None,
+            title: "Humanize durations".to_string(),
+            url: Some("https://forge.example/17".to_string()),
+            state: Some("open".to_string()),
+            needs_response: false,
+            updated_at: chrono::Utc::now(),
+            raw: serde_json::json!({}),
+        }
+    }
+
+    fn ticket(id: &str, doing: Doing) -> BoardTicket {
+        BoardTicket {
+            plan_id: "forge-demo-17".to_string(),
+            ticket: id.to_string(),
+            state: Some("fix".to_string()),
+            doing,
+            item: Some("forge:demo/17".to_string()),
+            title: "Humanize durations".to_string(),
+            plan: PathBuf::from("/w/demo/panta/forge-demo-17.rhei.md"),
+        }
+    }
+
+    fn plan() -> PathBuf {
+        PathBuf::from("/w/demo/panta/forge-demo-17.rhei.md")
+    }
+
+    fn running_row() -> OpRow {
+        OpRow {
+            op: Operation {
+                project: "demo".to_string(),
+                root: PathBuf::from("/w/demo/panta"),
+                live: true,
+                dashboard: Some("http://127.0.0.1:39114".to_string()),
+                quiet: Some(12),
+                tickets: vec![
+                    ticket("fix-gate-1", Doing::Running),
+                    ticket("answer-1", Doing::Queued),
+                ],
+                done: 2,
+                machine_unread: None,
+                plans: vec![plan()],
+            },
+            item: Some(item()),
+            plan: Some(plan()),
+        }
+    }
+
+    /// A second execution root — the board is one row per root, so two rows
+    /// are two roots.
+    fn claimed_row() -> OpRow {
+        OpRow {
+            op: Operation {
+                project: "demo".to_string(),
+                root: PathBuf::from("/w/other/panta"),
+                live: false,
+                dashboard: None,
+                quiet: None,
+                tickets: vec![ticket(
+                    "fix-gate-1",
+                    Doing::Claimed {
+                        assignee: "luna".to_string(),
+                        free: "the-runner release forge-demo-17.fix-gate-1".to_string(),
+                    },
+                )],
+                done: 0,
+                machine_unread: None,
+                plans: vec![plan()],
+            },
+            item: None,
+            plan: Some(plan()),
+        }
+    }
+
+    /// A run that parked a ticket has usually exited, so the row is not live
+    /// and nobody claimed it (§FS-005-dispatch.15). Naming that "claimed"
+    /// would put a person's name on work no person took.
+    #[test]
+    fn a_parked_row_waits_on_the_reader_rather_than_reading_as_claimed() {
+        let mut row = claimed_row();
+        row.op.tickets = vec![ticket("fix-gate-1", Doing::Waiting)];
+        let text = text(&OperationsScreen::new(vec![row], None), None);
+        assert!(text.contains("waiting on you"), "{text}");
+        assert!(!text.contains("claimed, not scheduled"), "{text}");
+    }
+
+    fn text(screen: &OperationsScreen, progress: Option<&str>) -> String {
+        screen
+            .lines(progress)
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The board says what is running, what waits its turn, how long a live
+    /// run has been silent, and what finished — and the refresh reports here
+    /// additionally (§FS-001-forge-interface.7, §FS-005-dispatch.15).
+    #[test]
+    fn a_running_operation_reads_whole() {
+        let screen = OperationsScreen::new(vec![running_row()], None);
+        let text = text(&screen, Some("Refreshing demo (1/3)…"));
+        assert!(text.contains("⟳ Refreshing demo (1/3)…"), "{text}");
+        assert!(text.contains("▶ demo · /w/demo/panta"), "{text}");
+        assert!(
+            text.contains("running · quiet 12m · dashboard (o)"),
+            "{text}"
+        );
+        assert!(
+            text.contains("⚙ forge-demo-17.fix-gate-1  · Humanize durations  [fix]  running"),
+            "{text}"
+        );
+        assert!(
+            text.contains("‖ forge-demo-17.answer-1  · Humanize durations  [fix]  queued"),
+            "{text}"
+        );
+        assert!(text.contains("✓ 2 finished"), "{text}");
+    }
+
+    /// A dead run's leavings are their own flavour on the screen, never
+    /// worded as a question about the work: the row says a run died here,
+    /// and the ticket says what happens next (§FS-005-dispatch.15).
+    #[test]
+    fn a_dropped_ticket_says_a_run_died_not_waiting() {
+        let mut row = claimed_row();
+        row.op.tickets = vec![ticket("fix-gate-1", Doing::Dropped)];
+        let text = text(&OperationsScreen::new(vec![row], None), None);
+        assert!(text.contains("a run died here"), "{text}");
+        assert!(
+            text.contains(
+                "✗ forge-demo-17.fix-gate-1  · Humanize durations  [fix]  \
+                           dropped by a run that died — a new run takes it up"
+            ),
+            "{text}"
+        );
+        assert!(!text.contains("waiting on you"), "{text}");
+        assert!(!text.contains("claimed, not scheduled"), "{text}");
+    }
+
+    /// A root whose machine could not be read says so on its row: queued and
+    /// finished are withheld in the data, and a silent zero would read as
+    /// nothing done (§FS-005-dispatch.15).
+    #[test]
+    fn an_unreadable_machine_is_said_on_the_row() {
+        let mut row = running_row();
+        row.op.machine_unread =
+            Some("no states.yaml — nothing judged queued or finished".to_string());
+        let text = text(&OperationsScreen::new(vec![row], None), None);
+        assert!(
+            text.contains("running · no states.yaml — nothing judged queued or finished"),
+            "{text}"
+        );
+    }
+
+    /// A claim with no run behind it is its own flavour, with the runner's
+    /// own words for freeing it — reported, never offered as a key.
+    #[test]
+    fn a_claim_is_reported_with_the_remedy() {
+        let screen = OperationsScreen::new(vec![claimed_row()], None);
+        let text = text(&screen, None);
+        assert!(text.contains("✋ demo · /w/other/panta"), "{text}");
+        assert!(text.contains("claimed, not scheduled"), "{text}");
+        assert!(
+            text.contains("claimed by luna — free it: the-runner release forge-demo-17.fix-gate-1"),
+            "{text}"
+        );
+    }
+
+    /// The empty board is the shape most installations see, and it is
+    /// correct rather than broken: the refresh row, and the workable rung's
+    /// sentence where a runtime is missing (§FS-005-dispatch.15).
+    #[test]
+    fn an_empty_board_is_the_refresh_row_and_the_reason() {
+        let screen = OperationsScreen::new(
+            Vec::new(),
+            Some(
+                "acme-runtime is not on PATH; ephor writes the tickets but the runtime runs them."
+                    .to_string(),
+            ),
+        );
+        let text = text(&screen, None);
+        assert!(text.contains("⟳ refresh — idle · r starts one"), "{text}");
+        assert!(text.contains("acme-runtime is not on PATH"), "{text}");
+        assert!(text.contains("nothing is running"), "{text}");
+    }
+
+    /// Enter goes to the matter, or to the plan where the operation has
+    /// none; o opens the dashboard only where a live run published one.
+    #[test]
+    fn keys_go_to_the_matter_the_plan_and_the_dashboard() {
+        let mut screen = OperationsScreen::new(vec![running_row(), claimed_row()], None);
+        match screen.handle_key(KeyCode::Enter) {
+            Action::OpenThread { item, or_url } => {
+                assert_eq!(item.id, "forge:demo/17");
+                assert!(or_url);
+            }
+            _ => panic!("expected the matter"),
+        }
+        match screen.handle_key(KeyCode::Char('o')) {
+            Action::OpenUrl(Some(url)) => assert_eq!(url, "http://127.0.0.1:39114"),
+            _ => panic!("expected the dashboard"),
+        }
+        screen.handle_key(KeyCode::Char('j'));
+        match screen.handle_key(KeyCode::Enter) {
+            Action::ReadPlan(plan) => {
+                assert!(plan.ends_with("forge-demo-17.rhei.md"), "{plan:?}")
+            }
+            _ => panic!("an operation with no matter opens the plan"),
+        }
+        assert!(matches!(
+            screen.handle_key(KeyCode::Char('o')),
+            Action::SetMessage(_)
+        ));
+        assert!(matches!(screen.handle_key(KeyCode::Esc), Action::Back));
+        assert!(matches!(
+            screen.handle_key(KeyCode::Char('r')),
+            Action::Refresh
+        ));
+    }
+
+    /// The tick's cheap half patches liveness in place, and a flip is the
+    /// cue to rebuild (§FS-005-dispatch.15.1). What it reports is what moved:
+    /// a probe that found nothing new asks for no frame, because a board
+    /// redrawing itself every couple of seconds regardless is paying to show
+    /// the reader what they are already looking at.
+    #[test]
+    fn the_pulse_patches_in_place_and_says_what_moved() {
+        use crate::work::runtime::watch::Pulse;
+        let mut screen = OperationsScreen::new(vec![running_row()], None);
+        // Same liveness, moved badges: something changed, nothing flipped.
+        let found = screen.repulse(|_| Pulse {
+            live: true,
+            dashboard: None,
+            quiet: Some(13),
+        });
+        assert!(found.changed);
+        assert!(!found.flipped);
+        let text = text(&screen, None);
+        assert!(text.contains("quiet 13m"), "{text}");
+        assert!(!text.contains("dashboard (o)"), "{text}");
+
+        // The very same answer again: nothing to show, nothing to redraw.
+        let found = screen.repulse(|_| Pulse {
+            live: true,
+            dashboard: None,
+            quiet: Some(13),
+        });
+        assert!(!found.changed);
+        assert!(!found.flipped);
+
+        // The run died: the OS released the lock, the probe sees it, and the
+        // caller is told to rebuild the rows whose flavour depended on it.
+        let found = screen.repulse(|_| Pulse {
+            live: false,
+            dashboard: None,
+            quiet: None,
+        });
+        assert!(found.changed);
+        assert!(found.flipped);
+    }
+
+    /// A rebuild fires from the tick and from every refresh landing
+    /// (§FS-001-forge-interface.7), and rows can arrive above the cursor. The
+    /// cursor belongs to the operation, not to the index it had — otherwise
+    /// `enter` acts on something the reader never selected
+    /// (§FS-004-quick-actions.2).
+    #[test]
+    fn the_cursor_follows_the_operation_when_a_row_arrives_above_it() {
+        let mut screen = OperationsScreen::new(vec![claimed_row()], None);
+        match screen.handle_key(KeyCode::Enter) {
+            Action::ReadPlan(_) => {}
+            _ => panic!("the claim has no matter, so Enter opens its plan"),
+        }
+        screen.replace(vec![running_row(), claimed_row()], None);
+        // Still the claim, now the second row.
+        assert_eq!(screen.selected, 1);
+        match screen.handle_key(KeyCode::Enter) {
+            Action::ReadPlan(_) => {}
+            _ => panic!("the cursor stayed on the operation it was on"),
+        }
+
+        // The operation is gone: the index stands, and the cursor lands on
+        // whatever took its place.
+        screen.replace(vec![running_row()], None);
+        assert_eq!(screen.selected, 0);
+    }
+
+    /// An operation is several lines, so a selection that moves without the
+    /// scroll following it puts the cursor off screen and leaves the reader
+    /// pressing `enter` on something they cannot see
+    /// (§FS-004-quick-actions.2).
+    #[test]
+    fn the_scroll_follows_the_selected_operation() {
+        let mut screen = OperationsScreen::new(vec![running_row(), claimed_row()], None);
+        // Four header lines, then the running row's four (its own, two
+        // tickets, the finished count), then the claim's two.
+        assert_eq!(screen.row_offset(0), 4);
+        assert_eq!(screen.row_offset(1), 8);
+
+        // A viewport too short to hold both: moving down scrolls just far
+        // enough to show the claim's last line, moving back up scrolls to the
+        // running row's first.
+        screen.viewport = 4;
+        screen.handle_key(KeyCode::Char('j'));
+        assert_eq!(screen.selected, 1);
+        assert_eq!(screen.scroll, 8 + 2 - 4);
+        screen.handle_key(KeyCode::Char('k'));
+        assert_eq!(screen.selected, 0);
+        assert_eq!(screen.scroll, 4);
+    }
+
+    /// The offsets `follow_selection` computes are the offsets `lines` builds
+    /// — measured against the lines themselves, so the two cannot drift.
+    #[test]
+    fn a_rows_offset_is_where_that_row_actually_is() {
+        for refusal in [None, Some("no runtime is bound".to_string())] {
+            let screen = OperationsScreen::new(vec![running_row(), claimed_row()], refusal);
+            let rendered: Vec<String> = screen
+                .lines(None)
+                .iter()
+                .map(|line| {
+                    line.spans
+                        .iter()
+                        .map(|span| span.content.as_ref())
+                        .collect::<String>()
+                })
+                .collect();
+            assert!(
+                rendered[screen.row_offset(0)].contains("▶ demo"),
+                "{rendered:?}"
+            );
+            assert!(
+                rendered[screen.row_offset(1)].contains("✋ demo"),
+                "{rendered:?}"
+            );
+        }
+    }
+}

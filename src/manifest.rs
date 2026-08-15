@@ -176,6 +176,10 @@ impl Offer {
             icon: self.icon.clone().unwrap_or_else(|| OFFER_ICON.to_string()),
             description: self.description.clone(),
             command: self.command.clone(),
+            // A manifest offer runs a command; work a project wants handed to
+            // an agent is a recipe of its own (§FS-005-dispatch.1).
+            agent: None,
+            hand: None,
             cwd: self.cwd.clone(),
             kinds: Vec::new(),
             when: self.when.clone(),

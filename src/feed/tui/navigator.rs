@@ -16,7 +16,7 @@ use crate::feed::cache::{self, Seen};
 use crate::feed::gate::Gate;
 use crate::feed::model::{Item, ItemKind, ItemRole};
 use crate::feed::render::age;
-use crate::forest::Staleness;
+use crate::forest::{Staleness, Standing};
 
 use super::{highlight_style, Action, BranchInfo, Ctx, WorkBadge};
 
@@ -52,9 +52,15 @@ enum Entry {
     Header(&'static str),
     /// Branch row: group header inside a type section, or the branch
     /// overview in the detail view. Carries its project id, whether its
-    /// workspace is checked out on disk, and how many commits it trails
-    /// main (summed over the workspace's repos).
-    Branch(String, BranchInfo, bool, Option<u64>),
+    /// workspace is checked out on disk, how many commits it trails main,
+    /// how many it trails its own published copy (each summed over the
+    /// workspace's repos) — two distances, two facts
+    /// (§DA-003-upstream-is-the-published-copy) — and how many items are
+    /// filed under it. Every fact on the row is settled here, at rebuild:
+    /// the last of them was being looked up inside `draw`, which allocated
+    /// two keys per branch row per frame to answer something that cannot
+    /// change between two keystrokes.
+    Branch(String, BranchInfo, bool, Option<u64>, Option<u64>, usize),
     /// Group header for items linked to none of the project's branches —
     /// neither one the row names nor one with a workspace on disk.
     Unassigned,
@@ -63,6 +69,13 @@ enum Entry {
 
 fn selectable(entry: &Entry) -> bool {
     !matches!(entry, Entry::Org(_) | Entry::Header(_) | Entry::Unassigned)
+}
+
+/// What the cursor is on: one of the three selectable rows.
+enum Selected {
+    Item(Item),
+    Branch(String, BranchInfo),
+    Project(String),
 }
 
 pub(crate) struct NavigatorState {
@@ -117,9 +130,9 @@ impl NavigatorState {
 
     pub fn footer(&self) -> &'static str {
         match self.mode {
-            Mode::Stream => " j/k move  enter thread  c gate  w work  o browser  x actions  m done  a all done  u unread  tab projects  r refresh  q quit",
-            Mode::Projects => " j/k move  enter view project  tab stream  r refresh  q quit",
-            Mode::Detail => " j/k move  enter thread  c gate  w work  o browser  x actions  m done  [/] project  esc back  u unread  r refresh  q quit",
+            Mode::Stream => " j/k move  enter thread  c gate  w work  o browser  x actions  m done  a all done  u unread  ; ops  tab projects  r refresh  q quit",
+            Mode::Projects => " j/k move  enter view project  ; ops  tab stream  r refresh  q quit",
+            Mode::Detail => " j/k move  enter thread  c gate  w work  o browser  x actions  m done  [/] project  esc back  u unread  ; ops  r refresh  q quit",
         }
     }
 
@@ -205,13 +218,12 @@ impl NavigatorState {
             });
             entries.push(Entry::Header(header));
 
-            // Each row is placed once, against the whole branch list, before
-            // any group is drawn: asking branch by branch would file a row
-            // under the first branch that resembles it rather than the one it
-            // is on (§FS-008-attribution.2).
+            // Where each row was placed when the feeds were read: against the
+            // whole branch list, so a row is filed under the branch it is on
+            // rather than the first that resembles it (§FS-008-attribution.2).
             let placed: Vec<Option<usize>> = rows
                 .iter()
-                .map(|row| crate::branches::place(&row.item, &branches))
+                .map(|row| ctx.item_branch(project, &row.item))
                 .collect();
             for (position, branch) in branches.iter().enumerate() {
                 let matching: Vec<usize> = (0..rows.len())
@@ -226,6 +238,9 @@ impl NavigatorState {
                     ctx.branch_checked_out(project, branch),
                     ctx.branch_behind(project, &branch.branch)
                         .and_then(Staleness::total),
+                    ctx.branch_standing(project, &branch.branch)
+                        .and_then(Standing::behind_upstream),
+                    ctx.branch_linked(project, branch),
                 ));
                 for index in matching {
                     entries.push(Entry::Item(rows[index].clone()));
@@ -327,6 +342,9 @@ impl NavigatorState {
                     ctx.branch_checked_out(&project, branch),
                     ctx.branch_behind(&project, &branch.branch)
                         .and_then(Staleness::total),
+                    ctx.branch_standing(&project, &branch.branch)
+                        .and_then(Standing::behind_upstream),
+                    ctx.branch_linked(&project, branch),
                 ));
             }
         }
@@ -373,9 +391,15 @@ impl NavigatorState {
                 },
                 None => Action::None,
             },
-            KeyCode::Char('x') => match self.selected_item() {
-                Some(item) => Action::OpenActionMenu(item),
-                None => Action::None,
+            // Where the fact is shown is where the move is offered: a branch
+            // row carries ephor's own offers about the branch, with no matter
+            // behind it (§FS-004-quick-actions.6).
+            KeyCode::Char('x') => match self.selected_row() {
+                Some(Selected::Item(item)) => Action::OpenActionMenu(item),
+                Some(Selected::Branch(project, branch)) => {
+                    Action::OpenBranchActions { project, branch }
+                }
+                _ => Action::None,
             },
             // What is being done about this, and what could be
             // (§FS-005-dispatch).
@@ -436,23 +460,7 @@ impl NavigatorState {
 
     /// Enter/l (`thread_first`) or o (browser) on the selected row.
     fn activate(&mut self, ctx: &Ctx, thread_first: bool) -> Action {
-        enum Selected {
-            Item(Item),
-            Branch(String, BranchInfo),
-            Project(String),
-        }
-        let selected = {
-            let (entries, state) = self.tree();
-            match state.selected().and_then(|index| entries.get(index)) {
-                Some(Entry::Item(row)) => Some(Selected::Item(row.item.clone())),
-                Some(Entry::Branch(project, branch, _, _)) => {
-                    Some(Selected::Branch(project.clone(), branch.clone()))
-                }
-                Some(Entry::Project(project)) => Some(Selected::Project(project.clone())),
-                _ => None,
-            }
-        };
-        match selected {
+        match self.selected_row() {
             Some(Selected::Item(item)) if thread_first => Action::OpenThread { item, or_url: true },
             Some(Selected::Item(item)) => Action::OpenUrl(item.url),
             Some(Selected::Branch(project, branch)) => {
@@ -477,6 +485,21 @@ impl NavigatorState {
             Some(Entry::Item(row)) => Some(row.item.clone()),
             _ => None,
         })
+    }
+
+    /// What the cursor is on, in the three shapes a key can act on. Keys that
+    /// only work on one of them read this and refuse on the rest, rather than
+    /// the row deciding what a key means (§FS-004-quick-actions.2).
+    fn selected_row(&mut self) -> Option<Selected> {
+        let (entries, state) = self.tree();
+        match state.selected().and_then(|index| entries.get(index)) {
+            Some(Entry::Item(row)) => Some(Selected::Item(row.item.clone())),
+            Some(Entry::Branch(project, branch, ..)) => {
+                Some(Selected::Branch(project.clone(), branch.clone()))
+            }
+            Some(Entry::Project(project)) => Some(Selected::Project(project.clone())),
+            _ => None,
+        }
     }
 
     fn tree(&mut self) -> (&Vec<Entry>, &mut ListState) {
@@ -599,65 +622,14 @@ impl NavigatorState {
                         .fg(Color::DarkGray)
                         .add_modifier(Modifier::ITALIC),
                 ))),
-                Entry::Branch(project, branch, checked_out, behind) => {
-                    let marker = if branch.active {
-                        Span::styled("      ● ", Style::default().fg(Color::Green))
-                    } else {
-                        Span::styled("      ○ ", Style::default().fg(Color::DarkGray))
-                    };
-                    let mut spans = vec![
-                        marker,
-                        Span::raw(format!(
-                            "{:<44}",
-                            branch.branch.chars().take(44).collect::<String>()
-                        )),
-                    ];
-                    if let Some(ticket) = &branch.ticket {
-                        spans.push(Span::styled(
-                            format!("{ticket:<10}"),
-                            Style::default().fg(Color::Yellow),
-                        ));
-                    } else {
-                        spans.push(Span::raw(" ".repeat(10)));
-                    }
-                    if *checked_out {
-                        spans.push(Span::styled(
-                            "✓ checked out",
-                            Style::default().fg(Color::Green),
-                        ));
-                        match behind {
-                            Some(0) => spans.push(Span::styled(
-                                " · up to date  ",
-                                Style::default().fg(Color::DarkGray),
-                            )),
-                            Some(count) => spans.push(Span::styled(
-                                format!(" · {count} behind  "),
-                                Style::default().fg(Color::Yellow),
-                            )),
-                            None => spans.push(Span::raw("  ")),
-                        }
-                    } else {
-                        spans.push(Span::styled(
-                            "∅ not checked out  ",
-                            Style::default()
-                                .fg(Color::DarkGray)
-                                .add_modifier(Modifier::ITALIC),
-                        ));
-                    }
-                    if branch.is_release {
-                        spans.push(Span::styled(
-                            "release  ",
-                            Style::default().fg(Color::DarkGray),
-                        ));
-                    }
-                    let linked = ctx.items_on_branch(project, branch).len();
-                    if linked > 0 {
-                        spans.push(Span::styled(
-                            format!("{linked} linked"),
-                            Style::default().fg(Color::Magenta),
-                        ));
-                    }
-                    ListItem::new(Line::from(spans))
+                Entry::Branch(_, branch, checked_out, behind, behind_upstream, linked) => {
+                    ListItem::new(branch_line(
+                        branch,
+                        *checked_out,
+                        *behind,
+                        *behind_upstream,
+                        *linked,
+                    ))
                 }
                 Entry::Item(row) => {
                     let mut line = item_line(row, seen, now);
@@ -677,6 +649,85 @@ impl NavigatorState {
         };
         frame.render_stateful_widget(list, area, state);
     }
+}
+
+/// One branch row. Both distances a checkout can trail by are on it, kept
+/// distinguishable — `N behind` is against the project's main branch, `↓N`
+/// against the branch's own published copy
+/// (§DA-003-upstream-is-the-published-copy) — because a reader who confuses
+/// them replays onto the wrong thing. A copy that is level, or a branch
+/// published nowhere, adds nothing: the arrow is news, not a state.
+fn branch_line(
+    branch: &BranchInfo,
+    checked_out: bool,
+    behind: Option<u64>,
+    behind_upstream: Option<u64>,
+    linked: usize,
+) -> Line<'static> {
+    let marker = if branch.active {
+        Span::styled("      ● ", Style::default().fg(Color::Green))
+    } else {
+        Span::styled("      ○ ", Style::default().fg(Color::DarkGray))
+    };
+    let mut spans = vec![
+        marker,
+        Span::raw(format!(
+            "{:<44}",
+            branch.branch.chars().take(44).collect::<String>()
+        )),
+    ];
+    if let Some(ticket) = &branch.ticket {
+        spans.push(Span::styled(
+            format!("{ticket:<10}"),
+            Style::default().fg(Color::Yellow),
+        ));
+    } else {
+        spans.push(Span::raw(" ".repeat(10)));
+    }
+    if checked_out {
+        spans.push(Span::styled(
+            "✓ checked out",
+            Style::default().fg(Color::Green),
+        ));
+        match behind {
+            Some(0) => spans.push(Span::styled(
+                " · up to date",
+                Style::default().fg(Color::DarkGray),
+            )),
+            Some(count) => spans.push(Span::styled(
+                format!(" · {count} behind"),
+                Style::default().fg(Color::Yellow),
+            )),
+            None => {}
+        }
+        if let Some(count) = behind_upstream.filter(|count| *count > 0) {
+            spans.push(Span::styled(
+                format!(" · ↓{count}"),
+                Style::default().fg(Color::Cyan),
+            ));
+        }
+        spans.push(Span::raw("  "));
+    } else {
+        spans.push(Span::styled(
+            "∅ not checked out  ",
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
+        ));
+    }
+    if branch.is_release {
+        spans.push(Span::styled(
+            "release  ",
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+    if linked > 0 {
+        spans.push(Span::styled(
+            format!("{linked} linked"),
+            Style::default().fg(Color::Magenta),
+        ));
+    }
+    Line::from(spans)
 }
 
 fn item_line(row: &Row, seen: &Seen, now: chrono::DateTime<Utc>) -> Line<'static> {
@@ -706,10 +757,10 @@ fn item_line(row: &Row, seen: &Seen, now: chrono::DateTime<Utc>) -> Line<'static
     match checked_out {
         Some(true) => spans.push(Span::styled("✓ ", Style::default().fg(Color::Green))),
         Some(false) => spans.push(Span::styled("∅ ", Style::default().fg(Color::DarkGray))),
-        // Keep PR titles aligned within a section even when one PR's
-        // branch is unknown.
-        None if item.kind == ItemKind::Pr => spans.push(Span::raw("  ")),
-        None => {}
+        // Keep titles aligned within a section even where one item's branch
+        // is unknown — a section is one kind, and the marker now follows the
+        // branch rather than the kind (§FS-004-quick-actions.6).
+        None => spans.push(Span::raw("  ")),
     }
     spans.push(Span::raw(item.title.clone()));
     // Why it is back, where ephor can say (§FS-007-matters.5): a row that
@@ -941,6 +992,109 @@ mod tests {
         fix_selection(&after, &mut state, was);
 
         assert_eq!(state.selected(), Some(1));
+    }
+
+    fn branch_info(name: &str) -> BranchInfo {
+        BranchInfo {
+            branch: name.to_string(),
+            ticket: None,
+            active: true,
+            is_release: false,
+            declared: true,
+        }
+    }
+
+    fn text_of(line: &Line<'static>) -> String {
+        line.spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect()
+    }
+
+    /// The row says both distances and keeps them apart — `N behind` is
+    /// against the project's main branch, `↓N` against the branch's own
+    /// published copy (§DA-003-upstream-is-the-published-copy) — down to the
+    /// color, so a reader cannot take one number for the other.
+    #[test]
+    fn the_branch_row_says_both_distances_and_keeps_them_apart() {
+        let line = branch_line(&branch_info("you/ABC-42"), true, Some(13), Some(2), 0);
+        let text = text_of(&line);
+        assert!(text.contains(" · 13 behind"), "{text:?}");
+        assert!(text.contains(" · ↓2"), "{text:?}");
+        let style_of = |needle: &str| {
+            line.spans
+                .iter()
+                .find(|span| span.content.contains(needle))
+                .expect("the span is on the row")
+                .style
+        };
+        assert_ne!(style_of("behind").fg, style_of("↓").fg);
+    }
+
+    /// A copy that is level, or a branch published nowhere, adds nothing:
+    /// the arrow is news, not a state
+    /// (§DA-003-upstream-is-the-published-copy).
+    #[test]
+    fn a_copy_level_or_unpublished_puts_no_arrow_on_the_row() {
+        let level = branch_line(&branch_info("you/ABC-42"), true, Some(0), Some(0), 0);
+        assert!(text_of(&level).contains("up to date"));
+        assert!(!text_of(&level).contains('↓'));
+
+        let unpushed = branch_line(&branch_info("you/ABC-42"), true, Some(3), None, 0);
+        assert!(text_of(&unpushed).contains(" · 3 behind"));
+        assert!(!text_of(&unpushed).contains('↓'));
+    }
+
+    /// The copy's distance stands on its own where main's could not be
+    /// measured, and nothing is measured at all on a branch not on disk.
+    #[test]
+    fn each_distance_stands_without_the_other() {
+        let copy_only = branch_line(&branch_info("you/ABC-42"), true, None, Some(4), 0);
+        assert!(!text_of(&copy_only).contains("behind"));
+        assert!(text_of(&copy_only).contains(" · ↓4"));
+
+        let absent = branch_line(&branch_info("you/ABC-42"), false, None, None, 0);
+        assert!(text_of(&absent).contains("∅ not checked out"));
+        assert!(!text_of(&absent).contains('↓'));
+    }
+
+    /// `x` on a branch row opens the menu about the branch. The action menu
+    /// was written for items and a branch is not one, so the key had nothing
+    /// to act on exactly where the counts it is about are shown
+    /// (§FS-004-quick-actions.6).
+    #[test]
+    fn the_action_key_acts_on_a_branch_row_too() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = super::super::tests::ctx_with_branch(tmp.path(), None);
+        let mut navigator = NavigatorState::new();
+        navigator.mode = Mode::Detail;
+        navigator.detail_entries = vec![
+            Entry::Branch(
+                "widget".to_string(),
+                branch_info("you/ABC-42"),
+                true,
+                Some(13),
+                Some(2),
+                0,
+            ),
+            row("pr:1"),
+        ];
+        navigator.detail_state = on(&navigator.detail_entries, 0);
+
+        match navigator.handle_key(&ctx, KeyCode::Char('x')) {
+            Action::OpenBranchActions { project, branch } => {
+                assert_eq!(project, "widget");
+                assert_eq!(branch.branch, "you/ABC-42");
+            }
+            _ => panic!("the branch row opens its own menu"),
+        }
+
+        // And the item rows go on opening theirs.
+        navigator.detail_state = on(&navigator.detail_entries, 1);
+        assert!(matches!(
+            navigator.handle_key(&ctx, KeyCode::Char('x')),
+            Action::OpenActionMenu(_)
+        ));
     }
 
     /// A project row is a matter of its own for this purpose: the projects
