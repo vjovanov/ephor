@@ -25,7 +25,7 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState};
 use crate::capabilities::CapabilitySet;
 use crate::feed::config::{ActionConfig, CheckoutConfig};
 use crate::feed::model::Item;
-use crate::forest::{Forest, Upstream};
+use crate::forest::{Forest, Trail, Upstream};
 use crate::work::recipe::{Facts, HandPin};
 use crate::work::runtime::roster::Hand;
 
@@ -104,15 +104,15 @@ pub(crate) fn agent_entry(recipe: &crate::work::recipe::Recipe) -> ActionConfig 
     }
 }
 
-/// The rebase ephor offers on a checkout that trails its project's main
-/// branch (§FS-004-quick-actions.6). It runs `ephor rebase`, so the key and
-/// the state machine's program state are the same operation
-/// (§FS-005-dispatch.12), and it says how far behind the branch is because
-/// that is the fact the reader is being asked to act on.
-pub(crate) fn rebase_action(main_branch: &str, behind: u64) -> ActionConfig {
+/// The rebase ephor offers on a checkout with a main branch to name
+/// (§FS-004-quick-actions.6). It runs `ephor rebase`, so the key and the state
+/// machine's program state are the same operation (§FS-005-dispatch.12), and
+/// it says how far behind the branch is and as of when, because a distance
+/// with no day on it is a claim about now that nothing here measured.
+pub(crate) fn rebase_action(main_branch: &str, trail: Trail) -> ActionConfig {
     rebase_entry(
         "rebase",
-        &format!("rebase onto {main_branch} ({behind} behind)"),
+        &format!("rebase onto {main_branch} ({})", trail.label()),
         "",
     )
 }
@@ -122,12 +122,15 @@ pub(crate) fn rebase_action(main_branch: &str, behind: u64) -> ActionConfig {
 /// because two entries reading `rebase onto …` differ in exactly that word —
 /// and where the repositories of a forest are published under different names
 /// there is no one ref to name, so it says what it is instead.
-pub(crate) fn upstream_rebase_action(published: Option<&str>, behind: u64) -> ActionConfig {
+pub(crate) fn upstream_rebase_action(published: Option<&str>, trail: Trail) -> ActionConfig {
     rebase_entry(
         "rebase-upstream",
         &format!(
-            "rebase onto {} ({behind} behind)",
-            published.unwrap_or("its published copy")
+            "rebase onto {} ({})",
+            published.unwrap_or("its published copy"),
+            // The copy's own day, not the base's: a fetch dates only the refs
+            // it actually brought down (§FS-004-quick-actions.8).
+            trail.label()
         ),
         " --upstream",
     )
@@ -167,14 +170,18 @@ fn rebase_entry(id: &str, description: &str, extra: &str) -> ActionConfig {
 /// the menu and counts measured a moment apart would eventually disagree
 /// (§AR-004-forest.1).
 pub(crate) struct Trailing {
-    /// Commits the checkout trails its main branch, summed over the forest.
-    pub behind: Option<u64>,
-    /// Commits it trails its own published copies. None where nothing is
+    /// Commits the checkout trails its main branch, summed over the forest,
+    /// with the day the oldest copy of that branch last moved here — the
+    /// freshness every statement of the distance carries
+    /// (§FS-004-quick-actions.6).
+    pub behind: Option<Trail>,
+    /// Commits it trails its own published copies, dated the same way from
+    /// those copies. None where nothing is
     /// published — which is not the same answer as level with a copy — and a
     /// repository whose copy is its base again already contributes nothing:
     /// the sum leaves that distance to `behind`, so the two entries cannot
     /// carry one distance under two names (§FS-004-quick-actions.8).
-    pub behind_upstream: Option<u64>,
+    pub behind_upstream: Option<Trail>,
     /// The ref every counted repository names, where they all name one.
     pub published: Option<String>,
 }
@@ -198,8 +205,8 @@ impl Trailing {
             }
         }
         Trailing {
-            behind: standing.staleness().total(),
-            behind_upstream: standing.behind_upstream(),
+            behind: standing.staleness().trail(),
+            behind_upstream: standing.upstream_trail(),
             // Named only where the whole forest agrees: two different refs
             // have no one name, and an entry naming one of them would be
             // telling the reader about half its checkout.
@@ -207,11 +214,14 @@ impl Trailing {
         }
     }
 
-    /// The two distances in the shape a selector asks about them.
+    /// The two distances in the shape a selector asks about them — bare
+    /// counts, without the day. A recipe is dispatched on whether there is
+    /// anything to do (§FS-005-dispatch.1), which is a different question from
+    /// what the entry beside it is labelled with.
     pub fn facts(&self) -> Facts {
         Facts {
-            behind: self.behind,
-            behind_upstream: self.behind_upstream,
+            behind: self.behind.map(|trail| trail.behind),
+            behind_upstream: self.behind_upstream.map(|trail| trail.behind),
         }
     }
 }
@@ -1351,7 +1361,13 @@ mod tests {
             WorkspaceState::Ready,
             None,
             &can_everything(),
-            vec![rebase_action("master", 3)],
+            vec![rebase_action(
+                "master",
+                Trail {
+                    behind: 3,
+                    seen: None,
+                },
+            )],
         );
         assert_eq!(menu.subject.title(), "you/ABC-42");
         assert_eq!(menu.subject.project(), "widget");

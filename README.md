@@ -154,10 +154,12 @@ provider block turns it off.
 Every branch row states its checkout: `✓ checked out` (green) when the
 branch workspace exists on disk, `∅ not checked out` otherwise. Checked-out
 branches also show staleness against the project's `main_branch` — `· N
-behind` (or `· up to date`), where N sums `git rev-list --count
-HEAD..origin/<main>` over **all** the workspace's repos (Widget CE + EE +
+behind as of Jul 28` (or `· level as of Jul 28`), where N sums `git rev-list
+--count HEAD..origin/<main>` over **all** the workspace's repos (Widget CE + EE +
 docs-site for a poly-repo workspace). Counts are measured locally at startup and on
-`r`, against the last-fetched origin.
+`r`, against the last-fetched origin — and the date is when that fetch last
+moved `origin/<main>` here, oldest across the repos, omitted where nothing
+ever recorded one.
 
 | key | action |
 |---|---|
@@ -217,16 +219,19 @@ would work: the gate is failing, the item still names its pull request,
 and `gh` is installed.
 
 ephor offers three of its own, from what is on disk rather than from a source.
-`⤴ rebase onto <main> (N behind)` on a pull request whose branch workspace has
-fallen behind the project's main branch
+`⤴ rebase onto <main> (N behind as of Jul 28)` on a pull request whose branch
+workspace is on disk and whose project names a main branch — behind it or
+level, since the replay fetches first and is the move that refreshes the
+reading
 ([§FS-004-quick-actions.6](requirements.md#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase)).
 It runs `ephor rebase` there — fetch and replay every repository in the
 checkout, nothing stashed, nothing pushed — and where the replay stops in a
 conflict it opens the ticket about it, because that part is a question about
 the code and the rest never was
 ([§FS-005-dispatch.12](requirements.md#12-work-an-algorithm-can-finish-does-not-start-with-a-model)).
-`⤴ rebase onto <remote>/<branch> (N behind)` where the same checkout trails its
-own **published copy** instead — somebody else pushed to your branch
+`⤴ rebase onto <remote>/<branch> (N behind as of Aug 11)` where the same
+checkout has a **published copy** of its own to replay onto instead — somebody
+else pushed to your branch
 ([§FS-004-quick-actions.8](requirements.md#8-a-branch-that-trails-its-own-published-copy-is-offered-the-rebase-onto-it)):
 `ephor rebase --upstream` replays each repository onto its own copy, which is
 the branch bare `git rebase` refuses to touch when no tracking configuration

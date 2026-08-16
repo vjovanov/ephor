@@ -956,15 +956,25 @@ past the window. Finished work never awaits a response: it is news, not a task.
 └ needs a response ( * = merely unread, blank = read )
 ```
 
-Branch rows say whether they are checked out and how far they trail the main
-branch, summed across every repository in the workspace. A checkout that also
+Branch rows say whether they are checked out, how far they trail the main
+branch — summed across every repository in the workspace — and **as of when**:
+`· 13 behind as of Jul 28`. Nothing in the inbox fetches, so the distance is
+measured against the copy of the base this machine last pulled down, and the
+date says when that was: the last time `origin/<main>` moved here, taken across
+the workspace's repositories and reported as the oldest of them. A checkout
+level with the base says `· level as of Jul 28` rather than *up to date* —
+level as of a day you can see is a fact, "up to date" was a claim. Where no day
+was ever recorded, which is what a fresh clone that has never fetched looks
+like, the qualifier is simply left off: `· 13 behind`. A checkout that also
 trails its own **published copy** — the pushed branch of the same name, read
 per repository from each checkout's `HEAD` — carries a second distance in a
-second color: `· 13 behind · ↓2` is thirteen commits behind the project's
-main branch and two behind what was pushed of this branch. They are different
+second color: `· 13 behind as of Jul 28 · ↓2` is thirteen commits behind the
+project's main branch and two behind what was pushed of this branch. The arrow
+carries no date: it is news that somebody pushed, and a stale reading of it can
+only under-report. They are different
 facts — main moved under you; someone (a teammate, another machine, the
 forge) moved the branch itself — and a rebase answers each onto a different
-ref. A tracking config that names the main branch is not a publication: it
+ref, refreshing the reading as it goes. A tracking config that names the main branch is not a publication: it
 records where the branch was cut. A repository parked on the main branch and
 tracking it counts toward the first number alone — one distance never wears
 both. A copy that is level shows no arrow, and a
@@ -1084,22 +1094,32 @@ list as the forge reports it, then every failed job's log, paged. It is offered
 only where it would work: the gate is failing, the item still names its pull
 request, and the tool that reaches it is installed.
 
-**`⤴ rebase onto <main> (N behind)`** wherever there is a branch workspace on
-disk that has fallen behind the project's `main_branch`
+**`⤴ rebase onto <main> (13 behind as of Jul 28)`** wherever there is a branch
+workspace on disk and the project names a `main_branch` to replay onto
 ([§FS-004-quick-actions.6](../requirements.md#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase)).
+It is offered whether the branch measured behind or level — `(level as of Jul
+28)`, or just `(level)` where no fetch was ever dated — because that reading is
+only as fresh as the last fetch and this is the move that would refresh it: the
+replay fetches first, so a branch that went stale without this machine hearing
+about it is exactly the branch you want the entry on. A branch genuinely level
+replays onto nothing and says so.
 Any row that resolves to that workspace carries it — a pull request, an issue,
 a status a source filed about the same change — and **so does the branch row
-itself** in the detail view, which is where the `N behind` you are reacting to
-is written. It runs `ephor rebase` in that checkout — fetch, replay, and an
+itself** in the detail view, which is where the `13 behind as of Jul 28` you
+are reacting to is written. It runs `ephor rebase` in that checkout — fetch, replay, and an
 answer per repository, every repository in a poly-repo workspace. Where the
 replay stops in a conflict, it opens the ticket about it instead of leaving you
 with a half-finished rebase and no record of it ([§8.11](#811-rebasing-a-branch-that-has-fallen-behind)).
 A project whose registry row names no `main_branch` is not offered this one:
 there is no base to name, and the entry would have nothing to say.
 
-**`⤴ rebase onto <remote>/<branch> (N behind)`** on the same checkouts and the
-same rows when it trails its own **published copy** instead — somebody else
-pushed to your branch ([§FS-004-quick-actions.8](../requirements.md#8-a-branch-that-trails-its-own-published-copy-is-offered-the-rebase-onto-it)).
+**`⤴ rebase onto <remote>/<branch> (2 behind as of Aug 11)`** on the same
+checkouts and the same rows, about its own **published copy** instead —
+somebody else pushed to your branch ([§FS-004-quick-actions.8](../requirements.md#8-a-branch-that-trails-its-own-published-copy-is-offered-the-rebase-onto-it)).
+It follows the entry above in both respects: offered wherever there is a copy
+to replay onto, behind it or level, and dated from that copy's own ref rather
+than the base's — a fetch dates only the refs it actually brought down, so the
+two days rarely match.
 This one needs no `main_branch` at all: each repository resolves its own copy,
 so a project that names no main branch is still offered it.
 It runs `ephor rebase --upstream`, which replays each repository onto its own
@@ -1284,8 +1304,7 @@ The menu is assembled in provenance order
 ([§FS-006-project-interface.9](../requirements.md#9-offers-the-projects-actions)):
 
 1. **what ephor recognized** — a source's own quick actions (§7.1), the rebase
-   on a branch that has fallen behind, the checkout on a workspace that is not
-   there;
+   on a branch that is here, the checkout on a workspace that is not there;
 2. **what the project offers** — the `actions` of its `ephor.json` (§4.2.1),
    under the trust your row extends to it;
 3. **what you configured** — `actions` and `projects.<id>.actions` (§7.2);
@@ -1466,7 +1485,11 @@ Finished work never matches.
 that failed are something a checkout can fix, while a forge refusing an
 otherwise green change is usually waiting on a person.
 
-`behind` is measured in your own checkout, not asked of a forge: each of the
+`behind` is the recipe's own question — *is there anything to replay?* — and so
+it is still `false` on a branch measured level, even though the menu entry
+beside it is offered there (§7.1): handing a level rebase to an agent is a
+ticket to do nothing, while pressing the key runs git and finds out. It is
+measured in your own checkout, not asked of a forge: each of the
 branch workspace's repositories is counted against `<its remote>/<its base>` as
 it was last fetched — the remote read off the repository, and the base its own
 `default_branch` where the row names one that is a branch rather than a

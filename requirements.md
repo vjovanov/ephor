@@ -516,20 +516,36 @@ wrong and not offering the move is the whole of what this section exists to
 stop, and here ephor is not even relying on a forge to tell it: the fact is on
 disk, in the reader's own checkout.
 
+The fact on disk is only as fresh as the last fetch. Nothing under the watch
+fetches — reading a row costs a handful of local reads and runs nothing — so
+every distance stated here is measured against the copy of the base this
+machine last pulled down, and that copy can be weeks old. Two things follow,
+and together they are the shape of the offer.
+
 So **a checkout that trails its project's main branch is offered the rebase
-onto that branch**. Which base this is about has to be said now that there are
-two: this one replays onto the branch the project declares as its main, and it
-is offered only where the project declares one — an entry has to name what it
-is about to replay onto, and where nothing names a main branch there is no
-answer to put in it. The other rebase
+onto that branch — and so is one that measured level**. The reading that says
+*level* is exactly the reading the replay would refresh: replaying onto main
+begins by fetching ([§FS-005-dispatch.12](#12-work-an-algorithm-can-finish-does-not-start-with-a-model)),
+so a branch that went stale without this machine hearing about it is the branch
+the offer is needed on most, and withholding the entry there hides the one move
+that would correct the reading. A branch genuinely level replays onto nothing
+at no cost, and is told so in the register a current repository is always told
+it in ([§2](#2-offered-only-where-it-would-work)) — a cheaper thing to be wrong
+about than a branch nineteen days behind being shown as current. What the offer
+needs is a base to name, not a distance to it.
+
+Which base this is about has to be said now that there are two: this one
+replays onto the branch the project declares as its main, and it is offered
+only where the project declares one — an entry has to name what it is about to
+replay onto, and where nothing names a main branch there is no answer to put in
+it. The other rebase
 ([§8](#8-a-branch-that-trails-its-own-published-copy-is-offered-the-rebase-onto-it))
 resolves its ref inside each repository and so needs no base named anywhere:
 the two are gated apart, and a project that declares no main branch is still
 offered the replay onto its own published copy.
 
-What carries the offer is a branch on disk that trails something, not the kind
-of row that mentions it. **Any item that resolves to a branch workspace** is
-offered it — a pull request, an issue, a status a source filed about the same
+What carries the offer is a branch on disk, not the kind of row that mentions
+it. **Any item that resolves to a branch workspace** is offered it — a pull request, an issue, a status a source filed about the same
 change — because the fact being acted on belongs to the checkout, and the item
 is only how the reader arrived at it. Restricting it to pull requests said that
 a branch is stale only when a forge has an opinion about it, which is the
@@ -541,13 +557,37 @@ actually standing, and an offer reachable only by first finding something a
 source filed about that branch is an offer most readers never reach — including
 on every branch nothing has been filed about yet.
 
+**And every statement of the distance says how fresh it is.** The row and the
+entry alike read `13 behind as of Jul 28` — the count, and the day the local
+copy of the base last moved — because `13 behind` on its own is a claim about
+now that nothing here is in a position to make. A branch that measured level
+says the same thing the same way: `level as of Jul 28`. *Up to date* is retired
+wherever it stood, on rows and in entries both: it announced that the branch was
+current when all that was measured was that it matched a copy fetched at some
+unstated time, and it was the wording that made a nineteen-day-old reading look
+like news.
+
+The day is the base's own: the last time the local copy of the base moved on
+this disk, which is the last fetch that brought anything down for it — read
+from that copy's ref, never from a record of fetches having been attempted. So
+it never over-claims. A fetch that found nothing new leaves the copy, and the
+day, where they were; a fetch that failed to connect leaves both untouched
+rather than stamping today onto a comparison it never refreshed. It is measured
+per repository, so a checkout of several reports the oldest of them — a
+comparison is only as fresh as its stalest half. And where a measured
+repository has no such day at all, which is what a fresh clone that has never
+fetched looks like, there is no day to report and the qualifier is left off
+entirely: the row reads `13 behind`, and nothing is invented to fill the gap.
+
 Offered only where it would work ([§2](#2-offered-only-where-it-would-work)):
-something that resolves to no branch has nowhere to rebase, a workspace that is
-not there is a checkout question
+something that resolves to no branch has nowhere to rebase, and a workspace
+that is not there is a checkout question
 ([§7](#7-a-workspace-that-is-not-there-is-offered-the-checkout)) rather than a
-rebase one, and a branch that trails by nothing has nothing to replay. Where a
-branch cannot be resolved to a checkout on disk the offer is withheld rather
-than made and left to fail on the keystroke.
+rebase one. A branch measured level is no longer one of these refusals, but a
+branch nothing could be measured on — no base named, or no ref to compare with
+— still is: the entry would have nothing to name. Where a branch cannot be
+resolved to a checkout on disk the offer is withheld rather than made and left
+to fail on the keystroke.
 
 It is git and nothing else. Fetch, replay the branch on the base, say what
 moved — no forge, no vendor CLI, and no knowledge of what the project is built
@@ -619,6 +659,16 @@ offered the rebase onto that copy**, beside the rebase onto main
 facts, two entries, two operations: one replays what the reader has onto where
 the project went, the other onto where their own branch already is.
 
+It follows [§6](#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase)
+in both of that section's consequences, for the same reason: this distance is
+measured against what was last fetched too. So the entry is offered wherever
+there is a copy to replay onto, whether the checkout measured behind it or
+level, because the replay is what would refresh the reading — and it says how
+fresh the reading is, `2 behind as of Jul 28` or `level as of Jul 28`, from the
+copy's own ref rather than the base's. The two rarely last moved on the same
+day: main moves when the project lands something, a branch's copy when somebody
+pushes to it, and a fetch only dates the refs it actually brought down.
+
 A branch's published copy is what was last pushed of it, read per repository
 from that repository's own `HEAD` rather than from the name of the directory the
 workspace sits in — a repository need not be on the branch its workspace is
@@ -635,15 +685,16 @@ is exactly what `git worktree add -b` leaves behind, and in such a checkout bare
 `git rebase` refuses to run.
 
 Offered only where it would do something
-([§2](#2-offered-only-where-it-would-work)), which here is five refusals. An
+([§2](#2-offered-only-where-it-would-work)), which here is four refusals. An
 item linked to no branch has nowhere to rebase, and a workspace that is not on
 disk is a checkout question
-([§7](#7-a-workspace-that-is-not-there-is-offered-the-checkout)). A branch level
-with its copy has nothing to replay. A branch never pushed has no copy at all —
-and *nothing published* is an answer, given in the same register as a repository
-already current and never as a failure: the reader is told what was found, not
-what went wrong. And a repository whose published copy **is** the base carries
-nothing of its own here — a branch parked on the main branch and tracking it
+([§7](#7-a-workspace-that-is-not-there-is-offered-the-checkout)). A branch
+never pushed has no copy at all — nothing to name in the entry, nothing to
+replay onto, and no reading a fetch would correct — and *nothing published* is
+an answer, given in the same register as a repository already current and never
+as a failure: the reader is told what was found, not what went wrong. And a
+repository whose published copy **is** the base carries nothing of its own here
+— a branch parked on the main branch and tracking it
 has one distance wearing two names, and two menu entries counting one distance
 is the duplication the resolution above exists to prevent — so its distance
 belongs to the rebase onto main alone, and a checkout of nothing but such

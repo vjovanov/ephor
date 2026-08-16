@@ -224,21 +224,23 @@ impl Ctx {
     /// what is on offer.
     fn rebase_offers(&self, project: &str, trailing: &actions::Trailing) -> Vec<ActionConfig> {
         let mut offers = Vec::new();
-        if let (Some(main_branch), Some(behind)) = (
-            self.main_branch(project),
-            trailing.behind.filter(|behind| *behind > 0),
-        ) {
-            offers.push(actions::rebase_action(main_branch, behind));
+        // Measurable, not behind: the reading that says *level* is the reading
+        // the replay would refresh, and it is only ever as fresh as the last
+        // fetch, so withholding the entry on it hides the one move that would
+        // correct it (§FS-004-quick-actions.6). What is required is a base to
+        // name — the entry has to say what it replays onto.
+        if let (Some(main_branch), Some(trail)) = (self.main_branch(project), trailing.behind) {
+            offers.push(actions::rebase_action(main_branch, trail));
         }
-        // The count already leaves out every repository whose copy is simply
-        // its base — that distance is the first entry's — so a checkout of
-        // nothing but such repositories measures nothing here and the entry
-        // never carries the first one's number under another name
+        // The same, and the fold already leaves out every repository whose
+        // copy is simply its base — that distance is the first entry's — so a
+        // checkout of nothing but such repositories measures nothing here and
+        // the entry never carries the first one's number under another name
         // (§FS-004-quick-actions.8).
-        if let Some(behind) = trailing.behind_upstream.filter(|behind| *behind > 0) {
+        if let Some(trail) = trailing.behind_upstream {
             offers.push(actions::upstream_rebase_action(
                 trailing.published.as_deref(),
-                behind,
+                trail,
             ));
         }
         offers
@@ -2742,10 +2744,21 @@ mod tests {
         assert!(status.success(), "git {args:?} failed in {}", dir.display());
     }
 
+    /// A fixture writes its refs the moment the test runs, so a distance
+    /// measured against one of them is dated today
+    /// (§FS-004-quick-actions.6). The repositories `repo_behind` builds have
+    /// no remote at all, so their base is a local branch nothing fetched and
+    /// their distances carry no day.
+    fn today() -> String {
+        chrono::Local::now().format("%b %-d").to_string()
+    }
+
     /// How far the item's checkout trails the project's main branch, out of
     /// the one fold the offers read.
     fn behind(ctx: &Ctx, item: &Item) -> Option<u64> {
-        ctx.item_trailing(item).and_then(|trailing| trailing.behind)
+        ctx.item_trailing(item)
+            .and_then(|trailing| trailing.behind)
+            .map(|trail| trail.behind)
     }
 
     /// A repo whose `feature` branch is `commits` commits behind `master`.
@@ -2892,12 +2905,18 @@ mod tests {
         assert!(menu[0].command.contains("rebase --project"));
         assert!(menu[0].requires_checkout);
 
-        // Level with master: nothing to replay, so nothing offered.
+        // Level with master: still offered, because the reading that says
+        // level is only as fresh as the last fetch and the replay is what
+        // would refresh it — and the entry says *level* rather than a count
+        // (§FS-004-quick-actions.6).
         for repo in ["ce", "ee"] {
             git(&workspace.join(repo), &["checkout", "-q", "master"]);
         }
         assert_eq!(behind(&ctx, &pr), Some(0));
-        assert!(ctx.actions_for(&pr, &[]).is_empty());
+        let level = ctx.actions_for(&pr, &[]);
+        assert_eq!(level.len(), 1, "{level:?}");
+        assert_eq!(level[0].id, "rebase");
+        assert_eq!(level[0].description, "rebase onto master (level)");
     }
 
     #[test]
@@ -2972,7 +2991,10 @@ mod tests {
         let menu = ctx.actions_for(&ticket_item(), &[]);
         assert_eq!(menu.len(), 1, "{menu:?}");
         assert_eq!(menu[0].id, "rebase-upstream");
-        assert_eq!(menu[0].description, "rebase onto origin/feature (2 behind)");
+        assert_eq!(
+            menu[0].description,
+            format!("rebase onto origin/feature (2 behind as of {})", today())
+        );
 
         // The row is gated the same way, so what it shows and what the menu
         // offers cannot disagree: the copy's distance, and no distance to a
@@ -3006,7 +3028,7 @@ mod tests {
         assert_eq!(offered[0].description, "rebase onto master (2 behind)");
         assert_eq!(
             offered[1].description,
-            "rebase onto origin/feature (1 behind)"
+            format!("rebase onto origin/feature (1 behind as of {})", today())
         );
 
         // The same entries the item's menu carries — one implementation, so a
@@ -3088,21 +3110,35 @@ mod tests {
         declare(&mut ctx, &["ce"]);
         let pr = ticket_item();
         let menu = ctx.actions_for(&pr, &[]);
-        assert_eq!(menu.len(), 1);
-        assert_eq!(menu[0].id, "rebase-upstream");
-        assert_eq!(menu[0].description, "rebase onto origin/feature (2 behind)");
-        assert!(menu[0].command.contains("rebase --upstream --project"));
-        assert!(menu[0].requires_checkout);
+        assert_eq!(menu.len(), 2, "{menu:?}");
+        assert_eq!(menu[1].id, "rebase-upstream");
+        assert_eq!(
+            menu[1].description,
+            format!("rebase onto origin/feature (2 behind as of {})", today())
+        );
+        assert!(menu[1].command.contains("rebase --upstream --project"));
+        assert!(menu[1].requires_checkout);
 
-        // Level with the copy: nothing to replay, so nothing offered — and a
-        // branch published nowhere is the same silence for the same reason.
+        // Level with the copy: still offered, and labelled *level* — the
+        // distance to a copy is measured against what was last fetched too
+        // (§FS-004-quick-actions.8).
         git(
             &repo,
             &["update-ref", "refs/remotes/origin/feature", "HEAD"],
         );
-        assert!(ctx.actions_for(&pr, &[]).is_empty());
+        let level = ctx.actions_for(&pr, &[]);
+        assert_eq!(level.len(), 2, "{level:?}");
+        assert_eq!(
+            level[1].description,
+            format!("rebase onto origin/feature (level as of {})", today())
+        );
+
+        // A branch published nowhere has no copy to name and no reading a
+        // fetch would correct, so this entry alone goes.
         git(&repo, &["update-ref", "-d", "refs/remotes/origin/feature"]);
-        assert!(ctx.actions_for(&pr, &[]).is_empty());
+        let unpushed = ctx.actions_for(&pr, &[]);
+        assert_eq!(unpushed.len(), 1, "{unpushed:?}");
+        assert_eq!(unpushed[0].id, "rebase");
     }
 
     /// A forest where the repositories disagree — one on the change's branch,
@@ -3127,7 +3163,10 @@ mod tests {
         // `ee`'s copy is its base, so it neither counts here nor keeps the
         // entry from naming the one ref the counted repositories share.
         assert_eq!(menu[1].id, "rebase-upstream");
-        assert_eq!(menu[1].description, "rebase onto origin/feature (2 behind)");
+        assert_eq!(
+            menu[1].description,
+            format!("rebase onto origin/feature (2 behind as of {})", today())
+        );
     }
 
     /// And where every repository's published copy *is* its base, the copy
@@ -3149,12 +3188,15 @@ mod tests {
         let trailing = ctx
             .item_trailing(&ticket_item())
             .expect("the checkout was measured");
-        assert_eq!(trailing.behind, Some(2));
+        assert_eq!(trailing.behind.map(|trail| trail.behind), Some(2));
         assert_eq!(trailing.behind_upstream, None);
         let menu = ctx.actions_for(&ticket_item(), &[]);
         assert_eq!(menu.len(), 1);
         assert_eq!(menu[0].id, "rebase");
-        assert_eq!(menu[0].description, "rebase onto master (2 behind)");
+        assert_eq!(
+            menu[0].description,
+            format!("rebase onto master (2 behind as of {})", today())
+        );
     }
 
     /// A red gate on my own change, on a checkout that trails: the commands

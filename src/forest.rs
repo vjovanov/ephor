@@ -16,6 +16,8 @@
 
 use std::path::{Path, PathBuf};
 
+use chrono::{DateTime, Datelike, Local, Utc};
+
 /// What a row (or, later, a manifest) says about one repository, before
 /// anything has been looked for on disk.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -187,24 +189,12 @@ impl Forest {
 
     /// How far each repository trails its base, per repository and then
     /// summed (§AR-004-forest.1). Local refs only — no fetch — so this is
-    /// measured against what was last fetched.
+    /// measured against what was last fetched, and each answer carries the day
+    /// that was (§FS-004-quick-actions.6). The half of [`Self::standing`] that
+    /// asks about the base, taken from that one fold rather than measured
+    /// again, so no caller can hold two readings of one checkout.
     pub fn staleness(&self) -> Staleness {
-        let repos = self
-            .repos
-            .iter()
-            .map(|repo| RepoStale {
-                name: repo.name.clone(),
-                behind: self.behind_base(repo),
-            })
-            .collect();
-        Staleness { repos }
-    }
-
-    /// Commits this repository's `HEAD` trails its base, against the
-    /// last-fetched ref.
-    fn behind_base(&self, repo: &Repo) -> Option<u64> {
-        self.base(repo)
-            .and_then(|base| crate::git::commits_behind(&repo.path, &repo.remote, &base))
+        self.standing().staleness()
     }
 
     /// Where each repository's checked-out branch stands — against its base
@@ -229,6 +219,8 @@ impl Forest {
                     ahead: measured.track.map(|(ahead, _)| ahead),
                     behind_upstream: measured.track.map(|(_, behind)| behind),
                     behind_base: measured.behind_base,
+                    base_seen: measured.base_seen,
+                    upstream_seen: measured.upstream_seen,
                     base,
                 }
             })
@@ -268,6 +260,12 @@ pub struct RepoStanding {
     pub behind_upstream: Option<u64>,
     /// Commits `HEAD` trails the base — the count [`Staleness`] carries.
     pub behind_base: Option<u64>,
+    /// When the local copy of the base last moved here: how fresh
+    /// `behind_base` is (§FS-004-quick-actions.6).
+    pub base_seen: Option<DateTime<Utc>>,
+    /// When the published copy last moved here: how fresh `behind_upstream`
+    /// is (§FS-004-quick-actions.8).
+    pub upstream_seen: Option<DateTime<Utc>>,
     /// The base this repository was measured against, resolved once in the
     /// fold and carried here so a reader asking whether the published copy is
     /// simply the base again reads the fold's own fact.
@@ -306,6 +304,7 @@ impl Standing {
                 .map(|repo| RepoStale {
                     name: repo.name.clone(),
                     behind: repo.behind_base,
+                    seen: repo.base_seen,
                 })
                 .collect(),
         }
@@ -319,13 +318,90 @@ impl Standing {
     /// own, and summing it here would put one distance under two names
     /// (§FS-004-quick-actions.8).
     pub fn behind_upstream(&self) -> Option<u64> {
-        self.repos
-            .iter()
-            .filter(|repo| !repo.copies_the_base())
-            .filter_map(|repo| repo.behind_upstream)
-            .fold(None, |total: Option<u64>, count| {
-                Some(total.unwrap_or(0) + count)
+        self.upstream_trail().map(|trail| trail.behind)
+    }
+
+    /// The same distance with its freshness on it: how far the checkout trails
+    /// its published copies, and when the oldest of those copies last moved
+    /// here (§FS-004-quick-actions.8). What the entry about the copies is
+    /// labelled from, so the count and the day come off one fold.
+    pub fn upstream_trail(&self) -> Option<Trail> {
+        Trail::oldest(
+            self.repos
+                .iter()
+                .filter(|repo| !repo.copies_the_base())
+                .filter_map(|repo| Some((repo.behind_upstream?, repo.upstream_seen))),
+        )
+    }
+}
+
+/// A distance and how fresh the comparison behind it is: the count, and the
+/// day the local copy of what it was measured against last moved here
+/// (§FS-004-quick-actions.6). Every statement of a distance — a branch row, a
+/// menu entry — is rendered from one of these, so none of them can say a
+/// number without saying what it is a number as of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Trail {
+    pub behind: u64,
+    /// None where no day was recorded: a clone that has never fetched, or a
+    /// forest with such a repository in it. Nothing is invented to fill it.
+    pub seen: Option<DateTime<Utc>>,
+}
+
+impl Trail {
+    /// The fold over a forest: the counts summed, dated with the oldest day
+    /// among them — a comparison is only as fresh as its stalest half. A
+    /// repository with no day at all is older than any day there is, so it
+    /// takes the whole answer's day away rather than letting another
+    /// repository's stand in for it (§FS-004-quick-actions.6). None where
+    /// nothing was measured, which is not the same answer as zero.
+    fn oldest(measured: impl Iterator<Item = (u64, Option<DateTime<Utc>>)>) -> Option<Trail> {
+        measured.fold(None, |folded: Option<Trail>, (count, seen)| {
+            let Some(folded) = folded else {
+                return Some(Trail {
+                    behind: count,
+                    seen,
+                });
+            };
+            Some(Trail {
+                behind: folded.behind + count,
+                seen: match (folded.seen, seen) {
+                    (Some(known), Some(other)) => Some(known.min(other)),
+                    _ => None,
+                },
             })
+        })
+    }
+
+    /// "13 behind as of Jul 28", "level as of Jul 28", or "level" where no day
+    /// was recorded (§FS-004-quick-actions.6). Never "up to date": all that
+    /// was measured is that the checkout matched a copy last fetched on the
+    /// day named, and a reading with no day on it claims more than it knows.
+    pub fn label(&self) -> String {
+        let distance = if self.behind == 0 {
+            "level".to_string()
+        } else {
+            format!("{} behind", self.behind)
+        };
+        match self.seen {
+            Some(seen) => format!("{distance} as of {}", as_of(seen)),
+            None => distance,
+        }
+    }
+}
+
+/// The day a ref last moved, as a reader reads days: "Jul 28" in the year it
+/// is now, "Jul 28, 2025" in any other — a bare month and day would put a
+/// year-old fetch and last week's on the same footing, which is the whole
+/// thing this qualifier exists to stop (§FS-004-quick-actions.6). Local time,
+/// because the reader's question is which day *they* last fetched.
+fn as_of(seen: DateTime<Utc>) -> String {
+    let seen = seen.with_timezone(&Local);
+    let now = Local::now();
+    if seen.year() == now.year() {
+        seen.format("%b %-d").to_string()
+    } else {
+        seen.format("%b %-d, %Y").to_string()
     }
 }
 
@@ -336,6 +412,9 @@ pub struct RepoStale {
     /// None where it could not be measured: not a working tree, or no ref to
     /// measure against.
     pub behind: Option<u64>,
+    /// When the ref it was measured against last moved here; None where no
+    /// such day was recorded (§FS-004-quick-actions.6).
+    pub seen: Option<DateTime<Utc>>,
 }
 
 /// The fold of [`Forest::staleness`], with the per-repository answers kept.
@@ -349,12 +428,19 @@ impl Staleness {
     /// measured at all, which is not the same answer as zero: zero means up to
     /// date, none means there was nothing to ask.
     pub fn total(&self) -> Option<u64> {
-        self.repos
-            .iter()
-            .filter_map(|repo| repo.behind)
-            .fold(None, |total: Option<u64>, count| {
-                Some(total.unwrap_or(0) + count)
-            })
+        self.trail().map(|trail| trail.behind)
+    }
+
+    /// The same total with its freshness on it: what the checkout trails by,
+    /// and the day the oldest of the refs it was measured against last moved
+    /// here (§FS-004-quick-actions.6). What a row and the entry beside it are
+    /// both labelled from, so they cannot say different things.
+    pub fn trail(&self) -> Option<Trail> {
+        Trail::oldest(
+            self.repos
+                .iter()
+                .filter_map(|repo| Some((repo.behind?, repo.seen))),
+        )
     }
 
     /// The repositories actually behind, in forest order.
@@ -365,22 +451,29 @@ impl Staleness {
             .collect()
     }
 
-    /// "5 behind (ce 2, ee 3)" — the number a row shows, and which
-    /// repositories it came from where more than one did.
+    /// "5 behind (ce 2, ee 3) as of Jul 28" — the number, which repositories
+    /// it came from where more than one did, and how fresh the whole reading
+    /// is (§FS-004-quick-actions.6). A checkout that measured level says
+    /// "level as of Jul 28" rather than "up to date": the day is what makes it
+    /// a fact instead of a claim.
     pub fn summary(&self) -> Option<String> {
-        let total = self.total()?;
-        if total == 0 {
-            return Some("up to date".to_string());
-        }
+        let trail = self.trail()?;
         let behind = self.behind();
-        if behind.len() < 2 {
-            return Some(format!("{total} behind"));
+        let mut summary = if trail.behind == 0 {
+            "level".to_string()
+        } else if behind.len() < 2 {
+            format!("{} behind", trail.behind)
+        } else {
+            let parts: Vec<String> = behind
+                .iter()
+                .map(|repo| format!("{} {}", repo.name, repo.behind.unwrap_or(0)))
+                .collect();
+            format!("{} behind ({})", trail.behind, parts.join(", "))
+        };
+        if let Some(seen) = trail.seen {
+            summary.push_str(&format!(" as of {}", as_of(seen)));
         }
-        let parts: Vec<String> = behind
-            .iter()
-            .map(|repo| format!("{} {}", repo.name, repo.behind.unwrap_or(0)))
-            .collect();
-        Some(format!("{total} behind ({})", parts.join(", ")))
+        Some(summary)
     }
 }
 
@@ -405,6 +498,7 @@ pub fn relative(checkout: &Path, repo: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
 
     fn work_tree(path: &Path) {
         std::fs::create_dir_all(path).unwrap();
@@ -578,7 +672,10 @@ mod tests {
         let forest = Forest::resolve(tmp.path(), Some("master"), &declared);
         assert_eq!(forest.base(&forest.repos[0]).as_deref(), Some("master"));
         assert_eq!(forest.staleness().total(), Some(2));
-        assert_eq!(forest.staleness().summary().as_deref(), Some("2 behind"));
+        assert_eq!(
+            forest.staleness().summary(),
+            Some(format!("2 behind as of {}", today()))
+        );
 
         // With no project main either, what the remote calls its default does.
         let forest = Forest::resolve(tmp.path(), None, &declared);
@@ -608,7 +705,7 @@ mod tests {
         assert_eq!(stale.repos[0].behind, Some(3));
         assert_eq!(stale.repos[1].behind, None);
         assert_eq!(stale.total(), Some(3));
-        assert_eq!(stale.summary().as_deref(), Some("3 behind"));
+        assert_eq!(stale.summary(), Some(format!("3 behind as of {}", today())));
 
         // Asked with nothing declared, each repository answers for itself: the
         // one with no `master` is measured against the default its own remote
@@ -921,19 +1018,36 @@ mod tests {
         assert_eq!(standing.behind_upstream(), None);
     }
 
+    /// A repository's answer with no day on it: what a base that was never
+    /// fetched here leaves behind (§FS-004-quick-actions.6).
+    fn stale(name: &str, behind: Option<u64>) -> RepoStale {
+        RepoStale {
+            name: name.to_string(),
+            behind,
+            seen: None,
+        }
+    }
+
+    /// A fixture's refs are written the moment the test runs, so every
+    /// distance measured against one is dated today
+    /// (§FS-004-quick-actions.6).
+    fn today() -> String {
+        Local::now().format("%b %-d").to_string()
+    }
+
+    /// Midday on a given day, in the reader's own zone, as the reflog would
+    /// have recorded it.
+    fn day(year: i32, month: u32, day: u32) -> DateTime<Utc> {
+        Local
+            .with_ymd_and_hms(year, month, day, 12, 0, 0)
+            .unwrap()
+            .with_timezone(&Utc)
+    }
+
     #[test]
     fn staleness_sums_but_keeps_which_repository_was_behind() {
         let stale = Staleness {
-            repos: vec![
-                RepoStale {
-                    name: "ce".to_string(),
-                    behind: Some(2),
-                },
-                RepoStale {
-                    name: "ee".to_string(),
-                    behind: Some(3),
-                },
-            ],
+            repos: vec![stale("ce", Some(2)), stale("ee", Some(3))],
         };
         assert_eq!(stale.total(), Some(5));
         assert_eq!(stale.behind().len(), 2);
@@ -943,38 +1057,83 @@ mod tests {
     #[test]
     fn one_repository_behind_needs_no_breakdown() {
         let stale = Staleness {
-            repos: vec![
-                RepoStale {
-                    name: "ce".to_string(),
-                    behind: Some(4),
-                },
-                RepoStale {
-                    name: "ee".to_string(),
-                    behind: Some(0),
-                },
-            ],
+            repos: vec![stale("ce", Some(4)), stale("ee", Some(0))],
         };
         assert_eq!(stale.summary().as_deref(), Some("4 behind"));
     }
 
     #[test]
-    fn nothing_measurable_is_not_the_same_answer_as_up_to_date() {
+    fn nothing_measurable_is_not_the_same_answer_as_level() {
         let nothing = Staleness {
-            repos: vec![RepoStale {
-                name: ".".to_string(),
-                behind: None,
-            }],
+            repos: vec![stale(".", None)],
         };
         assert_eq!(nothing.total(), None);
         assert_eq!(nothing.summary(), None);
 
+        // Level is an answer, and it says as of when — never "up to date",
+        // which claimed the branch was current when all that was measured was
+        // a match against a copy of unstated age (§FS-004-quick-actions.6).
         let current = Staleness {
-            repos: vec![RepoStale {
-                name: ".".to_string(),
-                behind: Some(0),
-            }],
+            repos: vec![stale(".", Some(0))],
         };
         assert_eq!(current.total(), Some(0));
-        assert_eq!(current.summary().as_deref(), Some("up to date"));
+        assert_eq!(current.summary().as_deref(), Some("level"));
+    }
+
+    /// The fold takes the oldest day among the repositories that were
+    /// measured — a comparison is only as fresh as its stalest half — and a
+    /// repository with no day at all takes the answer's day away rather than
+    /// letting another's stand in for it (§FS-004-quick-actions.6).
+    #[test]
+    fn the_fold_is_only_as_fresh_as_its_oldest_repository() {
+        let mixed = Staleness {
+            repos: vec![
+                RepoStale {
+                    seen: Some(day(2019, 7, 28)),
+                    ..stale("ce", Some(2))
+                },
+                RepoStale {
+                    seen: Some(day(2019, 8, 11)),
+                    ..stale("ee", Some(3))
+                },
+            ],
+        };
+        assert_eq!(mixed.trail().unwrap().seen, Some(day(2019, 7, 28)));
+        assert_eq!(
+            mixed.summary().as_deref(),
+            Some("5 behind (ce 2, ee 3) as of Jul 28, 2019")
+        );
+
+        let never_fetched = Staleness {
+            repos: vec![
+                RepoStale {
+                    seen: Some(day(2019, 8, 11)),
+                    ..stale("ce", Some(2))
+                },
+                stale("ee", Some(3)),
+            ],
+        };
+        assert_eq!(never_fetched.trail().unwrap().seen, None);
+        assert_eq!(
+            never_fetched.summary().as_deref(),
+            Some("5 behind (ce 2, ee 3)")
+        );
+    }
+
+    /// What a row and an entry are both labelled from: the count, or the word
+    /// *level*, and the day the comparison is as of where one is known
+    /// (§FS-004-quick-actions.6). The year goes unsaid in the year it is now
+    /// and is named in any other, so a year-old fetch cannot read as last
+    /// week's.
+    #[test]
+    fn a_distance_is_stated_as_of_the_day_it_was_measured() {
+        let dated = |behind, seen| Trail { behind, seen }.label();
+        assert_eq!(
+            dated(13, Some(Utc::now())),
+            format!("13 behind as of {}", Local::now().format("%b %-d"))
+        );
+        assert_eq!(dated(0, Some(day(2019, 7, 28))), "level as of Jul 28, 2019");
+        assert_eq!(dated(13, None), "13 behind");
+        assert_eq!(dated(0, None), "level");
     }
 }

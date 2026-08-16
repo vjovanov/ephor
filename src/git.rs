@@ -13,6 +13,8 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use chrono::{DateTime, Utc};
+
 use crate::forest::{under, Forest, Upstream, ORIGIN};
 
 /// What a replay puts the branch on top of. `Base` is one branch name for the
@@ -307,19 +309,39 @@ fn upstream_remote(repo: &Path, remotes: &[String]) -> Option<String> {
         .cloned()
 }
 
-/// Commits `repo`'s HEAD is behind the base, preferring the last-fetched
-/// `<remote>/<base>`; None when no usable ref — a path that is not a
-/// repository answers the same way, because git itself fails there, so
+/// Commits `repo`'s HEAD is behind the base, and the day the ref it was
+/// counted against last moved here; None when no usable ref — a path that is
+/// not a repository answers the same way, because git itself fails there, so
 /// nothing spawns a subprocess to ask that separately (§AR-004-forest.3). The
 /// remote is handed in rather than spelled here: nothing under this module
 /// knows which remote a project uses (§AR-004-forest.2).
-pub fn commits_behind(repo: &Path, remote: &str, base: &str) -> Option<u64> {
-    for reference in [format!("{remote}/{base}"), base.to_string()] {
-        if let Some(count) = behind_ref(repo, &reference) {
-            return Some(count);
-        }
+///
+/// The last-fetched `<remote>/<base>` is preferred, and only it has a day to
+/// give (§FS-004-quick-actions.6): where the count comes from a local branch
+/// of that name instead, nothing was fetched to be fresh or stale about, so
+/// there is no qualifier and none is invented.
+fn behind_the_base(repo: &Path, remote: &str, base: &str) -> Option<(u64, Option<DateTime<Utc>>)> {
+    let fetched = format!("{remote}/{base}");
+    if let Some(count) = behind_ref(repo, &fetched) {
+        return Some((count, ref_seen(repo, &format!("refs/remotes/{fetched}"))));
     }
-    None
+    behind_ref(repo, base).map(|count| (count, None))
+}
+
+/// When `reference` last moved on this disk: the newest entry in its own
+/// reflog, which for a remote-tracking ref is the last fetch that actually
+/// brought something down for it (§FS-004-quick-actions.6). None where the ref
+/// has no reflog at all — a fresh clone writes the ref and no entry — because
+/// a day nobody recorded is not a day to print.
+///
+/// The ref's reflog and not `FETCH_HEAD`: a fetch that fails to connect
+/// truncates `FETCH_HEAD` and bumps its mtime, which would stamp today onto a
+/// comparison it never refreshed, and `FETCH_HEAD` is per working tree while
+/// the refs — and their reflogs — are shared by every worktree of the
+/// repository.
+fn ref_seen(repo: &Path, reference: &str) -> Option<DateTime<Utc>> {
+    let stamp = git(repo, &["log", "-g", "-1", "--format=%ct", reference])?;
+    DateTime::from_timestamp(stamp.trim().parse().ok()?, 0)
 }
 
 /// Commits `reference` carries that `HEAD` does not; None where there is no
@@ -348,6 +370,13 @@ pub struct Measured {
     /// Commits `HEAD` trails the base, against the last-fetched ref; None
     /// where no base was named or nothing could be measured.
     pub behind_base: Option<u64>,
+    /// When the local copy of the base last moved here — how fresh
+    /// `behind_base` is (§FS-004-quick-actions.6). None where there is no such
+    /// day to report.
+    pub base_seen: Option<DateTime<Utc>>,
+    /// The same for the published copy: when it last moved here, which is how
+    /// fresh `track` is (§FS-004-quick-actions.8).
+    pub upstream_seen: Option<DateTime<Utc>>,
 }
 
 /// Where `repo`'s checked-out branch is published, how far `HEAD` sits from
@@ -365,8 +394,25 @@ pub struct Measured {
 /// and one `rev-list` measures the base. Its failure is also the
 /// not-a-repository answer, so nothing probes that separately — the fold
 /// already trusts its own repositories (§AR-004-forest.3). Local refs only —
-/// no fetch — so distances are against what was last fetched.
+/// no fetch — so distances are against what was last fetched, and each
+/// distance that found a ref to compare with costs one further short reflog
+/// read to say when that was (§FS-004-quick-actions.6).
 pub fn standing(repo: &Path, remote: &str, base: Option<&str>) -> Measured {
+    let mut measured = measure(repo, remote, base);
+    // Asked of the ref the resolution above settled on, so what the entry
+    // names and what it dates are one copy (§FS-004-quick-actions.8).
+    measured.upstream_seen = match &measured.upstream {
+        Upstream::Published { remote, branch } => {
+            ref_seen(repo, &format!("refs/remotes/{remote}/{branch}"))
+        }
+        Upstream::Unpushed { .. } | Upstream::Unknown => None,
+    };
+    measured
+}
+
+/// Everything [`standing`] answers except the published copy's freshness,
+/// which is read once from the copy this settles on.
+fn measure(repo: &Path, remote: &str, base: Option<&str>) -> Measured {
     let Some(listed) = git(
         repo,
         &[
@@ -380,9 +426,16 @@ pub fn standing(repo: &Path, remote: &str, base: Option<&str>) -> Measured {
             upstream: Upstream::Unknown,
             track: None,
             behind_base: None,
+            base_seen: None,
+            upstream_seen: None,
         };
     };
-    let behind_base = base.and_then(|base| commits_behind(repo, remote, base));
+    // One reading: the count and the day the ref it was counted against last
+    // moved here, so a row cannot state a distance and a freshness that were
+    // measured a moment apart (§AR-004-forest.1).
+    let against_base = base.and_then(|base| behind_the_base(repo, remote, base));
+    let behind_base = against_base.map(|(count, _)| count);
+    let base_seen = against_base.and_then(|(_, seen)| seen);
     // The starred line is the branch this working tree has checked out; no
     // star is a detached HEAD — not on a branch, so there is no publication
     // to speak of, though the distance to the base above still stands.
@@ -392,6 +445,8 @@ pub fn standing(repo: &Path, remote: &str, base: Option<&str>) -> Measured {
             upstream: Upstream::Unknown,
             track: None,
             behind_base,
+            base_seen,
+            upstream_seen: None,
         };
     };
     let mut fields = line.split('\t');
@@ -405,6 +460,8 @@ pub fn standing(repo: &Path, remote: &str, base: Option<&str>) -> Measured {
             upstream: Upstream::Unknown,
             track: None,
             behind_base,
+            base_seen,
+            upstream_seen: None,
         };
     }
     let own_copy = format!("{remote}/{branch}");
@@ -423,6 +480,8 @@ pub fn standing(repo: &Path, remote: &str, base: Option<&str>) -> Measured {
                 },
                 track: Some(parse_track(track)),
                 behind_base,
+                base_seen,
+                upstream_seen: None,
             };
         }
         // Tracking that names the base records where the branch was cut, not
@@ -439,6 +498,8 @@ pub fn standing(repo: &Path, remote: &str, base: Option<&str>) -> Measured {
                     },
                     track: Some(parse_track(track)),
                     behind_base,
+                    base_seen,
+                    upstream_seen: None,
                 };
             }
         }
@@ -456,6 +517,8 @@ pub fn standing(repo: &Path, remote: &str, base: Option<&str>) -> Measured {
             },
             track: Some(track),
             behind_base,
+            base_seen,
+            upstream_seen: None,
         },
         None => Measured {
             branch: Some(branch),
@@ -464,6 +527,8 @@ pub fn standing(repo: &Path, remote: &str, base: Option<&str>) -> Measured {
             },
             track: None,
             behind_base,
+            base_seen,
+            upstream_seen: None,
         },
     }
 }
@@ -1488,16 +1553,64 @@ mod tests {
         assert!(stopped.report().contains("mid-rebase"));
     }
 
+    /// A count says as of when, and the day comes from the base's own ref:
+    /// the last time this disk saw `origin/master` move
+    /// (§FS-004-quick-actions.6). It never over-claims — a clone that has
+    /// never fetched has no day at all, and a fetch that finds nothing new
+    /// leaves the day where it was.
+    #[test]
+    fn the_distance_is_dated_from_the_bases_own_reflog() {
+        let temp = tempfile::tempdir().unwrap();
+        let checkout = checkout_with_origin(temp.path(), "app");
+        // A clone writes the ref and no reflog entry, so there is nothing to
+        // date the reading with and nothing is invented.
+        assert_eq!(
+            behind_the_base(&checkout, ORIGIN, "master"),
+            Some((0, None))
+        );
+
+        advance_master(temp.path(), "app", "theirs.txt", "theirs\n");
+        run_in(&checkout, &["fetch", "origin", "-q"]);
+        let (count, seen) =
+            behind_the_base(&checkout, ORIGIN, "master").expect("a base to measure");
+        assert_eq!(count, 1);
+        let moved = seen.expect("the fetch moved origin/master, and its reflog says when");
+        assert!((Utc::now() - moved).num_seconds().abs() < 300);
+
+        // A fetch that brought nothing down does not restamp the reading as
+        // today's: the ref did not move, so neither did the day.
+        run_in(&checkout, &["fetch", "origin", "-q"]);
+        assert_eq!(
+            behind_the_base(&checkout, ORIGIN, "master"),
+            Some((1, Some(moved)))
+        );
+
+        // The published copy carries its own day, off the ref the entry about
+        // it names (§FS-004-quick-actions.8).
+        advance_published_feature(temp.path(), "app", "theirs.txt");
+        let measured = standing(&checkout, ORIGIN, Some("master"));
+        assert_eq!(measured.base_seen, Some(moved));
+        assert!(measured.upstream_seen.is_some());
+
+        // A base that resolved to a local branch of that name was never
+        // fetched, so there is no fetch for the reading to be as of.
+        assert_eq!(
+            behind_the_base(&checkout, "nowhere", "master"),
+            Some((0, None))
+        );
+    }
+
     #[test]
     fn behind_counts_against_the_last_fetched_origin() {
         let temp = tempfile::tempdir().unwrap();
         let checkout = checkout_with_origin(temp.path(), "app");
-        assert_eq!(commits_behind(&checkout, ORIGIN, "master"), Some(0));
+        let count = |repo: &Path| behind_the_base(repo, ORIGIN, "master").map(|(count, _)| count);
+        assert_eq!(count(&checkout), Some(0));
         advance_master(temp.path(), "app", "theirs.txt", "theirs\n");
         // Local git only: until someone fetches, the count is what was known.
-        assert_eq!(commits_behind(&checkout, ORIGIN, "master"), Some(0));
+        assert_eq!(count(&checkout), Some(0));
         run_in(&checkout, &["fetch", "origin", "-q"]);
-        assert_eq!(commits_behind(&checkout, ORIGIN, "master"), Some(1));
-        assert_eq!(commits_behind(temp.path(), ORIGIN, "master"), None);
+        assert_eq!(count(&checkout), Some(1));
+        assert_eq!(count(temp.path()), None);
     }
 }

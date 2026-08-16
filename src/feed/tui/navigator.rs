@@ -16,7 +16,7 @@ use crate::feed::cache::{self, Seen};
 use crate::feed::gate::Gate;
 use crate::feed::model::{Item, ItemKind, ItemRole};
 use crate::feed::render::age;
-use crate::forest::{Staleness, Standing};
+use crate::forest::{Staleness, Standing, Trail};
 
 use super::{highlight_style, Action, BranchInfo, Ctx, WorkBadge};
 
@@ -92,15 +92,23 @@ enum Entry {
     Header(&'static str),
     /// Branch row: group header inside a type section, or the branch
     /// overview in the detail view. Carries its project id, whether its
-    /// workspace is checked out on disk, how many commits it trails main,
-    /// how many it trails its own published copy (each summed over the
-    /// workspace's repos) — two distances, two facts
+    /// workspace is checked out on disk, how far it trails main and how far
+    /// it trails its own published copy (each summed over the workspace's
+    /// repos, and each carrying the day it was measured as of —
+    /// §FS-004-quick-actions.6) — two distances, two facts
     /// (§DA-003-upstream-is-the-published-copy) — and how many items are
     /// filed under it. Every fact on the row is settled here, at rebuild:
     /// the last of them was being looked up inside `draw`, which allocated
     /// two keys per branch row per frame to answer something that cannot
     /// change between two keystrokes.
-    Branch(String, BranchInfo, bool, Option<u64>, Option<u64>, usize),
+    Branch(
+        String,
+        BranchInfo,
+        bool,
+        Option<Trail>,
+        Option<Trail>,
+        usize,
+    ),
     /// Group header for items linked to none of the project's branches —
     /// neither one the row names nor one with a workspace on disk.
     Unassigned,
@@ -239,9 +247,9 @@ impl NavigatorState {
                     branch.clone(),
                     ctx.branch_checked_out(project, branch),
                     ctx.branch_behind(project, &branch.branch)
-                        .and_then(Staleness::total),
+                        .and_then(Staleness::trail),
                     ctx.branch_standing(project, &branch.branch)
-                        .and_then(Standing::behind_upstream),
+                        .and_then(Standing::upstream_trail),
                     ctx.branch_linked(project, branch),
                 ));
                 for index in matching {
@@ -343,9 +351,9 @@ impl NavigatorState {
                     branch.clone(),
                     ctx.branch_checked_out(&project, branch),
                     ctx.branch_behind(&project, &branch.branch)
-                        .and_then(Staleness::total),
+                        .and_then(Staleness::trail),
                     ctx.branch_standing(&project, &branch.branch)
-                        .and_then(Standing::behind_upstream),
+                        .and_then(Standing::upstream_trail),
                     ctx.branch_linked(&project, branch),
                 ));
             }
@@ -662,8 +670,8 @@ impl NavigatorState {
 fn branch_line(
     branch: &BranchInfo,
     checked_out: bool,
-    behind: Option<u64>,
-    behind_upstream: Option<u64>,
+    behind: Option<Trail>,
+    behind_upstream: Option<Trail>,
     linked: usize,
 ) -> Line<'static> {
     let marker = if branch.active {
@@ -691,20 +699,28 @@ fn branch_line(
             "✓ checked out",
             Style::default().fg(Color::Green),
         ));
-        match behind {
-            Some(0) => spans.push(Span::styled(
-                " · up to date",
-                Style::default().fg(Color::DarkGray),
-            )),
-            Some(count) => spans.push(Span::styled(
-                format!(" · {count} behind"),
-                Style::default().fg(Color::Yellow),
-            )),
-            None => {}
-        }
-        if let Some(count) = behind_upstream.filter(|count| *count > 0) {
+        // The distance and the day it is a distance as of, together: a bare
+        // count is a claim about now that nothing here measured
+        // (§FS-004-quick-actions.6). Level is still stated — a reader wants to
+        // know the comparison was made — but in the colour of a state rather
+        // than of news.
+        if let Some(trail) = behind {
+            let colour = if trail.behind == 0 {
+                Color::DarkGray
+            } else {
+                Color::Yellow
+            };
             spans.push(Span::styled(
-                format!(" · ↓{count}"),
+                format!(" · {}", trail.label()),
+                Style::default().fg(colour),
+            ));
+        }
+        // The copy's distance stays the bare arrow, undated: it is news that
+        // somebody pushed, and a stale reading of it can only under-report —
+        // it never tells the reader their branch is current when it is not.
+        if let Some(trail) = behind_upstream.filter(|trail| trail.behind > 0) {
+            spans.push(Span::styled(
+                format!(" · ↓{}", trail.behind),
                 Style::default().fg(Color::Cyan),
             ));
         }
@@ -1045,6 +1061,12 @@ mod tests {
         }
     }
 
+    /// A distance nothing dated — the shape of a repository whose base was
+    /// never fetched here (§FS-004-quick-actions.6).
+    fn trail(behind: u64) -> Trail {
+        Trail { behind, seen: None }
+    }
+
     fn text_of(line: &Line<'static>) -> String {
         line.spans
             .iter()
@@ -1058,7 +1080,13 @@ mod tests {
     /// color, so a reader cannot take one number for the other.
     #[test]
     fn the_branch_row_says_both_distances_and_keeps_them_apart() {
-        let line = branch_line(&branch_info("you/ABC-42"), true, Some(13), Some(2), 0);
+        let line = branch_line(
+            &branch_info("you/ABC-42"),
+            true,
+            Some(trail(13)),
+            Some(trail(2)),
+            0,
+        );
         let text = text_of(&line);
         assert!(text.contains(" · 13 behind"), "{text:?}");
         assert!(text.contains(" · ↓2"), "{text:?}");
@@ -1077,20 +1105,67 @@ mod tests {
     /// (§DA-003-upstream-is-the-published-copy).
     #[test]
     fn a_copy_level_or_unpublished_puts_no_arrow_on_the_row() {
-        let level = branch_line(&branch_info("you/ABC-42"), true, Some(0), Some(0), 0);
-        assert!(text_of(&level).contains("up to date"));
+        let level = branch_line(
+            &branch_info("you/ABC-42"),
+            true,
+            Some(trail(0)),
+            Some(trail(0)),
+            0,
+        );
+        assert!(
+            text_of(&level).contains(" · level"),
+            "{:?}",
+            text_of(&level)
+        );
         assert!(!text_of(&level).contains('↓'));
 
-        let unpushed = branch_line(&branch_info("you/ABC-42"), true, Some(3), None, 0);
+        let unpushed = branch_line(&branch_info("you/ABC-42"), true, Some(trail(3)), None, 0);
         assert!(text_of(&unpushed).contains(" · 3 behind"));
         assert!(!text_of(&unpushed).contains('↓'));
+    }
+
+    /// The row says how fresh its comparison is, because the count is only
+    /// ever as fresh as the last fetch — and it says nothing where no day was
+    /// recorded rather than inventing one. "Up to date" is gone: it claimed
+    /// the branch was current when all that was measured was a match against
+    /// a copy of unstated age (§FS-004-quick-actions.6).
+    #[test]
+    fn the_row_says_how_fresh_its_comparison_is() {
+        let dated = |behind| Trail {
+            behind,
+            seen: Some(chrono::Utc::now()),
+        };
+        let trailing = branch_line(&branch_info("you/ABC-42"), true, Some(dated(13)), None, 0);
+        assert!(
+            text_of(&trailing).contains(" · 13 behind as of "),
+            "{:?}",
+            text_of(&trailing)
+        );
+
+        let level = branch_line(&branch_info("you/ABC-42"), true, Some(dated(0)), None, 0);
+        assert!(
+            text_of(&level).contains(" · level as of "),
+            "{:?}",
+            text_of(&level)
+        );
+        for line in [&trailing, &level] {
+            assert!(!text_of(line).contains("up to date"));
+        }
+
+        // Never fetched here: the qualifier is left off, not filled in.
+        let undated = branch_line(&branch_info("you/ABC-42"), true, Some(trail(0)), None, 0);
+        assert!(
+            !text_of(&undated).contains("as of"),
+            "{:?}",
+            text_of(&undated)
+        );
     }
 
     /// The copy's distance stands on its own where main's could not be
     /// measured, and nothing is measured at all on a branch not on disk.
     #[test]
     fn each_distance_stands_without_the_other() {
-        let copy_only = branch_line(&branch_info("you/ABC-42"), true, None, Some(4), 0);
+        let copy_only = branch_line(&branch_info("you/ABC-42"), true, None, Some(trail(4)), 0);
         assert!(!text_of(&copy_only).contains("behind"));
         assert!(text_of(&copy_only).contains(" · ↓4"));
 
@@ -1114,8 +1189,8 @@ mod tests {
                 "widget".to_string(),
                 branch_info("you/ABC-42"),
                 true,
-                Some(13),
-                Some(2),
+                Some(trail(13)),
+                Some(trail(2)),
                 0,
             ),
             row("pr:1"),
