@@ -327,6 +327,113 @@ fn issues_arrive_by_role_from_repositories_nobody_configured() {
         .stdout(predicate::str::contains("other/lib#12"));
 }
 
+/// A fake `gh` for a source that follows a label: only the label search is
+/// answered, and either role search is a hard failure — the label question is
+/// the whole of what this fixture asks.
+const FAKE_GH_LABEL: &str = r#"#!/usr/bin/env bash
+set -euo pipefail
+args="$*"
+case "$args" in
+  *"search issues"*"--author"*|*"search issues"*"--involves"*)
+    echo "a role search was made" >&2
+    exit 1
+    ;;
+  *"search issues"*"--label priority"*"--state open"*)
+    printf '[{"number": 101, "title": "Metadata for Netty 4.2", "url": "https://github.com/oracle/graalvm-reachability-metadata/issues/101", "updatedAt": "2026-08-01T09:00:00Z", "state": "open", "repository": {"nameWithOwner": "oracle/graalvm-reachability-metadata"}, "commentsCount": 0, "author": {"login": "tester"}}, {"number": 102, "title": "Reflection config drifts", "url": "https://github.com/oracle/graalvm-reachability-metadata/issues/102", "updatedAt": "2026-08-01T11:00:00Z", "state": "open", "repository": {"nameWithOwner": "oracle/graalvm-reachability-metadata"}, "commentsCount": 1, "author": {"login": "stranger"}}]'
+    ;;
+  *graphql*issue*comments*)
+    printf '{"data": {"repository": {"issue": {"comments": {"nodes": [{"id": "IC_9", "author": {"login": "stranger"}, "body": "still reproducing?", "createdAt": "2026-08-01T11:00:00Z", "reactions": {"nodes": []}}]}}}}}'
+    ;;
+  *)
+    printf '[]'
+    ;;
+esac
+"#;
+
+/// §FS-001-forge-interface.1: a source told to follow a label reports the open
+/// issues carrying it whoever is in them, each under the role its author says
+/// the reader holds — and asks no role question at all.
+#[test]
+fn a_followed_label_brings_issues_nobody_is_in_under_the_role_of_their_author() {
+    let tmp = tempdir();
+    write_feed_fixture(tmp.path());
+    let fake_bin = tmp.path().join("fakebin");
+    fs::create_dir_all(&fake_bin).unwrap();
+    make_executable(&fake_bin.join("gh"), FAKE_GH_LABEL);
+    let path = format!(
+        "{}:{}",
+        fake_bin.to_string_lossy(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    fs::write(
+        tmp.path().join("status.json"),
+        serde_json::to_string_pretty(&json!({
+            "defaults": {
+                "ttl_seconds": 600,
+                "provider_timeout_seconds": 10,
+                "github_user": "tester",
+                "recent_days": 3650
+            },
+            "projects": {
+                "demo": {
+                    "providers": [
+                        {
+                            "provider": "github-issues",
+                            "authored": false,
+                            "participating": false,
+                            "labels": ["priority"]
+                        }
+                    ]
+                }
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let mut cmd = ephor_cmd();
+    cmd.env("PATH", &path);
+    for (key, value) in feed_env(tmp.path()) {
+        cmd.env(key, value);
+    }
+    // Success at all is the proof that no role search was made: the fake
+    // fails either of them, and a provider that fails loses the refresh.
+    cmd.args(["refresh", "demo"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("demo: 2 items"));
+
+    let cache: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(tmp.path().join("state/ephor/feed/demo.json")).unwrap(),
+    )
+    .unwrap();
+    let items = cache["providers"]["github-issues"]["matters"]
+        .as_array()
+        .unwrap();
+
+    let mine = items
+        .iter()
+        .find(|item| item["key"] == "github-issues:oracle/graalvm-reachability-metadata#101")
+        .expect("the labelled issue the user opened");
+    assert_eq!(mine["kind"], "issue");
+    assert_eq!(mine["role"], "author");
+    assert_eq!(mine["state"], "open");
+
+    // Nobody the role searches would have found is in this one, and it still
+    // arrives — under the participating role.
+    let theirs = items
+        .iter()
+        .find(|item| item["key"] == "github-issues:oracle/graalvm-reachability-metadata#102")
+        .expect("the labelled issue the user has never touched");
+    assert_eq!(theirs["role"], "reviewer");
+    assert_eq!(theirs["state"], "open");
+    assert_eq!(
+        theirs["raw"]["threads"][0]["messages"][0]["text"],
+        "still reproducing?"
+    );
+}
+
 /// §FS-003-feed-categories.3: with the recency window shut, finished work
 /// leaves the feed the moment it finishes; unfinished work is untouched.
 #[test]

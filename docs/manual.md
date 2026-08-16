@@ -739,7 +739,7 @@ A provider block always has `provider`; the rest is its own.
 |---|---|---|
 | `github-prs` | `gh search prs` by every role: authored, and with `reviews` the ones you are in a thread on, cited in, asked to review, or assigned | authored: changes requested; reviewing: a review asked of you, or an unanswered citation |
 | `github-ci` | `gh pr list` + `gh pr checks` per open PR | a check is failing |
-| `github-issues` | `gh search issues` by role, plus comments | a comment awaits your reply |
+| `github-issues` | `gh search issues` by role, plus comments; with `labels`, the open issues carrying them whoever is in them | a comment awaits your reply |
 | `github-notifications` | `GET /notifications` — everything GitHub says is directed at you (§5.2) | GitHub's reason is a mention, a review request, an assignment, a broken gate, or an advisory |
 | `github-threads` | GraphQL unresolved review threads | the last comment is not yours |
 | `custom-status` | any shell command in the workspace | the JSON says so |
@@ -766,9 +766,12 @@ makes them a source.
 
 { "provider": "github-issues",
   "repos": [],                  // empty searches the whole forge, not a list
+  "authored": true,             // issues you opened
   "participating": true,        // issues you are in but did not open
+  "labels": [],                 // issues carrying any of these labels, whoever is in
+                                //   them — open only, one search per label
   "updated_within_days": 30,    // 0 removes the bound
-  "limit": 50,                  // per search, per role
+  "limit": 30,                  // per search
   "comments": true,             // fetch comments (one call per issue that has any)
   "host": null }
 
@@ -788,6 +791,20 @@ makes them a source.
   "format": "text",             // "answer", or the legacy "text" / "json"
   "cwd": "{project_root}/app" } // defaults to the project root
 ```
+
+**Following a label.** `labels` asks a different question from the two role
+searches: not *which issues am I in* but *which issues carry this word* —
+`priority`, `regression`, whatever a project calls the work it wants followed.
+Each label is one `gh search issues --label <name> --state open`, so issues
+nobody has ever touched arrive too, and each lands under the role its author
+gives it: **My Issues** where you opened it, **Participating** otherwise
+([§FS-001-forge-interface.1](../requirements.md#1-capabilities)). Only open
+issues are asked for — a label search that took the closed too would spend its
+`limit` on history rather than on the queue. And a label search that comes back
+with exactly `limit` issues **fails the source** rather than showing you part
+of a queue as if it were the whole of it: raise `limit`, or narrow `labels`. A
+block with `authored` off, `participating` off, and no `labels` asks nothing
+and is refused when it is read.
 
 **`custom-status`** runs its command as a summons like everything else ephor
 asks of a project

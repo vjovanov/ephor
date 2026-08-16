@@ -88,6 +88,23 @@ ephor degrades to what is answered rather than failing.
   ([§FS-003-feed-categories.4](#4-a-conversation-is-answered-in-whatever-form-the-forge-recorded-it)).
   An implementation with no notion of assignment omits it, and nothing it
   reports is ever counted as unclaimed.
+
+  Where a source is configured to **follow a label**, an implementation also
+  reports the open issues carrying it, whoever is in them. A label is the
+  project's own word for what an issue is — a priority, a class of work — and
+  on a project the reader answers for, an issue so labelled is theirs to
+  follow whether or not they have ever spoken in it; the searches by role
+  cannot reach it, since being nobody in an issue is precisely what they
+  filter out. Each such issue is reported under the role the reader actually
+  holds on it — author where they opened it, participant otherwise — so it
+  lands where its kind lands
+  ([§FS-003-feed-categories.1](#1-the-categories)). Only what is open is asked
+  for: following a label is following work, and a search that took the closed
+  too would spend its bound on history rather than on the queue. And a label
+  search that comes back as full as it was allowed to be has not answered
+  ([§6](#6-a-source-that-did-not-answer-says-so-and-says-which-kind-of-not)) —
+  it delivered a prefix nobody can size — so an implementation fails there
+  rather than showing a fraction of a queue as if it were the queue.
 - **Notices** — what the forge itself says is directed at the user: one entry
   per thing it decided to tell them, carrying the reason it gives, the subject
   it concerns, when it arrived, and whether the forge considers it read. This
@@ -313,7 +330,7 @@ role on it:
 | Reviewing | pull requests the user is on as a reviewer |
 | CI | gate and build results |
 | My Issues | issues the user opened |
-| Participating | issues the user is in but did not open |
+| Participating | issues the user is in but did not open, or follows by a label the source names (§FS-001-forge-interface.1) |
 | Tasks | the project's own tasks, from a store in its checkout (§FS-006-project-interface.7) |
 | Messages | anything addressed to the user that is not a pull request or an issue |
 | Recent | finished items — see [§2](#2-recent) |
