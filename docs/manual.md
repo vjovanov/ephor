@@ -1964,7 +1964,7 @@ tells you what it answered. It never rewrites a `**State:**` line by hand,
 because the plan language reserves a ticket's state to the runtime's verbs
 once the ticket is written (the compare-and-swap, the artifact checks, the
 callbacks, the audit trail;
-[§DA-005](decisions/architectural/DA-005-cancel-is-the-runtimes-move.md)).
+[§DA-005-cancel-is-the-runtimes-move](decisions/architectural/DA-005-cancel-is-the-runtimes-move.md)).
 So with no runtime bound `c` is not offered and says why, exactly as `R` does;
 the plan stays hand-editable for anyone who wants to make the move themselves.
 
@@ -2570,7 +2570,7 @@ declared `outputs:` on every transition out of it, the edge into `cancelled`
 included, so a ticket parked in a state whose artifacts were never written
 cannot be moved through the verb until the runtime exempts cancellation the
 way it exempts its own failure routes. ephor does not edit around it
-([§DA-005](decisions/architectural/DA-005-cancel-is-the-runtimes-move.md));
+([§DA-005-cancel-is-the-runtimes-move](decisions/architectural/DA-005-cancel-is-the-runtimes-move.md));
 the plan is yours to hand-edit if you must.
 
 **An agent never runs.** ephor writes tickets; the runtime runs them.

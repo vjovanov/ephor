@@ -54,7 +54,7 @@ ships, the previous "latest" section moves verbatim to
 
 - **A ticket can be taken back**
   ([§FS-005-dispatch.16](../requirements.md#16-work-that-should-not-go-on-is-cancelled-and-the-plan-says-so),
-  [§DA-005](decisions/architectural/DA-005-cancel-is-the-runtimes-move.md)).
+  [§DA-005-cancel-is-the-runtimes-move](decisions/architectural/DA-005-cancel-is-the-runtimes-move.md)).
   The same recipe pressed twice was two runs of one fix in one checkout, and
   the only way back was an editor on the plan. `c` on the work screen now
   picks an open ticket — numbered, `j`/`k` or a digit — and asks why in one
