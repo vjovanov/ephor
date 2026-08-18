@@ -47,6 +47,11 @@ pub(crate) struct WorkScreen {
     /// take back (§FS-005-dispatch.16); None otherwise. An index into
     /// [`WorkScreen::cancellable`], not into the tickets.
     picking: Option<usize>,
+    /// What ephor has run about this item itself, newest first
+    /// (§FS-005-dispatch.17). A job's record stays with the item it was about
+    /// after it has left the board, which is what makes "what happened when I
+    /// pressed that" answerable an hour later.
+    jobs: Vec<crate::seams::jobs::Job>,
     scroll: u16,
     viewport: u16,
 }
@@ -57,6 +62,7 @@ impl WorkScreen {
         status: Option<WorkStatus>,
         offers: Vec<Offer>,
         refusal: Option<String>,
+        jobs: Vec<crate::seams::jobs::Job>,
     ) -> Self {
         WorkScreen {
             item,
@@ -65,6 +71,7 @@ impl WorkScreen {
             refusal,
             selected: 0,
             picking: None,
+            jobs,
             scroll: 0,
             viewport: 0,
         }
@@ -97,9 +104,11 @@ impl WorkScreen {
         if self.picking.is_some() {
             return " j/k choose  enter/1-9 cancel that ticket  esc keep them";
         }
-        match self.refusal {
-            Some(_) => " j/k move  enter/1-9 open work  a ask  s reopen  e read the plan  o browser  ; ops  esc back",
-            None => " j/k move  enter/1-9 open work  a ask  s reopen  c cancel  R run the runtime  e read the plan  o browser  ; ops  esc back",
+        match (self.refusal.is_some(), self.jobs.is_empty()) {
+            (true, true) => " j/k move  enter/1-9 open work  a ask  s reopen  e read the plan  o browser  ; ops  esc back",
+            (true, false) => " j/k move  enter/1-9 open work  a ask  s reopen  e plan  L job log  o browser  ; ops  esc back",
+            (false, true) => " j/k move  enter/1-9 open work  a ask  s reopen  c cancel  R run the runtime  e read the plan  o browser  ; ops  esc back",
+            (false, false) => " j/k move  enter/1-9 open work  a ask  s reopen  c cancel  R run  e plan  L job log  o browser  ; ops  esc back",
         }
     }
 
@@ -170,6 +179,17 @@ impl WorkScreen {
             KeyCode::Char('e') => match self.plan() {
                 Some(plan) => Action::ReadPlan(plan),
                 None => Action::SetMessage("No plan yet".to_string()),
+            },
+            // What ephor last ran here itself (§FS-005-dispatch.17). The
+            // newest, because that is the one a reader who just pressed a key
+            // is asking about; the rest are listed above with what they came
+            // to, and `ephor job log` reads any of them by name.
+            KeyCode::Char('L') => match self.jobs.first() {
+                Some(job) => Action::ReadLog {
+                    path: job.log_path(),
+                    following: job.live,
+                },
+                None => Action::SetMessage("ephor has run nothing here itself".to_string()),
             },
             // Anything the recipes do not cover (§FS-005-dispatch.10).
             KeyCode::Char('a') => Action::AskWork(self.item.clone()),
@@ -376,6 +396,41 @@ impl WorkScreen {
             }
         }
 
+        // What ephor ran here itself (§FS-005-dispatch.17). Above the recipes
+        // and below the tickets, because it sits between the two in kind: a
+        // move already made, by nobody who had to be asked.
+        if !self.jobs.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "  what ephor ran here".to_string(),
+                heading,
+            )));
+            for job in &self.jobs {
+                let (marker, style) = match (&job.ended, job.live) {
+                    (_, true) => ("⚙", Style::default().fg(Color::Yellow)),
+                    (Some(ended), false) if ended.outcome == "done" => {
+                        ("✓", Style::default().fg(Color::Green))
+                    }
+                    (Some(_), false) => ("✗", Style::default().fg(Color::Red)),
+                    // No lock and no outcome: the supervisor died, which is
+                    // neither success nor failure and is not reported as either.
+                    (None, false) => ("✗", Style::default().fg(Color::Red)),
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(format!("    {marker} "), style),
+                    Span::raw(format!("{} {}", job.record.icon, job.record.description)),
+                ]));
+                lines.push(Line::from(Span::styled(
+                    format!("      {}", job.says()),
+                    dim,
+                )));
+            }
+            lines.push(Line::from(Span::styled(
+                "    L reads the newest one".to_string(),
+                dim,
+            )));
+        }
+
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             "  what can be asked for".to_string(),
@@ -531,7 +586,7 @@ mod tests {
     #[test]
     fn the_screen_says_what_was_asked_what_it_reached_and_what_else_could_be() {
         let shown = offers();
-        let screen = WorkScreen::new(item(), Some(status(true)), offers(), None);
+        let screen = WorkScreen::new(item(), Some(status(true)), offers(), None, Vec::new());
         let text = text(&screen);
         assert!(text.contains("forge-demo-17.rhei.md"), "{text}");
         assert!(text.contains("fix-gate-1"), "{text}");
@@ -557,7 +612,7 @@ mod tests {
 
     #[test]
     fn an_item_with_no_work_still_shows_what_could_be_asked_for() {
-        let screen = WorkScreen::new(item(), None, offers(), None);
+        let screen = WorkScreen::new(item(), None, offers(), None, Vec::new());
         let text = text(&screen);
         assert!(text.contains("nothing has been handed over"), "{text}");
         assert!(text.contains("what can be asked for"), "{text}");
@@ -566,7 +621,7 @@ mod tests {
     #[test]
     fn keys_dispatch_by_number_and_refuse_what_there_is_nothing_to_do() {
         let ids: Vec<String> = offers().into_iter().map(|o| o.recipe.id).collect();
-        let mut screen = WorkScreen::new(item(), None, offers(), None);
+        let mut screen = WorkScreen::new(item(), None, offers(), None, Vec::new());
         match screen.handle_key(KeyCode::Char('2')) {
             Action::DispatchWork { recipe, .. } => assert_eq!(recipe, ids[1]),
             _ => panic!("expected a dispatch"),
@@ -587,7 +642,7 @@ mod tests {
         ));
 
         // With work that is current, reopening says so rather than doing it.
-        let mut screen = WorkScreen::new(item(), Some(status(false)), offers(), None);
+        let mut screen = WorkScreen::new(item(), Some(status(false)), offers(), None, Vec::new());
         assert!(matches!(
             screen.handle_key(KeyCode::Char('s')),
             Action::SetMessage(_)
@@ -641,7 +696,13 @@ mod tests {
     /// its reason beneath it (§FS-005-dispatch.16).
     #[test]
     fn c_picks_an_open_ticket_to_take_back_and_a_cancelled_one_reads_as_such() {
-        let mut screen = WorkScreen::new(item(), Some(status_with_open_tickets()), offers(), None);
+        let mut screen = WorkScreen::new(
+            item(),
+            Some(status_with_open_tickets()),
+            offers(),
+            None,
+            Vec::new(),
+        );
         let shown = text(&screen);
         assert!(shown.contains("⊘ fix-gate-2"), "{shown}");
         assert!(shown.contains("[cancelled]"), "{shown}");
@@ -699,12 +760,12 @@ mod tests {
     /// sentence and is not taught, exactly as `R` is (§FS-005-dispatch.16).
     #[test]
     fn c_refuses_where_nothing_is_open_and_where_nothing_can_move_it() {
-        let mut screen = WorkScreen::new(item(), Some(status(false)), offers(), None);
+        let mut screen = WorkScreen::new(item(), Some(status(false)), offers(), None, Vec::new());
         match screen.handle_key(KeyCode::Char('c')) {
             Action::SetMessage(said) => assert!(said.contains("Nothing to cancel"), "{said}"),
             _ => panic!("expected a refusal"),
         }
-        let mut screen = WorkScreen::new(item(), None, offers(), None);
+        let mut screen = WorkScreen::new(item(), None, offers(), None, Vec::new());
         assert!(matches!(
             screen.handle_key(KeyCode::Char('c')),
             Action::SetMessage(_)
@@ -718,6 +779,7 @@ mod tests {
             Some(status_with_open_tickets()),
             offers(),
             Some(unbound.clone()),
+            Vec::new(),
         );
         assert!(!screen.footer().contains("c cancel"), "{}", screen.footer());
         match screen.handle_key(KeyCode::Char('c')) {
@@ -740,8 +802,13 @@ mod tests {
         })
         .expect("a runner that is not on PATH is refused");
 
-        let mut screen =
-            WorkScreen::new(item(), Some(status(false)), offers(), Some(unbound.clone()));
+        let mut screen = WorkScreen::new(
+            item(),
+            Some(status(false)),
+            offers(),
+            Some(unbound.clone()),
+            Vec::new(),
+        );
         assert!(!screen.footer().contains("R run"), "{}", screen.footer());
         match screen.handle_key(KeyCode::Char('R')) {
             Action::SetMessage(said) => assert_eq!(said, unbound),
@@ -758,11 +825,72 @@ mod tests {
         ));
 
         // Bound: the key is advertised and acts.
-        let mut bound = WorkScreen::new(item(), Some(status(false)), offers(), None);
+        let mut bound = WorkScreen::new(item(), Some(status(false)), offers(), None, Vec::new());
         assert!(bound.footer().contains("R run"), "{}", bound.footer());
         assert!(matches!(
             bound.handle_key(KeyCode::Char('R')),
             Action::RunWork { .. }
         ));
+    }
+
+    /// A job ephor ran about this item keeps its record here after it has
+    /// left the board, with what it came to — which is what makes "what
+    /// happened when I pressed that" answerable an hour later
+    /// (§FS-005-dispatch.17).
+    #[test]
+    fn what_ephor_ran_here_stays_with_the_item() {
+        let job = crate::seams::jobs::Job {
+            id: "20260818T090000.000Z-rebase".to_string(),
+            dir: std::path::PathBuf::from("/state/ephor/jobs/20260818T090000.000Z-rebase"),
+            record: crate::seams::jobs::Record {
+                version: 1,
+                project: "demo".to_string(),
+                item: Some("forge:demo/17".to_string()),
+                icon: "⤴".to_string(),
+                description: "rebase onto master (3 behind as of Jul 28)".to_string(),
+                root: std::path::PathBuf::from("/w/demo"),
+                workspace: None,
+                steps: Vec::new(),
+                dossier: Vec::new(),
+                started: "2026-08-18T09:00:00Z".to_string(),
+            },
+            live: false,
+            ended: Some(crate::seams::jobs::Ended {
+                outcome: "done".to_string(),
+                exit_code: Some(0),
+                step: None,
+                says: "⤴ rebase onto master (3 behind as of Jul 28): ok".to_string(),
+                ended: "2026-08-18T09:04:00Z".to_string(),
+            }),
+        };
+        let mut screen = WorkScreen::new(item(), None, offers(), None, vec![job]);
+        let text = text(&screen);
+        assert!(text.contains("what ephor ran here"), "{text}");
+        assert!(text.contains("rebase onto master"), "{text}");
+        assert!(text.contains(": ok"), "the outcome is on the row: {text}");
+        assert!(screen.footer().contains("L job log"), "{}", screen.footer());
+        match screen.handle_key(KeyCode::Char('L')) {
+            Action::ReadLog { path, following } => {
+                assert!(path.ends_with("log"), "{path:?}");
+                assert!(!following, "nothing to follow: it is over");
+            }
+            _ => panic!("L reads the newest job"),
+        }
+    }
+
+    /// With nothing run here the key is not taught and says so plainly rather
+    /// than opening an empty pager.
+    #[test]
+    fn an_item_ephor_ran_nothing_on_says_so() {
+        let mut screen = WorkScreen::new(item(), None, offers(), None, Vec::new());
+        assert!(
+            !screen.footer().contains("L job log"),
+            "{}",
+            screen.footer()
+        );
+        match screen.handle_key(KeyCode::Char('L')) {
+            Action::SetMessage(said) => assert!(said.contains("nothing"), "{said}"),
+            _ => panic!("nothing to read"),
+        }
     }
 }

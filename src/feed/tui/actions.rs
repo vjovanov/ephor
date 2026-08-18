@@ -159,6 +159,10 @@ fn rebase_entry(id: &str, description: &str, extra: &str) -> ActionConfig {
         // (§FS-004-quick-actions.6). The gate is the checkout resolving, and
         // it is applied where the entry is built.
         requires_checkout: true,
+        // A replay asks nothing and decides nothing, so it costs no model
+        // (§FS-005-dispatch.12) and no screen either: it runs beneath the
+        // interface and is watched from its row (§FS-005-dispatch.17).
+        background: true,
         ..ActionConfig::default()
     }
 }

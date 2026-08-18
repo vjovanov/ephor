@@ -784,6 +784,12 @@ pub(crate) enum Action {
     },
     /// Open a plan in the reader's editor.
     ReadPlan(PathBuf),
+    /// Read what a job wrote (§FS-005-dispatch.17). `following` asks the
+    /// pager to keep up with a job that is still writing.
+    ReadLog {
+        path: PathBuf,
+        following: bool,
+    },
     /// Ask this item for something no recipe covers (§FS-005-dispatch.10).
     AskWork(Item),
     /// Take one of this item's tickets back (§FS-005-dispatch.16): the shell
@@ -843,6 +849,11 @@ struct App {
     /// seen then (§FS-005-dispatch.15.1).
     ticked_at: std::time::Instant,
     work_seen: Option<std::time::SystemTime>,
+    /// What ephor is running beneath this screen (§FS-005-dispatch.17), read
+    /// from where jobs are written rather than from anything that remembers
+    /// starting one — a job another ephor started is in here too. Refreshed
+    /// when rows are built and probed on the tick, exactly as a run is.
+    jobs: Vec<crate::seams::jobs::Job>,
     message: String,
 }
 
@@ -1048,8 +1059,14 @@ impl App {
             work_groups: Vec::new(),
             ticked_at: std::time::Instant::now(),
             work_seen: None,
+            jobs: Vec::new(),
             message: String::new(),
         };
+        // Whatever is still going from an earlier session is the reader's
+        // news on the first frame, and what is long over is swept here rather
+        // than on a path a keystroke waits on (§FS-005-dispatch.17).
+        crate::seams::jobs::sweep();
+        app.jobs = crate::seams::jobs::all();
         app.reload_feeds()?;
         // What is on disk now is the baseline the tick moves from: the load
         // just read it, and re-reading it two seconds in would be a glance
@@ -1596,6 +1613,7 @@ impl App {
                 self.reload_work();
                 self.reload_operations();
             }
+            Action::ReadLog { path, following } => self.read_log(terminal, &path, following)?,
             Action::Refresh => self.start_refresh(config),
         }
         Ok(false)
@@ -1737,7 +1755,15 @@ impl App {
         // advertises the key rather than when it is pressed
         // (§FS-004-quick-actions.2).
         let refusal = crate::work::runtime::refusal(&self.work);
-        self.screen = Screen::Work(WorkScreen::new(item, status, offers, refusal));
+        // What ephor has run about this item itself, newest first
+        // (§FS-005-dispatch.17) — the record outlives the row on the board.
+        let jobs: Vec<crate::seams::jobs::Job> = self
+            .jobs
+            .iter()
+            .filter(|job| job.record.item.as_deref() == Some(item.id.as_str()))
+            .cloned()
+            .collect();
+        self.screen = Screen::Work(WorkScreen::new(item, status, offers, refusal, jobs));
     }
 
     fn dispatch_work(&mut self, item: &Item, recipe_id: &str) {
@@ -1937,6 +1963,10 @@ impl App {
     /// the checkout dependency first when the entry needs one, then the
     /// action itself in the item's checkout, wait for a keypress, and come
     /// back. Blocked entries only set a status message.
+    ///
+    /// An entry that says it needs no reader never gets here: it is started
+    /// beneath the screen instead, and the interface stays where it was
+    /// (§FS-005-dispatch.17).
     fn run_menu_entry(
         &mut self,
         terminal: &mut DefaultTerminal,
@@ -1945,6 +1975,10 @@ impl App {
     ) -> Result<()> {
         if let actions::Gate::Blocked(reason) = &entry.gate {
             self.message = reason.clone();
+            return Ok(());
+        }
+        if !entry.is_checkout && entry.action.background {
+            self.start_job(menu, entry);
             return Ok(());
         }
         ratatui::restore();
@@ -2050,6 +2084,119 @@ impl App {
         }
         self.rebuild_view();
         Ok(())
+    }
+
+    /// Start a menu entry beneath the screen (§FS-005-dispatch.17): write
+    /// down what it is, hand it to a supervisor of its own, and stay where
+    /// the reader was. Nothing is waited on — the row the job takes among the
+    /// operations is how it is watched from here.
+    ///
+    /// The chain travels with it. An entry needing the branch workspace
+    /// carries the checkout as the job's first step, with the directory it
+    /// has to create named on the step: the supervisor verifies it rather
+    /// than trusting it, exactly as this call site did while the reader
+    /// watched (§FS-006-project-interface.8).
+    fn start_job(&mut self, menu: &ActionMenu, entry: &actions::MenuEntry) {
+        use crate::seams::jobs;
+
+        let needs_checkout =
+            entry.is_checkout || matches!(entry.gate, actions::Gate::NeedsCheckout);
+        let mut steps = Vec::new();
+        // Where the action itself will run, which is the workspace the
+        // checkout is about to make when there is one to make.
+        let mut workspace = menu.workspace.clone();
+        if needs_checkout {
+            let Some((checkout, target)) = menu.checkout_step() else {
+                self.message = "the workspace is missing and nothing checks it out".to_string();
+                return;
+            };
+            steps.push(jobs::Step {
+                icon: checkout.icon.clone(),
+                description: checkout.description.clone(),
+                command: checkout.command.clone(),
+                // The checkout's job is to make the workspace, so it runs in
+                // the root — the workspace is not there to run in yet.
+                cwd: Some("root".to_string()),
+                creates: Some(target.clone()),
+                becomes_workspace: true,
+            });
+            workspace = target;
+        }
+        let action = &entry.action;
+        steps.push(jobs::Step {
+            icon: action.icon.clone(),
+            description: action.description.clone(),
+            command: action.command.clone(),
+            cwd: action.cwd.clone(),
+            creates: None,
+            becomes_workspace: false,
+        });
+
+        let project = menu.subject.project().to_string();
+        // The forest of the place it runs in, so a command that folds over
+        // repositories folds over the same ones ephor does (§AR-004-forest.1).
+        let forest = self
+            .ctx
+            .placement(&project)
+            .map(|placement| placement.forest(&workspace));
+        let record = jobs::Record {
+            version: 1,
+            project,
+            item: menu.subject.item().map(|item| item.id.clone()),
+            icon: action.icon.clone(),
+            description: action.description.clone(),
+            root: menu.root.clone(),
+            // None where the checkout is still to make it: a site pointed at a
+            // directory that is not there yet would refuse the first step.
+            workspace: (!needs_checkout).then(|| workspace.clone()),
+            steps,
+            dossier: menu_dossier(menu, &workspace, forest.as_ref()),
+            started: chrono::Utc::now().to_rfc3339(),
+        };
+        self.message = match jobs::start(record) {
+            Ok(job) => {
+                let says = format!(
+                    "{} {}: started · ; to watch",
+                    job.record.icon, job.record.description
+                );
+                self.jobs.insert(0, job);
+                self.reload_operations();
+                says
+            }
+            Err(err) => err.to_string(),
+        };
+    }
+
+    /// Everything one job wrote, in the reader's pager (§FS-005-dispatch.17).
+    /// A pager rather than an editor: a log is read, and `less` asked to
+    /// follow keeps up with a job that is still writing — asked only where
+    /// the pager is known to understand it, since `$PAGER` may be anything.
+    fn read_log(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        path: &Path,
+        following: bool,
+    ) -> Result<()> {
+        let (pager, known) = match std::env::var("PAGER") {
+            Ok(pager) if !pager.trim().is_empty() => (pager, false),
+            _ => ("less".to_string(), true),
+        };
+        let follow = match following && known {
+            true => " +F",
+            false => "",
+        };
+        let dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
+        let command = format!(
+            "{pager}{follow} {}",
+            crate::feed::providers::shell_quote(&path.to_string_lossy())
+        );
+        self.handover(
+            terminal,
+            "📖",
+            &pager,
+            &Site::root(&dir),
+            &summons::Summons::new("log", command),
+        )
     }
 
     fn open_url(&mut self, url: Option<String>) {
@@ -2214,11 +2361,21 @@ impl App {
     /// answering what is live there. The ledger's plans carry their matter;
     /// an enumerated plan ephor never dispatched has none, and its row leads
     /// to the plan itself.
-    fn board_rows(&self) -> (Vec<operations::OpRow>, Option<String>) {
+    fn board_rows(&self) -> (Vec<operations::Row>, Option<String>) {
         use crate::work::runtime::watch;
+        // What ephor is running itself needs no runtime and no registry: it is
+        // ephor running a command (§FS-005-dispatch.17), so its rows stand
+        // even where the runtime's half of the board says why it is empty.
+        let running: Vec<operations::Row> = self
+            .jobs
+            .iter()
+            .filter(|job| job.live)
+            .cloned()
+            .map(operations::Row::Job)
+            .collect();
         if self.dispatcher.is_none() {
             return (
-                Vec::new(),
+                running,
                 Some("Work needs the registry, which could not be read at startup".to_string()),
             );
         }
@@ -2244,7 +2401,7 @@ impl App {
                 }
             }
         }
-        let rows = operations
+        let runs: Vec<operations::Row> = operations
             .into_iter()
             .map(|op| operations::OpRow {
                 item: op.item().and_then(|id| matters.get(id).cloned()),
@@ -2262,7 +2419,13 @@ impl App {
                 }),
                 op,
             })
+            .map(|row| operations::Row::Op(Box::new(row)))
             .collect();
+        // The reader's own move first: a job is something they pressed a key
+        // for moments ago, and a board that filed it under the runtime's work
+        // would answer "did that start?" with a scroll.
+        let mut rows: Vec<operations::Row> = running;
+        rows.extend(runs);
         (rows, refusal)
     }
 
@@ -2295,6 +2458,10 @@ impl App {
             return false;
         }
         self.ticked_at = std::time::Instant::now();
+        // Jobs first, and whatever screen the reader is on: a job ending is
+        // news exactly as a ticket parking is (§FS-005-dispatch.17), and the
+        // re-listing below must not take an ended job away before it is said.
+        let jobs_moved = self.pulse_jobs();
         let newest = self.work_wrote();
         let moved = match (newest, self.work_seen) {
             (Some(now), Some(seen)) => now > seen,
@@ -2303,6 +2470,10 @@ impl App {
         };
         if moved {
             self.work_seen = newest;
+            // A job appearing or ending moves what the gate above stats, and
+            // a job somebody else started is found by looking, here
+            // (§FS-005-dispatch.17).
+            self.jobs = crate::seams::jobs::all();
             // Something moved, so the walk is paid once here: a plan that
             // appeared in a known root — the directory's own timestamp is in
             // the gate — joins the universe now (§FS-005-dispatch.15.1).
@@ -2314,7 +2485,9 @@ impl App {
         }
         let shown = match &self.screen {
             Screen::Operations(board) => board.roots(),
-            _ => return false,
+            // The board is closed, so nothing below it can change the screen —
+            // but a job that ended already has (§FS-005-dispatch.17).
+            _ => return jobs_moved,
         };
         // A run *starting* on a root the board has no row for writes nothing
         // the timestamp above watches — the OS takes its lock, and that is the
@@ -2332,7 +2505,7 @@ impl App {
             }
             _ => return false,
         };
-        if found.flipped || appeared {
+        if found.flipped || appeared || jobs_moved {
             self.reload_operations();
             return true;
         }
@@ -2340,6 +2513,63 @@ impl App {
         // every couple of seconds regardless would be paying for a frame to
         // show the reader what they are already looking at.
         found.changed
+    }
+
+    /// Probe every job ephor knows of, and answer whether the screen moved
+    /// (§FS-005-dispatch.17).
+    ///
+    /// Liveness is the lock and nothing else: a job that took its lock becomes
+    /// live here, and one that let it go is read once more — the outcome is
+    /// written before the lock is released, so what is read then is complete.
+    /// That release is the whole event, and it moves no timestamp, which is
+    /// why it is probed rather than watched. The transition is also what makes
+    /// the news honest: only a job seen running can be said to have finished
+    /// or died, so a job whose supervisor has not started yet says nothing
+    /// rather than being reported as dead a millisecond after it was asked
+    /// for.
+    fn pulse_jobs(&mut self) -> bool {
+        let mut news: Vec<String> = Vec::new();
+        let mut changed = false;
+        for job in &mut self.jobs {
+            if job.ended.is_some() {
+                continue;
+            }
+            let live = crate::seams::jobs::live(&job.dir);
+            if live == job.live {
+                continue;
+            }
+            changed = true;
+            if live {
+                job.live = true;
+                continue;
+            }
+            if let Some(fresh) = crate::seams::jobs::read(&job.dir) {
+                *job = fresh;
+            } else {
+                job.live = false;
+            }
+            news.push(job.says());
+        }
+        if let Some(last) = news.pop() {
+            self.message = match news.len() {
+                0 => last,
+                more => format!("{last}  (+{more} more finished)"),
+            };
+            // What the move changed is what the rows say: a replay moves a
+            // branch's distance from its base, a checkout buys the rungs that
+            // were waiting on it (§AR-005-capabilities.1), and a conflict
+            // handed over is a ticket that was not there before
+            // (§FS-005-dispatch.12).
+            self.ctx.recompute_behind();
+            self.ctx.recompute_capabilities();
+            self.reload_work_groups();
+            self.reload_work();
+            self.rebuild_view();
+        }
+        if changed {
+            self.reload_operations();
+        }
+        changed
     }
 
     /// The newest write across everything the last enumeration found: each
@@ -2370,6 +2600,14 @@ impl App {
                 &self.work,
                 &group.root,
             ));
+        }
+        // A job appearing is a directory event, and a job ending writes its
+        // outcome into its own (§FS-005-dispatch.17). Two stats and one per
+        // known job, in the same fixed handful this gate is built out of
+        // (§FS-005-dispatch.15.1) — never a walk.
+        fold(modified(&crate::seams::jobs::jobs_dir()));
+        for job in &self.jobs {
+            fold(modified(&job.dir));
         }
         newest
     }

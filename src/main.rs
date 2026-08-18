@@ -83,6 +83,9 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Command::Rebase(args) => return rebase::rebase(args),
         Command::Checkout(args) => return checkout::checkout(args),
         Command::Work(args) => return work::commands::work(args),
+        // A job outlives the interface that started it (§FS-005-dispatch.17), so
+        // it is answerable without one — and the supervisor itself is here.
+        Command::Job(args) => return ephor::seams::jobs::job(args),
         // Both read the site rather than the registry alone, and the self
         // pass reads neither — so neither loads the registry up front
         // (§FS-010-doctor).
@@ -188,6 +191,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         | Command::Rebase(_)
         | Command::Checkout(_)
         | Command::Work(_)
+        | Command::Job(_)
         | Command::Schema(_)
         | Command::Check(_)
         | Command::Capabilities(_)

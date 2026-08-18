@@ -164,6 +164,12 @@ pub struct Offer {
     pub requires: Vec<String>,
     #[serde(default)]
     pub confirm: bool,
+    /// It runs beneath the screen as a job rather than taking the terminal
+    /// (§FS-005-dispatch.17). An offer that needs no reader says so; the
+    /// default is the terminal, because an offer may be a pager or an editor
+    /// (§FS-006-project-interface.9).
+    #[serde(default)]
+    pub background: bool,
 }
 
 /// What a project offers, as a menu entry. The icon is the only thing ephor
@@ -190,6 +196,7 @@ impl Offer {
             // needs on disk it says through `requires` like everything else.
             requires_checkout: false,
             confirm: self.confirm,
+            background: self.background,
         }
     }
 }

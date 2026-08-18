@@ -21,6 +21,37 @@ use crate::work::runtime::watch::{Doing, Operation};
 
 use super::Action;
 
+/// One row of the board. Two kinds of operation stand here: what the runtime
+/// is at (§FS-005-dispatch.15), and what ephor is running itself
+/// (§FS-005-dispatch.17) — one cursor over both, because "what is going on"
+/// has one answer and the reader should not have to know which half of the
+/// machine is doing it.
+pub(crate) enum Row {
+    /// A job of ephor's own, while it runs. A job that ended is no longer an
+    /// operation: its outcome went to the reader and its record stays with the
+    /// item (§FS-005-dispatch.17).
+    Job(crate::seams::jobs::Job),
+    Op(Box<OpRow>),
+}
+
+impl Row {
+    /// What this row *is*, for keeping the cursor on it across a rebuild: the
+    /// job it is, or the execution root it is (§FS-005-dispatch.15.1).
+    fn key(&self) -> String {
+        match self {
+            Row::Job(job) => format!("job:{}", job.id),
+            Row::Op(row) => format!("root:{}", row.op.root.display()),
+        }
+    }
+
+    fn op(&self) -> Option<&OpRow> {
+        match self {
+            Row::Op(row) => Some(row),
+            Row::Job(_) => None,
+        }
+    }
+}
+
 /// One operation with the matter behind it, where the feed still carries
 /// one — resolved by the shell when the board is built, never while drawing.
 pub(crate) struct OpRow {
@@ -43,7 +74,7 @@ pub(crate) struct Repulsed {
 }
 
 pub(crate) struct OperationsScreen {
-    rows: Vec<OpRow>,
+    rows: Vec<Row>,
     /// Why there are no operations, where a runtime cannot run any — the
     /// workable rung's own sentence, shown rather than an empty screen that
     /// looks broken (§FS-005-dispatch.15).
@@ -54,7 +85,7 @@ pub(crate) struct OperationsScreen {
 }
 
 impl OperationsScreen {
-    pub fn new(rows: Vec<OpRow>, refusal: Option<String>) -> Self {
+    pub fn new(rows: Vec<Row>, refusal: Option<String>) -> Self {
         OperationsScreen {
             rows,
             refusal,
@@ -72,7 +103,7 @@ impl OperationsScreen {
     /// again — said here rather than left for the reader to guess, the way
     /// every other screen now says `; ops` (§FS-005-dispatch.15).
     pub fn footer(&self) -> &'static str {
-        " j/k move  enter matter/plan  e plan  o dashboard  r refresh  esc/; back"
+        " j/k move  enter matter/plan/log  e plan/log  o dashboard  r refresh  esc/; back"
     }
 
     /// Fresh rows from a rebuild, with the cursor still on the operation it
@@ -81,12 +112,12 @@ impl OperationsScreen {
     /// otherwise silently change what the next `enter` or `o` acts on — the
     /// same rule the tree keeps, keyed on the execution root, which is what a
     /// row of this board *is* (§FS-005-dispatch.15).
-    pub fn replace(&mut self, rows: Vec<OpRow>, refusal: Option<String>) {
-        let was = self.selected_row().map(|row| row.op.root.clone());
+    pub fn replace(&mut self, rows: Vec<Row>, refusal: Option<String>) {
+        let was = self.rows.get(self.selected).map(Row::key);
         self.rows = rows;
         self.refusal = refusal;
         self.selected = was
-            .and_then(|root| self.rows.iter().position(|row| row.op.root == root))
+            .and_then(|key| self.rows.iter().position(|row| row.key() == key))
             .unwrap_or_else(|| self.selected.min(self.rows.len().saturating_sub(1)));
         self.follow_selection();
     }
@@ -99,6 +130,11 @@ impl OperationsScreen {
     ) -> Repulsed {
         let mut found = Repulsed::default();
         for row in &mut self.rows {
+            // A job's liveness is its own lock, probed by the shell that owns
+            // the job list (§FS-005-dispatch.17); this is the runtime's half.
+            let Row::Op(row) = row else {
+                continue;
+            };
             let pulse = probe(&row.op.root);
             if pulse.live != row.op.live {
                 found.flipped = true;
@@ -120,11 +156,22 @@ impl OperationsScreen {
     /// tell "a run whose badges moved" from "a run that started somewhere
     /// this board is not showing" (§FS-005-dispatch.15.1).
     pub fn roots(&self) -> Vec<PathBuf> {
-        self.rows.iter().map(|row| row.op.root.clone()).collect()
+        self.rows
+            .iter()
+            .filter_map(Row::op)
+            .map(|row| row.op.root.clone())
+            .collect()
     }
 
     fn selected_row(&self) -> Option<&OpRow> {
-        self.rows.get(self.selected)
+        self.rows.get(self.selected).and_then(Row::op)
+    }
+
+    fn selected_job(&self) -> Option<&crate::seams::jobs::Job> {
+        match self.rows.get(self.selected) {
+            Some(Row::Job(job)) => Some(job),
+            _ => None,
+        }
     }
 
     fn selected_plan(&self) -> Option<PathBuf> {
@@ -138,10 +185,16 @@ impl OperationsScreen {
         4 + usize::from(self.refusal.is_some())
     }
 
-    /// Lines one operation takes: its own, one per ticket, and the finished
-    /// count where there is one.
-    fn row_lines(row: &OpRow) -> usize {
-        1 + row.op.tickets.len() + usize::from(row.op.done > 0 || row.op.cancelled > 0)
+    /// Lines one row takes: for a run, its own, one per ticket, and the
+    /// finished count where there is one; for a job, its own and the line
+    /// saying what it is doing right now (§FS-005-dispatch.17).
+    fn row_lines(row: &Row) -> usize {
+        match row {
+            Row::Job(_) => 2,
+            Row::Op(row) => {
+                1 + row.op.tickets.len() + usize::from(row.op.done > 0 || row.op.cancelled > 0)
+            }
+        }
     }
 
     /// Where an operation's first line sits in what [`OperationsScreen::lines`]
@@ -212,25 +265,41 @@ impl OperationsScreen {
                 Action::None
             }
             // The matter, where the feed still carries it; the plan where the
-            // operation has none (§FS-005-dispatch.15).
-            KeyCode::Enter | KeyCode::Char('l') => match self.selected_row() {
-                Some(row) => match &row.item {
-                    Some(item) => Action::OpenThread {
-                        item: item.clone(),
-                        or_url: true,
-                    },
-                    None => match self.selected_plan() {
-                        Some(plan) => Action::ReadPlan(plan),
-                        None => Action::None,
-                    },
+            // operation has none (§FS-005-dispatch.15). On a job it is the
+            // log — what the reader would have watched, kept
+            // (§FS-005-dispatch.17).
+            KeyCode::Enter | KeyCode::Char('l') => match self.selected_job() {
+                Some(job) => Action::ReadLog {
+                    path: job.log_path(),
+                    following: job.live,
                 },
-                None => Action::None,
+                None => match self.selected_row() {
+                    Some(row) => match &row.item {
+                        Some(item) => Action::OpenThread {
+                            item: item.clone(),
+                            or_url: true,
+                        },
+                        None => match self.selected_plan() {
+                            Some(plan) => Action::ReadPlan(plan),
+                            None => Action::None,
+                        },
+                    },
+                    None => Action::None,
+                },
             },
-            KeyCode::Char('e') => match self.selected_plan() {
-                Some(plan) => Action::ReadPlan(plan),
-                None => Action::SetMessage("No plan behind this row".to_string()),
+            KeyCode::Char('e') => match self.selected_job() {
+                Some(job) => Action::ReadLog {
+                    path: job.log_path(),
+                    following: job.live,
+                },
+                None => match self.selected_plan() {
+                    Some(plan) => Action::ReadPlan(plan),
+                    None => Action::SetMessage("No plan behind this row".to_string()),
+                },
             },
             KeyCode::Char('o') => match self.selected_row() {
+                // A job serves nothing to open: it writes a log, and that is
+                // what `e` is for (§FS-005-dispatch.17).
                 Some(row) => match &row.op.dashboard {
                     Some(url) => Action::OpenUrl(Some(url.clone())),
                     None => Action::SetMessage(
@@ -275,12 +344,37 @@ impl OperationsScreen {
 
         if self.rows.is_empty() {
             lines.push(Line::from(Span::styled(
-                "    nothing is running — a live run appears here on its own".to_string(),
+                "    nothing is running — a live run or job appears here on its own".to_string(),
                 dim,
             )));
         }
         for (index, row) in self.rows.iter().enumerate() {
             let selected = index == self.selected;
+            // What ephor is running itself (§FS-005-dispatch.17): one row and
+            // the line under it saying what the log last said, because
+            // "running" and "stuck" look identical without it.
+            let row = match row {
+                Row::Job(job) => {
+                    lines.push(Line::from(vec![
+                        Span::styled(format!("  {} ", if selected { "▸" } else { " " }), dim),
+                        Span::styled(
+                            format!("▶ {} · {}", job.record.project, job.record.description),
+                            if selected {
+                                Style::default().add_modifier(Modifier::BOLD)
+                            } else {
+                                Style::default()
+                            },
+                        ),
+                        Span::styled("   job · e reads it".to_string(), dim),
+                    ]));
+                    lines.push(Line::from(vec![
+                        Span::styled("        ⚙ ".to_string(), Style::default().fg(Color::Yellow)),
+                        Span::styled(job.says(), dim),
+                    ]));
+                    continue;
+                }
+                Row::Op(row) => row,
+            };
             let op = &row.op;
             let mut badges: Vec<String> = Vec::new();
             // What the row is, read off what its tickets say rather than off
@@ -445,6 +539,35 @@ mod tests {
         PathBuf::from("/w/demo/panta/forge-demo-17.rhei.md")
     }
 
+    /// Runs as board rows. The board is one cursor over two kinds of
+    /// operation (§FS-005-dispatch.17), and these tests are about the
+    /// runtime's kind.
+    fn rows(ops: Vec<OpRow>) -> Vec<Row> {
+        ops.into_iter().map(|op| Row::Op(Box::new(op))).collect()
+    }
+
+    /// A job of ephor's own, mid-flight (§FS-005-dispatch.17).
+    fn job_row() -> Row {
+        Row::Job(crate::seams::jobs::Job {
+            id: "20260818T090000.000Z-rebase".to_string(),
+            dir: PathBuf::from("/state/ephor/jobs/20260818T090000.000Z-rebase"),
+            record: crate::seams::jobs::Record {
+                version: 1,
+                project: "demo".to_string(),
+                item: Some("forge:demo/17".to_string()),
+                icon: "⤴".to_string(),
+                description: "rebase onto master (1582 behind as of Nov 21)".to_string(),
+                root: PathBuf::from("/w/demo"),
+                workspace: Some(PathBuf::from("/w/demo/you/ABC-42")),
+                steps: Vec::new(),
+                dossier: Vec::new(),
+                started: "2026-08-18T09:00:00Z".to_string(),
+            },
+            live: true,
+            ended: None,
+        })
+    }
+
     fn running_row() -> OpRow {
         OpRow {
             op: Operation {
@@ -501,7 +624,7 @@ mod tests {
     fn a_parked_row_waits_on_the_reader_rather_than_reading_as_claimed() {
         let mut row = claimed_row();
         row.op.tickets = vec![ticket("fix-gate-1", Doing::Waiting)];
-        let text = text(&OperationsScreen::new(vec![row], None), None);
+        let text = text(&OperationsScreen::new(rows(vec![row]), None), None);
         assert!(text.contains("waiting on you"), "{text}");
         assert!(!text.contains("claimed, not scheduled"), "{text}");
     }
@@ -525,7 +648,7 @@ mod tests {
     /// additionally (§FS-001-forge-interface.7, §FS-005-dispatch.15).
     #[test]
     fn a_running_operation_reads_whole() {
-        let screen = OperationsScreen::new(vec![running_row()], None);
+        let screen = OperationsScreen::new(rows(vec![running_row()]), None);
         let text = text(&screen, Some("Refreshing demo (1/3)…"));
         assert!(text.contains("⟳ Refreshing demo (1/3)…"), "{text}");
         assert!(text.contains("▶ demo · /w/demo/panta"), "{text}");
@@ -551,7 +674,7 @@ mod tests {
     fn a_dropped_ticket_says_a_run_died_not_waiting() {
         let mut row = claimed_row();
         row.op.tickets = vec![ticket("fix-gate-1", Doing::Dropped)];
-        let text = text(&OperationsScreen::new(vec![row], None), None);
+        let text = text(&OperationsScreen::new(rows(vec![row]), None), None);
         assert!(text.contains("a run died here"), "{text}");
         assert!(
             text.contains(
@@ -572,7 +695,7 @@ mod tests {
         let mut row = running_row();
         row.op.machine_unread =
             Some("no states.yaml — nothing judged queued or finished".to_string());
-        let text = text(&OperationsScreen::new(vec![row], None), None);
+        let text = text(&OperationsScreen::new(rows(vec![row]), None), None);
         assert!(
             text.contains("running · no states.yaml — nothing judged queued or finished"),
             "{text}"
@@ -583,7 +706,7 @@ mod tests {
     /// own words for freeing it — reported, never offered as a key.
     #[test]
     fn a_claim_is_reported_with_the_remedy() {
-        let screen = OperationsScreen::new(vec![claimed_row()], None);
+        let screen = OperationsScreen::new(rows(vec![claimed_row()]), None);
         let text = text(&screen, None);
         assert!(text.contains("✋ demo · /w/other/panta"), "{text}");
         assert!(text.contains("claimed, not scheduled"), "{text}");
@@ -615,7 +738,7 @@ mod tests {
     /// none; o opens the dashboard only where a live run published one.
     #[test]
     fn keys_go_to_the_matter_the_plan_and_the_dashboard() {
-        let mut screen = OperationsScreen::new(vec![running_row(), claimed_row()], None);
+        let mut screen = OperationsScreen::new(rows(vec![running_row(), claimed_row()]), None);
         match screen.handle_key(KeyCode::Enter) {
             Action::OpenThread { item, or_url } => {
                 assert_eq!(item.id, "forge:demo/17");
@@ -653,7 +776,7 @@ mod tests {
     #[test]
     fn the_pulse_patches_in_place_and_says_what_moved() {
         use crate::work::runtime::watch::Pulse;
-        let mut screen = OperationsScreen::new(vec![running_row()], None);
+        let mut screen = OperationsScreen::new(rows(vec![running_row()]), None);
         // Same liveness, moved badges: something changed, nothing flipped.
         let found = screen.repulse(|_| Pulse {
             live: true,
@@ -693,12 +816,12 @@ mod tests {
     /// (§FS-004-quick-actions.2).
     #[test]
     fn the_cursor_follows_the_operation_when_a_row_arrives_above_it() {
-        let mut screen = OperationsScreen::new(vec![claimed_row()], None);
+        let mut screen = OperationsScreen::new(rows(vec![claimed_row()]), None);
         match screen.handle_key(KeyCode::Enter) {
             Action::ReadPlan(_) => {}
             _ => panic!("the claim has no matter, so Enter opens its plan"),
         }
-        screen.replace(vec![running_row(), claimed_row()], None);
+        screen.replace(rows(vec![running_row(), claimed_row()]), None);
         // Still the claim, now the second row.
         assert_eq!(screen.selected, 1);
         match screen.handle_key(KeyCode::Enter) {
@@ -708,7 +831,7 @@ mod tests {
 
         // The operation is gone: the index stands, and the cursor lands on
         // whatever took its place.
-        screen.replace(vec![running_row()], None);
+        screen.replace(rows(vec![running_row()]), None);
         assert_eq!(screen.selected, 0);
     }
 
@@ -718,7 +841,7 @@ mod tests {
     /// (§FS-004-quick-actions.2).
     #[test]
     fn the_scroll_follows_the_selected_operation() {
-        let mut screen = OperationsScreen::new(vec![running_row(), claimed_row()], None);
+        let mut screen = OperationsScreen::new(rows(vec![running_row(), claimed_row()]), None);
         // Four header lines, then the running row's four (its own, two
         // tickets, the finished count), then the claim's two.
         assert_eq!(screen.row_offset(0), 4);
@@ -741,7 +864,7 @@ mod tests {
     #[test]
     fn a_rows_offset_is_where_that_row_actually_is() {
         for refusal in [None, Some("no runtime is bound".to_string())] {
-            let screen = OperationsScreen::new(vec![running_row(), claimed_row()], refusal);
+            let screen = OperationsScreen::new(rows(vec![running_row(), claimed_row()]), refusal);
             let rendered: Vec<String> = screen
                 .lines(None)
                 .iter()
@@ -760,6 +883,56 @@ mod tests {
                 rendered[screen.row_offset(1)].contains("✋ demo"),
                 "{rendered:?}"
             );
+        }
+    }
+
+    /// A job stands among the operations and stands first: it is what the
+    /// reader pressed a key for a moment ago, and a board that filed it under
+    /// the runtime's work would answer "did that start?" with a scroll
+    /// (§FS-005-dispatch.17).
+    #[test]
+    fn a_job_is_an_operation_and_reads_ahead_of_the_runtimes() {
+        let mut all = vec![job_row()];
+        all.extend(rows(vec![running_row()]));
+        let text = text(&OperationsScreen::new(all, None), None);
+        let job_at = text.find("rebase onto master").expect("the job");
+        let run_at = text.find("/w/demo/panta").expect("the run");
+        assert!(job_at < run_at, "{text}");
+        assert!(text.contains("job · e reads it"), "{text}");
+    }
+
+    /// A job's inspection is its log, wherever the run's would be its plan —
+    /// and following is asked for only while it is still writing.
+    #[test]
+    fn a_job_row_reads_its_log_and_follows_a_live_one() {
+        let mut screen = OperationsScreen::new(vec![job_row()], None);
+        match screen.handle_key(KeyCode::Char('e')) {
+            Action::ReadLog { path, following } => {
+                assert!(path.ends_with("log"), "{path:?}");
+                assert!(following, "a live job is followed");
+            }
+            _ => panic!("a job is read from its log, not its plan"),
+        }
+        match screen.handle_key(KeyCode::Enter) {
+            Action::ReadLog { .. } => {}
+            _ => panic!("Enter on a job is the same reading"),
+        }
+    }
+
+    /// The cursor stays on the operation it was on, whichever kind that is:
+    /// a run appearing above a job must not silently change what the next key
+    /// acts on (§FS-005-dispatch.15.1).
+    #[test]
+    fn the_cursor_keeps_the_job_it_was_on_when_a_run_appears_above_it() {
+        let mut screen = OperationsScreen::new(vec![job_row()], None);
+        assert_eq!(screen.selected, 0);
+        let mut all = rows(vec![running_row()]);
+        all.push(job_row());
+        screen.replace(all, None);
+        assert_eq!(screen.selected, 1, "still the job");
+        match screen.handle_key(KeyCode::Char('e')) {
+            Action::ReadLog { .. } => {}
+            _ => panic!("the cursor stayed on the job"),
         }
     }
 }

@@ -20,7 +20,8 @@
     {
       "icon": "🧪",
       "description": "run the tests",
-      "command": "just test"
+      "command": "just test",
+      "background": true
     }
   ],
   "work": {

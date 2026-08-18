@@ -118,6 +118,13 @@ pub struct ActionConfig {
     pub requires_checkout: bool,
     /// Ask before running it.
     pub confirm: bool,
+    /// It runs beneath the screen as a job rather than taking the terminal
+    /// (§FS-005-dispatch.17). The default is the terminal, because a menu
+    /// entry has always been allowed to *be* the reader's session — `lazygit`,
+    /// an editor, a pager (§FS-006-project-interface.9) — and one of those
+    /// started beneath the screen is a program nobody can type into. ephor's
+    /// own deterministic moves set it themselves (§FS-005-dispatch.12).
+    pub background: bool,
 }
 
 /// Who a piece of agent work would go to, resolved when the menu opens
@@ -172,6 +179,8 @@ struct RawAction {
     requires_checkout: bool,
     #[serde(default)]
     confirm: bool,
+    #[serde(default)]
+    background: bool,
 }
 
 impl TryFrom<RawAction> for ActionConfig {
@@ -236,6 +245,7 @@ impl TryFrom<RawAction> for ActionConfig {
             requires: raw.requires,
             requires_checkout: raw.requires_checkout,
             confirm: raw.confirm,
+            background: raw.background,
         })
     }
 }

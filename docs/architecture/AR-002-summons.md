@@ -46,3 +46,37 @@ offering or running: a summons whose rung is missing is rendered
 with the same sentence. Discovery-by-failure — spawning to find out — is
 reserved for the world's own errors, which are reported as the command's
 output, not as ephor's.
+
+## 5. Detached: the job
+
+A summons the reader is not watching runs as a **job** (§FS-005-dispatch.17):
+its own process, started and left. The executor is unchanged — the same `sh
+-c`, the same place resolution, the same `EPHOR_*` dossier, the same exit
+semantics — and what differs is only who holds the other end of the streams.
+
+A job is a directory under ephor's state, named for when it started and what
+it is: `job.json` (the steps, the site, the dossier, the matter it is about),
+`log` (the job's whole output, in order), `lock`, and `outcome.json` written
+at the end. Nothing outside this seam invents that layout, and nothing that
+reads a job reads anything else.
+
+**The supervisor is ephor.** `ephor job run <dir>` takes the lock, runs each
+step through this executor in `Mode::Interactive` — inheriting streams that
+are the log rather than a terminal, which is why no third mode is needed —
+and writes `outcome.json` on the way out. The interface starts it with
+`Command::process_group(0)` and does not wait: a new process group is what
+keeps the reader's Ctrl-C and the terminal's hangup off a job that was
+started precisely because nobody has to stay (§FS-005-dispatch.17).
+
+**Liveness is the lock, never the record.** The supervisor holds an exclusive
+flock on `lock` for exactly its own lifetime, and the operating system frees
+it however the process dies; a reader probes it non-blockingly, as it probes a
+runtime's execution root (§AR-007-runtime.1). `job.json` says a job was
+started, which is a different claim, and a job with no `outcome.json` and no
+lock is one that died — reported as that, never as running.
+
+**Steps, because the move was a sequence.** An entry that needs the branch
+workspace carries its checkout as the job's first step, with the directory
+verified between steps exactly as the interface verified it
+(§FS-006-project-interface.8); a step that fails ends the job there, and
+`outcome.json` names the step that did it.

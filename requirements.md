@@ -1053,6 +1053,10 @@ working tree, because that is the state resolving it needs, and the ticket says
 which repository, which files, and which two sides
 ([§2](#2-the-ticket-carries-what-ephor-knows-not-a-link-to-it)).
 
+A move that costs no model costs no screen either: the replay runs beneath
+the interface as a job, and what the reader would have watched is in its log
+([§17](#17-a-move-that-needs-nobody-runs-beneath-the-screen)).
+
 The rebase is the first of these, not the shape of the only one. Any recipe
 whose opening move is deterministic makes that move before it costs a model,
 and dispatches what is left over — which is also why the move has to be
@@ -1316,16 +1320,23 @@ moment the ticket's own state says it moved on, and is never read as
 running under a run that came later.
 
 **Watching only, and deliberately so.** The board starts nothing, stops
-nothing, and intervenes in nothing. Interfering with a live run, and
-starting one beneath the screen, are a later section: both need a summons
-mode this section does not have and a channel to the run that exists only
-while a run serves one, and a board that hinted at either would be promising
-what it cannot do.
+nothing, and intervenes in nothing — and it stays that way now that something
+*can* be started beneath the screen
+([§17](#17-a-move-that-needs-nobody-runs-beneath-the-screen)): what starts a
+job is the menu entry the reader pressed, and the board is only where it is
+then seen. Interfering with a live run remains out — it needs a channel to
+the run that exists only while a run serves one, and a board that hinted at
+it would be promising what it cannot do.
 
-**With no runtime bound, the board is the refresh row** — and that is the
-board being right, not broken (§REQ-001-boundary.1): an operation is a run,
-and where nothing can run there are none, said in the workable rung's own
-words (§FS-006-project-interface.10). The tickets themselves stay readable
+**With no runtime bound, the board holds the refresh row and ephor's own
+jobs** — and that is the board being right, not broken (§REQ-001-boundary.1):
+the operations a *runtime* has are runs, and where nothing can run there are
+none, said in the workable rung's own words (§FS-006-project-interface.10). A
+job needs no runtime to exist
+([§17](#17-a-move-that-needs-nobody-runs-beneath-the-screen)) — it is ephor
+running a command, which is the one thing that never depended on a binding —
+so it keeps its row while the runtime's half of the board says why it is
+empty. The tickets themselves stay readable
 exactly as everywhere else in dispatch: work state is read from the plan
 files on disk, that reading is the floor and is never removed, and where the
 bound runner itself can be asked for a sharper listing, its answer may
@@ -1435,6 +1446,84 @@ appends afterwards — a reopen, a second ask — is ordered after the last
 ticket that is **not** cancelled
 ([§5](#5-an-item-that-moved-reopens-its-work)), so ephor's own chain never
 hangs off abandoned work.
+
+### 17. A move that needs nobody runs beneath the screen
+
+Pressing a key for a deterministic move costs the whole interface for as long
+as the move takes. Replaying a forest onto its main branch is a fetch and a
+rebase per repository, and on a checkout weeks behind that is minutes of
+output — output that asks nothing, decides nothing, and is read afterwards if
+it is read at all. Meanwhile the watch is gone: the reader cannot look at the
+next item, cannot start the second move, cannot even see that the first one is
+still going, because the screen that would say so has been given away. Then it
+asks for a keypress to hand the screen back. The reader paid the interface for
+a command that never needed it
+([§12](#12-work-an-algorithm-can-finish-does-not-start-with-a-model)).
+
+So a menu entry that does not need the reader runs as a **job**: started
+beneath the screen, with the interface staying exactly where it was, and the
+job taking a row of its own among the operations
+([§15](#15-every-operation-is-visible-in-one-place)). What was a takeover
+becomes a line saying the work started and a row saying it is going.
+
+**Which entries these are, the entry says.** ephor's own deterministic moves
+are jobs by construction — the rebase is the whole argument of
+[§12](#12-work-an-algorithm-can-finish-does-not-start-with-a-model), and a
+move that costs no model has no reader to cost either. Everything a person or
+a project wrote keeps the terminal unless it asks otherwise, because a menu
+entry has always been allowed to *be* the reader's session — `lazygit`, an
+editor, a pager (§FS-006-project-interface.9) — and starting one of those
+beneath the screen would leave a program nobody can type into, waiting on a
+terminal it does not have. Which way an entry runs is therefore the entry's
+own word, and its default is the one that was always safe.
+
+**A job outlives the interface that started it.** It is its own process in its
+own process group, so quitting ephor does not take it down, and neither does
+closing the terminal: a move that needed nobody watching does not suddenly
+need somebody staying. This is the same property from the other side — work
+handed to the runtime already survives the screen (§FS-005-dispatch.4), and a
+move ephor runs itself should not be the fragile one.
+
+**Everything the reader would have watched is kept.** The job's output —
+what it wrote and what it complained about, whole and in order — goes to a
+log, and the log is the inspection: from the job's row on the board, from the
+work screen of the item it was started about, and from the command line. A
+job that is going says what it is doing right now, because "still running" and
+"stuck" are the same three words on a row, and the log is the difference.
+
+**Liveness is the lock, exactly as it is for a run.** A job holds one for as
+long as it runs, and the operating system releases it when the job dies,
+however it dies ([§15](#15-every-operation-is-visible-in-one-place)); the
+board probes it and never waits on it. Nothing consults a process table, and
+nothing believes a record that says a job started: a job ephor started and
+then crashed alongside is not running, and the lock says so without being
+asked.
+
+**The rows are found by looking, here too.** Jobs are read from where they are
+written, not from anything that remembers having written them, so a job
+started from another ephor — a second terminal, an earlier session that has
+since exited — is a row like any other, and a record with no job under it is
+history rather than a claim.
+
+**The chain travels with the job.** An entry that needs the item's branch
+workspace still gets the checkout first (§FS-004-quick-actions.7), inside the
+job and against the same verification: the directory is checked for rather
+than trusted (§FS-006-project-interface.8), and a checkout that did not make
+it ends the job there with what it said. A job is a sequence because the move
+was a sequence; it is not a way to run two unrelated things.
+
+**The outcome comes back to where the reader is looking.** A job ending is
+news exactly as a ticket parking is (§FS-005-dispatch.9): its one line lands
+on the screen being read, whatever screen that is. A job that has ended is no
+longer an operation and leaves the board — an inbox that accumulated every
+finished thing would be the pile this section exists to avoid — while its
+record stays with the item it was about, log and all, until it is old enough
+to be swept.
+
+**What the move hands over, it still hands over.** A rebase that stops in a
+conflict dispatches its ticket exactly as it did when the reader was watching
+([§12](#12-work-an-algorithm-can-finish-does-not-start-with-a-model)), and
+that ticket is a run with a row of its own. The job ends; the work does not.
 
 ## FS-006-project-interface: a project and ephor meet over one interface, in three homes
 
@@ -1622,7 +1711,10 @@ what ephor itself recognized first (§FS-004-quick-actions.3), then the
 project's offers, then the person's own — and where two entries share an id,
 the person's beats the project's beats the shipped one. An offer is invoked
 by a person, runs as a summons (§3), and is refused with its reason where
-its requirements do not hold (§FS-004-quick-actions.2).
+its requirements do not hold (§FS-004-quick-actions.2). It takes the reader's
+terminal while it runs, which is what lets an offer be a pager or an editor —
+and an offer that needs none of that says so, and runs beneath the screen as a
+job instead (§FS-005-dispatch.17).
 
 **Who does an action is the project's to default.** Work that needs judgment
 goes to a hand (§FS-005-dispatch.14), and `work.hands` maps an action's id to

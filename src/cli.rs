@@ -62,6 +62,8 @@ pub enum Command {
     Checkout(CheckoutArgs),
     /// Hand items to the agent runtime, and see what came of it.
     Work(WorkArgs),
+    /// What ephor is running beneath the screen, and what it wrote.
+    Job(JobArgs),
     /// What a project can do, rung by rung, and why a rung is missing.
     #[command(visible_alias = "caps")]
     Capabilities(CapabilitiesArgs),
@@ -70,6 +72,51 @@ pub enum Command {
     /// Interactive inbox: navigate the feed, open items, mark them done.
     #[command(alias = "inbox")]
     Tui,
+}
+
+/// `ephor job` (§FS-005-dispatch.17): a move that needs nobody watching runs
+/// beneath the screen, and this is the same job from the command line — what is
+/// going, what it wrote, and the supervisor the interface itself starts.
+#[derive(Args, Debug)]
+pub struct JobArgs {
+    #[command(subcommand)]
+    pub command: Option<JobCommand>,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum JobCommand {
+    /// What is running, and what recently ran.
+    List(JobListArgs),
+    /// Everything one job wrote, in order.
+    Log(JobLogArgs),
+    /// Run a job that has already been written down. This is the supervisor
+    /// the interface starts (§AR-002-summons.5); its own output is the log, so
+    /// running it by hand prints what the job would have written.
+    #[command(hide = true)]
+    Run(JobRunArgs),
+}
+
+#[derive(Args, Debug, Default)]
+pub struct JobListArgs {
+    /// Only what is running now.
+    #[arg(long)]
+    pub live: bool,
+
+    /// Emit raw JSON instead of a table.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct JobLogArgs {
+    /// The job, as `ephor job list` names it.
+    pub id: String,
+}
+
+#[derive(Args, Debug)]
+pub struct JobRunArgs {
+    /// The job directory, holding the record written before it started.
+    pub dir: std::path::PathBuf,
 }
 
 /// `ephor capabilities` (§FS-010-doctor.2): the ladder of

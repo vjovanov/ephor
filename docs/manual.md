@@ -427,7 +427,10 @@ verbs, task stores, and offers — menu entries you invoke.
 
 An offer is a menu entry in the same shape yours have (§7.2), selected by the
 same `when` language and gated by the same rungs — it sits between the shipped
-entries and your own, and yours wins on a shared `id` (§7.6).
+entries and your own, and yours wins on a shared `id` (§7.6). It takes the
+terminal while it runs, which is what lets an offer be a pager or an editor;
+one that needs no reader says `"background": true` and runs as a job instead
+([§8.14](#814-jobs--what-ephor-runs-beneath-the-screen)).
 
 Every command a block binds is a **summons**: it runs with `sh -c` in the place
 the binding names (`cwd` is `root` — the default — or `repo:<name>`), it is
@@ -1189,6 +1192,7 @@ difference is only whether anyone expects to want their own.
 | `requires` | capability rungs it needs (§7.5); an unmet one shows its reason |
 | `requires_checkout` | the action needs the item's branch workspace on disk |
 | `confirm` | ask before running it: the second Enter on the row runs it |
+| `background` | run it beneath the interface as a job rather than taking the terminal (§8.14) |
 
 `kinds` is the older spelling of `when.kinds` and still works; `when` is the
 whole language — roles, gate, `needs_response`, sources, `behind` — so an
@@ -1237,6 +1241,14 @@ branch: the item is matched to its registry branch, and if that branch
 workspace exists on disk the command runs there; otherwise it runs in the
 project root. The interface leaves the screen entirely while it runs — so
 `lazygit`, an editor, a pager all work — and returns on Enter.
+
+**Unless the entry says it needs nobody.** `"background": true` runs it as a
+job instead: the interface stays where it is, the job gets a row on the
+operations board, and its output goes to a log you can read then or later
+([§8.14](#814-jobs--what-ephor-runs-beneath-the-screen)). The default is the
+terminal precisely because of the sentence above — an editor started beneath
+the screen is a program nobody can type into. ephor's own `⤴ rebase` entries
+set it themselves: a replay asks nothing.
 
 ### 7.3 The environment
 
@@ -1929,6 +1941,7 @@ ledger goes on saying the item moved past it.
 | `c` | take a ticket back (§8.7.1) |
 | `R` | hand **this item's plan** to the runtime |
 | `e` | read the plan in `$EDITOR` |
+| `L` | read the newest job ephor ran here (§8.14), where it ran one |
 | `o` | open the item in the browser |
 | `j` `k` | move between recipes · `f`/`b` page · `;` ops · `Esc` back |
 
@@ -1987,7 +2000,7 @@ tells you what it answered. It never rewrites a `**State:**` line by hand,
 because the plan language reserves a ticket's state to the runtime's verbs
 once the ticket is written (the compare-and-swap, the artifact checks, the
 callbacks, the audit trail;
-[§DA-005](decisions/architectural/DA-005-cancel-is-the-runtimes-move.md)).
+[§DA-005-cancel-is-the-runtimes-move](decisions/architectural/DA-005-cancel-is-the-runtimes-move.md)).
 So with no runtime bound `c` is not offered and says why, exactly as `R` does;
 the plan stays hand-editable for anyone who wants to make the move themselves.
 
@@ -2168,6 +2181,10 @@ has to rewrite what the remote already has. It is `--force-with-lease`, so a
 remote that moved under you refuses the push instead of overwriting somebody
 else's commits.
 
+The `⤴ rebase onto …` entries in the action menu run exactly this command,
+and run it as a job: the interface stays where it is and the replay is watched
+from its row ([§8.14](#814-jobs--what-ephor-runs-beneath-the-screen)).
+
 Give the `rebase` recipe `"state": "rebase"` in your `status.json` for tickets
 to start there; with the shipped two-state machine they start in `fix`, where
 the brief tells the agent to run `ephor rebase` itself and resolve what it
@@ -2242,6 +2259,16 @@ a subtask the runtime split off reads from the plan like its parent —
 
 **Watch-only.** The board starts nothing, stops nothing, and touches no run —
 those need machinery a watcher does not have, and belong to a later chapter.
+What ephor runs *itself* is started by the menu entry you pressed and merely
+shown here ([§8.14](#814-jobs--what-ephor-runs-beneath-the-screen)); jobs list
+first, above the runtime's roots, because a job is usually the thing you asked
+for a moment ago:
+
+```
+  operations
+  ▸ ▶ demo · rebase onto master (1582 behind as of Nov 21)   job · e reads it
+        ⚙ replaying substratevm-enterprise-gcs onto origin/master
+```
 
 **Rows are execution roots, and liveness is the runtime's lock.** The runtime
 holds a lock per execution root for exactly as long as a run is live there,
@@ -2280,8 +2307,8 @@ nothing judged queued or finished`.
 | Key | Does |
 |---|---|
 | `j` `k` | move between operations (the view follows the selection) |
-| `Enter` | the matter's thread — or the plan, where the operation has no matter |
-| `e` | read the plan in `$EDITOR` |
+| `Enter` | the matter's thread — or the plan, where the operation has no matter — or, on a job, its log |
+| `e` | read the plan in `$EDITOR`; on a job, its log in `$PAGER` |
 | `o` | open the run's dashboard, where a live run published one |
 | `r` | refresh underneath, exactly as everywhere else |
 | `Esc` `;` `q` | back to where you were |
@@ -2289,8 +2316,9 @@ nothing judged queued or finished`.
 The refresh reports here **additionally** — the header line on whatever screen
 you are reading keeps carrying it
 ([§FS-001-forge-interface.7](../requirements.md#7-a-fetch-runs-beneath-the-reading-never-in-front-of-it)).
-With no runtime bound the board is the refresh row plus the workable rung's
-sentence, which is the shape most installations see — correct, not broken.
+With no runtime bound the board is the refresh row, ephor's own jobs, and the
+workable rung's sentence, which is the shape most installations see — correct,
+not broken. A job needs no runtime: it is ephor running a command.
 
 The board, and every work badge in the feed, keeps itself current: between
 key reads ephor glances at the plans and run artifacts it already knows by
@@ -2316,6 +2344,69 @@ The walk runs when the board is built (opened, or rebuilt because the
 glance saw something move), never on the bare 2-second tick, and is bounded
 by the registry's own places: between builds the tick stats only what the
 last walk found.
+
+### 8.14 Jobs — what ephor runs beneath the screen
+
+Some menu entries need nobody watching. A replay across a poly-repo checkout
+weeks behind its base is minutes of output that asks nothing and decides
+nothing; handing it the whole interface costs you the watch and then asks for
+a keypress to give the screen back. Those entries run as **jobs**
+([§FS-005-dispatch.17](../requirements.md#17-a-move-that-needs-nobody-runs-beneath-the-screen)).
+
+Press `⤴ rebase onto master` and the menu closes onto the row you were on,
+with one line in the status bar:
+
+```
+⤴ rebase onto master (1582 behind as of Nov 21, 2025): started · ; to watch
+```
+
+**It is its own process, in its own process group.** Quitting ephor does not
+take it down, and neither does closing the terminal — a move that needed
+nobody watching does not suddenly need somebody staying. Start one, quit,
+come back tomorrow: `ephor job list` still answers.
+
+**Watch it from `;`.** A live job is a row on the operations board with the
+last line of its log under it, so *still going* and *stuck* are not the same
+word. `e` or `Enter` on the row opens the log in `$PAGER` — with `less` that
+is `less +F`, following the job as it writes; `q` stops following, `F`
+resumes.
+
+**When it ends, it says so where you are.** Whatever screen you are reading,
+the outcome lands in the status bar, and the row leaves the board — an inbox
+of every finished thing is the pile the board exists to avoid. What the move
+changed is picked up with it: the branch's distance from its base is
+re-measured, and a conflict handed over is a ticket that was not there before.
+
+**Afterwards it stays with the item.** The work screen (`w`) lists what ephor
+ran there, with what each came to, and `L` reads the newest one's log.
+Records are swept a week after they end.
+
+```bash
+ephor job list          # what is running, and what recently ran
+ephor job list --live   # only what is running now
+ephor job list --json   # the same, for a script
+ephor job log <id>      # everything one job wrote, in order
+```
+
+A job is a directory under `~/.local/state/ephor/jobs/` — `job.json` (what it
+is), `log` (what it wrote), `lock`, and `outcome.json` when it ends — and that
+is the whole record. **Liveness is the lock**, probed and never waited on,
+exactly as it is for a run: a job that died holds no lock and wrote no
+outcome, and is reported as *died* rather than as running, because "it
+started" is a claim about the past. Jobs are found by listing that directory,
+so one started by another ephor — a second terminal, a session that has since
+exited — is a row like any other.
+
+**The chain travels with the job.** An entry that needs the branch workspace
+runs its `checkout` as the job's first step, and the directory the checkout
+was supposed to make is verified rather than trusted: if it did not appear,
+the job ends there naming the step, and the action after it never runs.
+
+**Your own entries keep the terminal unless they ask not to** — `lazygit`, an
+editor, a pager are legitimate menu entries, and one of those started beneath
+the screen is a program nobody can type into. Write `"background": true` on an
+action or an offer that needs no reader (§7.2). ephor's own `⤴ rebase` entries
+set it themselves.
 
 ---
 
@@ -2506,6 +2597,7 @@ ephor refresh | status | feed | mark-read | failures      # the feed
 ephor rebase | checkout                                   # the checkout
 ephor check | validate --manifest | schema                # the project interface
 ephor work list | dispatch | ask | sync | run | forget | states
+ephor job list | log <id>                                 # what runs beneath the screen
 ephor tui                                                 # alias: inbox
 ```
 
@@ -2524,7 +2616,7 @@ all — a checkout is enough, which is why CI can run them
 | `EPHOR_HOME` | legacy config root (`$EPHOR_HOME/config/*.json`) |
 | `XDG_STATE_HOME`, `XDG_CONFIG_HOME` | where state and config live |
 | `NO_COLOR` | plain output |
-| `PAGER`, `EDITOR` | used by quick actions and `e` on the work screen |
+| `PAGER`, `EDITOR` | used by quick actions, `e` on the work screen, and reading a job's log |
 
 ### 11.3 Files
 
@@ -2535,6 +2627,7 @@ all — a checkout is enough, which is why CI can run them
 | `~/.local/state/ephor/feed/*.json` | one cache per project |
 | `~/.local/state/ephor/seen.json` | unread tracking |
 | `~/.local/state/ephor/work.json` | the work ledger |
+| `~/.local/state/ephor/jobs/<id>/` | one job: `job.json`, `log`, `lock`, `outcome.json` (§8.14) |
 | `~/config/secrets/ephor/*.json` | provider secrets |
 | `<forest root>/ephor.json` | the project's own manifest, if it wrote one (§4.2.1) |
 | `<checkout>/panta/` | work roots: plans, state machine, runtime artifacts |
@@ -2593,7 +2686,7 @@ declared `outputs:` on every transition out of it, the edge into `cancelled`
 included, so a ticket parked in a state whose artifacts were never written
 cannot be moved through the verb until the runtime exempts cancellation the
 way it exempts its own failure routes. ephor does not edit around it
-([§DA-005](decisions/architectural/DA-005-cancel-is-the-runtimes-move.md));
+([§DA-005-cancel-is-the-runtimes-move](decisions/architectural/DA-005-cancel-is-the-runtimes-move.md));
 the plan is yours to hand-edit if you must.
 
 **An agent never runs.** ephor writes tickets; the runtime runs them.

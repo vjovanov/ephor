@@ -173,7 +173,14 @@ impl World {
 
     /// `ephor`, as a person runs it, with this world as its whole environment.
     pub fn ephor(&self) -> assert_cmd::Command {
-        let mut command = assert_cmd::Command::cargo_bin("ephor").expect("the ephor binary");
+        assert_cmd::Command::from_std(self.ephor_raw())
+    }
+
+    /// The same binary in the same world, as a plain command — for a case that
+    /// has to point its streams somewhere, the way ephor points a job
+    /// supervisor's at the job's log (§FS-005-dispatch.17).
+    pub fn ephor_raw(&self) -> std::process::Command {
+        let mut command = std::process::Command::new(assert_cmd::cargo::cargo_bin("ephor"));
         command
             .env(
                 "PATH",

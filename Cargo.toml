@@ -57,6 +57,10 @@ path = "e2e/cases/E2E-008-operations.rs"
 name = "e2e_007_rebase_onto_the_published_copy"
 path = "e2e/cases/E2E-007-rebase-onto-the-published-copy.rs"
 
+[[test]]
+name = "e2e_009_jobs"
+path = "e2e/cases/E2E-009-jobs.rs"
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }

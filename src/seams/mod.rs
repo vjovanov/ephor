@@ -12,5 +12,6 @@ pub mod checks;
 pub mod commands;
 pub mod dossier;
 pub mod gate;
+pub mod jobs;
 pub mod summons;
 pub mod tasks;

@@ -18,8 +18,9 @@ no IO, no vendor, no product.
   literal; nothing else does.
 - **seams** — what binds and runs: binding resolution
   (site configuration over manifest over probe, §FS-006-project-interface.1),
-  the summons executor and answer reader, and the verb modules — checks,
-  gate, checkout, task stores, runtime (§AR-007-runtime).
+  the summons executor and answer reader, its detached form — the job
+  (§AR-002-summons.5) — and the verb modules: checks, gate, checkout, task
+  stores, runtime (§AR-007-runtime).
 - **engine** — the pipeline of §AR-008-pipeline, the cache, refresh, and the
   work ledger's operations.
 - **surfaces** — CLI, TUI, status widget, JSON output. Presentation only;
