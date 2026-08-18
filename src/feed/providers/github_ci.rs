@@ -15,7 +15,9 @@ use crate::feed::model::{Item, ItemKind};
 use crate::feed::provider::{
     command_exists, run_json, Provider, ProviderContext, ProviderError, ProviderResult,
 };
-use crate::feed::providers::{gh_command, parse_config, parse_github_time, show_failing_checks};
+use crate::feed::providers::{
+    gh_command, parse_config, parse_github_time, restart_actions, show_failing_checks,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -73,7 +75,9 @@ impl Provider for GithubCi {
         if !command_exists("gh") {
             return Vec::new();
         }
-        self.failing_check_actions(item)
+        let mut entries = self.failing_check_actions(item);
+        entries.extend(restart_actions(self.config.host.as_deref(), item));
+        entries
     }
 
     fn fetch(&self, ctx: &ProviderContext) -> ProviderResult {

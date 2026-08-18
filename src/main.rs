@@ -80,6 +80,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Command::Refresh(args) => return feed::commands::refresh(args),
         Command::MarkRead(args) => return feed::commands::mark_read(args, cli.all),
         Command::Failures(args) => return feed::commands::failures(args),
+        Command::Restart(args) => return feed::commands::restart(args),
         Command::Rebase(args) => return rebase::rebase(args),
         Command::Checkout(args) => return checkout::checkout(args),
         Command::Work(args) => return work::commands::work(args),
@@ -188,6 +189,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         | Command::Refresh(_)
         | Command::MarkRead(_)
         | Command::Failures(_)
+        | Command::Restart(_)
         | Command::Rebase(_)
         | Command::Checkout(_)
         | Command::Work(_)

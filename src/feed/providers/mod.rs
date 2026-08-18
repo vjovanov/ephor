@@ -161,7 +161,9 @@ pub(crate) fn enabled() -> bool {
 
 pub(crate) use crate::seams::summons::quote as shell_quote;
 
-pub(crate) use github::{gh_command, github_login, parse_github_time, show_failing_checks};
+pub(crate) use github::{
+    gh_command, github_login, parse_github_time, restart_actions, show_failing_checks,
+};
 
 pub(crate) fn parse_config<T: serde::de::DeserializeOwned>(
     config: &Value,
@@ -207,12 +209,24 @@ mod tests {
             json!({ "provider": "github-ci", "repos": ["acme/widget"] }),
         ];
         // The github-ci block answers for its own item — where `gh` is
-        // installed to answer at all (§FS-004-quick-actions.2).
+        // installed to answer at all (§FS-004-quick-actions.2): the failures
+        // and both restarts (§FS-004-quick-actions.9).
         let offered = quick_actions(&blocks, &failing_ci_item("github-ci"));
-        assert_eq!(offered.len(), usize::from(command_exists("gh")));
-        assert!(offered
-            .iter()
-            .all(|action| action.description == "see the CI failures"));
+        if command_exists("gh") {
+            assert_eq!(
+                offered
+                    .iter()
+                    .map(|action| action.description.as_str())
+                    .collect::<Vec<_>>(),
+                [
+                    "see the CI failures",
+                    "restart what failed",
+                    "restart the whole gate"
+                ]
+            );
+        } else {
+            assert!(offered.is_empty());
+        }
         // The same item attributed to another source asks that source, which
         // knows nothing about it.
         assert!(quick_actions(&blocks, &failing_ci_item("custom-status")).is_empty());

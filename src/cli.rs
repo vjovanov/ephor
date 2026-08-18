@@ -56,6 +56,8 @@ pub enum Command {
     MarkRead(MarkReadArgs),
     /// Show what failed under a pull request's red gate.
     Failures(FailuresArgs),
+    /// Run a pull request's gate again — everything, or only what is not green.
+    Restart(RestartArgs),
     /// Replay a checkout's branch onto its main branch.
     Rebase(RebaseArgs),
     /// Make the branch workspace that is not checked out yet.
@@ -484,6 +486,34 @@ pub struct FailuresArgs {
     /// Pull request number.
     #[arg(long)]
     pub number: String,
+}
+
+/// `ephor restart` (§FS-004-quick-actions.9): ask a pull request's gate to run
+/// again. The scope is stated rather than inferred — the cheap re-run and the
+/// expensive one are different questions, and one of them spends an hour of a
+/// shared machine pool.
+#[derive(Args, Debug)]
+pub struct RestartArgs {
+    /// Project the pull request belongs to.
+    #[arg(long)]
+    pub project: String,
+
+    /// Source that reported it (the provider name).
+    #[arg(long)]
+    pub source: String,
+
+    /// Repository the pull request lives in.
+    #[arg(long)]
+    pub repo: String,
+
+    /// Pull request number.
+    #[arg(long)]
+    pub number: String,
+
+    /// How much to run again: `failed` (the default — the failing gate and
+    /// everything downstream of it) or `all`.
+    #[arg(long, default_value = "failed")]
+    pub scope: String,
 }
 
 /// `ephor rebase` (§FS-004-quick-actions.6): fetch, and replay every

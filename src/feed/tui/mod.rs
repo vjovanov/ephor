@@ -2894,10 +2894,16 @@ mod tests {
         // ahead of it (§FS-004-quick-actions.3) — where `gh` is installed for
         // it to be offered at all.
         let menu = ctx.actions_for(&ci, &[]);
-        let quick = usize::from(crate::feed::provider::command_exists("gh"));
+        // The failures entry and both restarts (§FS-004-quick-actions.9),
+        // where `gh` is installed for any of them to be offered.
+        let quick = if crate::feed::provider::command_exists("gh") {
+            3
+        } else {
+            0
+        };
         assert_eq!(menu.len(), quick + 1);
         assert_eq!(menu.last().unwrap().description, "run the gate");
-        if quick == 1 {
+        if quick > 0 {
             assert_eq!(menu[0].description, "see the CI failures");
         }
     }

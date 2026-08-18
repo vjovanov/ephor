@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/vjovanov/ephor/schemas/forge/v1",
   "title": "ephor out-of-process forge protocol",
-  "description": "The protocol of FS-001-forge-interface.2: an executable named 'ephor-forge-<name>', resolved on PATH, invoked as 'ephor-forge-<name> <subcommand>' with a request as JSON on stdin and the answer as JSON on stdout. Diagnostics go to stderr; a non-zero exit is a failure, never an empty answer (FS-001-forge-interface.6). Subcommands: capabilities, pull-requests, issues, failures, resolve-task, react, reply. An implementation answers the subcommands whose capabilities it declared; ephor never calls an undeclared one. This document defines the request shape and one response shape per subcommand; message, gate, and failure shapes are the answer envelope's $defs, referenced here so the two transports cannot drift (FS-001-forge-interface.2).",
+  "description": "The protocol of FS-001-forge-interface.2: an executable named 'ephor-forge-<name>', resolved on PATH, invoked as 'ephor-forge-<name> <subcommand>' with a request as JSON on stdin and the answer as JSON on stdout. Diagnostics go to stderr; a non-zero exit is a failure, never an empty answer (FS-001-forge-interface.6). Subcommands: capabilities, pull-requests, issues, failures, restart, resolve-task, react, reply. An implementation answers the subcommands whose capabilities it declared; ephor never calls an undeclared one. This document defines the request shape and one response shape per subcommand; message, gate, and failure shapes are the answer envelope's $defs, referenced here so the two transports cannot drift (FS-001-forge-interface.2).",
   "$defs": {
     "request": {
       "type": "object",
@@ -13,8 +13,12 @@
           "description": "The provider block from the person's feed configuration, verbatim. Project keys, repository slugs, the user's address — the forge's business, opaque to ephor (FS-001-forge-interface.4)."
         },
         "timeout_seconds": { "type": "integer", "minimum": 1 },
-        "repo": { "type": "string", "description": "failures only: the repository whose gate is being asked." },
-        "number": { "type": "string", "description": "failures only: the pull request whose gate is being asked." },
+        "repo": { "type": "string", "description": "failures and restart: the repository whose gate is being asked about." },
+        "number": { "type": "string", "description": "failures and restart: the pull request whose gate is being asked about." },
+        "scope": {
+          "enum": ["failed", "all"],
+          "description": "restart only: how much of the gate to run again \u2014 only what is not green, or everything it covers. The caller's word, never the implementation's guess: the two are different asks and one of them spends an hour of a shared machine pool (FS-004-quick-actions.9)."
+        },
         "tickets": {
           "type": "array",
           "items": { "type": "string" },
@@ -37,6 +41,7 @@
         "conversation": { "type": "boolean" },
         "gate": { "type": "boolean" },
         "failures": { "type": "boolean" },
+        "restart": { "type": "boolean" },
         "issues": { "type": "boolean" },
         "tasks": { "type": "boolean" },
         "reactions": { "type": "boolean" },
@@ -126,6 +131,19 @@
       "type": "array",
       "items": { "$ref": "https://github.com/vjovanov/ephor/schemas/answer/v1#/$defs/failure" },
       "description": "What failed under the red gate of request.repo/request.number. The empty array is an answer — 'the gate is red and nothing failed', a gate blocked on approvals or unstarted jobs — and ephor then shows the blockers it already has. Asked on demand, never during refresh (FS-001-forge-interface.1)."
+    },
+    "restart_response": {
+      "type": "object",
+      "properties": {
+        "asked": { "type": "integer", "minimum": 0, "description": "How many jobs the forge was asked to run again. Zero is an answer \u2014 nothing here needed restarting \u2014 and not a failure. Omit it where the forge takes the request and does not say how much it scheduled: that is an ordinary whole-gate start, and reporting it as zero would read as a restart that found nothing to do." },
+        "note": { "type": "string", "description": "The forge's own sentence about what it did, shown verbatim. What answers the reader where 'asked' is omitted." },
+        "skipped": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "What could not be restarted, one line each: an external status somebody else's system wrote, a run too old to re-run. Reported rather than swallowed \u2014 a restart that silently did three quarters of the job is worse than one that says which quarter it skipped (FS-001-forge-interface.1)."
+        }
+      },
+      "description": "What the restart of request.repo/request.number actually asked for, at request.scope. A gate is minutes from saying anything itself, so this has to stand on its own until then (FS-004-quick-actions.9)."
     },
     "resolve_task_response": {
       "type": "object",

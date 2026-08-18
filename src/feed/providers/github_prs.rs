@@ -36,7 +36,7 @@ use crate::feed::provider::{
     command_exists, run_json, Provider, ProviderContext, ProviderError, ProviderResult,
 };
 use crate::feed::providers::{
-    gh_command, github_login, parse_config, parse_github_time, show_failing_checks,
+    gh_command, github_login, parse_config, parse_github_time, restart_actions, show_failing_checks,
 };
 use crate::forge::{policy, Message, PullRequest, Reason, Review, Role, Thread};
 
@@ -472,12 +472,20 @@ impl Provider for GithubPrs {
     /// reachable through the `github-ci` item as well, and the reader should
     /// not have to know which of the two rows carries the action.
     fn quick_actions(&self, item: &Item) -> Vec<ActionConfig> {
-        let red = Gate::of(item).is_some_and(|gate| gate.is_red());
-        let identified = item.repo().is_some() && item.number().is_some();
-        if !red || !identified || !command_exists("gh") {
+        if !command_exists("gh") {
             return Vec::new();
         }
-        vec![show_failing_checks(self.config.host.as_deref())]
+        let red = Gate::of(item).is_some_and(|gate| gate.is_red());
+        let identified = item.repo().is_some() && item.number().is_some();
+        let mut entries = Vec::new();
+        if red && identified {
+            entries.push(show_failing_checks(self.config.host.as_deref()));
+        }
+        // Restarting is offered on a gate that is not red too — that is the
+        // half of it the reader reaches for when the merge commit itself is
+        // suspect (§FS-004-quick-actions.9).
+        entries.extend(restart_actions(self.config.host.as_deref(), item));
+        entries
     }
 
     fn fetch(&self, ctx: &ProviderContext) -> ProviderResult {
@@ -666,28 +674,41 @@ mod tests {
     }
 
     /// The action belongs to the row showing the red count, not to a separate
-    /// CI item the reader has to go and find (§FS-004-quick-actions.4).
+    /// CI item the reader has to go and find (§FS-004-quick-actions.4) — and
+    /// beside it, the two restarts, offered by what each of them can do
+    /// (§FS-004-quick-actions.9).
     #[test]
-    fn a_pull_request_with_a_red_gate_is_offered_its_log() {
+    fn a_pull_request_with_a_red_gate_is_offered_its_log_and_both_restarts() {
         let provider = provider();
-        // Only where `gh` is installed to answer at all — the same condition
-        // the github-ci item's action is under (§FS-004-quick-actions.2).
-        let expected = usize::from(command_exists("gh"));
-        assert_eq!(
-            provider.quick_actions(&pr(Some(gate(1, 2)))).len(),
-            expected
-        );
-        if expected == 1 {
-            assert_eq!(
-                provider.quick_actions(&pr(Some(gate(1, 2))))[0].description,
-                "see the CI failures"
-            );
+        let described = |item: &Item| -> Vec<String> {
+            provider
+                .quick_actions(item)
+                .into_iter()
+                .map(|action| action.description)
+                .collect()
+        };
+        // Only where `gh` is installed to answer at all: an entry that can
+        // print nothing but `gh: not found` is worse than no entry
+        // (§FS-004-quick-actions.2).
+        if !command_exists("gh") {
+            assert!(described(&pr(Some(gate(1, 2)))).is_empty());
+            return;
         }
-
-        // A green gate, and a pull request whose gate was never recorded, have
-        // nothing to show.
-        assert!(provider.quick_actions(&pr(Some(gate(3, 0)))).is_empty());
-        assert!(provider.quick_actions(&pr(None)).is_empty());
+        assert_eq!(
+            described(&pr(Some(gate(1, 2)))),
+            [
+                "see the CI failures",
+                "restart what failed",
+                "restart the whole gate"
+            ]
+        );
+        // A green gate has no failures to read and nothing failing to re-run,
+        // and still has the whole gate to run again — the entry for a merge
+        // commit that is itself suspect (§FS-004-quick-actions.9).
+        assert_eq!(described(&pr(Some(gate(3, 0)))), ["restart the whole gate"]);
+        // A pull request whose gate was never recorded has nothing to restart:
+        // the fact is the item's, not the project's.
+        assert!(described(&pr(None)).is_empty());
     }
 
     /// §FS-001-forge-interface.1: the review the reader gave, picked out of

@@ -17,6 +17,8 @@ use serde_json::{json, Value};
 
 use crate::error::{EphorError, Result};
 use crate::feed::config::ActionConfig;
+use crate::feed::gate::Scope;
+use crate::feed::model::Item;
 use crate::feed::provider::{run_capture, run_json, ProviderContext, ProviderError};
 use crate::feed::react::emoji_for_content;
 
@@ -136,6 +138,119 @@ const SHOW_FAILING_CHECKS: &str = r##"{
       done
 } 2>&1 | ${PAGER:-less -R}
 "##;
+
+/// Run a pull request's checks again (§FS-004-quick-actions.9).
+///
+/// Checks on a pull request are workflow runs against its head commit, so the
+/// head is resolved first and the runs are asked for by it — `gh run rerun`
+/// takes a run, and nothing on the pull request itself names one. `--failed`
+/// is GitHub's own `rerun-failed-jobs`, which is why *restart what failed*
+/// asks for exactly the jobs that failed rather than for something ephor
+/// reconstructed.
+///
+/// Only completed runs are asked: one still in flight is already running, and
+/// re-running it is refused by the forge rather than by a guess here. And a
+/// check that is **not** a workflow run — a status somebody else's system
+/// wrote onto the commit — cannot be re-run through this API at all, so it is
+/// named rather than silently left out: a key that quietly did three quarters
+/// of the job is worse than one that says which quarter it skipped.
+const RESTART_CHECKS: &str = r##"{
+  sha="$(gh pr view "$EPHOR_NUMBER" --repo "$EPHOR_REPO" --json headRefOid -q .headRefOid)" || exit 1
+  [ -n "$sha" ] || { echo "no head commit for $EPHOR_REPO#$EPHOR_NUMBER"; exit 1; }
+  printf 'restarting @WHAT@ on %s#%s (head %s)\n\n' "$EPHOR_REPO" "$EPHOR_NUMBER" "$sha"
+
+  asked=0
+  refused=0
+  # Tab-separated and split on the tab alone: a workflow run's name has spaces
+  # in it, and the default IFS would eat the leading ones.
+  while IFS="$(printf '\t')" read -r id name; do
+    [ -n "$id" ] || continue
+    printf '\342\237\263 %s (run %s)\n' "$name" "$id"
+    if gh run rerun "$id" --repo "$EPHOR_REPO"@FLAG@; then
+      asked=$((asked + 1))
+    else
+      refused=$((refused + 1))
+    fi
+  done <<EOF
+$(gh api --paginate "repos/$EPHOR_REPO/actions/runs?head_sha=$sha" \
+    -q '.workflow_runs[] | select(@FILTER@) | "\(.id)\t\(.name)"')
+EOF
+
+  gh pr checks "$EPHOR_NUMBER" --repo "$EPHOR_REPO" --json name,link \
+     --jq '.[] | select((.link // "") | contains("/actions/runs/") | not) | .name' 2>/dev/null \
+    | while read -r name; do
+        [ -n "$name" ] || continue
+        printf '\302\267 %s is not a workflow run \342\200\224 it is restarted where it is published\n' "$name"
+      done
+
+  printf '\nasked %s run(s) to run again' "$asked"
+  if [ "$refused" -eq 0 ]; then printf '\n'; else printf ', %s refused\n' "$refused"; fi
+  [ "$asked" -gt 0 ] || echo "nothing here needed restarting"
+} 2>&1
+"##;
+
+/// The two restart entries for a GitHub-hosted gate, offered by both GitHub
+/// sources for the same reason the failing-checks entry is: the same gate is
+/// reachable through the pull request and through its checks, and the reader
+/// should not have to know which row carries the key.
+///
+/// A red gate gets both. A gate that is not red gets *restart the whole gate*
+/// alone — the entry that still has something to do there — and not *restart
+/// what failed*, which would report that there was nothing to restart
+/// (§FS-004-quick-actions.2, §FS-004-quick-actions.9).
+pub(crate) fn restart_actions(host: Option<&str>, item: &Item) -> Vec<ActionConfig> {
+    let Some(gate) = crate::feed::gate::Gate::of(item) else {
+        return Vec::new();
+    };
+    if item.repo().is_none() || item.number().is_none() {
+        return Vec::new();
+    }
+    let mut entries = Vec::new();
+    if gate.is_red() {
+        entries.push(restart_checks(host, Scope::Failed));
+    }
+    entries.push(restart_checks(host, Scope::All));
+    entries
+}
+
+/// One restart entry. It runs beneath the screen: the gate answers minutes
+/// later and asks nothing meanwhile (§FS-005-dispatch.17).
+fn restart_checks(host: Option<&str>, scope: Scope) -> ActionConfig {
+    let (what, flag, filter) = match scope {
+        Scope::Failed => (
+            "what failed",
+            " --failed",
+            r#".status == "completed" and .conclusion != "success""#,
+        ),
+        Scope::All => ("every check", "", r#".status == "completed""#),
+    };
+    let script = RESTART_CHECKS
+        .replace("@WHAT@", what)
+        .replace("@FLAG@", flag)
+        .replace("@FILTER@", filter);
+    let command = match host {
+        Some(host) => format!("export GH_HOST={}\n{script}", shell_quote(host)),
+        None => script,
+    };
+    ActionConfig {
+        id: match scope {
+            Scope::Failed => "restart-failed".to_string(),
+            Scope::All => "restart-all".to_string(),
+        },
+        icon: "⟳".to_string(),
+        description: match scope {
+            Scope::Failed => "restart what failed".to_string(),
+            Scope::All => "restart the whole gate".to_string(),
+        },
+        command,
+        background: true,
+        // Re-running a whole gate spends an hour of a shared machine pool, and
+        // a keystroke away from a cursor is not a decision
+        // (§FS-004-quick-actions.9).
+        confirm: matches!(scope, Scope::All),
+        ..ActionConfig::default()
+    }
+}
 
 /// The failing-CI quick action, pointed at the host the checks live on: the
 /// enterprise host is configuration, so it is exported rather than named in

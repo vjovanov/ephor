@@ -320,52 +320,74 @@ pub fn refresh(args: &RefreshArgs) -> Result<ExitCode> {
 /// the arguments: the cached item is the one carrying the gate the reader is
 /// asking about, and answering for a pull request that is not in their feed
 /// would be answering a different question than the one the row asked.
-pub fn failures(args: &FailuresArgs) -> Result<ExitCode> {
-    let config = load_config()?;
-    let project_config = known_project(&config, &args.project)?;
+/// The provider that reported one pull request, the matter itself, and the
+/// context to ask in. Both questions a reader asks of a gate — what failed
+/// (§FS-004-quick-actions.4) and run it again (§FS-004-quick-actions.9) — take
+/// the same four coordinates and resolve them the same way, so they resolve
+/// them here: the source that produced the item is the one asked, the matter
+/// comes out of ephor's own cache rather than a fresh fetch, and the source's
+/// own timeout is the ceiling, because both of these are its slow calls.
+fn about_the_gate(
+    config: &StatusConfig,
+    project: &str,
+    source: &str,
+    repo: &str,
+    number: &str,
+) -> Result<(
+    Box<dyn crate::feed::provider::Provider>,
+    crate::feed::model::Item,
+    crate::feed::provider::ProviderContext,
+)> {
+    let project_config = known_project(config, project)?;
     let block = project_config
         .providers
         .iter()
-        .find(|block| block.get("provider").and_then(Value::as_str) == Some(args.source.as_str()))
+        .find(|block| block.get("provider").and_then(Value::as_str) == Some(source))
         .ok_or_else(|| {
             registry_error(format!(
-                "Project '{}' has no source named '{}'.",
-                args.project, args.source
+                "Project '{project}' has no source named '{source}'."
             ))
         })?;
 
-    let feed = cache::load_feed(&args.project)?.ok_or_else(|| {
+    let feed = cache::load_feed(project)?.ok_or_else(|| {
         registry_error(format!(
-            "No cached feed for '{}' — run `ephor refresh {}` first.",
-            args.project, args.project
+            "No cached feed for '{project}' — run `ephor refresh {project}` first."
         ))
     })?;
     let item = feed
         .items()
         .find(|item| {
-            item.source == args.source
-                && item.repo().as_deref() == Some(args.repo.as_str())
-                && item.number().as_deref() == Some(args.number.as_str())
+            item.source == source
+                && item.repo().as_deref() == Some(repo)
+                && item.number().as_deref() == Some(number)
         })
         .ok_or_else(|| {
             registry_error(format!(
-                "{}#{} is not in {}'s cached feed from '{}'.",
-                args.repo, args.number, args.project, args.source
+                "{repo}#{number} is not in {project}'s cached feed from '{source}'."
             ))
         })?;
 
     let provider = crate::feed::providers::build_provider(block)
         .map_err(|err| EphorError::Command(err.to_string()))?;
     let registry_doc = load_registry_doc()?;
-    let mut ctx =
-        crate::feed::refresh::build_context(&registry_doc, &args.project, &config.defaults)?;
-    // The source's own ceiling, not the refresh default: this is the slow
-    // question, and the block that set a longer timeout for its fetches meant
-    // it for this one too.
+    let mut ctx = crate::feed::refresh::build_context(&registry_doc, project, &config.defaults)?;
+    // The source's own ceiling, not the refresh default: the block that set a
+    // longer timeout for its fetches meant it for these too.
     if let Some(timeout) = crate::feed::refresh::provider_timeout(block) {
         ctx.timeout = timeout;
     }
+    Ok((provider, item, ctx))
+}
 
+pub fn failures(args: &FailuresArgs) -> Result<ExitCode> {
+    let config = load_config()?;
+    let (provider, item, ctx) = about_the_gate(
+        &config,
+        &args.project,
+        &args.source,
+        &args.repo,
+        &args.number,
+    )?;
     let style = Style::detect();
     let gate = crate::feed::gate::Gate::of(&item);
     println!("{}\n", style.bold(&item.title));
@@ -377,6 +399,55 @@ pub fn failures(args: &FailuresArgs) -> Result<ExitCode> {
         .failures(&ctx, &item)
         .map_err(|err| EphorError::Command(err.to_string()))?;
     render::render_failures(found, gate.as_ref(), &style);
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `ephor restart` (§FS-004-quick-actions.9): ask one pull request's gate to
+/// run again, at the scope stated.
+///
+/// The same shape `failures` has, and for the same reason: the coordinates
+/// come from ephor's own cached feed, the source that reported the item is the
+/// one asked, and the provider decides how its forge re-runs a gate. What it
+/// answers is printed rather than summarised away — a gate is minutes from
+/// saying anything itself, so "asked 12 runs" and "asked nothing" are the
+/// difference between a restart that happened and one that did not.
+pub fn restart(args: &crate::cli::RestartArgs) -> Result<ExitCode> {
+    let scope = crate::feed::gate::Scope::parse(&args.scope).ok_or_else(|| {
+        registry_error(format!(
+            "Unknown scope '{}': expected 'failed' or 'all'.",
+            args.scope
+        ))
+    })?;
+    let config = load_config()?;
+    let (provider, item, ctx) = about_the_gate(
+        &config,
+        &args.project,
+        &args.source,
+        &args.repo,
+        &args.number,
+    )?;
+    let style = Style::detect();
+    println!("{}\n", style.bold(&item.title));
+    println!(
+        "restarting {} on {}#{}",
+        // Neutral about how much that is: on a forge with per-job reruns it is
+        // the failed jobs, and on one that starts its gate as a whole it is
+        // everything downstream of them (§FS-006-project-interface.6). The row
+        // in the interface says which; this says what was asked for.
+        match scope {
+            crate::feed::gate::Scope::Failed => "what is not green",
+            crate::feed::gate::Scope::All => "the whole gate",
+        },
+        args.repo,
+        args.number
+    );
+    let restarted = provider
+        .restart(&ctx, &item, scope)
+        .map_err(|err| EphorError::Command(err.to_string()))?;
+    println!("\n{}", restarted.says());
+    for skipped in &restarted.skipped {
+        println!("· {skipped}");
+    }
     Ok(ExitCode::SUCCESS)
 }
 

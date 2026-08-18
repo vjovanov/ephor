@@ -72,6 +72,22 @@ ephor degrades to what is answered rather than failing.
   text itself where the forge can extract it. Asked on demand rather than
   during a refresh — it is the expensive question, and nobody asks it of a
   green gate.
+- **Restart** — run a pull request's gate again, at a stated scope: everything
+  it covers, or only what is not green
+  ([§FS-004-quick-actions.9](#9-a-gate-is-offered-the-restart-in-two-shapes)).
+  The one capability here that spends somebody else's machines, which is why
+  the scope is the caller's word and never the implementation's guess: the
+  cheap ask and the expensive one are different asks and a forge that widened
+  the first into the second would be answering a question nobody put. It
+  answers what it actually asked for — how many jobs where it counts them, its
+  own sentence where it does not, and what it could not restart — because a
+  gate is minutes away from saying anything itself, and a restart that reported
+  only *done* is indistinguishable from one that found nothing to do. Not
+  counting is an ordinary answer and not a broken one: a whole-gate start is
+  accepted and executed elsewhere, and how much it scheduled is knowable only
+  from the gate. What must not happen is that answer arriving as *nothing*. An
+  implementation whose forge cannot re-run a check does not declare it, and
+  ephor offers nothing rather than a key that fails.
 - **Issues by role** — the ones the user opened, and the ones they are engaged
   in without having opened them. Each is a ticket by key, with title, url,
   state as the forge spells it, last-updated time, and its comments in the same
@@ -717,6 +733,74 @@ already published, so that copy can no longer be fast-forwarded and landing the
 result means a force push under a lease. The rebase onto main has exactly the
 same property, and the same answer: the replay itself never pushes, and the push
 is a decision belonging to whoever makes it.
+
+### 9. A gate is offered the restart, in two shapes
+
+Reading what failed ([§4](#4-failing-ci-answers-what-failed-and-why)) answers
+the question a red gate asks. It does not answer the one a reader most often
+has about it, which is *was that even me*. A runner died, a mirror was
+unreachable, a dependency shipped something broken, the same flake landed on
+the same job for the third day: nothing about the change is wrong, and what
+the change needs is another run. Knowing that and sending the reader to a
+browser tab to click it is the same failure this section exists to stop, and
+it is worse here than elsewhere, because the browser tab is where a restart is
+usually one click away and where finding *which* thing to click takes five
+minutes.
+
+So a gate is offered the restart. It is two entries, not one, and the
+difference between them is the reader's own diagnosis:
+
+**Restart what failed.** One job died on infrastructure while everything
+around it passed, and what that needs is the work back rather than a whole
+gate re-run — an hour of a shared machine pool to answer a question that was
+about one build. This is the ordinary case and the cheaper one.
+
+How much cheaper is the forge's to say, not this section's. What is asked for
+is *what is not green, and everything downstream of it*
+(§FS-006-project-interface.6): on a forge that re-runs job by job that is the
+failed jobs and nothing else, and on one that starts a gate as a whole it is
+the failing part of the tree and what hangs off it, which can be most of the
+tree. **The entry says which it is**, because a row promising one job over a
+hundred rebuilt ones is the label lying about the cost — and a reader who
+cannot tell the two apart cannot choose between the two entries at all, which
+is the whole point of there being two.
+
+**Restart everything.** The merge commit itself is suspect: the base moved
+under the change, a cache was poisoned, the green results are as untrustworthy
+as the red ones. Then re-running only what failed proves nothing, because the
+part that would have caught it is the part that is being kept. This is the
+expensive one, and it is a separate keystroke precisely so it is a decision
+rather than a default.
+
+**Where they are offered follows from what each of them means.** A red gate
+gets both. A gate that is not red — green, still running, blocked on an
+approval — gets *restart everything*, which is exactly the entry that still
+has something to do there, and not *restart what failed*, which would be a key
+that runs and reports that there was nothing to restart
+([§2](#2-offered-only-where-it-would-work)). An item carrying no gate at all
+gets neither: there is nothing to restart, and the fact is the item's, not the
+project's.
+
+**Restarting is the gate's verb, not ephor's idea of one.** Which command
+re-runs a gate is project truth exactly as reading it is
+(§FS-006-project-interface.6), and the scope — everything, or only what is not
+green — crosses that seam as part of the ask. A forge that hosts its own gate
+answers it as the shipped default and needs no manifest, so restarting works
+on the common case with nothing configured
+(§FS-001-forge-interface.1). Where the forge cannot re-run
+something — an external status somebody else's system wrote — the entry says
+so rather than reporting a restart that never happened.
+
+**It runs beneath the screen** (§FS-005-dispatch.17). A restart asks nothing,
+decides nothing, and is answered by the gate minutes later; taking the
+interface for it would be paying the screen for a command that never needed
+it, and the log is where what it asked for and what came back are kept.
+
+**It commits nothing, and it is the same move the loop makes**
+(§FS-005-dispatch.11). A reader pressing this key and a state machine deciding
+the failure was never the change's are asking for the same thing, so they ask
+for it the same way — one verb, one scope, one answer — and cannot drift into
+two ideas of what restarting means.
 
 ## FS-005-dispatch: what ephor watches, it can hand to an agent runtime
 
@@ -1630,9 +1714,15 @@ configuration overriding where credentials or variants demand. Three verbs:
 **status** answers the gate's counts per repository of the forest;
 **failures** answers what actually failed, as the failing job, its log, and
 the error where it can be had — the expensive question, asked on demand
-(§FS-001-forge-interface.1); **restart** re-runs the failing gate and every
-gate downstream of it, committing nothing, under the semantics of
-§FS-005-dispatch.11. A forge-hosted gate needs no manifest at all: the
+(§FS-001-forge-interface.1); **restart** re-runs the gate,
+committing nothing, at the scope it is asked for — everything the gate covers,
+or only what is not green
+([§FS-004-quick-actions.9](#9-a-gate-is-offered-the-restart-in-two-shapes)) —
+and, where only what is not green is asked for, that means the failing gate
+and every gate downstream of it, under the semantics of §FS-005-dispatch.11.
+The scope crosses the seam as part of the ask, because the cheap re-run and
+the expensive one are different questions and only the caller knows which was
+meant. A forge-hosted gate needs no manifest at all: the
 provider's own gate capability is the shipped default binding. A project
 with an internal gate binds three commands, and nothing above the seam can
 tell the difference.

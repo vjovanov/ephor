@@ -19,7 +19,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::feed::gate::{Failure, Gate};
+use crate::feed::gate::{Failure, Gate, Scope};
 use crate::feed::model::ItemRole;
 use crate::feed::provider::{ProviderContext, ProviderError};
 
@@ -46,6 +46,13 @@ pub struct Capabilities {
     /// for every pull request on every refresh, a failure list only when
     /// somebody asks (§FS-001-forge-interface.1).
     pub failures: bool,
+    /// Answers [`Forge::restart`] — run a pull request's gate again
+    /// (§FS-004-quick-actions.9). Kept apart from `gate` and from `failures`
+    /// because it is the one capability here that *writes*, and what it spends
+    /// is somebody else's machines: a forge that reports a gate it cannot
+    /// re-run is an ordinary implementation, and ephor offers no key there
+    /// rather than one that fails.
+    pub restart: bool,
     /// Answers [`Forge::issues`].
     pub issues: bool,
     /// Answers [`Forge::notices`] — the forge's own list of what it decided to
@@ -63,6 +70,54 @@ pub struct Capabilities {
     /// answered where it lives, and a drafted reply is material to copy rather
     /// than something to send (§FS-005-dispatch.13).
     pub replies: bool,
+}
+
+/// What a restart actually asked for (§FS-001-forge-interface.1).
+///
+/// A gate is minutes away from saying anything itself, so the answer has to
+/// stand on its own until then: *done* alone cannot be told apart from a
+/// restart that found nothing to run.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Restarted {
+    /// How many jobs the forge said it asked to run again. `Some(0)` is an
+    /// answer — there was nothing not-green to restart — and not a failure.
+    ///
+    /// `None` is a different answer: the forge took the request and does not
+    /// say how much it scheduled. That is an ordinary gate rather than a
+    /// broken one — a whole-gate start is accepted and executed
+    /// asynchronously, with the count knowable only from the gate itself
+    /// minutes later — and it must not be reported as zero, which would read
+    /// as a restart that found nothing to do.
+    pub asked: Option<usize>,
+    /// What it could not restart, one line each: an external status somebody
+    /// else's system wrote, a run too old for the forge to re-run. Reported
+    /// rather than swallowed, because a key that silently did three quarters
+    /// of the job is worse than one that says which quarter it skipped.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub skipped: Vec<String>,
+    /// The forge's own sentence about what it did, where it has one. Shown
+    /// verbatim, for the same reason a gate's blockers are
+    /// (§FS-001-forge-interface.1): it is the forge's vocabulary, and it is
+    /// what a reader matches against the forge itself.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+impl Restarted {
+    /// The one line worth showing about a restart, in the reader's own terms.
+    pub fn says(&self) -> String {
+        match (self.asked, &self.note) {
+            (Some(0), None) => "nothing here needed restarting".to_string(),
+            (Some(count), None) => format!("asked {count} job(s) to run again"),
+            (Some(count), Some(note)) => format!("asked {count} job(s) to run again — {note}"),
+            // The forge does not count. Saying what it said beats inventing a
+            // number, and beats a bare "done" that cannot be told from a
+            // restart that did nothing.
+            (None, Some(note)) => note.clone(),
+            (None, None) => "the gate took the request; it does not say how much".to_string(),
+        }
+    }
 }
 
 /// Which side of a pull request or issue the user is on. Defaults to author:
@@ -424,6 +479,24 @@ pub trait Forge: Send + Sync {
     ) -> Result<Vec<Failure>, ProviderError> {
         Err(ProviderError(format!(
             "{} does not report what failed",
+            self.name()
+        )))
+    }
+
+    /// Run a pull request's gate again, at the scope asked for
+    /// (§FS-004-quick-actions.9). The one write here that spends somebody
+    /// else's machines, so the scope is passed through rather than
+    /// interpreted: an implementation that widened *what failed* into
+    /// *everything* would be answering a question nobody put.
+    fn restart(
+        &self,
+        _request: &Request,
+        _repo: &str,
+        _number: &str,
+        _scope: Scope,
+    ) -> Result<Restarted, ProviderError> {
+        Err(ProviderError(format!(
+            "{} does not restart a gate",
             self.name()
         )))
     }

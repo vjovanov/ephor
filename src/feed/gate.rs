@@ -12,6 +12,50 @@ use serde_json::Value;
 
 use crate::feed::model::Item;
 
+/// How much of a gate a restart asks for (§FS-004-quick-actions.9).
+///
+/// The caller's word, never the forge's guess: the cheap re-run and the
+/// expensive one are different questions, and one of them spends an hour of a
+/// shared machine pool.
+/// Not serde's: the word is spelled once, by [`Scope::name`], because it
+/// crosses three seams — the forge protocol, a bound command's environment,
+/// and the command line — and a derived spelling beside a hand-written one is
+/// two sources of truth for the same word.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Scope {
+    /// Only what is not green — the failing gate and everything downstream of
+    /// it (§FS-005-dispatch.11). The ordinary case: a job died on
+    /// infrastructure and what it needs is that job back.
+    #[default]
+    Failed,
+    /// Everything the gate covers, the green included. For when the merge
+    /// commit itself is suspect and the passes are as untrustworthy as the
+    /// failures.
+    All,
+}
+
+impl Scope {
+    /// The word that crosses every seam: the forge protocol, a bound command's
+    /// environment, and the command line all spell it this way.
+    pub fn name(self) -> &'static str {
+        match self {
+            Scope::Failed => "failed",
+            Scope::All => "all",
+        }
+    }
+
+    /// Read the word back. `None` where it is not one of the two — a scope
+    /// nobody recognizes is refused rather than defaulted, because the two
+    /// differ by an hour of somebody else's machines.
+    pub fn parse(word: &str) -> Option<Scope> {
+        match word.trim().to_ascii_lowercase().as_str() {
+            "failed" => Some(Scope::Failed),
+            "all" => Some(Scope::All),
+            _ => None,
+        }
+    }
+}
+
 /// What a job's state string means. Anything that is neither a finished pass
 /// nor a finished failure is still in flight (queued, running, waiting).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

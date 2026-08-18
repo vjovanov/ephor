@@ -153,6 +153,24 @@ pub fn failures_of(answer: &Answer) -> Vec<Failure> {
         .unwrap_or_default()
 }
 
+/// The environment name a restart's scope crosses under
+/// (§FS-006-project-interface.6). The scope is part of the ask, not a property
+/// of the binding: the cheap re-run and the expensive one are different
+/// questions, and only the caller knows which was meant
+/// (§FS-004-quick-actions.9).
+pub const SCOPE_VAR: &str = "EPHOR_RESTART";
+
+/// The dossier a restart carries: whatever the caller knows about the matter,
+/// and the scope it is asking for. Composed here so a bound command and a
+/// forge-hosted gate are asked the same question in the same words.
+pub fn restart_dossier(
+    mut dossier: Vec<(String, String)>,
+    scope: crate::feed::gate::Scope,
+) -> Vec<(String, String)> {
+    dossier.push((SCOPE_VAR.to_string(), scope.name().to_string()));
+    dossier
+}
+
 /// How a restart went (§FS-005-dispatch.11). Nothing is committed by it — the
 /// change was never the problem — so the only answers are "asked for",
 /// "still running, ask again later", and "refused".
@@ -384,5 +402,23 @@ mod tests {
         assert!(may_restart(RESTART_LIMIT - 1));
         assert!(!may_restart(RESTART_LIMIT));
         assert!(!may_restart(RESTART_LIMIT + 5));
+    }
+
+    /// The scope crosses as part of the ask, in the one name every binding
+    /// reads (§FS-006-project-interface.6). A bound command that saw no scope
+    /// would have to guess, and the guess costs an hour of a machine pool.
+    #[test]
+    fn a_restart_carries_the_scope_it_was_asked_for() {
+        use crate::feed::gate::Scope;
+        let carrying = restart_dossier(
+            vec![("EPHOR_REPO".to_string(), "app".to_string())],
+            Scope::All,
+        );
+        assert_eq!(
+            carrying.last(),
+            Some(&(SCOPE_VAR.to_string(), "all".to_string()))
+        );
+        let cheap = restart_dossier(Vec::new(), Scope::Failed);
+        assert_eq!(cheap, vec![(SCOPE_VAR.to_string(), "failed".to_string())]);
     }
 }

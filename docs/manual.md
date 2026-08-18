@@ -530,7 +530,7 @@ overriding where credentials or variants demand
 |---|---|
 | `status` | what the gate is doing, per repository of the forest — the `gate` of an envelope |
 | `failures` | what actually failed: the job, its log, the error where it can be had — the expensive question, asked on demand |
-| `restart` | re-run the failing gate and everything downstream of it, committing nothing; `75` means "still running, ask again later" ([§FS-005-dispatch.11](../requirements.md#11-a-failure-that-is-not-the-changes-fault-is-restarted-not-fixed)) |
+| `restart` | re-run the gate at the scope asked for — `EPHOR_RESTART` is `failed` (the failing gate and everything downstream of it) or `all` — committing nothing; `75` means "still running, ask again later" ([§FS-005-dispatch.11](../requirements.md#11-a-failure-that-is-not-the-changes-fault-is-restarted-not-fixed)) |
 
 **A forge-hosted gate needs no manifest at all**: the provider's own gate
 capability is the shipped default binding, which is why a pull request on
@@ -541,11 +541,14 @@ instead, and the seam answers the same three questions from them.
 Either way the *gated* rung holds ([§7.5](#75-why-something-is-not-offered)),
 and that is what buys failure dossiers and the restart.
 
-Today the row and the `✗ see the CI failures` entry are still drawn from what
-the **source** reported: `ephor failures` asks the provider that reported the
-item ([§4.1](#41-commands)), so a manifest-bound gate is what a state machine's
-program state and the capability table read, and the inbox's own failures view
-follows the forge. Binding these verbs is therefore worth doing where a script
+Today the row, the `✗ see the CI failures` entry and the two `⟳ restart …`
+entries are all still drawn from what the **source** reported: `ephor failures`
+and `ephor restart` ask the provider that reported the item
+([§4.1](#41-commands)), so a manifest-bound gate is what a state machine's
+program state and the capability table read, and the inbox's own views follow
+the forge. Nothing in ephor invokes the bound `restart` verb yet — `EPHOR_RESTART`
+is the name it will be handed the scope under, and the name a script in front
+of the agent can read today. Binding these verbs is therefore worth doing where a script
 in front of the agent asks them ([§8.5](#85-a-script-in-front-of-the-agent));
 where your gate is the forge's, there is nothing to write.
 
@@ -1090,12 +1093,43 @@ Entries ephor has without being told, on an item where it already knows what
 the problem is ([§FS-004-quick-actions](../requirements.md#fs-004-quick-actions-a-problem-ephor-recognizes-arrives-with-the-action-for-it)).
 They lead the menu, and configuration adds to them rather than replacing them.
 
-Today, four:
+Today, six:
 
 **`✗ see the CI failures`** on a pull request whose gate is red — the check
 list as the forge reports it, then every failed job's log, paged. It is offered
 only where it would work: the gate is failing, the item still names its pull
 request, and the tool that reaches it is installed.
+
+**`⟳ restart what failed`** and **`⟳ restart the whole gate`** on an item
+carrying a gate ([§FS-004-quick-actions.9](../requirements.md#9-a-gate-is-offered-the-restart-in-two-shapes)).
+The first is the ordinary case — a runner died, a mirror was unreachable, the
+same flake landed on the same job again — and it asks for that work back
+without re-running the whole gate. *How much* less is the forge's to say, and
+the row says which (below). The second is for when the merge commit itself is suspect: the
+base moved under the change, a cache was poisoned, and the green results are as
+untrustworthy as the red ones. Re-running everything to recover one job is an
+hour of a shared machine pool, which is why it is a separate keystroke, and why
+it asks before it runs.
+
+A **red** gate gets both. A gate that is not red — green, still running,
+blocked on an approval — gets only *restart the whole gate*, the one that still
+has something to do there. An item with no gate at all gets neither.
+
+Both run beneath the screen as jobs ([§8.14](#814-jobs--what-ephor-runs-beneath-the-screen)):
+a restart asks nothing and the gate answers minutes later, so the interface
+stays where it is and the log says what was asked for. On GitHub they resolve
+the pull request's head commit and re-run its workflow runs — `--failed` is
+GitHub's own *rerun failed jobs*, so *restart what failed* really is per-job —
+and a check that is not a workflow run, an external status somebody else's
+system wrote, is named rather than silently skipped. On a project whose forge
+is reached through an extension, the same two entries run `ephor restart`
+([§11.1](#111-every-command)) and the forge answers what it actually asked for.
+
+Read the row before you press it. Where a forge starts its gate as a whole
+rather than job by job, *restart what failed* is the failing gate **and
+everything downstream of it** — the entry says `restart what failed, and
+downstream` there, because on a gate spanning a tree that can be most of the
+tree ([§FS-006-project-interface.6](../requirements.md#6-the-gate-is-the-projects-in-three-verbs)).
 
 **`⤴ rebase onto <main> (13 behind as of Jul 28)`** wherever there is a branch
 workspace on disk and the project names a `main_branch` to replay onto
@@ -2520,6 +2554,7 @@ ephor-forge-<name> capabilities   <<< '{"config":…,"project":…}'
 ephor-forge-<name> pull-requests  <<< '{"config":…,"tickets":[…],…}'
 ephor-forge-<name> issues         <<< '{"config":…,"tickets":[…],…}'
 ephor-forge-<name> failures       <<< '{"config":…,"repo":…,"number":…}'
+ephor-forge-<name> restart        <<< '{"config":…,"repo":…,"number":…,"scope":"failed"|"all"}'
 ephor-forge-<name> react          <<< '{"config":…,"target":…,"emoji":…}'
 ephor-forge-<name> resolve-task   <<< '{"config":…,"target":…}'
 ephor-forge-<name> reply          <<< '{"config":…,"target":…,"text":…}'
@@ -2539,6 +2574,17 @@ has dealt with from one they have not ([§6.2](#62-reading-a-row)); leave it out
 and nothing else changes. `failures` is the one call a refresh never makes:
 it is asked when a reader opens a red gate, so it may take as long as it needs.
 
+`restart` runs the gate again, declared as `"restart": true`
+([§7.1](#71-quick-actions)). The `scope` is the caller's word and never the
+implementation's guess — `failed` is what is not green plus everything
+downstream of it, `all` is everything the gate covers — because the two differ
+by an hour of somebody else's machines. Answer with what you actually asked
+for: `{"asked": 12}`, plus `"skipped"` for anything the forge cannot re-run.
+Where a gate is started as a whole and executed elsewhere, **omit `asked`** and
+answer `{"note": "…"}` in the forge's own words: reporting a zero there would
+read as *nothing needed restarting*, which is the one thing it must not say. A
+request the forge declines is a non-zero exit, never an empty answer.
+
 `react`, `resolve-task` and `reply` receive back, verbatim, the `react` and
 `task` descriptors the extension put on a message and the `reply` descriptor it
 put on a thread: they are its own, and ephor reads only `task.state` (`open` /
@@ -2555,7 +2601,7 @@ unread — all of that is ephor's, applied identically over every implementation
 
 One module in `src/feed/providers/` implementing `Provider`, plus a match arm
 in `providers::build_provider`. A provider may also offer **quick actions** on
-items it produced, and answer `failures` for a red gate. Implementing the
+items it produced, and answer `failures` and `restart` for a gate. Implementing the
 `Forge` trait instead gets the whole item-building policy for free.
 
 ### 10.3 A state machine of your own
@@ -2594,6 +2640,7 @@ stalled on *"required outputs are missing"* no matter how well it reasons.
 ```
 ephor list | validate | ensure-agents | update            # the registry
 ephor refresh | status | feed | mark-read | failures      # the feed
+ephor restart --scope failed|all                          # run a gate again
 ephor rebase | checkout                                   # the checkout
 ephor check | validate --manifest | schema                # the project interface
 ephor work list | dispatch | ask | sync | run | forget | states

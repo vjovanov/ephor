@@ -10,11 +10,11 @@
 use serde_json::Value;
 
 use crate::feed::config::ActionConfig;
-use crate::feed::gate::{Failure, Gate};
+use crate::feed::gate::{Failure, Gate, Scope};
 use crate::feed::model::Item;
 use crate::feed::provider::{Provider, ProviderContext, ProviderError, ProviderResult};
 use crate::forge::external::ExternalForge;
-use crate::forge::{policy, Forge, Request};
+use crate::forge::{policy, Capabilities, Forge, Request, Restarted};
 
 pub struct ForgeProvider {
     forge: Box<dyn Forge>,
@@ -65,13 +65,10 @@ impl ForgeProvider {
     /// probe is what makes the third check honest — a forge that answers
     /// nothing here would give the reader a menu entry that prints only its
     /// own refusal.
-    fn failures_action(&self, item: &Item) -> Vec<ActionConfig> {
+    fn failures_action(&self, item: &Item, capabilities: &Capabilities) -> Vec<ActionConfig> {
         let red = Gate::of(item).is_some_and(|gate| gate.is_red());
         let identified = item.repo().is_some() && item.number().is_some();
-        if !red || !identified {
-            return Vec::new();
-        }
-        if !matches!(self.forge.capabilities(), Ok(capabilities) if capabilities.failures) {
+        if !red || !identified || !capabilities.failures {
             return Vec::new();
         }
         vec![ActionConfig {
@@ -81,6 +78,30 @@ impl ForgeProvider {
             command: failures_command(),
             ..ActionConfig::default()
         }]
+    }
+
+    /// The restart entries on one item (§FS-004-quick-actions.9): both where
+    /// the gate is red, *restart everything* alone where it is not — that is
+    /// the one that still has something to do on a gate that is green,
+    /// running, or blocked, and *restart what failed* there would be a key
+    /// that reports nothing to restart. An item carrying no gate gets neither.
+    /// Gated on the capability for the same reason the failures entry is: a
+    /// forge that cannot re-run a check should offer no key rather than one
+    /// that prints its own refusal (§FS-004-quick-actions.2).
+    fn restart_actions(&self, item: &Item, capabilities: &Capabilities) -> Vec<ActionConfig> {
+        let Some(gate) = Gate::of(item) else {
+            return Vec::new();
+        };
+        let identified = item.repo().is_some() && item.number().is_some();
+        if !identified || !capabilities.restart {
+            return Vec::new();
+        }
+        let mut entries = Vec::new();
+        if gate.is_red() {
+            entries.push(restart_action(Scope::Failed));
+        }
+        entries.push(restart_action(Scope::All));
+        entries
     }
 }
 
@@ -102,6 +123,47 @@ fn failures_command() -> String {
     )
 }
 
+/// One restart entry, run as a job: the gate answers minutes later and asks
+/// nothing meanwhile, so taking the interface for it would be paying the
+/// screen for a command that never needed it (§FS-005-dispatch.17).
+fn restart_action(scope: Scope) -> ActionConfig {
+    let exe = std::env::current_exe()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| "ephor".to_string());
+    ActionConfig {
+        id: match scope {
+            Scope::Failed => "restart-failed".to_string(),
+            Scope::All => "restart-all".to_string(),
+        },
+        icon: "⟳".to_string(),
+        description: match scope {
+            // Named for what the verb actually does rather than for the
+            // cheapest thing it might do: a restart at this scope is the
+            // failing gate *and every gate downstream of it*
+            // (§FS-006-project-interface.6), and on a forge that gates across
+            // a tree that is most of the tree. A row reading "what failed"
+            // over a hundred rebuilt jobs is the label lying about the cost.
+            Scope::Failed => "restart what failed, and downstream".to_string(),
+            Scope::All => "restart the whole gate".to_string(),
+        },
+        // ephor asks itself, and the forge answers through the protocol —
+        // naming this forge's CLI here would put a vendor tool back in the
+        // menu that §FS-001-forge-interface exists to keep out of it.
+        command: format!(
+            "{} restart --project \"$EPHOR_PROJECT\" --source \"$EPHOR_SOURCE\" \
+             --repo \"$EPHOR_REPO\" --number \"$EPHOR_NUMBER\" --scope {}",
+            super::shell_quote(&exe),
+            scope.name()
+        ),
+        background: true,
+        // Restarting the whole gate spends an hour of a shared machine pool,
+        // and a keystroke away from a cursor is not a decision
+        // (§FS-004-quick-actions.9).
+        confirm: matches!(scope, Scope::All),
+        ..ActionConfig::default()
+    }
+}
+
 impl Provider for ForgeProvider {
     fn name(&self) -> &'static str {
         self.name
@@ -119,7 +181,15 @@ impl Provider for ForgeProvider {
         if !self.forge.available() {
             return Vec::new();
         }
-        self.failures_action(item)
+        // One probe for the whole menu. It is a process launch, and asking it
+        // once per entry meant spawning the extension twice for every item the
+        // menu opened on.
+        let Ok(capabilities) = self.forge.capabilities() else {
+            return Vec::new();
+        };
+        let mut entries = self.failures_action(item, &capabilities);
+        entries.extend(self.restart_actions(item, &capabilities));
+        entries
     }
 
     fn failures(&self, ctx: &ProviderContext, item: &Item) -> Result<Vec<Failure>, ProviderError> {
@@ -131,6 +201,32 @@ impl Provider for ForgeProvider {
         };
         let request = Request::new(self.config.clone(), ctx);
         self.forge.failures(&request, &repo, &number)
+    }
+
+    fn restart(
+        &self,
+        ctx: &ProviderContext,
+        item: &Item,
+        scope: Scope,
+    ) -> Result<Restarted, ProviderError> {
+        let (Some(repo), Some(number)) = (item.repo(), item.number()) else {
+            return Err(ProviderError(format!(
+                "{} does not name a pull request to restart",
+                item.id
+            )));
+        };
+        // Declared or not asked: ephor degrades to the capability set and
+        // never calls a subcommand an implementation did not claim
+        // (§FS-001-forge-interface.1). Without this the reader gets whatever
+        // an unprepared script prints back, read as an answer.
+        if !matches!(self.forge.capabilities(), Ok(capabilities) if capabilities.restart) {
+            return Err(ProviderError(format!(
+                "{} does not restart a gate",
+                self.name
+            )));
+        }
+        let request = Request::new(self.config.clone(), ctx);
+        self.forge.restart(&request, &repo, &number, scope)
     }
 
     fn fetch(&self, ctx: &ProviderContext) -> ProviderResult {
@@ -187,7 +283,6 @@ mod tests {
     use super::*;
     use crate::feed::gate::RepoGate;
     use crate::feed::model::ItemKind;
-    use crate::forge::Capabilities;
     use serde_json::json;
 
     /// A forge that declares exactly what a test needs it to.
@@ -230,6 +325,30 @@ mod tests {
             }),
             json!({ "provider": "stub" }),
         )
+    }
+
+    /// A forge that can also re-run its gate (§FS-004-quick-actions.9).
+    fn restarting() -> ForgeProvider {
+        ForgeProvider::new(
+            Box::new(Stub {
+                capabilities: Capabilities {
+                    pull_requests: true,
+                    gate: true,
+                    failures: true,
+                    restart: true,
+                    ..Capabilities::default()
+                },
+            }),
+            json!({ "provider": "stub" }),
+        )
+    }
+
+    fn described(provider: &ForgeProvider, item: &Item) -> Vec<String> {
+        provider
+            .quick_actions(item)
+            .into_iter()
+            .map(|action| action.description)
+            .collect()
     }
 
     fn item(gate: Option<Gate>) -> Item {
@@ -313,5 +432,88 @@ mod tests {
         assert!(command.contains("${PAGER:-less -R}"), "{command}");
         // Nothing in it names this forge or a vendor tool (§FS-001-forge-interface).
         assert!(!command.contains("stub"), "{command}");
+    }
+
+    /// Which restart is offered follows what it can do
+    /// (§FS-004-quick-actions.9): a red gate has both moves available, and a
+    /// gate that is not red keeps only the one that still has something to
+    /// run — *restart what failed* there would be a key that reports there was
+    /// nothing to restart (§FS-004-quick-actions.2).
+    #[test]
+    fn a_red_gate_is_offered_both_restarts_and_a_gate_that_is_not_only_the_whole_one() {
+        let provider = restarting();
+        assert_eq!(
+            described(&provider, &item(Some(gate(40, 6, false)))),
+            [
+                "see the CI failures",
+                "restart what failed, and downstream",
+                "restart the whole gate"
+            ]
+        );
+        // Green jobs under a forge that refuses the merge is red too, and both
+        // moves still apply to it.
+        assert_eq!(
+            described(&provider, &item(Some(gate(118, 0, true)))),
+            [
+                "see the CI failures",
+                "restart what failed, and downstream",
+                "restart the whole gate"
+            ]
+        );
+        // A green gate: nothing failed to read and nothing failed to re-run,
+        // and the whole gate is still worth running when the merge commit
+        // itself is what is suspect.
+        assert_eq!(
+            described(&provider, &item(Some(gate(40, 0, false)))),
+            ["restart the whole gate"]
+        );
+        // No gate is no restart: the fact is the item's, not the project's.
+        assert!(described(&provider, &item(None)).is_empty());
+    }
+
+    /// A forge that reports a gate it cannot re-run is an ordinary
+    /// implementation, and gets no restart key (§FS-004-quick-actions.2).
+    #[test]
+    fn a_forge_that_cannot_restart_is_offered_no_restart() {
+        assert_eq!(
+            described(&provider(true), &item(Some(gate(40, 6, false)))),
+            ["see the CI failures"]
+        );
+    }
+
+    /// The expensive move asks first, and both run beneath the screen: a gate
+    /// answers minutes later and asks nothing meanwhile
+    /// (§FS-004-quick-actions.9, §FS-005-dispatch.17).
+    #[test]
+    fn restarting_everything_is_confirmed_and_both_run_as_jobs() {
+        let provider = restarting();
+        let entries = provider.quick_actions(&item(Some(gate(40, 6, false))));
+        let failed = entries
+            .iter()
+            .find(|entry| entry.id == "restart-failed")
+            .expect("the cheap one");
+        let all = entries
+            .iter()
+            .find(|entry| entry.id == "restart-all")
+            .expect("the expensive one");
+        assert!(failed.background && all.background);
+        assert!(!failed.confirm, "the ordinary case is one keystroke");
+        assert!(
+            all.confirm,
+            "an hour of a shared machine pool is a decision"
+        );
+        // ephor asks itself and the forge answers through the protocol; naming
+        // this forge's CLI here would put a vendor tool back in the menu.
+        assert!(
+            failed.command.contains("restart --project"),
+            "{}",
+            failed.command
+        );
+        assert!(
+            failed.command.ends_with("--scope failed"),
+            "{}",
+            failed.command
+        );
+        assert!(all.command.ends_with("--scope all"), "{}", all.command);
     }
 }

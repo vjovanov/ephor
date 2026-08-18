@@ -82,6 +82,27 @@ pub trait Provider: Send + Sync {
             self.name()
         )))
     }
+
+    /// Run this item's gate again, at the scope asked for
+    /// (§FS-004-quick-actions.9). Asked only when a reader asks, like
+    /// [`Provider::failures`] — and unlike it, this one *writes*: it spends
+    /// somebody else's machines, so the scope crosses verbatim and a provider
+    /// that cannot re-run a check answers here rather than guessing.
+    ///
+    /// A provider that restarts by handing the reader a command instead — a
+    /// quick action naming its forge's own CLI — answers nothing here and is
+    /// complete, which is why this defaults to an error.
+    fn restart(
+        &self,
+        _ctx: &ProviderContext,
+        _item: &Item,
+        _scope: crate::feed::gate::Scope,
+    ) -> Result<crate::forge::Restarted, ProviderError> {
+        Err(ProviderError(format!(
+            "{} does not restart a gate",
+            self.name()
+        )))
+    }
 }
 
 /// Run a command with a timeout, capturing stdout. Non-zero exits are

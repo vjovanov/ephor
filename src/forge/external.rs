@@ -27,7 +27,7 @@ use std::process::Command;
 
 use serde_json::{json, Value};
 
-use super::{Capabilities, Forge, Issue, Notice, PullRequest, Request};
+use super::{Capabilities, Forge, Issue, Notice, PullRequest, Request, Restarted};
 use crate::feed::gate::Failure;
 use crate::feed::provider::{command_exists, run_json_stdin, ProviderError};
 
@@ -146,6 +146,32 @@ impl Forge for ExternalForge {
             json!({ "repo": repo, "number": number }),
         )?;
         self.decode("failures", value)
+    }
+
+    fn restart(
+        &self,
+        request: &Request,
+        repo: &str,
+        number: &str,
+        scope: crate::feed::gate::Scope,
+    ) -> Result<Restarted, ProviderError> {
+        let value = self.call(
+            "restart",
+            request,
+            json!({ "repo": repo, "number": number, "scope": scope.name() }),
+        )?;
+        // A struct deserializes from a sequence as readily as from a map, so
+        // an implementation that answered `[]` — the shape every *listing*
+        // subcommand returns — would decode into "asked nothing" and read as a
+        // restart that found nothing to do. The one answer here that must not
+        // be inventable is that one (§FS-001-forge-interface.1).
+        if !value.is_object() {
+            return Err(ProviderError(format!(
+                "{} restart: expected an object saying what it asked for, got {value}",
+                self.command
+            )));
+        }
+        self.decode("restart", value)
     }
 
     fn react(&self, request: &Request, target: &Value, emoji: &str) -> Result<(), ProviderError> {
