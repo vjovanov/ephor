@@ -2678,7 +2678,7 @@ impl App {
                 // (§FS-004-quick-actions.2).
                 Screen::Thread(thread) => thread.footer(),
                 Screen::Gate(gate) => gate.footer().to_string(),
-                Screen::Work(work) => work.footer().to_string(),
+                Screen::Work(work) => work.footer(),
                 Screen::Operations(board) => board.footer().to_string(),
             }
         };

@@ -143,9 +143,44 @@ impl Job {
         }
     }
 
+    /// When it started, where the record's stamp reads as a time
+    /// (§FS-005-dispatch.18). A record ephor did not write — or wrote before
+    /// it stamped one — has no time here, and the row says nothing rather
+    /// than dating the job by whatever the filesystem happens to hold.
+    pub fn started_at(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+        stamp(&self.record.started)
+    }
+
+    /// When it ended, where it ended and said so.
+    pub fn ended_at(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+        self.ended.as_ref().and_then(|ended| stamp(&ended.ended))
+    }
+
+    /// How long it has been running, in seconds: to its end where it ended,
+    /// to now where it is still going — the same question asked of a thing
+    /// that has not finished. A job whose supervisor died is not timed: what
+    /// is known is when it started, and how long it lasted is exactly the
+    /// thing nothing recorded.
+    pub fn took(&self, now: chrono::DateTime<chrono::Utc>) -> Option<i64> {
+        let started = self.started_at()?;
+        let until = match (self.live, self.ended_at()) {
+            (true, _) => now,
+            (false, Some(ended)) => ended,
+            (false, None) => return None,
+        };
+        Some((until - started).num_seconds())
+    }
+
     pub fn log_path(&self) -> PathBuf {
         self.dir.join(LOG)
     }
+}
+
+/// A stamp as it was written: RFC 3339, or nothing.
+fn stamp(text: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    chrono::DateTime::parse_from_rfc3339(text)
+        .ok()
+        .map(|at| at.with_timezone(&chrono::Utc))
 }
 
 /// Where jobs live. One directory, listed rather than remembered

@@ -1609,6 +1609,52 @@ conflict dispatches its ticket exactly as it did when the reader was watching
 ([§12](#12-work-an-algorithm-can-finish-does-not-start-with-a-model)), and
 that ticket is a run with a row of its own. The job ends; the work does not.
 
+### 18. The work screen says when, and folds away what is over
+
+What was asked for and what ephor ran are both lists of things that already
+happened, and a list of things that happened without times answers half of
+what the reader brought to it. "Did I already press this?", "is that the job I
+started a minute ago, or the one from yesterday?" — those are questions about
+time, and a screen that will not answer them sends the reader to the ledger
+and the job directory to read timestamps that were on disk the whole while
+([§4](#4-the-ledger-is-ephors-record-and-never-the-truth-about-the-work),
+[§17](#17-a-move-that-needs-nobody-runs-beneath-the-screen)).
+
+So **every row that already happened says when**, in the age the watch
+already spells on its rows rather than a clock time the reader has to
+subtract from: a screen read at a glance is read in "12m ago", not in
+"14:22". A ticket says when it was **asked for** — the ledger's record of the
+dispatch, not anything the plan holds, since the plan is the runtime's and
+tracks what the work reached rather than when it was handed over
+([§4](#4-the-ledger-is-ephors-record-and-never-the-truth-about-the-work)). A
+job says when it **ran**, and how long it took; a job still going says how
+long it has been going, which is the same question asked of a thing that has
+not finished, and the only answer there is.
+
+**An age nothing can source is left off.** A ticket somebody wrote into a
+plan by hand was never dispatched, so nothing knows when it was asked for,
+and that row simply carries no age. The plan file's own modification time
+would be ephor inventing a fact about work it did not start, which is the
+same refusal the board makes about rows it did not write
+([§15](#15-every-operation-is-visible-in-one-place)).
+
+**What is over folds away.** Tickets accumulate, and are meant to: a reopen,
+a second ask, a cancel, months of work about one long-lived change, all of it
+kept ([§16](#16-work-that-should-not-go-on-is-cancelled-and-the-plan-says-so)).
+But a reader opening this screen is looking at what is still going, and the
+finished and the cancelled push it down the screen a row at a time until it is
+off it. So the screen leads with the tickets that are still open and collects
+the ones that are over behind a single line saying how many there are and how
+to see them; one key unfolds them in place, in their order in the plan, ages
+and all. Nothing is hidden that a keystroke does not show, and nothing is
+deleted: this is a reading of the record, and the record is unchanged
+(§GOAL-003-nothing-lost).
+
+**A plan with nothing open is not folded to nothing.** Where every ticket is
+over, they are all shown: folding the whole list away would leave a heading
+above an empty space and a reader wondering where the work went. The fold is
+for what is over *beside* what is not.
+
 ## FS-006-project-interface: a project and ephor meet over one interface, in three homes
 
 ephor requires capabilities of a project, never artifacts in it

@@ -15,7 +15,10 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
+use chrono::{DateTime, Utc};
+
 use crate::feed::model::Item;
+use crate::feed::render::{age, span};
 use crate::work::recipe::Recipe;
 use crate::work::WorkStatus;
 
@@ -52,6 +55,10 @@ pub(crate) struct WorkScreen {
     /// after it has left the board, which is what makes "what happened when I
     /// pressed that" answerable an hour later.
     jobs: Vec<crate::seams::jobs::Job>,
+    /// Tickets that are over are collected behind one line until the reader
+    /// asks for them (§FS-005-dispatch.18). A reading, never a change to the
+    /// plan: `z` shows every one of them, in their place in the order.
+    folded: bool,
     scroll: u16,
     viewport: u16,
 }
@@ -72,6 +79,7 @@ impl WorkScreen {
             selected: 0,
             picking: None,
             jobs,
+            folded: true,
             scroll: 0,
             viewport: 0,
         }
@@ -89,6 +97,30 @@ impl WorkScreen {
             .collect()
     }
 
+    /// Tickets that are over — finished, or taken back, which is finished too
+    /// (§FS-005-dispatch.16). What the fold collects.
+    fn over(&self) -> usize {
+        self.status
+            .iter()
+            .flat_map(|status| status.tickets.iter())
+            .filter(|ticket| ticket.finished)
+            .count()
+    }
+
+    /// Whether the fold is actually folding anything right now. A plan with
+    /// nothing open is shown whole: the fold is for what is over *beside*
+    /// what is not, and folding every row away would leave a heading over an
+    /// empty space (§FS-005-dispatch.18).
+    fn folding(&self) -> bool {
+        let over = self.over();
+        let all = self
+            .status
+            .as_ref()
+            .map(|status| status.tickets.len())
+            .unwrap_or(0);
+        self.folded && over > 0 && over < all
+    }
+
     pub fn title(&self) -> String {
         let title: String = self.item.title.chars().take(60).collect();
         format!(" ephor — work — {title}")
@@ -100,16 +132,25 @@ impl WorkScreen {
     /// keystroke to refuse them (§FS-004-quick-actions.2). Everything else on
     /// this screen goes on working with nothing bound — the plan is written,
     /// read, reopened and edited either way (§FS-005-dispatch lead).
-    pub fn footer(&self) -> &'static str {
+    pub fn footer(&self) -> String {
         if self.picking.is_some() {
-            return " j/k choose  enter/1-9 cancel that ticket  esc keep them";
+            return " j/k choose  enter/1-9 cancel that ticket  esc keep them".to_string();
         }
-        match (self.refusal.is_some(), self.jobs.is_empty()) {
-            (true, true) => " j/k move  enter/1-9 open work  a ask  s reopen  e read the plan  o browser  ; ops  esc back",
-            (true, false) => " j/k move  enter/1-9 open work  a ask  s reopen  e plan  L job log  o browser  ; ops  esc back",
-            (false, true) => " j/k move  enter/1-9 open work  a ask  s reopen  c cancel  R run the runtime  e read the plan  o browser  ; ops  esc back",
-            (false, false) => " j/k move  enter/1-9 open work  a ask  s reopen  c cancel  R run  e plan  L job log  o browser  ; ops  esc back",
-        }
+        let keys = match (self.refusal.is_some(), self.jobs.is_empty()) {
+            (true, true) => " j/k move  enter/1-9 open work  a ask  s reopen  e read the plan",
+            (true, false) => " j/k move  enter/1-9 open work  a ask  s reopen  e plan  L job log",
+            (false, true) => " j/k move  enter/1-9 open work  a ask  s reopen  c cancel  R run the runtime  e read the plan",
+            (false, false) => " j/k move  enter/1-9 open work  a ask  s reopen  c cancel  R run  e plan  L job log",
+        };
+        // `z` is taught only where there is a fold to work, since a key that
+        // does nothing visible spends the reader's keystroke to teach them
+        // nothing (§FS-004-quick-actions.2).
+        let fold = match (self.folding(), self.folded, self.over()) {
+            (true, _, _) => "  z the ones that are over",
+            (false, false, over) if over > 0 => "  z folds them back",
+            _ => "",
+        };
+        format!("{keys}{fold}  o browser  ; ops  esc back")
     }
 
     fn plan(&self) -> Option<PathBuf> {
@@ -146,6 +187,13 @@ impl WorkScreen {
             }
             KeyCode::Char('g') | KeyCode::Home => {
                 self.scroll = 0;
+                Action::None
+            }
+            // Show the tickets that are over, or put them back
+            // (§FS-005-dispatch.18). The plan is untouched either way — this
+            // key changes what is read, never what is recorded.
+            KeyCode::Char('z') => {
+                self.folded = !self.folded;
                 Action::None
             }
             KeyCode::Enter => self.dispatch(self.selected),
@@ -272,6 +320,9 @@ impl WorkScreen {
     }
 
     fn lines(&self) -> Vec<Line<'static>> {
+        // One reading of the clock for the whole screen, so two rows a
+        // millisecond apart do not disagree about what time it is.
+        let now = Utc::now();
         let dim = Style::default().fg(Color::DarkGray);
         let heading = dim.add_modifier(Modifier::BOLD);
         let mut lines = Vec::new();
@@ -309,7 +360,11 @@ impl WorkScreen {
                 // While a ticket is being chosen, the open ones wear the
                 // cursor and a number, in the order the digits pick them.
                 let mut open_index = 0usize;
+                let folding = self.folding();
                 for ticket in &status.tickets {
+                    if folding && ticket.finished {
+                        continue;
+                    }
                     let (marker, style) = if ticket.cancelled {
                         ("⊘", dim)
                     } else if ticket.waiting {
@@ -340,7 +395,7 @@ impl WorkScreen {
                         }
                         _ => Style::default(),
                     };
-                    lines.push(Line::from(vec![
+                    let mut spans = vec![
                         Span::styled(cursor, dim),
                         Span::styled(format!("{marker} "), style),
                         Span::styled(format!("{:<14}", ticket.id), title_style),
@@ -349,13 +404,31 @@ impl WorkScreen {
                             format!("  [{}]", ticket.state.as_deref().unwrap_or("?")),
                             dim,
                         ),
-                    ]));
+                    ];
+                    // When it was asked for, where anything knows — a ticket
+                    // ephor did not dispatch carries no age rather than a
+                    // guessed one (§FS-005-dispatch.18).
+                    if let Some(asked) = ticket.asked {
+                        spans.push(Span::styled(format!("   asked {}", ago(now, asked)), dim));
+                    }
+                    lines.push(Line::from(spans));
                     if let Some(verdict) = &ticket.verdict {
                         lines.push(Line::from(Span::styled(
                             format!("        {verdict}"),
                             Style::default().fg(Color::Cyan),
                         )));
                     }
+                }
+                if folding {
+                    let over = self.over();
+                    lines.push(Line::from(Span::styled(
+                        format!(
+                            "    … {over} more that {} over — z shows {}",
+                            if over == 1 { "is" } else { "are" },
+                            if over == 1 { "it" } else { "them" }
+                        ),
+                        dim,
+                    )));
                 }
                 if status.tickets.is_empty() {
                     lines.push(Line::from(Span::styled(
@@ -416,10 +489,17 @@ impl WorkScreen {
                     // neither success nor failure and is not reported as either.
                     (None, false) => ("✗", Style::default().fg(Color::Red)),
                 };
-                lines.push(Line::from(vec![
+                let mut spans = vec![
                     Span::styled(format!("    {marker} "), style),
                     Span::raw(format!("{} {}", job.record.icon, job.record.description)),
-                ]));
+                ];
+                // When it ran, and for how long (§FS-005-dispatch.18): the
+                // difference between the job the reader started a minute ago
+                // and the one from yesterday that says the same words.
+                if let Some(when) = ran(now, job) {
+                    spans.push(Span::styled(format!("   {when}"), dim));
+                }
+                lines.push(Line::from(spans));
                 lines.push(Line::from(Span::styled(
                     format!("      {}", job.says()),
                     dim,
@@ -493,6 +573,36 @@ impl WorkScreen {
     }
 }
 
+/// An age as a row says it (§FS-005-dispatch.18). The watch spells the first
+/// minute "now", and "now ago" is not a time.
+fn ago(now: DateTime<Utc>, then: DateTime<Utc>) -> String {
+    match age(now, then).as_str() {
+        "now" => "just now".to_string(),
+        age => format!("{age} ago"),
+    }
+}
+
+/// When a job ran, and for how long — or how long it has been going, which is
+/// the same question asked of a thing that has not finished
+/// (§FS-005-dispatch.18). None where the record carries no readable stamp: a
+/// row that says nothing is better than one that dates a job by a guess.
+fn ran(now: DateTime<Utc>, job: &crate::seams::jobs::Job) -> Option<String> {
+    let started = job.started_at()?;
+    if job.live {
+        return Some(format!("going {}", span(job.took(now).unwrap_or(0))));
+    }
+    // A job whose supervisor died has an end nothing recorded, so it is said
+    // by its beginning: how long it lasted is exactly the unknown.
+    if job.died() {
+        return Some(format!("started {}", ago(now, started)));
+    }
+    let ended = job.ended_at().unwrap_or(started);
+    Some(match job.took(now) {
+        Some(took) => format!("ran {}, took {}", ago(now, ended), span(took)),
+        None => format!("ran {}", ago(now, ended)),
+    })
+}
+
 /// A ticket's title without the item's own, which this screen's header
 /// already carries: "fix the red gate — #17 Humanize durations in the log
 /// reader" is "fix the red gate" once the reader knows which item they are on.
@@ -546,6 +656,7 @@ mod tests {
                 assignee: None,
                 pinned: None,
                 verdict: Some("done — the change is right".to_string()),
+                asked: Some(Utc::now() - chrono::Duration::hours(3)),
             }],
             changes: if stale {
                 vec!["1 new message".to_string()]
@@ -674,6 +785,7 @@ mod tests {
             assignee: None,
             pinned: None,
             verdict: None,
+            asked: Some(Utc::now() - chrono::Duration::minutes(12)),
         };
         status.tickets = vec![
             open("fix-gate-1", "collect"),
@@ -703,6 +815,16 @@ mod tests {
             None,
             Vec::new(),
         );
+        // It is over, so it is folded away until asked for
+        // (§FS-005-dispatch.18) — and then reads as taken back, in its place
+        // in the order, with its reason beneath it.
+        let shown = text(&screen);
+        assert!(!shown.contains("⊘ fix-gate-2"), "{shown}");
+        assert!(shown.contains("1 more that is over"), "{shown}");
+        assert!(matches!(
+            screen.handle_key(KeyCode::Char('z')),
+            Action::None
+        ));
         let shown = text(&screen);
         assert!(shown.contains("⊘ fix-gate-2"), "{shown}");
         assert!(shown.contains("[cancelled]"), "{shown}");
@@ -892,5 +1014,163 @@ mod tests {
             Action::SetMessage(said) => assert!(said.contains("nothing"), "{said}"),
             _ => panic!("nothing to read"),
         }
+    }
+
+    /// A job as the jobs directory would have it, dated relative to now so
+    /// the assertions read the same on any day.
+    fn job_ago(started: i64, ended: Option<i64>, live: bool) -> crate::seams::jobs::Job {
+        let at = |minutes: i64| (Utc::now() - chrono::Duration::minutes(minutes)).to_rfc3339();
+        crate::seams::jobs::Job {
+            id: "20260820T090000.000Z-restart".to_string(),
+            dir: std::path::PathBuf::from("/state/ephor/jobs/20260820T090000.000Z-restart"),
+            record: crate::seams::jobs::Record {
+                version: 1,
+                project: "demo".to_string(),
+                item: Some("forge:demo/17".to_string()),
+                icon: "⟳".to_string(),
+                description: "restart the whole gate".to_string(),
+                root: std::path::PathBuf::from("/w/demo"),
+                workspace: None,
+                steps: Vec::new(),
+                dossier: Vec::new(),
+                started: at(started),
+            },
+            live,
+            ended: ended.map(|ended| crate::seams::jobs::Ended {
+                outcome: "done".to_string(),
+                exit_code: Some(0),
+                step: None,
+                says: "⟳ restart the whole gate: ok".to_string(),
+                ended: at(ended),
+            }),
+        }
+    }
+
+    /// Every row that already happened says when (§FS-005-dispatch.18). The
+    /// ticket says when it was **asked for**, which only the ledger knows; the
+    /// job says when it **ran** and how long it took, and one still going says
+    /// how long it has been going.
+    #[test]
+    fn the_rows_say_when_they_happened() {
+        let screen = WorkScreen::new(
+            item(),
+            Some(status_with_open_tickets()),
+            offers(),
+            None,
+            vec![job_ago(65, Some(60), false)],
+        );
+        let shown = text(&screen);
+        assert!(shown.contains("fix-gate-1"), "{shown}");
+        assert!(shown.contains("asked 12m ago"), "{shown}");
+        assert!(shown.contains("ran 1h ago, took 5m"), "{shown}");
+
+        // Going, not gone: the same question asked of a thing that has not
+        // finished, and the only answer there is.
+        let screen = WorkScreen::new(
+            item(),
+            Some(status_with_open_tickets()),
+            offers(),
+            None,
+            vec![job_ago(3, None, true)],
+        );
+        assert!(text(&screen).contains("going 3m"), "{}", text(&screen));
+
+        // A supervisor that died recorded no end, so the row is said by its
+        // beginning: how long it lasted is exactly the unknown.
+        let screen = WorkScreen::new(
+            item(),
+            Some(status_with_open_tickets()),
+            offers(),
+            None,
+            vec![job_ago(90, None, false)],
+        );
+        let shown = text(&screen);
+        assert!(shown.contains("started 1h ago"), "{shown}");
+        assert!(!shown.contains("took"), "nothing timed it: {shown}");
+    }
+
+    /// A ticket ephor did not dispatch — written into the plan by hand, or by
+    /// the machine for itself — has no ask for anything to date, so its row
+    /// carries no age rather than one the plan's mtime invented
+    /// (§FS-005-dispatch.18).
+    #[test]
+    fn a_ticket_nothing_dispatched_carries_no_age() {
+        let mut status = status(false);
+        status.tickets[0].asked = None;
+        let screen = WorkScreen::new(item(), Some(status), offers(), None, Vec::new());
+        let row = text(&screen)
+            .lines()
+            .find(|line| line.contains("fix-gate-1"))
+            .expect("the ticket is on the screen")
+            .to_string();
+        assert!(!row.contains("asked"), "{row}");
+    }
+
+    /// Tickets that are over are collected behind one line until `z` asks for
+    /// them, and then read in their place in the plan's order. The plan is
+    /// untouched either way: this is a reading of the record
+    /// (§FS-005-dispatch.16, §FS-005-dispatch.18).
+    #[test]
+    fn what_is_over_folds_away_and_z_shows_it() {
+        let mut screen = WorkScreen::new(
+            item(),
+            Some(status_with_open_tickets()),
+            offers(),
+            None,
+            Vec::new(),
+        );
+        let shown = text(&screen);
+        assert!(shown.contains("fix-gate-1"), "{shown}");
+        assert!(shown.contains("fix-gate-3"), "{shown}");
+        assert!(
+            !shown.contains("fix-gate-2"),
+            "the cancelled one is over: {shown}"
+        );
+        assert!(
+            shown.contains("… 1 more that is over — z shows it"),
+            "{shown}"
+        );
+        assert!(
+            screen.footer().contains("z the ones that are over"),
+            "{}",
+            screen.footer()
+        );
+
+        screen.handle_key(KeyCode::Char('z'));
+        let shown = text(&screen);
+        let at = |id: &str| {
+            shown
+                .find(id)
+                .unwrap_or_else(|| panic!("{id} is not shown: {shown}"))
+        };
+        assert!(
+            at("fix-gate-1") < at("fix-gate-2"),
+            "in place, in the plan's order: {shown}"
+        );
+        assert!(
+            at("fix-gate-2") < at("fix-gate-3"),
+            "in place, in the plan's order: {shown}"
+        );
+        assert!(
+            screen.footer().contains("z folds them back"),
+            "{}",
+            screen.footer()
+        );
+
+        // And back.
+        screen.handle_key(KeyCode::Char('z'));
+        assert!(!text(&screen).contains("fix-gate-2"), "{}", text(&screen));
+    }
+
+    /// Where every ticket is over there is nothing for the fold to be beside,
+    /// so they are all shown: folding the whole list away would leave a
+    /// heading above an empty space (§FS-005-dispatch.18).
+    #[test]
+    fn a_plan_with_nothing_open_is_not_folded_to_nothing() {
+        let screen = WorkScreen::new(item(), Some(status(false)), offers(), None, Vec::new());
+        let shown = text(&screen);
+        assert!(shown.contains("✓ fix-gate-1"), "{shown}");
+        assert!(!shown.contains("more that is over"), "{shown}");
+        assert!(!screen.footer().contains(" z "), "{}", screen.footer());
     }
 }

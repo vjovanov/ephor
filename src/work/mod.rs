@@ -16,7 +16,7 @@ pub mod runtime;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use crate::branches::{Placement, WorkspaceState};
@@ -123,6 +123,11 @@ pub struct TicketStatus {
     /// What the review left behind, where the work reached one — or, for a
     /// ticket taken back, the reason the reader gave (§FS-005-dispatch.16).
     pub verdict: Option<String>,
+    /// When ephor asked for it, from the ledger's record of the dispatch
+    /// (§FS-005-dispatch.18). None for a ticket ephor did not dispatch — one
+    /// written into the plan by hand, or by the machine for itself: nothing
+    /// knows when that was asked for, so nothing claims to.
+    pub asked: Option<DateTime<Utc>>,
 }
 
 /// What one cancel did (§FS-005-dispatch.16).
@@ -1060,6 +1065,15 @@ pub fn status_of_entry(global: &WorkConfig, entry: &Entry, item: Option<&Item>) 
         .iter()
         .map(|dispatch| (dispatch.ticket.as_str(), dispatch.recipe.as_str()))
         .collect();
+    // When each ticket was asked for (§FS-005-dispatch.18). The ledger is the
+    // only thing that knows: the plan tracks what the work reached, never
+    // when it was handed over ([§4]). Dispatched twice under one id, the
+    // later ask stands — it is the one the reader last pressed.
+    let asked: BTreeMap<&str, DateTime<Utc>> = entry
+        .dispatches
+        .iter()
+        .map(|dispatch| (dispatch.ticket.as_str(), dispatch.at))
+        .collect();
     let root = WorkRoot::open(&entry.root).ok().flatten();
     let plan = Plan::read(&entry.plan).ok().flatten();
     let tickets: Vec<TicketStatus> = plan
@@ -1068,6 +1082,7 @@ pub fn status_of_entry(global: &WorkConfig, entry: &Entry, item: Option<&Item>) 
             plan.tickets()
                 .into_iter()
                 .map(|ticket| TicketStatus {
+                    asked: asked.get(ticket.id.as_str()).copied(),
                     recipe: recipes
                         .get(ticket.id.as_str())
                         .map(|recipe| recipe.to_string())

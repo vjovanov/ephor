@@ -40,6 +40,29 @@ impl Style {
     }
 }
 
+/// How long something took, in the shortest reading that is still true
+/// (§FS-005-dispatch.18). Unlike [`age`], seconds are worth printing here: a
+/// job that ran for forty seconds ran for forty seconds, and "now" would be
+/// the one thing it is not.
+pub fn span(seconds: i64) -> String {
+    let seconds = seconds.max(0);
+    if seconds < 60 {
+        return format!("{seconds}s");
+    }
+    let minutes = seconds / 60;
+    if minutes < 60 {
+        return format!("{minutes}m");
+    }
+    let hours = minutes / 60;
+    if hours < 48 {
+        return match minutes % 60 {
+            0 => format!("{hours}h"),
+            rest => format!("{hours}h{rest}m"),
+        };
+    }
+    format!("{}d", hours / 24)
+}
+
 pub fn age(now: DateTime<Utc>, then: DateTime<Utc>) -> String {
     let minutes = (now - then).num_minutes();
     if minutes < 1 {
@@ -269,4 +292,26 @@ pub fn render_summary_row(
         .filter(|item| crate::feed::gate::Gate::of(item).is_some_and(|gate| gate.is_red()))
         .count();
     (feed.project.clone(), unread, needs, failing)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// How long something took, in the shortest reading that is still true
+    /// (§FS-005-dispatch.18) — seconds under a minute, because a job that ran
+    /// for forty seconds did not run for "now".
+    #[test]
+    fn a_span_is_the_shortest_true_reading() {
+        assert_eq!(span(0), "0s");
+        assert_eq!(span(42), "42s");
+        assert_eq!(span(59), "59s");
+        assert_eq!(span(60), "1m");
+        assert_eq!(span(5 * 60), "5m");
+        assert_eq!(span(3_600), "1h");
+        assert_eq!(span(3_600 + 13 * 60), "1h13m");
+        assert_eq!(span(48 * 3_600), "2d");
+        // A clock that went backwards is not a negative duration.
+        assert_eq!(span(-5), "0s");
+    }
 }
