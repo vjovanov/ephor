@@ -180,6 +180,11 @@ pub enum WorkCommand {
     Cancel(WorkCancelArgs),
     /// Run the runtime over every work root that still has an open ticket.
     Run(WorkRunArgs),
+    /// What workflows the runtime offers, and what each one takes.
+    Workflows(WorkWorkflowsArgs),
+    /// Lay one of the runtime's workflows down about an item: a plan of its
+    /// own, beside the item's, ready for the board to run.
+    Lay(WorkLayArgs),
     /// Drop ledger entries; the plans they point at stay on disk.
     Forget(WorkForgetArgs),
     /// Print the state machine ephor's tickets run under, for editing or for
@@ -235,6 +240,48 @@ pub struct WorkDispatchArgs {
     pub updated_within: Option<i64>,
 
     /// Report what would be opened without writing anything.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+#[derive(Args, Debug, Default)]
+pub struct WorkWorkflowsArgs {
+    /// Ask about one project's checkout — a project keeps workflows of its
+    /// own beside it. Omitted, the first configured project answers.
+    #[arg(long)]
+    pub project: Option<String>,
+
+    /// Show one workflow's inputs in full.
+    pub workflow: Option<String>,
+
+    /// Emit raw JSON instead of a listing.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct WorkLayArgs {
+    /// The item it is about, by its feed id.
+    #[arg(long)]
+    pub item: String,
+
+    /// The entry to lay down — a menu entry that names a workflow, or a
+    /// workflow's own id where no entry names it.
+    pub entry: String,
+
+    /// Answer one of the workflow's inputs, for this instantiation alone:
+    /// `--set <input>=<value>`. Repeatable. An input naming who does the work
+    /// is answered with a hand's id like everywhere else.
+    #[arg(long = "set", value_name = "INPUT=VALUE")]
+    pub set: Vec<String>,
+
+    /// Who does it, for this instantiation alone: a hand id from the roster,
+    /// optionally at an effort (`<hand>[:<effort>]`).
+    #[arg(long)]
+    pub hand: Option<String>,
+
+    /// Report what would be written, and what would answer every input,
+    /// without writing the plan.
     #[arg(long)]
     pub dry_run: bool,
 }

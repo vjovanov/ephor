@@ -36,6 +36,8 @@ pub fn work(args: &WorkArgs) -> Result<ExitCode> {
         WorkCommand::Sync(sync) => sync_work(&config, sync),
         WorkCommand::Cancel(cancel) => cancel_work(&config, cancel),
         WorkCommand::Run(run) => run_work(&config, run),
+        WorkCommand::Workflows(workflows) => list_workflows(&config, workflows),
+        WorkCommand::Lay(lay) => lay_workflow(&config, lay),
         WorkCommand::Forget(forget) => forget_work(&config, forget),
         WorkCommand::States => {
             // The one configured for these projects when there is one, so what
@@ -138,6 +140,17 @@ fn list_work(config: &StatusConfig, args: &crate::cli::WorkListArgs) -> Result<E
                         "cancelled": ticket.cancelled,
                         "verdict": ticket.verdict,
                     })).collect::<Vec<_>>(),
+                    // The plans workflows laid down beside this matter's own
+                    // (§FS-005-dispatch.19). They carry no ticket inside the
+                    // matter's plan, so without this the ledger's record of
+                    // them would be readable nowhere.
+                    "workflows": entry.dispatches.iter().filter_map(|dispatch| {
+                        dispatch.plan.as_ref().map(|plan| serde_json::json!({
+                            "plan": plan,
+                            "entry": dispatch.recipe,
+                            "at": dispatch.at,
+                        }))
+                    }).collect::<Vec<_>>(),
                 })
             })
             .collect();
@@ -166,11 +179,26 @@ fn list_work(config: &StatusConfig, args: &crate::cli::WorkListArgs) -> Result<E
             status.badge(64),
             style.dim(&title(&entry.title)),
         );
-        println!(
-            "{:<width$}  {}",
-            "",
-            style.dim(&entry.plan.display().to_string())
-        );
+        // The matter's own plan, where there is one to name. An entry that
+        // is nothing but workflows never had one (§FS-005-dispatch.19), and
+        // printing a path to a file ephor never wrote reads as a loss.
+        if !status.tickets.is_empty() || status.missing || entry.plan.is_file() {
+            println!(
+                "{:<width$}  {}",
+                "",
+                style.dim(&entry.plan.display().to_string())
+            );
+        }
+        // What a workflow laid down beside it, each its own plan
+        // (§FS-005-dispatch.19).
+        for dispatch in entry.dispatches.iter().filter(|d| d.is_workflow()) {
+            let plan = dispatch.plan.as_deref().unwrap_or_default();
+            println!(
+                "{:<width$}  {}",
+                "",
+                style.dim(&format!("{plan}  ({})", dispatch.recipe))
+            );
+        }
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -384,6 +412,252 @@ fn ask_work(config: &StatusConfig, args: &crate::cli::WorkAskArgs) -> Result<Exi
         println!("note: {}", style.dim(note));
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// `ephor work workflows` — what the runtime offers, and what each one takes
+/// (§FS-005-dispatch.19). A reading: nothing is written, and where no runtime
+/// is bound the answer is that rung's own sentence rather than an empty list
+/// pretending there are none.
+fn list_workflows(config: &StatusConfig, args: &crate::cli::WorkWorkflowsArgs) -> Result<ExitCode> {
+    let mut dispatcher = Dispatcher::load(config)?;
+    let project = match &args.project {
+        Some(project) => project.clone(),
+        None => config
+            .projects
+            .keys()
+            .next()
+            .cloned()
+            .ok_or_else(|| EphorError::Command("No project is configured.".to_string()))?,
+    };
+    let offered = dispatcher.workflows(&project);
+    if let Some(refusal) = &offered.refusal {
+        println!("{refusal}");
+        return Ok(ExitCode::SUCCESS);
+    }
+    let style = Style::detect();
+    let named: Vec<&crate::work::runtime::workflow::Workflow> = match &args.workflow {
+        Some(wanted) => offered
+            .workflows
+            .iter()
+            .filter(|workflow| &workflow.id == wanted)
+            .collect(),
+        None => offered.workflows.iter().collect(),
+    };
+    if named.is_empty() {
+        match &args.workflow {
+            Some(wanted) => {
+                println!("The runtime offers no workflow called '{wanted}'.");
+                return Ok(ExitCode::FAILURE);
+            }
+            None => {
+                println!("The runtime offers no workflows here.");
+                return Ok(ExitCode::SUCCESS);
+            }
+        }
+    }
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&as_json(&named)).unwrap_or_else(|_| "[]".to_string())
+        );
+        return Ok(ExitCode::SUCCESS);
+    }
+    // An entry beside a workflow is what makes it an action, so the listing
+    // says which ones already have one (§FS-005-dispatch.19).
+    let entries: Vec<(String, String)> = dispatcher
+        .workflow_entries(&project)
+        .into_iter()
+        .filter_map(|(_, entry)| {
+            entry
+                .workflow
+                .as_ref()
+                .map(|ask| (ask.name.clone(), entry.id.clone()))
+        })
+        .collect();
+    for workflow in &named {
+        let entry = match entries.iter().find(|(name, _)| name == &workflow.id) {
+            Some((_, id)) => format!(" · '{id}' beside it"),
+            None => String::new(),
+        };
+        println!(
+            "{}  {}",
+            workflow.id,
+            style.dim(&format!(
+                "{} · {}{entry}",
+                workflow.version,
+                workflow.source.label()
+            ))
+        );
+        if !workflow.description.is_empty() {
+            println!("  {}", style.dim(&workflow.description));
+        }
+        // The inputs in full only where one workflow was named: the whole
+        // listing with every input is a screen nobody reads.
+        if args.workflow.is_some() {
+            for input in &workflow.inputs {
+                let mut says = vec![input.kind.label().to_string()];
+                if input.required {
+                    says.push("required".to_string());
+                }
+                if input.hand {
+                    says.push("names who does the work".to_string());
+                }
+                if let Some(default) = &input.default {
+                    says.push(format!("default {default}"));
+                }
+                println!("    {}  {}", input.name, style.dim(&says.join(" · ")));
+                if !input.description.is_empty() {
+                    println!("      {}", style.dim(&input.description));
+                }
+            }
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn as_json(workflows: &[&crate::work::runtime::workflow::Workflow]) -> serde_json::Value {
+    serde_json::Value::Array(
+        workflows
+            .iter()
+            .map(|workflow| {
+                serde_json::json!({
+                    "id": workflow.id,
+                    "description": workflow.description,
+                    "version": workflow.version,
+                    "source": workflow.source.label(),
+                    "inputs": workflow.inputs.iter().map(|input| serde_json::json!({
+                        "name": input.name,
+                        "description": input.description,
+                        "type": input.kind.label(),
+                        "required": input.required,
+                        "hand": input.hand,
+                        "default": input.default,
+                    })).collect::<Vec<_>>(),
+                })
+            })
+            .collect(),
+    )
+}
+
+/// `ephor work lay` — lay one workflow down about one item
+/// (§FS-005-dispatch.19). Writes files and nothing else: what runs the plan
+/// is the reader, from the board.
+fn lay_workflow(config: &StatusConfig, args: &crate::cli::WorkLayArgs) -> Result<ExitCode> {
+    let mut dispatcher = Dispatcher::load(config)?;
+    let item = selected_items(config, &[])?
+        .into_iter()
+        .find(|item| item.id == args.item)
+        .ok_or_else(|| {
+            EphorError::Command(format!(
+                "{} is not in any cached feed — run `ephor refresh` first.",
+                args.item
+            ))
+        })?;
+    let typed = typed_inputs(&args.set)?;
+    let picked = args
+        .hand
+        .as_deref()
+        .map(crate::work::recipe::HandPin::parse)
+        .transpose()
+        .map_err(EphorError::Command)?;
+    let entry = workflow_entry(&mut dispatcher, config, &item, &args.entry)?;
+    let laying = dispatcher.laying(&item, &entry, &typed, picked.as_ref())?;
+    let style = Style::detect();
+    println!(
+        "{} {} {}",
+        match args.dry_run {
+            true => "would lay",
+            false => "laying",
+        },
+        laying.workflow.id,
+        style.dim(&format!("about {}", title(&item.title)))
+    );
+    // What answered every input, before anything is written: the account a
+    // reader is owed of a plan they are about to get (§FS-005-dispatch.19).
+    for answer in &laying.answered.answers {
+        println!(
+            "  {}  {}",
+            answer.input,
+            style.dim(&match answer.shown.is_empty() {
+                true => format!("({})", answer.from.label()),
+                false => format!("{}  ({})", one_line(&answer.shown), answer.from.label()),
+            })
+        );
+    }
+    let laid = dispatcher.lay(&item, &laying, args.dry_run)?;
+    if !args.dry_run {
+        dispatcher.save()?;
+    }
+    println!("{}", style.dim(&laid.outcome.describe()));
+    if !laid.report.trim().is_empty() {
+        for line in laid.report.lines() {
+            println!("  {}", style.dim(line));
+        }
+    }
+    for note in dispatcher.notes() {
+        println!("note: {}", style.dim(note));
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `--set <input>=<value>`, as the reader wrote them.
+fn typed_inputs(set: &[String]) -> Result<std::collections::BTreeMap<String, String>> {
+    set.iter()
+        .map(|pair| {
+            pair.split_once('=')
+                .map(|(name, value)| (name.trim().to_string(), value.to_string()))
+                .ok_or_else(|| EphorError::Command(format!("'{pair}' is not <input>=<value>.")))
+        })
+        .collect()
+}
+
+/// The entry named on the command line: one written beside a workflow, one
+/// the project or the person configured, or — where nothing names it — the
+/// workflow itself, asked for by name, which is what
+/// [§FS-005-dispatch.10](crate) keeps possible.
+fn workflow_entry(
+    dispatcher: &mut Dispatcher,
+    config: &StatusConfig,
+    item: &Item,
+    named: &str,
+) -> Result<crate::feed::config::ActionConfig> {
+    let configured = config
+        .projects
+        .get(&item.project)
+        .map(|project| project.actions.as_slice())
+        .unwrap_or_default()
+        .iter()
+        .chain(config.actions.iter())
+        .find(|action| action.id == named && action.workflow.is_some());
+    if let Some(action) = configured {
+        return Ok(action.clone());
+    }
+    if let Some((_, entry)) = dispatcher
+        .workflow_entries(&item.project)
+        .into_iter()
+        .find(|(_, entry)| entry.id == named)
+    {
+        return Ok(entry);
+    }
+    let offered = dispatcher.workflows(&item.project);
+    let workflow = offered.find(named).ok_or_else(|| {
+        EphorError::Command(match &offered.refusal {
+            Some(why) => format!("'{named}' cannot be laid down: {why}"),
+            None => format!(
+                "Nothing here is called '{named}' — no entry names it, and the runtime offers \
+                 no such workflow. `ephor work workflows` lists what there is."
+            ),
+        })
+    })?;
+    Ok(crate::work::workflow::Beside::default().action(workflow))
+}
+
+fn one_line(text: &str) -> String {
+    let joined = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    match joined.chars().count() > 72 {
+        true => format!("{}…", joined.chars().take(71).collect::<String>()),
+        false => joined,
+    }
 }
 
 /// `ephor work cancel` — take tickets back, through the runtime's own move

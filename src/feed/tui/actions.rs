@@ -348,6 +348,9 @@ pub(crate) struct MenuEntry {
     /// The synthetic row with no command yet: the reader types one
     /// (§FS-005-dispatch.10).
     pub is_freehand: bool,
+    /// The synthetic row that opens the runtime's own workflows, for the ones
+    /// no entry names (§FS-005-dispatch.19).
+    pub is_workflows: bool,
     /// What the reader picked for this dispatch alone, where the picker was
     /// used (§FS-005-dispatch.14). It rides the one outcome that carries it
     /// to the dispatch and dies there: nothing records it, and the next
@@ -421,6 +424,7 @@ impl ActionMenu {
                 action,
                 is_checkout: true,
                 is_freehand: false,
+                is_workflows: false,
                 picked: None,
                 gate: Gate::NeedsCheckout,
             });
@@ -468,6 +472,7 @@ impl ActionMenu {
                 action,
                 is_checkout: false,
                 is_freehand: false,
+                is_workflows: false,
                 picked: None,
                 gate,
             });
@@ -483,6 +488,7 @@ impl ActionMenu {
             },
             is_checkout: false,
             is_freehand: true,
+            is_workflows: false,
             picked: None,
             gate: Gate::Ready,
         });
@@ -499,6 +505,48 @@ impl ActionMenu {
             roster: Vec::new(),
             picker: None,
         }
+    }
+
+    /// The row that reaches the runtime's workflows no entry names
+    /// (§FS-005-dispatch.19). Above the freehand row, because it is an offer
+    /// and that one is the escape hatch; below everything real, because most
+    /// of what it opens has nothing to do with this matter — which is the
+    /// whole reason those workflows are behind one row instead of in the menu.
+    pub fn offering_workflows(mut self) -> Self {
+        let at = self.entries.len().saturating_sub(1);
+        self.entries.insert(
+            at,
+            MenuEntry {
+                action: ActionConfig {
+                    icon: "⛬".to_string(),
+                    description: "lay down a workflow…".to_string(),
+                    ..ActionConfig::default()
+                },
+                is_checkout: false,
+                is_freehand: false,
+                is_workflows: true,
+                picked: None,
+                gate: Gate::Ready,
+            },
+        );
+        self
+    }
+
+    /// The same menu about the same subject, holding different entries — how
+    /// the workflow row opens what it offers without a second kind of list
+    /// existing (§FS-005-dispatch.19). What each entry can do is judged again,
+    /// against the same capability table the first menu used.
+    pub fn rebuilt(&self, actions: Vec<ActionConfig>, can: &CapabilitySet) -> ActionMenu {
+        ActionMenu::new(
+            self.subject.clone(),
+            self.root.clone(),
+            self.workspace.clone(),
+            self.branch.clone(),
+            self.state.clone(),
+            self.checkout.clone(),
+            can,
+            actions,
+        )
     }
 
     /// The hands `t` may offer here (§FS-005-dispatch.14). Separate from the

@@ -645,6 +645,7 @@ mod tests {
             checkout: PathBuf::from("/w/demo"),
             plan: PathBuf::from("/w/demo/panta/forge-demo-17.rhei.md"),
             missing: false,
+            workflows: 0,
             tickets: vec![TicketStatus {
                 id: "fix-gate-1".to_string(),
                 recipe: "fix-gate".to_string(),

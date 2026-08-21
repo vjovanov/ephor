@@ -44,7 +44,7 @@ const TASKS_HEADING: &str = "## Tasks";
 pub const PROJECT_DIR: &str = "panta";
 
 /// What a plan file is called: `<plan id>` and this.
-const PLAN_SUFFIX: &str = ".rhei.md";
+pub(super) const PLAN_SUFFIX: &str = ".rhei.md";
 
 /// A directory holding an item's plans: a rhei project, with the state machine
 /// its tickets run under.

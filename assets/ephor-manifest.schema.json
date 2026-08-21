@@ -136,12 +136,28 @@
     },
     "offer": {
       "type": "object",
-      "required": ["id", "description", "command"],
+      "required": ["id", "description"],
+      "oneOf": [
+        { "required": ["command"] },
+        { "required": ["workflow"] }
+      ],
+      "description": "One menu entry the project offers. It either runs a command here or lays down one of the runtime's workflows — never both and never neither (FS-006-project-interface.9, FS-005-dispatch.19).",
       "properties": {
         "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
         "icon": { "type": "string" },
         "description": { "type": "string" },
         "command": { "type": "string" },
+        "workflow": { "type": "string", "description": "The id of a workflow the bound runtime offers (FS-005-dispatch.19). What it lays down is a plan of its own beside the matter's, and it is offered where the workflow can be filled in." },
+        "inputs": {
+          "type": "object",
+          "description": "What this entry answers the workflow's inputs with (FS-005-dispatch.19). A string is rendered with the matter's fields where it names them — {branch}, {repo}, {number}, {title}, {url}, {workspace}, {root}, plus {dossier} and {item} for the files ephor writes; anything else is passed on as it stands.",
+          "additionalProperties": true
+        },
+        "hands": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Inputs of that workflow that name who does the work, for a workflow whose own manifest does not say so. Each resolves through ephor's hand resolution and is refused where a narrowing does not permit it (DA-006-hands-fill-a-workflows-targets)."
+        },
         "cwd": { "$ref": "#/$defs/cwd" },
         "when": { "$ref": "#/$defs/selector" },
         "requires": {

@@ -57,6 +57,27 @@ enumerates a work root's plans (§FS-005-dispatch.15) asks this module what
 the directory holds and gets back plan ids and paths — the suffix is never
 spelled above it (§REQ-001-boundary.5).
 
+Instantiating: the binding's own **workflows** — what it offers and what
+each one takes (§FS-005-dispatch.19). Enumerating them asks the binding, for
+the reason the roster does (§DA-004-roster-is-asked-not-configured): the
+listing is the binding's own stdout (`rhei templates --json`), honored by this
+one binding the way custom-status's is (§AR-002-summons.3), and what goes up
+from here is an id, a description, and typed inputs with none of the binding's
+grammar on them. Two things are read beside a workflow the binding keeps as a
+directory: the input properties its own listing leaves out — which input is an
+execution target, which is the principal one — scanned out of the manifest the
+way a states document is scanned in §3, right enough to fill an input and never
+the authority on anything else; and the entry that makes the workflow an
+action, handed up as bytes, because this module knows where such a file sits
+and never what it means. Rendering one is a summons like any other: the
+resolved values written out as the binding's own values file, the output
+directory named under the work root, and the workspace left behind recognized
+by the plan reading below — so a workflow's plan is an operation the moment it
+exists, and asks nothing further of this module. The hand grammar stays here as
+everywhere: an input the workflow declares an execution target for is filled
+with a chosen hand rendered into the binding's selector, the same rendering a
+ticket's execution line takes (§FS-005-dispatch.14).
+
 ## 2. What stays outside
 
 The ledger is the engine's and runtime-agnostic: it records what was
@@ -75,7 +96,12 @@ refuses with the configured runner named (§FS-006-project-interface.10,
 the workable rung). The refusal is the capability table's sentence
 (§AR-005-capabilities.2), not a spawn error. The roster is empty then, in
 the same rung's own sentence (§FS-005-dispatch.14): who can be asked is
-the runtime's knowledge, and nothing else in ephor changes. The operations
+the runtime's knowledge, and nothing else in ephor changes. The workflows
+are empty then for the same reason — what the binding offers is the
+binding's to say (§FS-005-dispatch.19) — and an entry naming one is refused
+in that rung's sentence rather than dropped from the menu; a plan some
+workflow laid down before is unaffected, since reading plans never depended
+on the binary. The operations
 board is then the refresh row alone (§FS-005-dispatch.15) — an operation is
 a run, and where nothing can run there are none. Enumerating a work root's
 plans is part of reading, not of running: a directory listing against the

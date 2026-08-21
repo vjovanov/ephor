@@ -12,6 +12,7 @@ pub mod dossier;
 pub mod ledger;
 pub mod recipe;
 pub mod runtime;
+pub mod workflow;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -22,8 +23,9 @@ use serde_json::Value;
 use crate::branches::{Placement, WorkspaceState};
 use crate::capabilities::{CapabilitySet, Rung};
 use crate::error::{EphorError, Result};
-use crate::feed::config::StatusConfig;
+use crate::feed::config::{ActionConfig, StatusConfig};
 use crate::feed::model::Item;
+use crate::paths::for_shell;
 
 use dossier::Subject;
 use ledger::{Dispatch, Entry, Ledger, Snapshot};
@@ -56,6 +58,14 @@ pub enum Outcome {
     /// The item moved, but nothing applies to it any more — it was merged,
     /// closed, or answered. The work is over; the ledger keeps saying so.
     Dormant { changes: Vec<String> },
+    /// A workflow the runtime offers laid down a plan of its own beside the
+    /// item's (§FS-005-dispatch.19).
+    Laid {
+        plan: PathBuf,
+        plan_id: String,
+        workflow: String,
+        entry: String,
+    },
 }
 
 impl Outcome {
@@ -95,6 +105,12 @@ impl Outcome {
             Outcome::Dormant { changes } => {
                 format!("{} — no recipe applies to it now", changes.join("; "))
             }
+            Outcome::Laid {
+                plan,
+                workflow,
+                entry,
+                ..
+            } => format!("{entry} ({workflow}) → {}", plan.display()),
         }
     }
 }
@@ -181,6 +197,11 @@ pub struct WorkStatus {
     /// The plan the ledger points at is gone — reported, never repaired.
     pub missing: bool,
     pub tickets: Vec<TicketStatus>,
+    /// How many plans a workflow laid down beside this matter's own
+    /// (§FS-005-dispatch.19). A count rather than the plans themselves: what
+    /// each one is doing is the operations board's answer, read from the plan
+    /// files there like every other operation (§FS-005-dispatch.15).
+    pub workflows: usize,
     /// What has happened to the item since the last dispatch.
     pub changes: Vec<String>,
     /// How to move the waiting ticket on by hand, where one is waiting. Built
@@ -210,6 +231,14 @@ impl WorkStatus {
     pub fn badge(&self, verdict_width: usize) -> String {
         if self.missing {
             return "⚠ plan missing".to_string();
+        }
+        // Work that is entirely workflows has no ticket to badge; what it has
+        // is said on the rows beneath (§FS-005-dispatch.19).
+        if self.tickets.is_empty() && self.workflows > 0 {
+            return match self.workflows {
+                1 => "⛬ 1 workflow".to_string(),
+                many => format!("⛬ {many} workflows"),
+            };
         }
         // A question for a person leads: everything else in the badge is the
         // runtime telling you what it is doing, and this is it telling you it
@@ -265,6 +294,9 @@ pub struct Dispatcher {
     /// merged settings, and a sweep asks about the same handful of roots over
     /// and over (§FS-005-dispatch.14).
     rosters: BTreeMap<PathBuf, runtime::roster::Roster>,
+    /// What the runtime offers, per place asked — a sweep asks the same
+    /// handful of roots over and over (§FS-005-dispatch.19).
+    workflows: BTreeMap<PathBuf, runtime::workflow::Offered>,
     /// What the reader should know about the hands this dispatcher resolved,
     /// each said once (§FS-006-project-interface.9).
     notes: Vec<String>,
@@ -284,6 +316,7 @@ impl Dispatcher {
             placements: BTreeMap::new(),
             behind: BTreeMap::new(),
             rosters: BTreeMap::new(),
+            workflows: BTreeMap::new(),
             notes: Vec::new(),
             ledger: ledger::load()?,
         })
@@ -639,6 +672,13 @@ impl Dispatcher {
     /// Where an item's work belongs, refusing where it would not run
     /// (§FS-005-dispatch.6).
     fn site(&mut self, item: &Item, recipe: &Recipe) -> Result<Site> {
+        self.site_for(item, recipe.needs_checkout)
+    }
+
+    /// The same, for an entry that is not a recipe: a workflow says what it
+    /// needs on disk through its own `requires_checkout`
+    /// (§FS-005-dispatch.19).
+    fn site_for(&mut self, item: &Item, needs_checkout: bool) -> Result<Site> {
         let template = self.root_template(&item.project);
         // A project ephor cannot place has nowhere to put the work, and the
         // ladder owns that sentence (§AR-005-capabilities.2).
@@ -657,7 +697,7 @@ impl Dispatcher {
         if let WorkspaceState::Missing(target) = &checkout.state {
             // Only for work that edits the change. A review or a reply runs in
             // the project's own checkout and fetches what it needs.
-            if recipe.needs_checkout {
+            if needs_checkout {
                 return Err(EphorError::Command(format!(
                     "{}: branch {} is not checked out ({} is missing). Make it with:\n  \
                      ephor checkout --item {}",
@@ -926,9 +966,305 @@ impl Dispatcher {
             ticket: ticket_id,
             recipe: recipe.id.clone(),
             at: Utc::now(),
+            // A ticket goes into the item's own plan, which the entry already
+            // names (§FS-005-dispatch.3).
+            plan: None,
             snapshot: Snapshot::of(item),
         });
         Ok(outcome)
+    }
+
+    /// What the runtime offers about this project's work
+    /// (§FS-005-dispatch.19). Asked at the project's own root, because a
+    /// project keeps workflows of its own beside its checkout — and asked
+    /// once per root, since a sweep asks about the same handful over and over.
+    pub fn workflows(&mut self, project: &str) -> runtime::workflow::Offered {
+        let Some(at) = self
+            .placement(project)
+            .map(|placement| placement.root.clone())
+        else {
+            return runtime::workflow::Offered::default();
+        };
+        if let Some(offered) = self.workflows.get(&at) {
+            return offered.clone();
+        }
+        let offered = runtime::workflow::offered(&self.global, &at);
+        self.workflows.insert(at, offered.clone());
+        offered
+    }
+
+    /// The entries written beside the workflows this project can reach — the
+    /// third home an entry may live in (§FS-005-dispatch.19), and the only
+    /// one that travels with the workflow itself. Each comes back with where
+    /// its workflow was found, because that is where the entry ranks in the
+    /// menu. An entry that would not parse is reported rather than dropped
+    /// (§FS-004-quick-actions.3).
+    pub fn workflow_entries(
+        &mut self,
+        project: &str,
+    ) -> Vec<(runtime::workflow::Source, ActionConfig)> {
+        let offered = self.workflows(project);
+        let mut entries = Vec::new();
+        for workflow in &offered.workflows {
+            match crate::work::workflow::beside(workflow) {
+                Ok(Some(entry)) => entries.push((workflow.source, entry)),
+                Ok(None) => {}
+                Err(why) => self.note_once(&why),
+            }
+        }
+        entries
+    }
+
+    /// Everything one workflow entry would write, with nothing written yet    /// Everything one workflow entry would write, with nothing written yet
+    /// (§FS-005-dispatch.19): which workflow, every input answered and where
+    /// its answer came from, and the plan it would lay down. A refusal here
+    /// leaves nothing behind, which is the point of resolving before writing.
+    pub fn laying(
+        &mut self,
+        item: &Item,
+        entry: &ActionConfig,
+        typed: &BTreeMap<String, String>,
+        picked: Option<&recipe::HandPin>,
+    ) -> Result<Laying> {
+        let ask = entry.workflow.clone().ok_or_else(|| {
+            EphorError::Command(format!("action '{}' lays down no workflow", entry.id))
+        })?;
+        let offered = self.workflows(&item.project);
+        let workflow = offered.find(&ask.name).cloned().ok_or_else(|| {
+            EphorError::Command(match &offered.refusal {
+                Some(why) => format!("'{}' lays down '{}', and {why}", entry.id, ask.name),
+                None => format!(
+                    "'{}' names the workflow '{}', which this runtime does not offer{}",
+                    entry.id,
+                    ask.name,
+                    match offered.workflows.is_empty() {
+                        true => String::new(),
+                        false => format!(
+                            " (it offers: {})",
+                            offered
+                                .workflows
+                                .iter()
+                                .map(|workflow| workflow.id.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ),
+                    }
+                ),
+            })
+        })?;
+        let site = self.site_for(item, entry.requires_checkout)?;
+        // Where the plan goes: named after the matter and the entry, and
+        // named apart from what an earlier run of the same entry left, since
+        // two runs of one workflow about one item are two records and not a
+        // correction of the first (§FS-005-dispatch.19).
+        let plan_id = free_plan_id(
+            &site.dir,
+            &plan::plan_id(&format!("{}-{}", item.id, entry.id)),
+        );
+        let output = site.dir.join(&plan_id);
+        // What ephor knows reaches a workflow as files: the paths are fixed
+        // here so an answer may name them, and the files themselves are
+        // written before the workflow is (§FS-005-dispatch.19).
+        let carried = carried(&site.dir, &plan_id);
+        let mut values = site.values.clone();
+        values.insert("dossier", for_shell(&carried.join(DOSSIER)));
+        values.insert("item", for_shell(&carried.join(ITEM)));
+        // Who does the work, before anything is answered: a refusal leaves
+        // nothing behind (§FS-006-project-interface.9).
+        let choice = self.hand(&item.project, &entry.id, picked, None, &site.dir);
+        if let runtime::roster::Choice::Refused(why) = choice {
+            return Err(EphorError::Command(why));
+        }
+        if let Some(note) = choice.note() {
+            self.note_once(note);
+        }
+        let hand = choice.pin().0;
+        let named = self.named_hands(item, entry, &ask, &workflow, typed, &site.dir);
+        let answered = crate::work::workflow::answer(
+            &workflow,
+            &ask,
+            typed,
+            &values,
+            hand.as_deref(),
+            &|name: &str| {
+                named
+                    .get(name)
+                    .cloned()
+                    .unwrap_or_else(|| Err(format!("'{name}' is not a hand this runtime knows")))
+            },
+        );
+        Ok(Laying {
+            entry: entry.id.clone(),
+            workflow,
+            answered,
+            plan_id,
+            output,
+            site,
+        })
+    }
+
+    /// Every hand the entry or the reader named for this workflow, resolved
+    /// through the seven steps before any of them is used
+    /// (§DA-006-hands-fill-a-workflows-targets). Resolved up front because
+    /// one refusal is the whole entry's refusal, and because answering the
+    /// inputs must not need the roster again halfway through.
+    fn named_hands(
+        &mut self,
+        item: &Item,
+        entry: &ActionConfig,
+        ask: &crate::feed::config::WorkflowAsk,
+        workflow: &runtime::workflow::Workflow,
+        typed: &BTreeMap<String, String>,
+        root: &std::path::Path,
+    ) -> BTreeMap<String, std::result::Result<Option<String>, String>> {
+        let is_hand = |name: &str| {
+            workflow
+                .input(name)
+                .map(|input| input.hand)
+                .unwrap_or(false)
+                || ask.hands.iter().any(|listed| listed == name)
+        };
+        let mut names: Vec<String> = Vec::new();
+        for (input, value) in &ask.inputs {
+            if is_hand(input) {
+                collect_names(value, &mut names);
+            }
+        }
+        for (input, word) in typed {
+            if is_hand(input) {
+                names.push(word.clone());
+            }
+        }
+        names.sort();
+        names.dedup();
+        names
+            .into_iter()
+            .map(|name| {
+                let rendered = match recipe::HandPin::parse(&name) {
+                    Err(why) => Err(why),
+                    Ok(pin) => {
+                        match self.hand(&item.project, &entry.id, None, Some(&pin), root) {
+                            runtime::roster::Choice::Refused(why) => Err(why),
+                            runtime::roster::Choice::Unasked { .. } => Ok(None),
+                            chosen => match chosen.pin().0 {
+                                Some(target) => Ok(Some(target)),
+                                // A hand with no model of its own rides a run
+                                // as flags and has no selector to write into
+                                // an input (§FS-005-dispatch.14).
+                                None => Err(format!(
+                                    "hand '{name}' names an agent with no model of its own, and \
+                                     an input naming who does the work needs the full spelling"
+                                )),
+                            },
+                        }
+                    }
+                };
+                (name, rendered)
+            })
+            .collect()
+    }
+
+    /// Lay a workflow's plan down beside the item's (§FS-005-dispatch.19).
+    /// Writes files and nothing else: what runs the plan is the reader, from
+    /// the board where every other operation is run
+    /// ([§FS-005-dispatch.7](crate)).
+    pub fn lay(&mut self, item: &Item, laying: &Laying, dry_run: bool) -> Result<Laid> {
+        if !laying.answered.refusals.is_empty() {
+            return Err(EphorError::Command(laying.answered.refusals.join("; ")));
+        }
+        if !laying.answered.missing.is_empty() {
+            return Err(EphorError::Command(format!(
+                "'{}' cannot be laid down: nothing answers {}. Answer them with --set \
+                 <input>=<value>, or say them in the entry.",
+                laying.entry,
+                laying.answered.missing.join(", ")
+            )));
+        }
+        let states = self.states_yaml(&item.project)?;
+        let root = WorkRoot::ensure(&laying.site.dir, &states)?;
+        let carried = carried(&root.dir, &laying.plan_id);
+        std::fs::create_dir_all(&carried).map_err(|err| {
+            EphorError::Command(format!("Cannot make {}: {err}", carried.display()))
+        })?;
+        let put = |name: &str, content: &str| -> Result<PathBuf> {
+            let path = carried.join(name);
+            std::fs::write(&path, content).map_err(|err| {
+                EphorError::Command(format!("Cannot write {}: {err}", path.display()))
+            })?;
+            Ok(path)
+        };
+        // The matter's own name leads it: a ticket carries the title in the
+        // plan's heading, and a workflow's plan is not ephor's to write — so
+        // without this the one thing every reader looks for first would be
+        // the one thing missing (§FS-005-dispatch.2).
+        put(
+            DOSSIER,
+            &format!("# {}\n\n{}", item.title, laying.site.dossier),
+        )?;
+        put(ITEM, &identifiers(&laying.site.metadata))?;
+        let values = put(
+            VALUES,
+            &serde_json::to_string_pretty(&laying.answered.values)
+                .unwrap_or_else(|_| "{}".to_string()),
+        )?;
+        let report = runtime::workflow::lay(
+            &self.global,
+            &laying.site.checkout.workspace,
+            &laying.workflow,
+            &values,
+            &laying.output,
+            dry_run,
+        )?;
+        if dry_run {
+            return Ok(Laid {
+                outcome: Outcome::Laid {
+                    plan: laying.output.clone(),
+                    plan_id: laying.plan_id.clone(),
+                    workflow: laying.workflow.id.clone(),
+                    entry: laying.entry.clone(),
+                },
+                report,
+            });
+        }
+        // Where the plan actually landed is the binding's answer, not a path
+        // ephor composed (§AR-007-runtime.1).
+        let plan = runtime::workflow::laid(&laying.output)
+            .map(|found| found.path)
+            .unwrap_or_else(|| laying.output.clone());
+        let entry_id = laying.entry.clone();
+        let ledger_entry = self.ledger.entries.entry(item.id.clone()).or_insert(Entry {
+            project: item.project.clone(),
+            title: item.title.clone(),
+            url: item.url.clone(),
+            root: root.dir.clone(),
+            checkout: laying.site.checkout.workspace.clone(),
+            // The item's own plan, whether or not it has one yet: a workflow
+            // lays down a plan beside it and never replaces it
+            // (§FS-005-dispatch.3).
+            plan_id: plan::plan_id(&item.id),
+            plan: plan::plan_path_in(&root.dir, &plan::plan_id(&item.id)),
+            dispatches: Vec::new(),
+        });
+        ledger_entry.title = item.title.clone();
+        ledger_entry.url = item.url.clone();
+        ledger_entry.root = root.dir.clone();
+        ledger_entry.checkout = laying.site.checkout.workspace.clone();
+        ledger_entry.dispatches.push(Dispatch {
+            ticket: String::new(),
+            recipe: entry_id.clone(),
+            at: Utc::now(),
+            plan: Some(laying.plan_id.clone()),
+            snapshot: Snapshot::of(item),
+        });
+        Ok(Laid {
+            outcome: Outcome::Laid {
+                plan,
+                plan_id: laying.plan_id.clone(),
+                workflow: laying.workflow.id.clone(),
+                entry: entry_id,
+            },
+            report,
+        })
     }
 
     /// Ask an item for something no recipe covers, in the reader's own words
@@ -1143,12 +1479,26 @@ pub fn status_of_entry(global: &WorkConfig, entry: &Entry, item: Option<&Item>) 
         runtime::advance_command(global, &ticket.id, ticket.state.as_deref().unwrap_or("?"))
     });
     WorkStatus {
+        workflows: entry
+            .dispatches
+            .iter()
+            .filter(|dispatch| dispatch.is_workflow())
+            .count(),
         project: entry.project.clone(),
         root: entry.root.clone(),
         plan_id: entry.plan_id.clone(),
         checkout: entry.checkout(),
         plan: entry.plan.clone(),
-        missing: plan.is_none(),
+        // The matter's own plan is missing only where something was meant
+        // to be in it. An entry whose every dispatch laid a plan of its own
+        // never wrote a ticket here (§FS-005-dispatch.19), so there is no
+        // plan to be missing — and reporting one would be ephor alarming a
+        // reader about a file it never said it would write.
+        missing: plan.is_none()
+            && entry
+                .dispatches
+                .iter()
+                .any(|dispatch| !dispatch.is_workflow()),
         tickets,
         advance,
         changes: item
@@ -1310,13 +1660,38 @@ pub fn enumerate_roots(
             root,
             plans: Vec::new(),
         });
-        group.plans.push(PlanRef {
-            project: entry.project.clone(),
-            plan_id: entry.plan_id.clone(),
-            path: entry.plan.clone(),
-            item: Some(item_id.clone()),
-            title: entry.title.clone(),
-        });
+        // The matter's own plan, where a ticket was ever written into it. An
+        // entry whose every dispatch laid a plan of its own never wrote one
+        // (§FS-005-dispatch.19), and a row for a file ephor never promised
+        // would be the board reporting on itself.
+        if entry.plan.is_file() || entry.dispatches.iter().any(|d| !d.is_workflow()) {
+            group.plans.push(PlanRef {
+                project: entry.project.clone(),
+                plan_id: entry.plan_id.clone(),
+                path: entry.plan.clone(),
+                item: Some(item_id.clone()),
+                title: entry.title.clone(),
+            });
+        }
+        // And the plans workflows laid down beside it. The listing below finds
+        // these anyway — they are plans in a work root — but only the ledger
+        // knows which matter they are about, which is what `Enter` needs
+        // (§FS-005-dispatch.15).
+        for dispatch in entry.dispatches.iter().filter(|d| d.is_workflow()) {
+            let Some(plan_id) = dispatch.plan.as_deref() else {
+                continue;
+            };
+            let Some(found) = runtime::workflow::laid(&entry.root.join(plan_id)) else {
+                continue;
+            };
+            group.plans.push(PlanRef {
+                project: entry.project.clone(),
+                plan_id: found.plan_id,
+                path: found.path,
+                item: Some(item_id.clone()),
+                title: entry.title.clone(),
+            });
+        }
     }
     for placement in placements {
         let template = root_template(global, projects.get(&placement.project));
@@ -1453,6 +1828,87 @@ enum Opening {
     Finished(String),
     /// It stopped, and this is the situation the ticket is about.
     Stopped(String),
+}
+
+/// What one workflow entry would write, with nothing written yet
+/// (§FS-005-dispatch.19).
+pub struct Laying {
+    /// The entry that names the workflow — the menu's own id, and the key a
+    /// hands table answers by (§FS-006-project-interface.9).
+    pub entry: String,
+    pub workflow: runtime::workflow::Workflow,
+    /// Every input, answered, and where each answer came from.
+    pub answered: crate::work::workflow::Answered,
+    /// The plan this would lay down, by the id the runtime will know it by.
+    pub plan_id: String,
+    /// Where it goes, under the item's own work root.
+    pub output: PathBuf,
+    site: Site,
+}
+
+impl Laying {
+    /// The work root the plan lands in.
+    pub fn root(&self) -> &std::path::Path {
+        &self.site.dir
+    }
+
+    /// Whether this can be laid down as it stands.
+    pub fn ready(&self) -> bool {
+        self.answered.missing.is_empty() && self.answered.refusals.is_empty()
+    }
+}
+
+/// A workflow's plan, written (§FS-005-dispatch.19).
+pub struct Laid {
+    pub outcome: Outcome,
+    /// What the binding said as it wrote — its own account of what it made,
+    /// which is what a reader is shown before and after.
+    pub report: String,
+}
+
+/// The files ephor writes for a workflow to read, under the work root's own
+/// hidden corner: a dotted name is not a plan, so enumerating the root steps
+/// over it (§FS-005-dispatch.15).
+fn carried(root: &std::path::Path, plan_id: &str) -> PathBuf {
+    root.join(CARRIED).join(plan_id)
+}
+
+const CARRIED: &str = ".ephor";
+const DOSSIER: &str = "dossier.md";
+const ITEM: &str = "item.json";
+const VALUES: &str = "values.json";
+
+/// The item as data, as a workflow's own programs can read it — the same
+/// names a shell action gets in its environment (§FS-005-dispatch.8).
+fn identifiers(metadata: &[(&'static str, String)]) -> String {
+    let fields: serde_json::Map<String, Value> = metadata
+        .iter()
+        .map(|(key, value)| ((*key).to_string(), Value::String(value.clone())))
+        .collect();
+    serde_json::to_string_pretty(&fields).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// A plan id nothing has taken in this work root: the name the entry earns,
+/// then the same name counted, so a second run of one workflow about one item
+/// is a second record rather than a correction of the first
+/// (§FS-005-dispatch.19).
+fn free_plan_id(root: &std::path::Path, base: &str) -> String {
+    if !root.join(base).exists() {
+        return base.to_string();
+    }
+    (2..)
+        .map(|nth| format!("{base}-{nth}"))
+        .find(|id| !root.join(id).exists())
+        .unwrap_or_else(|| base.to_string())
+}
+
+/// Every hand named in one written answer, at whatever depth it was written.
+fn collect_names(value: &Value, out: &mut Vec<String>) {
+    match value {
+        Value::String(name) => out.push(name.clone()),
+        Value::Array(items) => items.iter().for_each(|item| collect_names(item, out)),
+        _ => {}
+    }
 }
 
 /// Where one item's work goes, and what the ticket will say.

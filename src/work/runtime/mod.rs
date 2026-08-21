@@ -17,6 +17,7 @@ pub mod plan;
 pub mod results;
 pub mod roster;
 pub mod watch;
+pub mod workflow;
 
 use std::path::Path;
 

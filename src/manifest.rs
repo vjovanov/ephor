@@ -148,14 +148,28 @@ pub struct TaskStore {
 
 /// A menu entry the project offers (§FS-006-project-interface.9): the same
 /// shape a person's configured action has, selected by the same language and
-/// gated by the same rungs.
+/// gated by the same rungs. It runs a command here, or lays down one of the
+/// runtime's workflows (§FS-005-dispatch.19) — the schema refuses an offer
+/// that says both or neither, so nothing here has to.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Offer {
     pub id: String,
     #[serde(default)]
     pub icon: Option<String>,
     pub description: String,
-    pub command: String,
+    #[serde(default)]
+    pub command: Option<String>,
+    /// The workflow this offer lays down, where it lays one down rather than
+    /// running a command (§FS-005-dispatch.19).
+    #[serde(default)]
+    pub workflow: Option<String>,
+    /// What it answers that workflow's inputs with.
+    #[serde(default)]
+    pub inputs: std::collections::BTreeMap<String, serde_json::Value>,
+    /// Which of those inputs name who does the work
+    /// (§DA-006-hands-fill-a-workflows-targets).
+    #[serde(default)]
+    pub hands: Vec<String>,
     #[serde(default)]
     pub cwd: Option<String>,
     #[serde(default)]
@@ -183,10 +197,19 @@ impl Offer {
             id: self.id.clone(),
             icon: self.icon.clone().unwrap_or_else(|| OFFER_ICON.to_string()),
             description: self.description.clone(),
-            command: self.command.clone(),
-            // A manifest offer runs a command; work a project wants handed to
-            // an agent is a recipe of its own (§FS-005-dispatch.1).
+            command: self.command.clone().unwrap_or_default(),
+            // A manifest offer runs a command or lays down a workflow; a
+            // brief a project wants handed to an agent is a recipe of its own
+            // (§FS-005-dispatch.1).
             agent: None,
+            workflow: self
+                .workflow
+                .clone()
+                .map(|name| crate::feed::config::WorkflowAsk {
+                    name,
+                    inputs: self.inputs.clone(),
+                    hands: self.hands.clone(),
+                }),
             hand: None,
             cwd: self.cwd.clone(),
             kinds: Vec::new(),

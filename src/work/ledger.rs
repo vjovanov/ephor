@@ -62,12 +62,27 @@ pub struct Entry {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Dispatch {
-    /// The ticket id inside the plan.
+    /// The ticket id inside the plan. Empty for a dispatch that laid down a
+    /// plan of its own instead of a ticket inside one.
     pub ticket: String,
     pub recipe: String,
     pub at: DateTime<Utc>,
+    /// The plan this dispatch made, where it made one of its own rather than
+    /// appending to the item's — a workflow lays down its own
+    /// (§FS-005-dispatch.19). An addition, so a ledger written before this
+    /// field existed reads unchanged (§FS-006-project-interface.11).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<String>,
     /// The item as it was when this was asked for.
     pub snapshot: Snapshot,
+}
+
+impl Dispatch {
+    /// Whether this dispatch laid down a plan of its own
+    /// (§FS-005-dispatch.19).
+    pub fn is_workflow(&self) -> bool {
+        self.plan.is_some()
+    }
 }
 
 /// The fingerprint of an item: enough of it that a change worth reopening work

@@ -2100,6 +2100,8 @@ ephor work ask --item ID [WORDS…] [--state S] [--dry-run]
 ephor work sync [--project P] [--dry-run]
 ephor work cancel --item ID TICKET… [--why WORDS] [--dry-run]
 ephor work run [--project P] [--item ID] [-- RHEI_ARGS…]
+ephor work workflows [--project P] [WORKFLOW] [--json]
+ephor work lay ENTRY --item ID [--set INPUT=VALUE]… [--hand H] [--dry-run]
 ephor work forget [--item ID | --done | --missing]
 ephor work states
 ```
@@ -2117,6 +2119,9 @@ ephor work states
   project you keep in the same checkout for your own work is not swept in. One
   root at a time: tickets in one root are about one checkout, and two agents in
   one working tree edit the same files. Pass runtime flags after `--`.
+- **`workflows`** and **`lay`** are the runtime's own workflows, offered as
+  actions (§8.15). `lay` writes a plan of its own beside the matter's and runs
+  nothing; `--dry-run` shows what would answer every input first.
 - **`forget`** drops ledger entries only. The plans stay on disk: they are the
   record of what was done.
 
@@ -2137,11 +2142,18 @@ tracking uses:
       "dispatches": [
         { "ticket": "fix-gate-1", "recipe": "fix-gate", "at": "2026-08-12T06:10:00Z",
           "snapshot": { "updated_at": "…", "state": "open", "passed": 12,
-                        "failed": 2, "running": 0, "blocked": false, "messages": 3 } }
+                        "failed": 2, "running": 0, "blocked": false, "messages": 3 } },
+        { "ticket": "", "recipe": "review-change", "at": "2026-08-12T09:31:00Z",
+          "plan": "github-prs-acme-widget-42-review-change",
+          "snapshot": { "…": "…" } }
       ]
     }
   } }
 ```
+
+A dispatch carrying a `plan` laid a workflow down beside the matter's own
+plan rather than a ticket inside it (§8.15); its `ticket` is empty because
+there is none.
 
 It answers one question — has this been handed over? — and holds the
 fingerprint that answers the next: has the item moved since. An entry whose
@@ -2441,6 +2453,104 @@ editor, a pager are legitimate menu entries, and one of those started beneath
 the screen is a program nobody can type into. Write `"background": true` on an
 action or an offer that needs no reader (§7.2). ephor's own `⤴ rebase` entries
 set it themselves.
+
+### 8.15 Workflows the runtime offers
+
+A recipe is one ticket in your own words. The runtime carries something
+larger: **workflows** — parameterized plans that lay down tasks of their own,
+under a state machine of their own, with fan-out, review loops and human gates
+nobody had to write here. A workflow is an entry in the same action menu as
+everything else.
+
+Ask what there is:
+
+```bash
+ephor work workflows                    # what the runtime offers here
+ephor work workflows changeset-review   # and what that one takes
+```
+
+The list is the runtime's, asked at the moment of asking rather than kept as a
+copy — for the same reason the roster is (§8.4). With no runtime bound there
+are no workflows, said in the *workable* rung's own words.
+
+**An entry makes a workflow an action.** It is the same entry shape actions
+and offers already use, with `workflow` where a `command` would be:
+
+```json
+{ "id": "review-change", "icon": "⌥", "description": "review this change",
+  "workflow": "changeset-review",
+  "when": { "kinds": ["pr"] },
+  "requires_checkout": true,
+  "inputs": { "change_ref": "{branch}" },
+  "hands": ["smart_target"] }
+```
+
+Three places it may live, narrow beating broad:
+
+| Where | Who it is for |
+|---|---|
+| `.ephor.json` beside the workflow itself | travels and versions with the workflow |
+| the project's manifest, under `actions` | everyone working on this project |
+| `actions` in your `status.json` | you, everywhere |
+
+A workflow the runtime ships ranks with what ephor ships, one the project
+keeps with the project's offers, one you keep with your own — the provenance
+the menu already orders by.
+
+**Answering the inputs.** Five steps, each displacing the ones after it:
+
+1. what you answered for this laying alone — `--set <input>=<value>`, or the
+   line you typed in the interface;
+2. what the entry's `inputs` says;
+3. ephor's answer for an input that names who does the work;
+4. the workflow's own default;
+5. nobody — a required input still unanswered, which is asked for rather than
+   written with a hole in it.
+
+A string is rendered with the matter's own fields, exactly as a brief is
+(§8.3), plus `{dossier}` and `{item}` — the paths of two files ephor writes
+beside the plan, one the dossier as prose and one the identifiers as JSON, for
+a workflow whose first task wants to read them. Anything that is not a string
+is passed on as it stands, so an input wanting a number, a flag or a list gets
+one; strings nested inside a list or a record are rendered too.
+
+**Who does it is your answer, not the workflow's.** Most of a workflow's
+inputs are its agents, each defaulted to whatever model its author happened to
+be running. An input the workflow declares an execution target for — or one
+your entry lists under `hands` — resolves through the seven steps of §8.4
+instead, so `work.hands`, your pick at the moment of asking and
+`work.permitted_hands` all mean here what they mean everywhere. Configuration
+names a hand by its id: `"inputs": { "review_targets": ["luna", "sol"] }` is
+two hands, resolved and rendered into whatever the runtime spells them as. A
+hand a narrowing does not permit is refused with that reason — the workflow's
+own default included, since a default is a naming.
+
+**Laying one down.**
+
+```bash
+ephor work lay review-change --item github-prs:acme/widget#42 --dry-run
+ephor work lay review-change --item github-prs:acme/widget#42
+ephor work lay venue-intake --item … --set conference='ECOOP 2027'
+```
+
+`--dry-run` prints what would answer every input and where each answer came
+from, plus the runtime's own account of what it would render, and writes no
+plan. Without it, what lands is a **plan of its own beside the matter's** —
+`<matter>-<entry>` in the same work root, never a ticket inside the matter's
+own plan. Which means the operations board (`;`) finds it by looking like
+every other plan there, and a workflow and a ticket about one change queue
+behind the root's one run rather than editing the same tree at once.
+
+Laying one down writes files and nothing else. Running it is the move after,
+from the board or with `ephor work run`. A second laying of the same entry is
+`<matter>-<entry>-2`: two runs of one workflow about one item are two records,
+not a correction of the first.
+
+In the interface, a workflow entry is an ordinary row in the action menu. One
+missing scalar input is one line typed where you are standing; anything more —
+or anything wanting a list or a record — opens a file in `$EDITOR` with
+everything ephor already resolved in it and each unanswered input named with
+what it wants. Leave that file alone and nothing is laid down.
 
 ---
 

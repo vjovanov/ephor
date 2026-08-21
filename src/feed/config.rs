@@ -93,6 +93,11 @@ pub struct ActionConfig {
     /// one path the work screen uses and nothing it carries — its opening
     /// move, its own hand — is lost on the way (§FS-005-dispatch.4).
     pub agent: Option<crate::work::recipe::Recipe>,
+    /// The workflow this entry lays down, where it lays one down rather than
+    /// running a command or asking for a ticket (§FS-005-dispatch.19). The
+    /// workflow is the runtime's; what is here is its id and the answers this
+    /// entry gives its inputs.
+    pub workflow: Option<WorkflowAsk>,
     /// Who this work would go to, filled in when the menu opens
     /// (§FS-005-dispatch.14). Never configuration: nobody writes it, ephor
     /// resolves it so the reader sees it before pressing the key.
@@ -152,10 +157,29 @@ struct AgentAsk {
     hand: Option<crate::work::recipe::HandPin>,
 }
 
+/// What an entry says when it lays down a workflow the runtime offers
+/// (§FS-005-dispatch.19): which workflow, what its inputs are answered with,
+/// and which of them name who does the work.
+#[derive(Debug, Clone, Default)]
+pub struct WorkflowAsk {
+    /// The workflow's id, as the runtime knows it.
+    pub name: String,
+    /// What this entry answers the workflow's inputs with. A string is
+    /// rendered with the item's fields where it names them, exactly as a
+    /// brief is; anything else is passed on as it stands, because an input
+    /// wanting a number, a flag or a list of them is not served by a sentence
+    /// (§FS-005-dispatch.19).
+    pub inputs: BTreeMap<String, serde_json::Value>,
+    /// The inputs that name who does the work, for a workflow whose own
+    /// manifest does not say so — listing one is how a person says "this
+    /// input is a hand" (§DA-006-hands-fill-a-workflows-targets).
+    pub hands: Vec<String>,
+}
+
 /// The parse of an entry, before the one rule that cannot be expressed in the
-/// shape: an entry runs a command or asks for work, never both and never
-/// neither (§FS-005-dispatch.1). Refused here, where the person can still see
-/// what they wrote.
+/// shape: an entry runs a command, asks for work, or lays down a workflow —
+/// exactly one of the three (§FS-005-dispatch.1, §FS-005-dispatch.19).
+/// Refused here, where the person can still see what they wrote.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawAction {
@@ -167,6 +191,12 @@ struct RawAction {
     command: Option<String>,
     #[serde(default)]
     agent: Option<AgentAsk>,
+    #[serde(default)]
+    workflow: Option<String>,
+    #[serde(default)]
+    inputs: BTreeMap<String, serde_json::Value>,
+    #[serde(default)]
+    hands: Vec<String>,
     #[serde(default)]
     cwd: Option<String>,
     #[serde(default)]
@@ -191,29 +221,50 @@ impl TryFrom<RawAction> for ActionConfig {
             true => format!("'{}'", raw.description),
             false => format!("'{}'", raw.id),
         };
-        let (command, ask) = match (raw.command, raw.agent) {
-            (Some(_), Some(_)) => {
-                return Err(format!(
-                    "action {named} carries both a 'command' and an 'agent': an entry either runs \
-                 something here or asks somebody for it, never both"
-                ))
-            }
-            (None, None) => {
-                return Err(format!(
-                "action {named} carries neither a 'command' nor an 'agent': an entry has to say \
-                 what it does"
-            ))
-            }
-            (Some(command), None) => (command, None),
-            (None, Some(ask)) => (String::new(), Some(ask)),
-        };
+        // One entry says one thing: it runs something here, it asks somebody
+        // for a ticket, or it lays down a workflow the runtime offers
+        // (§FS-005-dispatch.1, §FS-005-dispatch.19). Two of them would leave
+        // one silently unused.
+        let said: Vec<&str> = [
+            raw.command.as_ref().map(|_| "command"),
+            raw.agent.as_ref().map(|_| "agent"),
+            raw.workflow.as_ref().map(|_| "workflow"),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        if said.len() > 1 {
+            return Err(format!(
+                "action {named} carries {}: an entry either runs something here, asks somebody \
+                 for it, or lays down a workflow — never more than one",
+                said.iter()
+                    .map(|word| format!("'{word}'"))
+                    .collect::<Vec<_>>()
+                    .join(" and ")
+            ));
+        }
+        if said.is_empty() {
+            return Err(format!(
+                "action {named} carries none of 'command', 'agent' or 'workflow': an entry has to \
+                 say what it does"
+            ));
+        }
+        let ask = raw.agent;
+        let command = raw.command.unwrap_or_default();
+        let workflow = raw.workflow.map(|name| WorkflowAsk {
+            name,
+            inputs: raw.inputs,
+            hands: raw.hands,
+        });
         // The id is the ticket's name and the key a hands table answers by
         // (§FS-006-project-interface.9), so work that asks for a hand has to
-        // have one.
-        if ask.is_some() && raw.id.is_empty() {
+        // have one. A workflow entry is under the same rule for the same
+        // reason: what it lays down is named after it, and a hands table
+        // answers for it by id (§FS-005-dispatch.19).
+        if (ask.is_some() || workflow.is_some()) && raw.id.is_empty() {
             return Err(format!(
-                "action {named} asks for work and has no 'id': the id names its ticket and is what \
-                 a hands table answers by"
+                "action {named} hands work over and has no 'id': the id names what it writes and \
+                 is what a hands table answers by"
             ));
         }
         let agent = ask.map(|ask| crate::work::recipe::Recipe {
@@ -238,6 +289,7 @@ impl TryFrom<RawAction> for ActionConfig {
             description: raw.description,
             command,
             agent,
+            workflow,
             hand: None,
             cwd: raw.cwd,
             kinds: raw.kinds,
@@ -438,10 +490,11 @@ mod tests {
         );
     }
 
-    /// An entry runs a command or asks for work, never both and never neither
-    /// — refused where the person can still see what they wrote
-    /// (§FS-005-dispatch.1). And work needs a name: the id is the ticket's and
-    /// the key a hands table answers by (§FS-006-project-interface.9).
+    /// An entry runs a command, asks for work, or lays down a workflow —
+    /// exactly one, refused where the person can still see what they wrote
+    /// (§FS-005-dispatch.1, §FS-005-dispatch.19). And work needs a name: the
+    /// id names what it writes and is the key a hands table answers by
+    /// (§FS-006-project-interface.9).
     #[test]
     fn an_entry_that_neither_runs_nor_asks_is_refused() {
         let both = serde_json::from_value::<ActionConfig>(serde_json::json!({
@@ -450,7 +503,18 @@ mod tests {
         }))
         .unwrap_err()
         .to_string();
-        assert!(both.contains("never both"), "{both}");
+        assert!(both.contains("never more than one"), "{both}");
+
+        let with_workflow = serde_json::from_value::<ActionConfig>(serde_json::json!({
+            "id": "x", "icon": "◆", "description": "d",
+            "command": "true", "workflow": "changeset-review"
+        }))
+        .unwrap_err()
+        .to_string();
+        assert!(
+            with_workflow.contains("never more than one"),
+            "{with_workflow}"
+        );
 
         let neither = serde_json::from_value::<ActionConfig>(
             serde_json::json!({ "icon": "◆", "description": "do a thing" }),
@@ -465,6 +529,15 @@ mod tests {
         .unwrap_err()
         .to_string();
         assert!(nameless.contains("no 'id'"), "{nameless}");
+
+        // A workflow entry is under the same rule for the same reason
+        // (§FS-005-dispatch.19).
+        let unnamed_workflow = serde_json::from_value::<ActionConfig>(serde_json::json!({
+            "icon": "◆", "description": "d", "workflow": "changeset-review"
+        }))
+        .unwrap_err()
+        .to_string();
+        assert!(unnamed_workflow.contains("no 'id'"), "{unnamed_workflow}");
 
         // And a typo inside the block is caught with the rest.
         assert!(serde_json::from_value::<ActionConfig>(serde_json::json!({

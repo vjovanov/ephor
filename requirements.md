@@ -1655,6 +1655,159 @@ over, they are all shown: folding the whole list away would leave a heading
 above an empty space and a reader wondering where the work went. The fold is
 for what is over *beside* what is not.
 
+### 19. A workflow the runtime offers is an action, and its inputs are answered here
+
+A binding brings more than a place to put tickets. It carries **workflows** —
+named, parameterized plans that lay down tasks of their own, under a machine of
+their own, with fan-out and gates ephor never wrote — and a reader who has one
+is in exactly the position
+[§1](#1-a-recipe-decides-which-items-deserve-work-and-what-to-ask-for)
+describes: the thing worth doing about this row is already written down, and
+doing it means leaving, remembering a vocabulary, and coming back. So a
+workflow is an entry in the same menu, selected by the same language, ordered
+by the same provenance, refused in the same sentence.
+
+Above the binding a workflow is an id, a description, and its **inputs**: each
+one a name, a type, whether it is required, and what it stands at when nobody
+says. Everything else about it — where workflows live, what a plan rendered
+from one looks like, how it is rendered at all — is the binding's, and is
+spelled there (§REQ-001-boundary.5). Which workflows there are, and what each
+one takes, is the binding's own knowledge too: it is asked of the binding at
+the moment of asking rather than kept as a list of ephor's, for the reason the
+roster is (§DA-004-roster-is-asked-not-configured) — a copy is wrong the first
+time a workflow is added on the other side. So with no runtime bound there are
+no workflows, in the *workable* rung's own words
+([§FS-006-project-interface.10](#10-capability-rung-by-rung)), and nothing else
+changes: the plans a workflow already laid down go on being found by looking
+and read from disk, like every other plan there
+([§15](#15-every-operation-is-visible-in-one-place)).
+
+**An entry names a workflow, and that is what makes it an action.** The entry
+is the one the menu already has
+([§FS-006-project-interface.9](#9-offers-the-projects-actions)) — an id, an
+icon, a description, a `when`, its capability requirements — and where it would
+carry a command or a brief it carries a workflow's name and the answers to its
+inputs instead. It is written in any of three places: beside the workflow
+itself, where the binding keeps one somewhere a reader can put a file — there
+it travels and versions with the workflow; in the project's manifest; in the
+person's own configuration. Narrow beats broad, as everywhere else. A
+workflow the binding ships is ranked with what ephor ships, one the person
+keeps with the person's own, one the project keeps with the project's offers —
+the provenance the menu already orders by, with nothing new to learn, and the
+same rule settling two entries that share an id.
+
+**A workflow no entry names is still asked for.** Requiring configuration
+before a workflow can be used once is the cost
+[§10](#10-what-ephor-offers-is-not-a-limit-on-what-can-be-asked) exists to
+refuse — but a menu carrying every workflow the machine can find, on every row,
+is [§FS-004-quick-actions.2](#2-offered-only-where-it-would-work) broken at
+scale: most of them have nothing to do with the item, and a reader who has to
+read past twenty of them to reach the two that do has lost the menu. So the
+named ones stand in the menu where they apply, and every other workflow is
+behind one entry that opens the list of them, where it is picked, answered, and
+run once. What was answered there can be kept as an entry, which is how a
+workflow becomes an action without anybody opening a configuration file first.
+
+**The inputs are answered in five steps**, each displacing the ones after it:
+what the reader answered for this instantiation alone; what the entry says;
+what ephor answers for an input about who does the work; the workflow's own
+default; and, where an input is required and still unanswered, the reader —
+asked, or refused by name where nobody is there to ask. The order is
+[§14](#14-who-does-the-work-is-chosen-and-defaulted-per-project)'s, deliberately,
+so that one resolution order covers everything a dispatch has to settle.
+
+What the entry says is data, not prose: a string is rendered with the item's
+fields where it names them, exactly as a brief is
+([§1](#1-a-recipe-decides-which-items-deserve-work-and-what-to-ask-for)), and
+anything that is not a string is passed on as it stands, because an input that
+wants a number, a flag, or a list of them is not served by a sentence. Where a
+list or a record holds strings, those are rendered too — the fields an item
+carries are as useful inside a structure as beside one.
+
+**What ephor knows reaches a workflow as files, not only as words.** The
+dossier and the identifiers are already written for exactly this
+([§2](#2-the-ticket-carries-what-ephor-knows-not-a-link-to-it),
+[§8](#8-the-ticket-carries-the-item-as-data-not-only-as-prose)), and a workflow
+has no place in its plan for either — so an entry may answer an input with the
+dossier or with the item's identifiers, and what the workflow is given is a
+path to a file ephor has already written, or that file's contents where the
+input wants the text itself. It is written before the workflow is, so an input
+that insists its file exists is answered truthfully, and it is written where a
+work root's own reading will not mistake it for a plan.
+
+**What is still unanswered is asked for, or refused by name.** One missing
+answer is one line, typed where the reader is standing, which is the whole of
+[§10](#10-what-ephor-offers-is-not-a-limit-on-what-can-be-asked)'s machinery
+already. More than one, or an input wanting a list or a record, is not a line:
+ephor writes down everything it did resolve, leaves each unanswered input with
+its name, its type and what it is for, and opens that in the reader's editor —
+the same handover an offer already takes, and a form the one-line prompt could
+never carry. Where nobody is there to ask — a dispatch of every matching item
+at once — the entry refuses and names the inputs it could not answer, because a
+workflow written with a hole in it is a piece of work that looks scheduled and
+never happens ([§6](#6-dispatch-is-offered-where-it-would-work-and-refuses-where-it-would-not)).
+
+**Who does the work is ephor's answer, not the workflow's.** A workflow's
+inputs are mostly its agents: which one reviews, which one adjudicates, which
+one writes — each defaulted to a model its author happened to have. Left alone,
+those defaults are a hole in everything
+[§14](#14-who-does-the-work-is-chosen-and-defaulted-per-project) and
+[§FS-006-project-interface.9](#9-offers-the-projects-actions) settle: the
+project's table stops applying, the reader's pick stops applying, and a project
+that narrowed which hands may see its code is narrowed right up to the moment a
+workflow is instantiated, which is the moment it mattered. So an input that
+names who does the work resolves through the seven steps like any other hand,
+and is rendered into the binding's words in the one place that renders them
+(§DA-006-hands-fill-a-workflows-targets); an
+input wanting several is answered with several. A hand a narrowing does not
+permit is refused with that reason wherever it was named — the workflow's own
+default included, since a default is a naming — and never quietly replaced.
+
+**What it writes is a plan beside the item's, not a ticket inside it.** A
+workflow lays down a plan of its own; it cannot be appended to the item's
+([§3](#3-one-rhei-per-item-one-ticket-per-dispatch)), and pretending otherwise
+would mean rewriting somebody else's workflow into ephor's shape and losing
+what made it worth having. It is written into the item's own work root all the
+same, and everything that follows from that is the point: the operations board
+finds it by looking, like every other plan there
+([§15](#15-every-operation-is-visible-in-one-place)); it shares the root's one
+run, so a workflow and a ticket about the same change queue rather than edit
+the same tree at once; and the ledger records the dispatch against the plan it
+made, which is the fact that was missing — the record says the item, the entry,
+the plan, and what the item looked like
+([§4](#4-the-ledger-is-ephors-record-and-never-the-truth-about-the-work)), and
+gains a plan of its own beside a ticket of its own, which is an addition and
+costs nothing to what is already written
+([§FS-006-project-interface.11](#11-the-interface-is-versioned)). An item that
+moved is offered the workflow again rather than a ticket appended to it
+([§5](#5-an-item-that-moved-reopens-its-work)), ordered after what came before
+and named apart from it, because two runs of one workflow about one item are
+two records and not a correction of the first.
+
+**Instantiating writes files; running is the move after it.** Everything
+[§7](#7-handing-over-work-is-the-readers-move-and-stays-inside-the-machine)
+guarantees holds here and holds for the same reason: what a key press does is
+write a plan, and what runs it is the reader, from the board where every other
+operation is run. A workflow lays down more than a ticket does — a directory,
+a machine, sometimes settings — so what is about to be written is shown before
+it is, in the binding's own account of it beside ephor's own account of every
+input it answered and where the answer came from. A workflow that fails to be
+written leaves nothing behind, so the board is never given half of one to
+report on, and the refusal read back is the binding's own.
+
+**What comes back is what the plan says, and no more.** A ticket ephor wrote
+carries the shape a verdict and a proposed answer are read out of
+([§13](#13-a-communication-is-work-too-and-its-answer-comes-back-as-a-proposal));
+a workflow answers to its author, not to ephor, and reading a verdict out of
+one would be ephor inventing a fact about work it did not shape. So workflow
+work is read at the altitude every plan is read at — its states, what is
+waiting, what is finished — and nothing is attached to the matter that the
+matter did not get. In the same spirit, where a workflow brings settings of its
+own into a work root, those settings are the root's from then on and govern
+every plan in it, ephor's tickets included: what changed is reported when it is
+written, because a workflow quietly re-answering how another workflow's agents
+run is exactly the kind of fact a watch exists to say out loud.
+
 ## FS-006-project-interface: a project and ephor meet over one interface, in three homes
 
 ephor requires capabilities of a project, never artifacts in it
@@ -1851,6 +2004,16 @@ its requirements do not hold (§FS-004-quick-actions.2). It takes the reader's
 terminal while it runs, which is what lets an offer be a pager or an editor —
 and an offer that needs none of that says so, and runs beneath the screen as a
 job instead (§FS-005-dispatch.17).
+
+**An offer may name a workflow instead.** Where the runtime carries whole
+workflows of its own — parameterized plans that lay down tasks of their own —
+an entry naming one is the same entry, in the same menu, under the same
+provenance, and what it answers that workflow's inputs with is written beside
+the rest of it
+([§FS-005-dispatch.19](#19-a-workflow-the-runtime-offers-is-an-action-and-its-inputs-are-answered-here)).
+The manifest is one of the three places such an entry may be written, for the
+reason it holds the others: which of the runtime's workflows are worth offering
+here, and about what, is the project's to say.
 
 **Who does an action is the project's to default.** Work that needs judgment
 goes to a hand (§FS-005-dispatch.14), and `work.hands` maps an action's id to

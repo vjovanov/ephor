@@ -152,10 +152,18 @@ impl Ctx {
     /// against the same measurement of the same checkout: two folds a moment
     /// apart would eventually offer a rebase entry beside a recipe that says
     /// the branch is current.
-    pub fn actions_for(
+    /// The entries written beside the runtime's own workflows
+    /// (§FS-005-dispatch.19). They are handed in rather than read here for the
+    /// reason the recipes are: reading them asks the binding, and every source
+    /// in one menu has to be selected against one measurement of one checkout.
+    /// Each arrives with where its workflow was found, which is where the
+    /// entry ranks — what the binding ships with what ephor ships, the
+    /// project's with the project's offers, the person's with the person's own.
+    pub fn actions_with(
         &self,
         item: &Item,
         recipes: &[crate::work::recipe::Recipe],
+        beside: &[(crate::work::runtime::workflow::Source, ActionConfig)],
     ) -> Vec<ActionConfig> {
         let project = self
             .project_actions
@@ -180,11 +188,19 @@ impl Ctx {
         if let Some(trailing) = &trailing {
             recognized.extend(self.rebase_offers(&item.project, trailing));
         }
-        let mut menu = actions::merge(vec![
-            recognized,
-            self.offers(item, &facts),
-            actions::applicable(&self.actions, project, item, &facts),
-        ]);
+        let from = |want: crate::work::runtime::workflow::Source| -> Vec<ActionConfig> {
+            beside
+                .iter()
+                .filter(|(source, entry)| *source == want && entry.matches(item, &facts))
+                .map(|(_, entry)| entry.clone())
+                .collect()
+        };
+        recognized.extend(from(crate::work::runtime::workflow::Source::Runtime));
+        let mut offered = self.offers(item, &facts);
+        offered.extend(from(crate::work::runtime::workflow::Source::Project));
+        let mut configured = actions::applicable(&self.actions, project, item, &facts);
+        configured.extend(from(crate::work::runtime::workflow::Source::Person));
+        let mut menu = actions::merge(vec![recognized, offered, configured]);
         actions::add_unclaimed(
             &mut menu,
             recipes
@@ -204,9 +220,12 @@ impl Ctx {
             self.checkout(item).map(|checkout| checkout.state),
             Some(WorkspaceState::Ready)
         );
-        menu.retain(|entry| match &entry.agent {
-            Some(recipe) => !item.is_finished() && (here || !recipe.needs_checkout),
-            None => true,
+        menu.retain(|entry| match (&entry.agent, &entry.workflow) {
+            (Some(recipe), _) => !item.is_finished() && (here || !recipe.needs_checkout),
+            // A workflow hands work over too, so it is gated the same way
+            // (§FS-005-dispatch.19).
+            (None, Some(_)) => !item.is_finished() && (here || !entry.requires_checkout),
+            _ => true,
         });
         menu
     }
@@ -1229,6 +1248,12 @@ impl App {
                         // (§FS-005-dispatch.1).
                         } else if entry.action.agent.is_some() {
                             self.dispatch_entry(&menu, &entry);
+                        // An entry that lays down a workflow writes files and
+                        // takes no terminal (§FS-005-dispatch.19).
+                        } else if entry.is_workflows {
+                            self.open_workflows(&menu);
+                        } else if entry.action.workflow.is_some() {
+                            self.lay_entry(terminal, &menu, &entry)?;
                         } else {
                             self.run_menu_entry(terminal, &menu, &entry)?;
                         }
@@ -1399,7 +1424,21 @@ impl App {
                     .as_ref()
                     .map(|dispatcher| dispatcher.recipes(&item.project))
                     .unwrap_or_default();
-                let mut applicable = self.ctx.actions_for(&item, &recipes);
+                // The third home an entry may live in: beside the workflow
+                // itself (§FS-005-dispatch.19).
+                let beside = self
+                    .dispatcher
+                    .as_mut()
+                    .map(|dispatcher| dispatcher.workflow_entries(&item.project))
+                    .unwrap_or_default();
+                // Whether there is anything behind the row that reaches the
+                // rest of them (§FS-004-quick-actions.2). Read from the same
+                // answer the entries above came from, which the dispatcher
+                // holds per root.
+                let has_workflows = self.dispatcher.as_mut().is_some_and(|dispatcher| {
+                    !dispatcher.workflows(&item.project).workflows.is_empty()
+                });
+                let mut applicable = self.ctx.actions_with(&item, &recipes, &beside);
                 self.name_the_hands(&item, &mut applicable, config);
                 // The hands `t` may offer, read once at menu open against the
                 // work root the dispatch will use (§FS-005-dispatch.14) —
@@ -1434,19 +1473,21 @@ impl App {
                         // an offer and a configured action are refused in the
                         // same sentence (§AR-005-capabilities.2).
                         let can = self.ctx.can(&item.project);
-                        self.menu = Some(
-                            ActionMenu::new(
-                                actions::Subject::Item(Box::new(item)),
-                                root.clone(),
-                                placed.workspace,
-                                branch,
-                                placed.state,
-                                checkout,
-                                &can,
-                                applicable,
-                            )
-                            .with_roster(roster),
-                        );
+                        let mut menu = ActionMenu::new(
+                            actions::Subject::Item(Box::new(item)),
+                            root.clone(),
+                            placed.workspace,
+                            branch,
+                            placed.state,
+                            checkout,
+                            &can,
+                            applicable,
+                        )
+                        .with_roster(roster);
+                        if has_workflows {
+                            menu = menu.offering_workflows();
+                        }
+                        self.menu = Some(menu);
                     }
                     _ => {
                         self.message = refusal.unwrap_or_else(|| {
@@ -1661,6 +1702,18 @@ impl App {
                 self.rebuild_view();
                 self.open_work(item);
             }
+            // One input, answered on one line, and the laying tried again
+            // with it (§FS-005-dispatch.19).
+            Asking::Input {
+                item,
+                entry,
+                mut typed,
+                input,
+                picked,
+            } => {
+                typed.insert(input, line.to_string());
+                self.lay_workflow(terminal, &item, &entry, typed, picked)?;
+            }
             Asking::Command(menu) => {
                 let entry = actions::MenuEntry {
                     action: ActionConfig {
@@ -1671,6 +1724,7 @@ impl App {
                     },
                     is_checkout: false,
                     is_freehand: false,
+                    is_workflows: false,
                     picked: None,
                     gate: actions::Gate::Ready,
                 };
@@ -1801,6 +1855,204 @@ impl App {
         // Where the reader pressed is not a fact about the work: they land on
         // the same screen the work key would have shown them.
         self.open_work(item);
+    }
+
+    /// The runtime's workflows, opened over the menu they were reached from
+    /// (§FS-005-dispatch.19). Every workflow it offers here becomes an entry —
+    /// the ones an entry already names keep that entry's own wording, and the
+    /// rest stand under their own id — so what is picked is picked once,
+    /// answered, and laid down, and nothing had to be written in a
+    /// configuration file first (§FS-005-dispatch.10).
+    fn open_workflows(&mut self, menu: &ActionMenu) {
+        let project = menu.subject.project().to_string();
+        let Some(dispatcher) = &mut self.dispatcher else {
+            self.message = "Work needs the registry, which could not be read".to_string();
+            return;
+        };
+        let offered = dispatcher.workflows(&project);
+        if let Some(refusal) = &offered.refusal {
+            self.message = refusal.clone();
+            return;
+        }
+        if offered.workflows.is_empty() {
+            self.message = "The runtime offers no workflows here".to_string();
+            return;
+        }
+        let named = dispatcher.workflow_entries(&project);
+        let entries: Vec<ActionConfig> = offered
+            .workflows
+            .iter()
+            .map(|workflow| {
+                named
+                    .iter()
+                    .find(|(_, entry)| {
+                        entry
+                            .workflow
+                            .as_ref()
+                            .is_some_and(|ask| ask.name == workflow.id)
+                    })
+                    .map(|(_, entry)| entry.clone())
+                    .unwrap_or_else(|| crate::work::workflow::Beside::default().action(workflow))
+            })
+            .collect();
+        let can = self.ctx.can(&project);
+        self.menu = Some(menu.rebuilt(entries, &can));
+    }
+
+    /// A workflow entry of the action menu, laid down (§FS-005-dispatch.19).
+    fn lay_entry(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        menu: &ActionMenu,
+        entry: &actions::MenuEntry,
+    ) -> Result<()> {
+        if let actions::Gate::Blocked(reason) = &entry.gate {
+            self.message = reason.clone();
+            return Ok(());
+        }
+        let Some(item) = menu.subject.item().cloned() else {
+            self.message = "There is no matter here to lay a workflow down about".to_string();
+            return Ok(());
+        };
+        let action = entry.action.clone();
+        let picked = entry.picked.clone();
+        self.lay_workflow(
+            terminal,
+            &item,
+            &action,
+            std::collections::BTreeMap::new(),
+            picked,
+        )
+    }
+
+    /// Lay one workflow down about one item, asking for whatever nobody has
+    /// answered (§FS-005-dispatch.19): one missing scalar is one line typed
+    /// where the reader is standing, and anything more — or anything wanting
+    /// a list or a record — is a file in their editor, which is the form a
+    /// one-line prompt could never carry.
+    fn lay_workflow(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        item: &Item,
+        entry: &ActionConfig,
+        typed: std::collections::BTreeMap<String, String>,
+        picked: Option<crate::work::recipe::HandPin>,
+    ) -> Result<()> {
+        let Some(dispatcher) = &mut self.dispatcher else {
+            self.message = "Work needs the registry, which could not be read".to_string();
+            return Ok(());
+        };
+        let laying = match dispatcher.laying(item, entry, &typed, picked.as_ref()) {
+            Ok(laying) => laying,
+            Err(err) => {
+                self.message = err.to_string();
+                return Ok(());
+            }
+        };
+        if !laying.answered.refusals.is_empty() {
+            self.message = laying.answered.refusals.join("; ");
+            return Ok(());
+        }
+        // One missing scalar: one line, here.
+        let alone = match laying.answered.missing.as_slice() {
+            [only] => laying
+                .workflow
+                .input(only)
+                .filter(|input| input.kind.is_scalar())
+                .map(|input| (input.name.clone(), input.description.clone())),
+            _ => None,
+        };
+        if let Some((input, says)) = alone {
+            self.prompt = Some(Prompt::new(
+                Asking::Input {
+                    item: Box::new(item.clone()),
+                    entry: Box::new(entry.clone()),
+                    typed,
+                    input: input.clone(),
+                    picked,
+                },
+                format!("{}: {input}", laying.workflow.id),
+                match says.is_empty() {
+                    true => "enter answers  ·  esc cancels".to_string(),
+                    false => format!("{says}  ·  enter answers  ·  esc cancels"),
+                },
+            ));
+            return Ok(());
+        }
+        // Anything else: the file, with everything already resolved in it and
+        // every unanswered input named.
+        if !laying.answered.missing.is_empty() {
+            let path = match self.write_answers(&laying) {
+                Ok(path) => path,
+                Err(err) => {
+                    self.message = err.to_string();
+                    return Ok(());
+                }
+            };
+            self.edit_file(terminal, &path)?;
+            let answered = read_answers(&path);
+            if answered.is_empty() {
+                self.message = format!("{} was not laid down", laying.workflow.id);
+                return Ok(());
+            }
+            let mut again = typed;
+            again.extend(answered);
+            return self.lay_workflow(terminal, item, entry, again, picked);
+        }
+        let Some(dispatcher) = &mut self.dispatcher else {
+            return Ok(());
+        };
+        self.message = match dispatcher.lay(item, &laying, false) {
+            Ok(laid) => match dispatcher.save() {
+                Ok(()) => format!("{} {}", entry.icon, laid.outcome.describe()),
+                Err(err) => err.to_string(),
+            },
+            Err(err) => err.to_string(),
+        };
+        self.reload_work();
+        self.rebuild_view();
+        Ok(())
+    }
+
+    /// The file a reader answers a workflow's inputs in: everything ephor
+    /// resolved, and every input nobody answered named with what it wants
+    /// (§FS-005-dispatch.19).
+    fn write_answers(&self, laying: &crate::work::Laying) -> Result<PathBuf> {
+        let dir = laying.root().join(".ephor").join(&laying.plan_id);
+        std::fs::create_dir_all(&dir)
+            .map_err(|err| EphorError::Command(format!("Cannot make {}: {err}", dir.display())))?;
+        let path = dir.join("answers.json");
+        let mut says = serde_json::Map::new();
+        let mut values = laying.answered.values.clone();
+        for input in &laying.workflow.inputs {
+            let unanswered = laying
+                .answered
+                .missing
+                .iter()
+                .any(|name| name == &input.name);
+            if !unanswered {
+                continue;
+            }
+            says.insert(
+                input.name.clone(),
+                serde_json::Value::String(match input.description.is_empty() {
+                    true => format!("{} · required", input.kind.label()),
+                    false => format!("{} · required · {}", input.kind.label(), input.description),
+                }),
+            );
+            values.insert(input.name.clone(), serde_json::Value::Null);
+        }
+        let mut document = serde_json::Map::new();
+        document.insert("what each input wants".to_string(), says.into());
+        for (name, value) in values {
+            document.insert(name, value);
+        }
+        std::fs::write(
+            &path,
+            serde_json::to_string_pretty(&document).unwrap_or_else(|_| "{}".to_string()),
+        )
+        .map_err(|err| EphorError::Command(format!("Cannot write {}: {err}", path.display())))?;
+        Ok(path)
     }
 
     /// Handing one recipe over about one item, and saying what landed. Both
@@ -2689,6 +2941,29 @@ impl App {
     }
 }
 
+/// What a reader wrote into the answers file, as answers. The line that says
+/// what each input wants is not one of them, and an input left at null is
+/// still unanswered — which is how leaving the file alone cancels.
+fn read_answers(path: &Path) -> std::collections::BTreeMap<String, String> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Default::default();
+    };
+    let Ok(serde_json::Value::Object(fields)) = serde_json::from_str(&text) else {
+        return Default::default();
+    };
+    fields
+        .into_iter()
+        .filter(|(name, value)| !value.is_null() && name != "what each input wants")
+        .map(|(name, value)| {
+            let word = match value {
+                serde_json::Value::String(text) => text,
+                other => other.to_string(),
+            };
+            (name, word)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2893,7 +3168,7 @@ mod tests {
         // The configured action keeps its place and the source's own goes
         // ahead of it (§FS-004-quick-actions.3) — where `gh` is installed for
         // it to be offered at all.
-        let menu = ctx.actions_for(&ci, &[]);
+        let menu = ctx.actions_with(&ci, &[], &[]);
         // The failures entry and both restarts (§FS-004-quick-actions.9),
         // where `gh` is installed for any of them to be offered.
         let quick = if crate::feed::provider::command_exists("gh") {
@@ -2933,7 +3208,7 @@ mod tests {
         }))
         .unwrap()];
 
-        let menu = ctx.actions_for(&ticket_item(), &[]);
+        let menu = ctx.actions_with(&ticket_item(), &[], &[]);
         let described: Vec<&str> = menu
             .iter()
             .map(|action| action.description.as_str())
@@ -2954,7 +3229,7 @@ mod tests {
             .get_mut("widget")
             .expect("the fixture project")
             .trust = crate::manifest::Trust::Descriptions;
-        let menu = ctx.actions_for(&ticket_item(), &[]);
+        let menu = ctx.actions_with(&ticket_item(), &[], &[]);
         assert_eq!(menu.len(), 1, "only the person's own is left");
         assert_eq!(menu[0].description, "my benchmark");
     }
@@ -3144,7 +3419,7 @@ mod tests {
         declare(&mut ctx, &["ce", "ee"]);
         let pr = ticket_item();
         assert_eq!(behind(&ctx, &pr), Some(5));
-        let menu = ctx.actions_for(&pr, &[]);
+        let menu = ctx.actions_with(&pr, &[], &[]);
         assert_eq!(menu[0].description, "rebase onto master (5 behind)");
         assert!(menu[0].command.contains("rebase --project"));
         assert!(menu[0].requires_checkout);
@@ -3157,7 +3432,7 @@ mod tests {
             git(&workspace.join(repo), &["checkout", "-q", "master"]);
         }
         assert_eq!(behind(&ctx, &pr), Some(0));
-        let level = ctx.actions_for(&pr, &[]);
+        let level = ctx.actions_with(&pr, &[], &[]);
         assert_eq!(level.len(), 1, "{level:?}");
         assert_eq!(level[0].id, "rebase");
         assert_eq!(level[0].description, "rebase onto master (level)");
@@ -3171,14 +3446,14 @@ mod tests {
 
         // The branch workspace was never checked out.
         assert_eq!(behind(&ctx, &ticket_item()), None);
-        assert!(ctx.actions_for(&ticket_item(), &[]).is_empty());
+        assert!(ctx.actions_with(&ticket_item(), &[], &[]).is_empty());
 
         // An item that resolves to no branch at all has nowhere to rebase,
         // whatever kind it is (§FS-004-quick-actions.2).
         let mut nowhere = ticket_item();
         nowhere.title = "Nothing about any branch".to_string();
         assert_eq!(behind(&ctx, &nowhere), None);
-        assert!(ctx.actions_for(&nowhere, &[]).is_empty());
+        assert!(ctx.actions_with(&nowhere, &[], &[]).is_empty());
     }
 
     /// The offer follows the branch on disk, not the kind of the row that
@@ -3204,7 +3479,7 @@ mod tests {
         ] {
             let mut item = ticket_item();
             item.kind = kind;
-            let menu = ctx.actions_for(&item, &[]);
+            let menu = ctx.actions_with(&item, &[], &[]);
             assert_eq!(menu.len(), 1, "{kind:?}: {menu:?}");
             assert_eq!(menu[0].description, offered, "{kind:?}");
             // And the entry says nothing about kinds any more, so nothing
@@ -3232,7 +3507,7 @@ mod tests {
             .expect("the fixture project")
             .main_branch = None;
 
-        let menu = ctx.actions_for(&ticket_item(), &[]);
+        let menu = ctx.actions_with(&ticket_item(), &[], &[]);
         assert_eq!(menu.len(), 1, "{menu:?}");
         assert_eq!(menu[0].id, "rebase-upstream");
         assert_eq!(
@@ -3277,7 +3552,7 @@ mod tests {
 
         // The same entries the item's menu carries — one implementation, so a
         // reader cannot be told two different things about one checkout.
-        let menu = ctx.actions_for(&ticket_item(), &[]);
+        let menu = ctx.actions_with(&ticket_item(), &[], &[]);
         let described = |actions: &[ActionConfig]| -> Vec<(String, String)> {
             actions
                 .iter()
@@ -3353,7 +3628,7 @@ mod tests {
         let mut ctx = ctx_with_branch(root, Some("{project_root}/{branch}"));
         declare(&mut ctx, &["ce"]);
         let pr = ticket_item();
-        let menu = ctx.actions_for(&pr, &[]);
+        let menu = ctx.actions_with(&pr, &[], &[]);
         assert_eq!(menu.len(), 2, "{menu:?}");
         assert_eq!(menu[1].id, "rebase-upstream");
         assert_eq!(
@@ -3370,7 +3645,7 @@ mod tests {
             &repo,
             &["update-ref", "refs/remotes/origin/feature", "HEAD"],
         );
-        let level = ctx.actions_for(&pr, &[]);
+        let level = ctx.actions_with(&pr, &[], &[]);
         assert_eq!(level.len(), 2, "{level:?}");
         assert_eq!(
             level[1].description,
@@ -3380,7 +3655,7 @@ mod tests {
         // A branch published nowhere has no copy to name and no reading a
         // fetch would correct, so this entry alone goes.
         git(&repo, &["update-ref", "-d", "refs/remotes/origin/feature"]);
-        let unpushed = ctx.actions_for(&pr, &[]);
+        let unpushed = ctx.actions_with(&pr, &[], &[]);
         assert_eq!(unpushed.len(), 1, "{unpushed:?}");
         assert_eq!(unpushed[0].id, "rebase");
     }
@@ -3401,7 +3676,7 @@ mod tests {
 
         let mut ctx = ctx_with_branch(root, Some("{project_root}/{branch}"));
         declare(&mut ctx, &["ce", "ee"]);
-        let menu = ctx.actions_for(&ticket_item(), &[]);
+        let menu = ctx.actions_with(&ticket_item(), &[], &[]);
         assert_eq!(menu.len(), 2);
         assert_eq!(menu[0].description, "rebase onto master (1 behind)");
         // `ee`'s copy is its base, so it neither counts here nor keeps the
@@ -3434,7 +3709,7 @@ mod tests {
             .expect("the checkout was measured");
         assert_eq!(trailing.behind.map(|trail| trail.behind), Some(2));
         assert_eq!(trailing.behind_upstream, None);
-        let menu = ctx.actions_for(&ticket_item(), &[]);
+        let menu = ctx.actions_with(&ticket_item(), &[], &[]);
         assert_eq!(menu.len(), 1);
         assert_eq!(menu[0].id, "rebase");
         assert_eq!(
@@ -3464,7 +3739,7 @@ mod tests {
         ] } });
 
         let recipes = crate::work::recipe::shipped();
-        let menu = ctx.actions_for(&mine, &recipes);
+        let menu = ctx.actions_with(&mine, &recipes, &[]);
         let described: Vec<(&str, &str, bool)> = menu
             .iter()
             .map(|entry| {
@@ -3504,7 +3779,7 @@ mod tests {
         let ctx = ctx_with_branch(tmp.path(), Some("{project_root}/{branch}"));
         let recipes = crate::work::recipe::shipped();
         let ids = |ctx: &Ctx, item: &Item| -> Vec<String> {
-            ctx.actions_for(item, &recipes)
+            ctx.actions_with(item, &recipes, &[])
                 .into_iter()
                 .filter(|entry| entry.agent.is_some())
                 .map(|entry| entry.id)
@@ -3542,7 +3817,7 @@ mod tests {
         let ctx = ctx_with_branch(tmp.path(), Some("{project_root}/{branch}"));
         let mut theirs = ticket_item();
         theirs.role = Some(crate::feed::model::ItemRole::Reviewer);
-        let offered = ctx.actions_for(&theirs, &crate::work::recipe::shipped());
+        let offered = ctx.actions_with(&theirs, &crate::work::recipe::shipped(), &[]);
         assert_eq!(
             offered.iter().filter(|entry| entry.agent.is_some()).count(),
             1
