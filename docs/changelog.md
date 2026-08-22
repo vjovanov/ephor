@@ -30,6 +30,82 @@ ships, the previous "latest" section moves verbatim to
 
 ### Added
 
+- **A run of the runtime starts beneath the screen, and is watched by
+  attaching**
+  ([§FS-005-dispatch.20](../requirements.md#20-a-run-of-the-runtime-starts-beneath-the-screen-and-is-watched-by-attaching),
+  [§AR-007-runtime](architecture/AR-007-runtime.md), PR #3). Pressing `R` used
+  to hand the whole interface to one run for as long as the work took — and the
+  work was handed over precisely so that nobody had to stay. `R` and
+  `ephor work run` now start the run **detached**, in a session of its own that
+  outlives the terminal, and answer with one line saying the run began and what
+  it is called. The root turns live on the board from the lock as it always
+  did; nothing new is watched. `ephor work run --watch` keeps the old
+  behaviour, and a runner with no detached shape gets it unasked, saying so.
+
+  **A run has an identity, and it is the binding's.** A live run names itself —
+  an id, and the address of its control while it serves one — read from the
+  descriptor the runtime leaves beside its lock and never from anything ephor
+  remembers having started, so a run somebody began in another terminal is
+  named and reached exactly like one ephor dispatched. The board says the id on
+  the row, the work screen says it on the operation, and
+  `ephor operations --json` prints it beside the control address, the runner's
+  own attach command, and the runner's own **stop** command — shown, never run:
+  a key that stopped a run would be a channel to the run ephor promised never
+  to hold.
+
+  **Watching is attaching.** `a` on the operations board, and
+  `ephor operations attach <run>`, open the binding's own surface on a live
+  run; leaving it detaches and never stops the run.
+
+- **What is already going is shown where it could be started again**
+  ([§FS-005-dispatch.21](../requirements.md#21-what-is-already-going-is-shown-where-it-could-be-started-again),
+  [§FS-011-command-line.8](../requirements.md#8-what-is-going-is-said-and-the-way-in-is-printed),
+  PR #3). The menu said what could be done and the board said what was being
+  done, and neither said the other: opening the menu on an item whose rebase was
+  already replaying showed the rebase as something to start. Every entry with
+  work going about its subject is now **marked running and set apart** — first,
+  under a line that says so, a step further in, in one colour used for nothing
+  else on that screen — with how long it has been going and what it is at right
+  now: the job's own last line, the ticket a run holds and the state it is in,
+  *queued* where the root's run will reach it.
+
+  Found by looking, never remembered from the keypress: a job is a held lock
+  and a record naming the entry it came from (a job now records that, and the
+  branch on a branch row), a run is a held lock and the descriptor beside it. A
+  second ephor sees the same rows, and a job that died is not running whatever
+  started it.
+
+  **Pressing a running entry opens it.** `Enter` (or `l`) goes to the thing
+  that is running — a job's log followed as it writes, a run attached, a window
+  brought forward — and the footer says *open* rather than *run*.
+  `ephor actions [--json]` carries the same mark with the same facts and prints
+  **the way in**, and `ephor actions open <id>` is that key as a command,
+  refusing by name where the entry has nothing going.
+
+- **A window of the reader's own, where one is bound**
+  ([§FS-005-dispatch.22](../requirements.md#22-a-window-of-the-readers-own-where-one-is-bound),
+  [§AR-002-summons.6](architecture/AR-002-summons.md),
+  [§DA-007-window-is-a-bound-opener](decisions/architectural/DA-007-window-is-a-bound-opener.md),
+  PR #3). ephor has one terminal and is sitting in it, and handing it over
+  stays the floor — but a reader inside a multiplexer, or in a terminal that
+  opens windows on request, had to make the better move by hand. The window is
+  now a **seam**: two commands, one that opens a window running a given command
+  and prints a handle, one that brings a handle forward. `window` under
+  `defaults` in `status.json` names which — a shipped binding (a terminal
+  multiplexer's new window, and two terminals' remote-control spawn) or a pair
+  of commands of your own — and with nothing configured ephor recognizes the
+  environment it was started in from the variable each product sets for exactly
+  this, never by spawning one to find out. Nothing bound and nothing recognized
+  means the terminal, with the line saying so.
+
+  An action or an offer that *is* a program you type into says `"window": true`
+  and runs there instead of taking the terminal: a job like any other, with the
+  lock as its liveness and the handle in its record, so it is a row that says
+  *running* and opens to the program rather than something ephor handed the
+  terminal to and forgot. Attaching to a run goes through the same opener.
+  ephor opens a window and brings one forward; it never closes one and never
+  ends what is in it.
+
 - **Everything the screen holds is a command, and every answer has a machine
   form** ([§REQ-002-parity](requirements/REQ-002-parity.md),
   [§FS-011-command-line](../requirements.md#fs-011-command-line-every-ability-is-a-command-and-every-answer-has-a-json-form),
