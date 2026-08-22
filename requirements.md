@@ -1808,6 +1808,179 @@ every plan in it, ephor's tickets included: what changed is reported when it is
 written, because a workflow quietly re-answering how another workflow's agents
 run is exactly the kind of fact a watch exists to say out loud.
 
+### 20. A run of the runtime starts beneath the screen, and is watched by attaching
+
+Pressing the key that runs the runtime hands it the whole interface for as
+long as the run takes — and a run takes as long as the work does. Everything
+[§17](#17-a-move-that-needs-nobody-runs-beneath-the-screen) says about a
+replay holds here with more force: the work was handed over precisely so that
+nobody had to stay
+([§7](#7-handing-over-work-is-the-readers-move-and-stays-inside-the-machine)),
+ephor is the half that remembers, and a screen given away to one run cannot
+watch the other items, cannot start the next move, and cannot even say that
+the first one is still going. A run that the reader *wants* to watch is the
+exception that was made the rule.
+
+So **a run starts detached**: where the binding can, the runtime is started in
+a session of its own, outliving the screen and the terminal that started it,
+and what the reader gets is one line saying the run began and what it is
+called. The root turns live on the board
+([§15](#15-every-operation-is-visible-in-one-place)) from the lock, as every
+run does — nothing new is watched, because nothing about "is a run live here"
+changed. A move that needs nobody does not suddenly need somebody staying,
+and a run is the longest such move ephor makes.
+
+**A run has an identity, and it is the binding's.** A live run names itself —
+an id, and while it serves one, the address of its control — and both are
+read from the artifacts the binding leaves beside its lock, never from
+anything ephor remembers having started: a run somebody started in another
+terminal, on a root ephor never dispatched into, has the same identity and is
+reached the same way
+([§15](#15-every-operation-is-visible-in-one-place)). An id is how the reader
+and the runtime agree on which run they mean, so the board says it on the
+row, the work screen says it on the operation, and the command line prints it
+with the rest (§FS-011-command-line.8).
+
+**Watching is attaching.** The binding's own surface for a run it did not
+start — a reader of the run's files and a client of its control — is opened
+on the run, and leaving that surface detaches and never stops the run: the
+reflex that ends a foreground command must not end a run another screen may
+also be watching. The surface is something the reader types into, so by
+[§17](#17-a-move-that-needs-nobody-runs-beneath-the-screen)'s own rule it
+takes the reader's terminal — or a window of the reader's own, where one is
+bound ([§22](#22-a-window-of-the-readers-own-where-one-is-bound)). What the
+surface can do — answer a question the run parked, release a gate, intervene
+— is the binding's, unchanged, and ephor adds nothing to it and takes nothing
+from it.
+
+**Stopping stays out of the screen.** The board starts nothing and stops
+nothing ([§15](#15-every-operation-is-visible-in-one-place)), and a detached
+run does not change that: where a run can be stopped, the row carries the
+runner's own command for stopping it, in the runner's own words, exactly as a
+claim carries the command that releases it
+([§10](#10-what-ephor-offers-is-not-a-limit-on-what-can-be-asked)). A key that
+stopped a run would be a channel to the run ephor promised never to hold.
+
+**A question a detached run asks still reaches the reader.** A run with
+nobody at its terminal waits at a human gate rather than exiting — that is
+the binding's own contract, and it is the right one, because the person who
+releases the gate is expected to arrive later. ephor reads the wait exactly
+as it reads a parked ticket
+([§9](#9-work-that-stops-for-a-person-says-so-where-the-person-is-looking)):
+the ticket says *waiting on you* wherever the reader is looking, and the way
+to answer is to attach.
+
+**Where the binding cannot detach, the run is watched as it was.** A runner
+with no detached shape, or a platform that has none, runs attached — the
+terminal handed over, the reader watching — and the one line says so rather
+than pretending. With no runtime bound there is no run to start, in the
+workable rung's own words (§FS-006-project-interface.10).
+
+### 21. What is already going is shown where it could be started again
+
+The menu says what can be done about a row; the board says what is being
+done. Kept apart, they forget each other: a reader who opens the menu on an
+item whose rebase is already replaying is shown the rebase as something to
+start, presses it, and is either refused by a lock or has started a second
+one — and has to visit the board to learn which. That is the watch knowing a
+fact and not saying it where the reader is looking (§GOAL-002-glance).
+
+So **every entry that has work going about its subject is marked running,
+and set apart**: the running entries stand first, under a line that says so,
+indented a step further than the rest, in one colour reserved for what is
+going and used for nothing else on that screen. Each says how long it has
+been going and what it is at right now — the job's own last line, the ticket
+a run holds and the state it is in, *waiting on you* where the ticket it
+opened is parked, with a run still on the root or without one, *queued* where
+the root's run will reach it — in the words the board already uses
+([§15](#15-every-operation-is-visible-in-one-place),
+[§18](#18-the-work-screen-says-when-and-folds-away-what-is-over)), because
+this is the board's reading narrowed to one row, not a second reading.
+
+**What counts as going is found by looking, here too.** A command entry is
+running where a job started from that entry, about this subject, still holds
+its lock — so a job records which entry it came from and, on a branch row,
+which branch, or nothing could ever match it back
+([§17](#17-a-move-that-needs-nobody-runs-beneath-the-screen)); the checkout
+row is running where the job that is making the workspace is. An entry that
+hands work over is running where the ticket it would open, or the plan it
+would lay, is open and its root is live or will reach it — the very facts the
+badge on the row is made of
+([§9](#9-work-that-stops-for-a-person-says-so-where-the-person-is-looking)) —
+and a ticket the run parked counts, live root or not, because a question
+standing on this subject is exactly what a second dispatch must not be laid
+beside.
+An entry whose program runs in a window of the reader's own is running while
+that window holds it
+([§22](#22-a-window-of-the-readers-own-where-one-is-bound)). Nothing here is
+remembered from the keypress: a second ephor opening the same menu sees the
+same rows, and a job that died is not running, whatever started it.
+
+**Pressing a running entry opens it; it never starts it again.** The key on a
+row that says *running* goes to the thing that is running: a job's log,
+followed as it writes ([§17](#17-a-move-that-needs-nobody-runs-beneath-the-screen));
+a run of the runtime, attached
+([§20](#20-a-run-of-the-runtime-starts-beneath-the-screen-and-is-watched-by-attaching));
+a program in its own window, that window brought forward
+([§22](#22-a-window-of-the-readers-own-where-one-is-bound)). A second copy is
+not what a reader pressing a row that says *running* meant, and where
+somebody does mean it the command line starts it and the refusal is the
+lock's own sentence. The footer says *open* on such a row, not *run*, because
+it is built from the row and not from the key (§FS-004-quick-actions.2).
+
+**Both surfaces say it.** The list `ephor actions` prints carries the same
+mark with the same facts — what is running, since when, and the way in
+(§FS-011-command-line.8) — so that a program reading the menu cannot start
+what a person reading it would have opened (§REQ-002-parity.2).
+
+### 22. A window of the reader's own, where one is bound
+
+Two kinds of thing above want a terminal: the surface that attaches to a run
+([§20](#20-a-run-of-the-runtime-starts-beneath-the-screen-and-is-watched-by-attaching)),
+and the program an entry *is* — an editor, a pager, a coding agent's own
+session (§FS-006-project-interface.9). ephor has one terminal and is sitting
+in it. Handing it over works everywhere, and stays the floor: ephor leaves,
+the program runs, the reader comes back. But a reader inside a multiplexer,
+or in a terminal that opens windows on request, has a better move available
+— the program in a window of its own, ephor still on screen, and "open" from
+then on meaning *bring that window forward* — and a tool that cannot make
+that move sends them to make it by hand, which is the sweep this project
+exists to retire (§GOAL-003-nothing-lost).
+
+So **the window is a seam** (§REQ-001-boundary.1, decided with its tradeoff
+recorded in §DA-007-window-is-a-bound-opener), with the anatomy every seam
+has. The contract is in materials: one command that opens a window
+running a given command and prints a handle for the window it made, and one
+that brings a handle forward. The binding is configured — `window` in site
+configuration names which — and ephor ships bindings for the common shapes
+(a terminal multiplexer, and terminals that take remote commands), chosen
+unasked when the environment ephor is running in says which one the reader
+is sitting inside, and never by spawning one to find out. The degrade rule is
+the floor: no binding and no recognized environment means no window, and
+the terminal is handed over as it always was. A window is the reader's: ephor
+opens it and brings it forward, and never closes it or ends what is in it
+([§15](#15-every-operation-is-visible-in-one-place)).
+
+**An entry may ask for a window.** An offer or a configured action says
+`window` as it already says `background`
+(§FS-006-project-interface.9): its program runs in a window of its own
+instead of taking the terminal, and ephor stays where it was. Such a program
+is an operation while it runs — it holds a lock as a job does
+([§17](#17-a-move-that-needs-nobody-runs-beneath-the-screen)), its record
+keeps the window's handle, and the window is its inspection where a log
+would have been, because what it writes is on that screen and nowhere else.
+That is what makes a coding agent started from the menu a row that says
+*running* and opens to the agent
+([§21](#21-what-is-already-going-is-shown-where-it-could-be-started-again)),
+rather than a program ephor handed the terminal to and forgot. Where no
+window can be opened, the entry takes the terminal as it always did, and
+says so.
+
+**Attaching goes to a window where one is bound.** The surface on a run
+opens in a window when there is one to open, and in the terminal otherwise;
+either way leaving it detaches and the run goes on
+([§20](#20-a-run-of-the-runtime-starts-beneath-the-screen-and-is-watched-by-attaching)).
+
 ## FS-006-project-interface: a project and ephor meet over one interface, in three homes
 
 ephor requires capabilities of a project, never artifacts in it
@@ -2003,7 +2176,10 @@ by a person, runs as a summons (§3), and is refused with its reason where
 its requirements do not hold (§FS-004-quick-actions.2). It takes the reader's
 terminal while it runs, which is what lets an offer be a pager or an editor —
 and an offer that needs none of that says so, and runs beneath the screen as a
-job instead (§FS-005-dispatch.17).
+job instead (§FS-005-dispatch.17). An offer that is such a program and should
+not take the terminal says `window` instead, and runs in a window of the
+reader's own where one is bound — still something that takes a person, now
+beside ephor rather than in its place (§FS-005-dispatch.22).
 
 **An offer may name a workflow instead.** Where the runtime carries whole
 workflows of its own — parameterized plans that lay down tasks of their own —
@@ -2455,3 +2631,29 @@ not say: *which* machine is in force, the one ephor ships or one this site
 configured. So the machine rides in a field of a shape of ephor's own, beside
 where it came from. A reader who got only the document could not tell the two
 apart, and they are different answers to "what states can a ticket be in".
+
+
+### 8. What is going is said, and the way in is printed
+
+`ephor actions` marks every entry that has work going about its subject
+(§FS-005-dispatch.21) with the same facts the screen sets apart: what is
+running — the job, the run, or the window — since when, and what it is at. And
+it prints **the way in**, because the way in is the ability and spawning the
+reader's own program on it is not (§REQ-002-parity.1): a job's log path, a
+run's id and the runner's own attach command in the runner's own words, its
+control address while it serves one, a window's handle. `ephor operations`
+prints the same for every live root, beside the runner's own command for
+stopping it (§FS-005-dispatch.20) — shown, never run.
+
+`ephor actions open <id>` is the key on a running row
+(§FS-005-dispatch.21) as a command: it follows the log, attaches to the run,
+or brings the window forward, by the same binding the key uses
+(§FS-005-dispatch.22), and refuses by name where the entry has nothing going.
+`ephor operations attach <run>` is the same move from the board's side, where
+the row is an execution root and not an entry (§FS-005-dispatch.15): every key
+the board holds is a command too (§REQ-002-parity.2), and a run somebody
+started in another terminal is reachable by its id alone.
+
+`ephor work run` starts the runtime detached and prints the run's id
+(§FS-005-dispatch.20); `--watch` keeps the terminal and watches the run as
+before, which is also what a runner that cannot detach does unasked, saying so.

@@ -83,8 +83,10 @@ impl Beside {
             requires_checkout: self.requires_checkout,
             confirm: self.confirm,
             // What a workflow lays down is files, and running it is the move
-            // after (§FS-005-dispatch.19): there is no terminal to take.
+            // after (§FS-005-dispatch.19): there is no terminal to take, and so
+            // no window to open either (§FS-005-dispatch.22).
             background: false,
+            window: false,
         }
     }
 }

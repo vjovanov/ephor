@@ -52,6 +52,24 @@ impl Row {
     }
 }
 
+/// What opening a job row gets the reader: everything it wrote, followed as it
+/// writes (§FS-005-dispatch.17).
+///
+/// A windowed job has no log — what its program wrote is on a screen the reader
+/// was looking at and is not duplicated (§AR-002-summons.6) — so the row says
+/// where the program went rather than opening a file that is not there. The
+/// board brings no window forward: it watches, and every ability it holds is a
+/// command (§FS-005-dispatch.15, §REQ-002-parity.2).
+fn way_into(job: &crate::seams::jobs::Job) -> Action {
+    match job.log() {
+        Some(path) => Action::ReadLog {
+            path,
+            following: job.live,
+        },
+        None => Action::SetMessage(job.says()),
+    }
+}
+
 /// One operation with the matter behind it, where the feed still carries
 /// one — resolved by the shell when the board is built, never while drawing.
 pub(crate) struct OpRow {
@@ -103,7 +121,8 @@ impl OperationsScreen {
     /// again — said here rather than left for the reader to guess, the way
     /// every other screen now says `; ops` (§FS-005-dispatch.15).
     pub fn footer(&self) -> &'static str {
-        " j/k move  enter matter/plan/log  e plan/log  o dashboard  r refresh  esc/; back"
+        " j/k move  enter matter/plan/log  e plan/log  a watch the run  o dashboard  r refresh  \
+         esc/; back"
     }
 
     /// Fresh rows from a rebuild, with the cursor still on the operation it
@@ -142,12 +161,20 @@ impl OperationsScreen {
             if pulse.live != row.op.live
                 || pulse.dashboard != row.op.dashboard
                 || pulse.quiet != row.op.quiet
+                || pulse.identity != row.op.identity
             {
                 found.changed = true;
             }
             row.op.live = pulse.live;
             row.op.dashboard = pulse.dashboard;
             row.op.quiet = pulse.quiet;
+            // A run that ended and one that started in its place are two runs,
+            // and the row says which it is looking at (§FS-005-dispatch.20).
+            // The stop command follows the id it is about, and is re-composed
+            // beside it: clearing it here left the row naming its run and no
+            // longer saying how to end it, from the first tick onwards.
+            row.op.stop = pulse.stop;
+            row.op.identity = pulse.identity;
         }
         found
     }
@@ -192,7 +219,9 @@ impl OperationsScreen {
         match row {
             Row::Job(_) => 2,
             Row::Op(row) => {
-                1 + row.op.tickets.len() + usize::from(row.op.done > 0 || row.op.cancelled > 0)
+                1 + usize::from(row.op.stop.is_some())
+                    + row.op.tickets.len()
+                    + usize::from(row.op.done > 0 || row.op.cancelled > 0)
             }
         }
     }
@@ -269,10 +298,7 @@ impl OperationsScreen {
             // log — what the reader would have watched, kept
             // (§FS-005-dispatch.17).
             KeyCode::Enter | KeyCode::Char('l') => match self.selected_job() {
-                Some(job) => Action::ReadLog {
-                    path: job.log_path(),
-                    following: job.live,
-                },
+                Some(job) => way_into(job),
                 None => match self.selected_row() {
                     Some(row) => match &row.item {
                         Some(item) => Action::OpenThread {
@@ -288,14 +314,31 @@ impl OperationsScreen {
                 },
             },
             KeyCode::Char('e') => match self.selected_job() {
-                Some(job) => Action::ReadLog {
-                    path: job.log_path(),
-                    following: job.live,
-                },
+                Some(job) => way_into(job),
                 None => match self.selected_plan() {
                     Some(plan) => Action::ReadPlan(plan),
                     None => Action::SetMessage("No plan behind this row".to_string()),
                 },
+            },
+            // Watching is attaching (§FS-005-dispatch.20). It watches: the
+            // board starts nothing and stops nothing, and leaving the surface
+            // detaches and never ends the run. A row with no identity behind it
+            // says so rather than doing nothing (§REQ-001-boundary.1).
+            KeyCode::Char('a') => match self.selected_row() {
+                Some(row) if !row.op.live => {
+                    Action::SetMessage("Nothing is running on this root".to_string())
+                }
+                Some(row) => match row.op.run_id() {
+                    Some(id) => Action::AttachRun {
+                        root: row.op.root.clone(),
+                        id: id.to_string(),
+                    },
+                    None => Action::SetMessage(
+                        "This run left no id beside its lock, so there is nothing to attach to"
+                            .to_string(),
+                    ),
+                },
+                None => Action::SetMessage("Nothing is running".to_string()),
             },
             KeyCode::Char('o') => match self.selected_row() {
                 // A job serves nothing to open: it writes a log, and that is
@@ -406,6 +449,11 @@ impl OperationsScreen {
             if let Some(unread) = &op.machine_unread {
                 badges.push(unread.clone());
             }
+            // An id is how the reader and the runtime agree on which run they
+            // mean, so the row says it (§FS-005-dispatch.20).
+            if let Some(id) = op.run_id() {
+                badges.push(format!("run {id} (a)"));
+            }
             if let Some(minutes) = op.quiet {
                 badges.push(format!("quiet {minutes}m"));
             }
@@ -426,6 +474,15 @@ impl OperationsScreen {
                 ),
                 Span::styled(format!("   {}", badges.join(" · ")), dim),
             ]));
+            // The runner's own command for stopping this run, shown and never
+            // run: a key that stopped a run would be a channel to the run ephor
+            // promised never to hold (§FS-005-dispatch.20).
+            if let Some(stop) = &op.stop {
+                lines.push(Line::from(Span::styled(
+                    format!("        stop it: {stop}"),
+                    dim,
+                )));
+            }
             for ticket in &op.tickets {
                 let state = ticket.state.as_deref().unwrap_or("?");
                 let name = format!("{}.{}", ticket.plan_id, ticket.ticket);
@@ -559,6 +616,10 @@ mod tests {
                 description: "rebase onto master (1582 behind as of Nov 21)".to_string(),
                 root: PathBuf::from("/w/demo"),
                 workspace: Some(PathBuf::from("/w/demo/you/ABC-42")),
+                action: None,
+                branch: None,
+                window: None,
+                windowed: false,
                 steps: Vec::new(),
                 dossier: Vec::new(),
                 started: "2026-08-18T09:00:00Z".to_string(),
@@ -583,10 +644,59 @@ mod tests {
                 done: 2,
                 cancelled: 1,
                 machine_unread: None,
+                identity: None,
+                stop: None,
                 plans: vec![plan()],
             },
             item: Some(item()),
             plan: Some(plan()),
+        }
+    }
+
+    /// A live run that named itself, with the way in and the way out beside it.
+    fn identified_row() -> OpRow {
+        let mut row = running_row();
+        row.op.identity = Some(crate::work::runtime::watch::RunIdentity {
+            id: Some("3f9a2c".to_string()),
+            control_url: Some("http://127.0.0.1:54321".to_string()),
+            started_at: None,
+        });
+        row.op.stop = Some("the-runner stop 3f9a2c".to_string());
+        row
+    }
+
+    /// A live run says which run it is, and carries the runner's own command
+    /// for stopping it — shown, never run (§FS-005-dispatch.20). `a` puts the
+    /// runner's own surface on it; a row with no identity says so rather than
+    /// doing nothing, and an idle root has nothing to attach to at all.
+    #[test]
+    fn the_row_names_its_run_shows_the_stop_and_attaches_on_a() {
+        let mut screen = OperationsScreen::new(rows(vec![identified_row()]), None);
+        let text = text(&screen, None);
+        assert!(text.contains("run 3f9a2c (a)"), "{text}");
+        assert!(text.contains("stop it: the-runner stop 3f9a2c"), "{text}");
+
+        match screen.handle_key(KeyCode::Char('a')) {
+            Action::AttachRun { id, root } => {
+                assert_eq!(id, "3f9a2c");
+                assert_eq!(root, PathBuf::from("/w/demo/panta"));
+            }
+            _ => panic!("expected AttachRun"),
+        }
+
+        // A live run that left no descriptor is live from the lock alone
+        // (§AR-007-runtime.3): there is nothing to attach to, and the row says
+        // that rather than doing nothing (§REQ-001-boundary.1).
+        let mut screen = OperationsScreen::new(rows(vec![running_row()]), None);
+        match screen.handle_key(KeyCode::Char('a')) {
+            Action::SetMessage(said) => assert!(said.contains("no id"), "{said}"),
+            _ => panic!("expected a sentence"),
+        }
+        // And a root nothing is running on is not a run to watch.
+        let mut screen = OperationsScreen::new(rows(vec![claimed_row()]), None);
+        match screen.handle_key(KeyCode::Char('a')) {
+            Action::SetMessage(said) => assert!(said.contains("Nothing is running"), "{said}"),
+            _ => panic!("expected a sentence"),
         }
     }
 
@@ -610,6 +720,8 @@ mod tests {
                 done: 0,
                 cancelled: 0,
                 machine_unread: None,
+                identity: None,
+                stop: None,
                 plans: vec![plan()],
             },
             item: None,
@@ -782,6 +894,8 @@ mod tests {
             live: true,
             dashboard: None,
             quiet: Some(13),
+            identity: None,
+            stop: None,
         });
         assert!(found.changed);
         assert!(!found.flipped);
@@ -794,6 +908,8 @@ mod tests {
             live: true,
             dashboard: None,
             quiet: Some(13),
+            identity: None,
+            stop: None,
         });
         assert!(!found.changed);
         assert!(!found.flipped);
@@ -804,9 +920,58 @@ mod tests {
             live: false,
             dashboard: None,
             quiet: None,
+            identity: None,
+            stop: None,
         });
         assert!(found.changed);
         assert!(found.flipped);
+    }
+
+    /// The tick re-reads who the run is, so it re-reads how the run is stopped
+    /// (§FS-005-dispatch.20). The stop line used to be cleared on every pulse
+    /// and re-composed only by a full rebuild, so a board opened on a steadily
+    /// live run said `run 3f9a2c (a)` and stopped saying `stop it:` two seconds
+    /// later — the one line §20 puts on the row precisely because the board
+    /// starts nothing and stops nothing itself.
+    #[test]
+    fn the_stop_line_survives_a_tick_on_a_run_that_is_still_going() {
+        use crate::work::runtime::watch::{Pulse, RunIdentity};
+        let identity = || {
+            Some(RunIdentity {
+                id: Some("3f9a2c".to_string()),
+                control_url: Some("http://127.0.0.1:54321".to_string()),
+                started_at: None,
+            })
+        };
+        let mut screen = OperationsScreen::new(rows(vec![identified_row()]), None);
+        let found = screen.repulse(|_| Pulse {
+            live: true,
+            dashboard: None,
+            quiet: None,
+            identity: identity(),
+            stop: Some("the-runner stop 3f9a2c".to_string()),
+        });
+        assert!(!found.flipped);
+        let still = text(&screen, None);
+        assert!(still.contains("run 3f9a2c (a)"), "{still}");
+        assert!(still.contains("stop it: the-runner stop 3f9a2c"), "{still}");
+
+        // And a run that ended with another started in its place is two runs:
+        // the row says which it is looking at, and how to end *that* one.
+        let found = screen.repulse(|_| Pulse {
+            live: true,
+            dashboard: None,
+            quiet: None,
+            identity: Some(RunIdentity {
+                id: Some("b41d70".to_string()),
+                ..identity().expect("an identity")
+            }),
+            stop: Some("the-runner stop b41d70".to_string()),
+        });
+        assert!(found.changed);
+        let again = text(&screen, None);
+        assert!(again.contains("run b41d70 (a)"), "{again}");
+        assert!(again.contains("stop it: the-runner stop b41d70"), "{again}");
     }
 
     /// A rebuild fires from the tick and from every refresh landing

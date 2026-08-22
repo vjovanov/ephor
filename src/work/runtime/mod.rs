@@ -191,6 +191,23 @@ pub fn invocation_with(
 /// part of this module (§AR-007-runtime).
 const PLAN_FLAG: &str = "--rhei";
 
+/// How the runner is told to detach: the run put in a session of its own,
+/// outliving the screen that started it, with the launcher printing what it
+/// started (§FS-005-dispatch.20). Part of the same coupling as the plan flag
+/// (§AR-007-runtime.1).
+const HEADLESS_FLAG: &str = "--headless";
+
+/// How the launcher is asked for the run's descriptor instead of its human
+/// block. It describes the *launcher's* output, not the run's
+/// (§AR-007-runtime.1).
+const LAUNCHER_JSON_FLAG: &str = "--json";
+
+/// The runner's own verb for putting a surface on a run it did not start, and
+/// its own verb for stopping one. Composed here and only ever shown, in the
+/// stop's case (§FS-005-dispatch.20).
+const ATTACH_VERB: &str = "attach";
+const STOP_VERB: &str = "stop";
+
 /// How the runner is told which agent a run's tickets go to, and at which of
 /// its modes — the spelling for the hand the plan language has no line for
 /// (§FS-005-dispatch.14). Part of the same coupling as the plan flag
@@ -228,6 +245,253 @@ pub fn migrate_ledger(document: &mut serde_json::Value) {
 /// The invocation with the shipped default runner and no hand riding it.
 pub fn invocation(root: &Path, plans: &[String], extra: &[String]) -> String {
     invocation_with(RUNNER, root, plans, None, extra)
+}
+
+/// `<runner> run --headless --json <root> [--rhei <plan>]… [agent flags]`,
+/// quoted for `sh` — the same grammar [`invocation_with`] builds, with the
+/// runner's own detach flag beside the plan flag (§AR-007-runtime.1).
+///
+/// The detached form is one edit of the attached one and not a second
+/// invocation: a run started beneath the screen has to be the run the key
+/// would have started (§FS-005-dispatch.12). The launcher's standard error is
+/// folded into what is captured, because the launcher's own diagnostic — the
+/// tail of what the child said before it died — is the whole of what a refusal
+/// has to carry (§FS-005-dispatch.20).
+pub fn detached_invocation_with(
+    runner: &str,
+    root: &Path,
+    plans: &[String],
+    hand: Option<&roster::HandFlags>,
+    extra: &[String],
+) -> String {
+    let attached = invocation_with(runner, root, plans, hand, extra);
+    let (head, rest) = attached
+        .split_once(' ')
+        .map(|(head, rest)| (head.to_string(), rest.to_string()))
+        .unwrap_or((attached.clone(), String::new()));
+    // `run` is the first word after the runner, and the flags go straight
+    // after it: the launcher reads them, the child never sees them.
+    let rest = rest.strip_prefix("run").unwrap_or(&rest).trim_start();
+    format!("{head} run {HEADLESS_FLAG} {LAUNCHER_JSON_FLAG} {rest} 2>&1")
+}
+
+/// The verb a detached start fills, for messages.
+pub const DETACH_VERB: &str = "work.run.headless";
+
+/// How long the launcher gets to hand back a run id. It waits for the child to
+/// publish its descriptor and then returns, so this is the child's startup and
+/// not the run: generous, and spent once, beneath a screen that stays where it
+/// was (§FS-005-dispatch.20).
+const DETACH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+
+/// What the launcher handed back about the run it started
+/// (§FS-005-dispatch.20, §AR-007-runtime.1).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Started {
+    /// What the run calls itself, where the launcher named it. None is a run
+    /// that started and named itself nothing ephor could read — the row is
+    /// still live from the lock, with nothing to attach to
+    /// (§AR-007-runtime.3).
+    pub id: Option<String>,
+    /// The launcher's own descriptor already said the run was over: it had
+    /// nothing to do and exited inside the handshake. Read from the same
+    /// document the id is, because announcing such a run as *started* sends a
+    /// reader who presses the board key straight to an empty board.
+    pub finished: bool,
+}
+
+/// Start a run beneath the screen and come back with what it is called
+/// (§FS-005-dispatch.20).
+///
+/// Captured rather than handed the terminal: the launcher is not the run — it
+/// waits for the child to publish its descriptor, prints it, and exits, and
+/// what ephor wants from it is the id. `Err` is the launcher's own diagnostic,
+/// which is the child's: an invalid plan, a held lock and an unresolvable hand
+/// all fail here, as loudly as they do in the foreground.
+pub fn start_detached(
+    config: &crate::work::recipe::WorkConfig,
+    root: &Path,
+    checkout: &Path,
+    plans: &[String],
+    hand: Option<&roster::HandFlags>,
+    extra: &[String],
+) -> Result<Started> {
+    let command = detached_invocation_with(runner(config), root, plans, hand, extra);
+    let answer = summons::run(
+        &Summons::new(DETACH_VERB, command),
+        &Site::root(checkout),
+        Mode::Captured(DETACH_TIMEOUT),
+    )?;
+    let printed = answer.output.as_deref().unwrap_or("");
+    if answer.is_done() {
+        return Ok(started(printed));
+    }
+    // The launcher's own diagnostic, which is the child's: an invalid plan, a
+    // held lock and an unresolvable hand all fail here (§FS-005-dispatch.20).
+    // Its error envelope first, since under `--json` that is where it puts the
+    // sentence; the printed lines otherwise.
+    let said = launcher_refusal(printed).unwrap_or_else(|| said(printed));
+    Err(crate::error::EphorError::Command(match said.is_empty() {
+        true => format!("{} refused: {}", label(config), answer.refusal(DETACH_VERB)),
+        false => format!("{} refused: {said}", label(config)),
+    }))
+}
+
+/// The sentence out of the launcher's own error envelope, where it printed one.
+/// The binding's own document, read by this one binding the way its listing's
+/// stdout is (§AR-002-summons.3) — and cut to what a message line can carry.
+fn launcher_refusal(output: &str) -> Option<String> {
+    for (at, _) in output.match_indices('{') {
+        let mut values =
+            serde_json::Deserializer::from_str(&output[at..]).into_iter::<serde_json::Value>();
+        if let Some(Ok(value)) = values.next() {
+            if let Some(message) = value
+                .get("error")
+                .and_then(|error| error.get("message"))
+                .and_then(serde_json::Value::as_str)
+            {
+                return Some(said(message)).filter(|said| !said.is_empty());
+            }
+        }
+    }
+    None
+}
+
+/// What the launcher said about the run, out of the descriptor it printed —
+/// wherever in the captured text that sits. Read leniently on purpose: the
+/// launcher's own warnings share the stream with it, and a reader that insisted
+/// the object began at byte zero would lose the id to a note about a registry
+/// file.
+///
+/// Both facts come out of the *same* document. A launcher that returns
+/// `{"id": …, "status": "finished"}` started a run that had nothing to do and
+/// was over before the handshake returned; reading only the id announced it as
+/// started and sent the reader to a board with nothing on it.
+fn started(output: &str) -> Started {
+    for (at, _) in output.match_indices('{') {
+        let mut values =
+            serde_json::Deserializer::from_str(&output[at..]).into_iter::<serde_json::Value>();
+        if let Some(Ok(value)) = values.next() {
+            let id = value
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .filter(|id| !id.is_empty());
+            if let Some(id) = id {
+                let over = value
+                    .get("status")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|status| FINISHED.contains(&status))
+                    || value.get("exit_code").is_some_and(|code| !code.is_null());
+                return Started {
+                    id: Some(id.to_string()),
+                    finished: over,
+                };
+            }
+        }
+    }
+    Started::default()
+}
+
+/// The launcher's own words for a run that is over. Part of the coupling, and
+/// so part of this module (§AR-007-runtime.1).
+const FINISHED: &[&str] = &["finished", "done", "complete", "completed", "failed"];
+
+/// How a reader watches a run they did not start: the runner's own surface on
+/// it, in the runner's own words (§FS-005-dispatch.20, §AR-007-runtime.1).
+/// Composed here; where it runs — the terminal, or a window of the reader's
+/// own — is the executor's (§AR-002-summons.6).
+pub fn attach_command(config: &crate::work::recipe::WorkConfig, id: &str) -> String {
+    format!("{} {ATTACH_VERB} {}", runner(config), quote(id))
+}
+
+/// The verb an attach fills, for messages.
+pub const ATTACH_VERB_NAME: &str = "work.attach";
+
+/// The attach as a summons: something the reader types into, so it takes a
+/// terminal — theirs, or a window of their own where one is bound
+/// (§AR-002-summons.6). Leaving it detaches and never stops the run, which is
+/// the runner's own contract and not something ephor adds (§FS-005-dispatch.20).
+pub fn attach_summons(config: &crate::work::recipe::WorkConfig, id: &str) -> Summons {
+    Summons::new(ATTACH_VERB_NAME, attach_command(config, id))
+}
+
+/// How a person stops a run, in the bound runner's own words
+/// (§FS-005-dispatch.20). Composed here and **only ever shown**: the board
+/// starts nothing and stops nothing, and a key that stopped a run would be a
+/// channel to the run ephor promised never to hold. The same standing the
+/// release command has (§FS-005-dispatch.10).
+///
+/// The id is quoted exactly as the attach's is. It comes out of a file the
+/// *run* wrote, and this line exists to be copied into a shell: an id with a
+/// space in it would produce a command that does not work, and one carrying
+/// `;` or `$( )` a line that runs something else when pasted.
+pub fn stop_command(config: &crate::work::recipe::WorkConfig, id: &str) -> String {
+    format!("{} {STOP_VERB} {}", runner(config), quote(id))
+}
+
+/// The verb the detach probe fills, for messages.
+const DETACHES_VERB: &str = "work.run.detaches";
+
+/// How long the probe gets. It is a help text, printed by a binary already on
+/// PATH — seconds are generous.
+const DETACHES_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// What each bound runner answered about detaching, once per process. The
+/// capability table's own rule: a capability is resolved when it is first
+/// needed and not re-established per keystroke (§AR-005-capabilities.1), and a
+/// probe that forked the runner on every menu build would be discovery by
+/// spawning on the draw path.
+static DETACHES: std::sync::OnceLock<std::sync::Mutex<std::collections::BTreeMap<String, bool>>> =
+    std::sync::OnceLock::new();
+
+/// Whether the bound runner has a detached shape at all (§AR-007-runtime.3).
+///
+/// Asked of the runner's own help rather than of a version number: what the
+/// surfaces need to know is whether the flag exists, and the binary is the only
+/// thing that can say. False with nothing bound, and false for a runner whose
+/// help does not name the flag — an older one, or a platform with no detached
+/// shape — and the run is then the attached invocation of before, with the
+/// outcome line saying so.
+pub fn can_detach(config: &crate::work::recipe::WorkConfig) -> bool {
+    if refusal(config).is_some() {
+        return false;
+    }
+    let runner = runner(config).to_string();
+    let seen = DETACHES.get_or_init(Default::default);
+    if let Ok(known) = seen.lock() {
+        if let Some(answer) = known.get(&runner) {
+            return *answer;
+        }
+    }
+    let answer = probe_detaches(&runner);
+    if let Ok(mut known) = seen.lock() {
+        known.insert(runner, answer);
+    }
+    answer
+}
+
+/// The probe itself: the runner's own `run --help`, captured, asked whether it
+/// names the detach flag.
+fn probe_detaches(runner: &str) -> bool {
+    let here = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let command = format!("{runner} run --help 2>&1");
+    match summons::run(
+        &Summons::new(DETACHES_VERB, command),
+        &Site::root(&here),
+        Mode::Captured(DETACHES_TIMEOUT),
+    ) {
+        Ok(answer) => answer.output.as_deref().is_some_and(help_detaches),
+        // A runner that could not be asked is a runner ephor cannot claim
+        // detaches: the floor is the attached run, and the floor is never
+        // removed (§AR-007-runtime.3).
+        Err(_) => false,
+    }
+}
+
+/// Whether a runner's own help names a detached shape. The whole of what the
+/// probe reads, so the reading can be held to on its own.
+fn help_detaches(help: &str) -> bool {
+    help.contains(HEADLESS_FLAG)
 }
 
 /// Why running is refused, or None where the runtime is there
@@ -451,6 +715,125 @@ mod tests {
             said.contains("refused: Task a-1 cannot leave state fix."),
             "{said}"
         );
+    }
+
+    /// The detached start is one edit of the attached invocation: the runner's
+    /// own detach flag beside the plan flag, the same root, the same plans, the
+    /// same hand — so the key that starts a run beneath the screen and the key
+    /// that watched one cannot drift into two invocations
+    /// (§FS-005-dispatch.20, §AR-007-runtime.1).
+    #[test]
+    fn a_detached_start_is_the_same_run_with_the_detach_flag() {
+        let hand = roster::HandFlags {
+            agent: "pi".to_string(),
+            effort: Some("high".to_string()),
+        };
+        let command = detached_invocation_with(
+            RUNNER,
+            Path::new("/w/panta"),
+            &["a.rhei.md".to_string()],
+            Some(&hand),
+            &["--parallel".to_string()],
+        );
+        assert_eq!(
+            command,
+            "rhei run --headless --json '/w/panta' --rhei 'a.rhei.md' --agent 'pi' \
+             --agent-mode 'high' '--parallel' 2>&1"
+        );
+        // And under another binding it is that binding's run.
+        let bound = detached_invocation_with("my-runtime", Path::new("/w/p"), &[], None, &[]);
+        assert_eq!(bound, "my-runtime run --headless --json '/w/p' 2>&1");
+    }
+
+    /// The id comes out of the launcher's own descriptor, wherever in what it
+    /// printed the object sits: warnings share the stream with it
+    /// (§FS-005-dispatch.20). And so does whether the run is already over —
+    /// out of the *same* document, because a run reported as started sends a
+    /// reader to the board, and a run that had nothing to do and exited inside
+    /// the handshake would send them to an empty one.
+    #[test]
+    fn the_run_id_is_read_out_of_what_the_launcher_printed() {
+        let printed = "warning: could not write the registry entry\n                       {\"id\":\"3f9a2c\",\"pid\":48213,\"status\":\"running\",\"exit_code\":null}\n";
+        assert_eq!(
+            started(printed),
+            Started {
+                id: Some("3f9a2c".to_string()),
+                finished: false
+            }
+        );
+        // Nothing to read is nothing claimed: a run that named itself nothing
+        // is still a run, and the row is live from the lock alone.
+        assert_eq!(started("started\n"), Started::default());
+        assert_eq!(started("{\"pid\":1}"), Started::default());
+
+        // Over before the launcher returned, said either way the launcher says
+        // it: by its own word for finished, or by an exit code.
+        assert!(started("{\"id\":\"3f9a2c\",\"status\":\"finished\"}").finished);
+        assert!(started("{\"id\":\"3f9a2c\",\"status\":\"running\",\"exit_code\":0}").finished);
+        assert!(!started("{\"id\":\"3f9a2c\",\"status\":\"running\"}").finished);
+    }
+
+    /// A launcher that refused says so in its own error envelope, and that
+    /// sentence is what the reader is told (§FS-005-dispatch.20): an invalid
+    /// plan, a held lock and an unresolvable hand all fail there, as loudly as
+    /// they do in the foreground.
+    #[test]
+    fn the_launchers_own_diagnostic_is_the_refusal() {
+        let envelope = concat!(
+            "{\"error\":{\"help\":\"the run's console is at runtime/run.log\",",
+            "\"message\":\"the run exited before it started (exit status 1):\\n",
+            "    × failed to parse state machine\\n",
+            "    │ 'states.yaml': missing field `version`\\n",
+            "    help: fix it\"}}"
+        );
+        let said = launcher_refusal(envelope).expect("it said why");
+        assert_eq!(
+            said,
+            "the run exited before it started (exit status 1): failed to parse state machine"
+        );
+        // Nothing shaped like an envelope is nothing to lift: the printed
+        // lines answer instead.
+        assert_eq!(launcher_refusal("could not start\n"), None);
+    }
+
+    /// The two verbs a run is reached by, in the runner's own words. The stop
+    /// is only ever shown (§FS-005-dispatch.20).
+    #[test]
+    fn attaching_and_stopping_are_the_runners_own_words() {
+        let shipped = crate::work::recipe::WorkConfig::default();
+        assert_eq!(attach_command(&shipped, "3f9a2c"), "rhei attach '3f9a2c'");
+        assert_eq!(stop_command(&shipped, "3f9a2c"), "rhei stop '3f9a2c'");
+        let bound = crate::work::recipe::WorkConfig {
+            runner: Some("my-runtime".to_string()),
+            ..crate::work::recipe::WorkConfig::default()
+        };
+        assert_eq!(attach_command(&bound, "a b"), "my-runtime attach 'a b'");
+        assert_eq!(stop_command(&bound, "3f9a2c"), "my-runtime stop '3f9a2c'");
+        // Both come out of a file the run wrote and both are lines to paste,
+        // so both are quoted: an id that carried a `;` used to make the stop
+        // line run something else.
+        assert_eq!(
+            stop_command(&bound, "3f; rm -rf /"),
+            "my-runtime stop '3f; rm -rf /'"
+        );
+    }
+
+    /// Whether the binding can detach is asked of the binding
+    /// (§AR-007-runtime.3), and read out of its own help: a runner that names
+    /// the flag detaches, one that does not runs attached as it always did,
+    /// and nothing bound detaches at all — and is never even asked. The probe
+    /// itself is proven from the outside, against a stand-in runner on PATH.
+    #[test]
+    fn whether_the_runner_detaches_is_read_out_of_its_own_help() {
+        assert!(help_detaches(
+            "Options:\n      --headless  Detach the run into its own session\n"
+        ));
+        assert!(!help_detaches("Options:\n      --tui  Force TUI mode\n"));
+        let absent = crate::work::recipe::WorkConfig {
+            runner: Some("no-such-runtime-anywhere".to_string()),
+            ..crate::work::recipe::WorkConfig::default()
+        };
+        assert!(!can_detach(&absent));
     }
 
     #[test]

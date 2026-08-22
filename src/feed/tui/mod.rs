@@ -139,6 +139,12 @@ pub(crate) enum Action {
         path: PathBuf,
         following: bool,
     },
+    /// Watch a live run by attaching to it (§FS-005-dispatch.20). Leaving the
+    /// surface detaches and never stops the run.
+    AttachRun {
+        root: PathBuf,
+        id: String,
+    },
     /// Ask this item for something no recipe covers (§FS-005-dispatch.10).
     AskWork(Item),
     /// Take one of this item's tickets back (§FS-005-dispatch.16): the shell
@@ -375,6 +381,14 @@ impl App {
                             self.lay_entry(terminal, &menu, &entry)?;
                         } else {
                             self.run_menu_entry(terminal, &menu, &entry)?;
+                        }
+                    }
+                    // The key on a row that says *running* goes to the thing
+                    // that is running (§FS-005-dispatch.21).
+                    MenuOutcome::Open(entry) => {
+                        self.menu = None;
+                        if let Some(running) = entry.running.clone() {
+                            self.open_running(terminal, &running)?;
                         }
                     }
                 }
@@ -633,28 +647,90 @@ impl App {
                 // The checkout, not the plan directory: it is where the work
                 // is, and where the runtime falls back to when a workspace has
                 // no one repository to be found by looking.
-                self.handover(
-                    terminal,
-                    "▶",
-                    &format!(
-                        "{} — {label}{}",
-                        crate::work::runtime::label(&config.work),
-                        match &hand {
-                            Some(hand) => format!(" · {}", hand.describe()),
-                            None => String::new(),
-                        }
-                    ),
-                    &Site::root(&checkout),
-                    &crate::work::runtime::summons_with(
+                let said = format!(
+                    "{} — {label}{}",
+                    crate::work::runtime::label(&config.work),
+                    match &hand {
+                        Some(hand) => format!(" · {}", hand.describe()),
+                        None => String::new(),
+                    }
+                );
+                // A run starts beneath the screen (§FS-005-dispatch.20): the
+                // work was handed over precisely so that nobody had to stay,
+                // and a screen given away to one run cannot watch the other
+                // items. What the reader gets is one line saying the run began
+                // and what it is called; the root turns live on the board from
+                // the lock, as every run does.
+                if crate::work::runtime::can_detach(&config.work) {
+                    self.message = match crate::work::runtime::start_detached(
                         &config.work,
                         &root,
+                        &checkout,
                         std::slice::from_ref(&plan_id),
                         hand.as_ref(),
                         &[],
-                    ),
-                )?;
-                // The runtime just advanced the plans this reads.
+                    ) {
+                        Ok(crate::work::runtime::Started {
+                            id: Some(id),
+                            finished: false,
+                        }) => {
+                            format!("▶ run {id} started · press ; for the board")
+                        }
+                        // A run that named itself nothing is still a run: the
+                        // row is live from the lock alone (§AR-007-runtime.3).
+                        Ok(crate::work::runtime::Started {
+                            id: None,
+                            finished: false,
+                        }) => "▶ run started · press ; for the board".to_string(),
+                        // The launcher's own descriptor said the run was over
+                        // before it returned: there was nothing to do. Saying
+                        // *started* would send the reader to an empty board
+                        // (§FS-005-dispatch.20).
+                        Ok(crate::work::runtime::Started {
+                            id: Some(id),
+                            finished: true,
+                        }) => {
+                            format!("✓ run {id} finished already")
+                        }
+                        Ok(crate::work::runtime::Started { finished: true, .. }) => {
+                            "✓ the run finished already".to_string()
+                        }
+                        Err(err) => err.to_string(),
+                    };
+                } else {
+                    // Where the binding cannot detach the run is watched as it
+                    // was — the terminal handed over — and the line says so
+                    // rather than pretending (§AR-007-runtime.3).
+                    //
+                    // *Before* the handover, not after it. The handover blocks
+                    // for the whole run, so a note appended to the message
+                    // afterwards told the reader why they had lost their
+                    // terminal only once they had it back. It rides the banner
+                    // the handover prints, which is the last thing on the
+                    // screen before the run takes it.
+                    let said = format!(
+                        "{said} · {} cannot start a run detached here, so it runs in this \
+                         terminal",
+                        crate::work::runtime::runner(&config.work)
+                    );
+                    self.handover(
+                        terminal,
+                        "▶",
+                        &said,
+                        &Site::root(&checkout),
+                        &crate::work::runtime::summons_with(
+                            &config.work,
+                            &root,
+                            std::slice::from_ref(&plan_id),
+                            hand.as_ref(),
+                            &[],
+                        ),
+                    )?;
+                }
+                // The runtime just advanced the plans this reads — and, where
+                // it detached, took the lock the board watches.
                 self.reload_work();
+                self.reload_operations();
                 self.rebuild_view();
                 if let Screen::Work(screen) = &self.screen {
                     let item = screen.item.clone();
@@ -696,6 +772,19 @@ impl App {
                 self.reload_operations();
             }
             Action::ReadLog { path, following } => self.read_log(terminal, &path, following)?,
+            // A window of the reader's own where one is bound, and the terminal
+            // otherwise (§FS-005-dispatch.22).
+            Action::AttachRun { root, id } => self.attach(
+                terminal,
+                &crate::api::offers::Running::Run {
+                    root,
+                    id: Some(id),
+                    control_url: None,
+                    attach: None,
+                    since: None,
+                    doing: String::new(),
+                },
+            )?,
             Action::Refresh => self.start_refresh(config),
         }
         Ok(false)
@@ -768,6 +857,7 @@ impl App {
                     is_workflows: false,
                     picked: None,
                     gate: actions::Gate::Ready,
+                    running: None,
                 };
                 self.run_menu_entry(terminal, &menu, &entry)?;
             }
@@ -779,18 +869,16 @@ impl App {
     /// Hand a file to the reader's editor, the terminal theirs while they have
     /// it — the same handover the runtime gets (§AR-002-summons).
     fn edit_file(&mut self, terminal: &mut DefaultTerminal, path: &Path) -> Result<()> {
-        let editor = std::env::var("EDITOR").unwrap_or_else(|_| "less".to_string());
         let dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
-        let command = format!(
-            "{editor} {}",
-            crate::feed::providers::shell_quote(&path.to_string_lossy())
-        );
+        // One spelling of what opening a file means, shared with the command
+        // that opens a parked question (§AR-009-surfaces.1).
+        let editing = crate::api::act::editing(path);
         self.handover(
             terminal,
             "📖",
-            &editor,
+            &editing.binding,
             &Site::root(&dir),
-            &summons::Summons::new("edit", command),
+            &editing,
         )?;
         Ok(())
     }
@@ -850,6 +938,19 @@ impl App {
             .filter(|job| job.record.item.as_deref() == Some(item.id.as_str()))
             .cloned()
             .collect();
+        // Which run is live on this matter's execution root, and how it is
+        // stopped in the runner's own words — shown, never run
+        // (§FS-005-dispatch.20).
+        let run = status.as_ref().and_then(|status| {
+            if !crate::work::runtime::watch::live(&self.work, &status.root) {
+                return None;
+            }
+            let id = crate::work::runtime::watch::identity(&self.work, &status.root)?.id?;
+            Some(format!(
+                "run {id} · stop it: {}",
+                crate::work::runtime::stop_command(&self.work, &id)
+            ))
+        });
         self.screen = Screen::Work(WorkScreen::new(
             item,
             status,
@@ -857,6 +958,7 @@ impl App {
             unavailable,
             refusal,
             jobs,
+            run,
         ));
     }
 
@@ -1092,6 +1194,7 @@ impl App {
             is_workflows: false,
             picked,
             gate: actions::Gate::Ready,
+            running: None,
         };
         self.message = self.ctx.hand_over(item, &laid, &answers, false).says;
         self.rebuild_view();
@@ -1230,10 +1333,13 @@ impl App {
         menu: &ActionMenu,
         entry: &actions::MenuEntry,
     ) -> Result<()> {
-        // An entry that says it needs no reader never takes the terminal: it
-        // is started beneath the screen and the interface stays where it was
-        // (§FS-005-dispatch.17).
-        if !entry.is_checkout && entry.action.background {
+        // An entry that needs no reader never takes the terminal, and neither
+        // does one whose program runs in a window of the reader's own: both are
+        // started beneath the screen and the interface stays where it was
+        // (§FS-005-dispatch.17, §FS-005-dispatch.22). Where each entry runs is
+        // the session's answer, so the key and `ephor actions run` cannot come
+        // to disagree about it (§AR-009-surfaces.1).
+        if !matches!(self.ctx.how(entry), crate::api::act::Runs::Here) {
             self.start_job(menu, entry);
             return Ok(());
         }
@@ -1305,11 +1411,14 @@ impl App {
     /// and the sentence the reader sees.
     fn start_job(&mut self, menu: &ActionMenu, entry: &actions::MenuEntry) {
         let request = self.request(menu, entry);
-        let outcome = self.ctx.start_job(&request);
+        // Where it runs is the session's answer, the same one the key that
+        // routed it here asked for (§AR-009-surfaces.1).
+        let place = self.ctx.how(entry);
+        let outcome = self.ctx.start_job(&request, place);
         self.message = match &outcome.job {
             // Nothing is waited on — the row it takes among the operations is
             // how it is watched from here.
-            Some(_) => format!("{} · ; to watch", outcome.says),
+            Some(_) => format!("{} · press ; for the board", outcome.says),
             None => outcome.says.clone(),
         };
         if let Some(id) = outcome.job {
@@ -1318,6 +1427,78 @@ impl App {
             }
             self.reload_operations();
         }
+    }
+
+    /// Go to the thing that is going (§FS-005-dispatch.21): a job's log,
+    /// followed as it writes (§FS-005-dispatch.17); a run of the runtime,
+    /// attached (§FS-005-dispatch.20); a program in its own window, that window
+    /// brought forward (§FS-005-dispatch.22). Never a second copy of it.
+    fn open_running(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        running: &crate::api::offers::Running,
+    ) -> Result<()> {
+        use crate::api::offers::Running;
+        match running {
+            Running::Job { log, .. } => self.read_log(terminal, &log.clone(), true),
+            // A run still standing at the gate is where the answer goes
+            // (§FS-005-dispatch.20).
+            Running::Run { id: Some(_), .. }
+            | Running::Queued { id: Some(_), .. }
+            | Running::Waiting { id: Some(_), .. } => self.attach(terminal, running),
+            // And where nothing is standing there, the question is in the plan
+            // and so is the answer (§FS-005-dispatch.9) — the same move `e`
+            // makes on the work screen.
+            Running::Waiting { plan, .. } => self.edit_file(terminal, &plan.clone()),
+            // A run that named itself nothing has no surface to put on it, and
+            // bringing a window forward costs no terminal — both are the
+            // session's move, and the interface stays where it is
+            // (§AR-007-runtime.3, §FS-005-dispatch.22).
+            Running::Run { .. } | Running::Queued { .. } | Running::Window { .. } => {
+                self.message = self
+                    .ctx
+                    .open_running(running, crate::api::act::Watching::Window)
+                    .says;
+                Ok(())
+            }
+        }
+    }
+
+    /// The runner's own surface on a run, opened where the reader can type into
+    /// it (§FS-005-dispatch.20). Leaving it detaches and never stops the run —
+    /// the binding's own contract, which ephor neither adds to nor takes from.
+    fn attach(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        running: &crate::api::offers::Running,
+    ) -> Result<()> {
+        // A window of the reader's own where one is bound, and the terminal
+        // otherwise (§FS-005-dispatch.22). Not one call, because the terminal
+        // is this call site's property: the interface gives it up around a
+        // surface that takes it, and must not around one that does not
+        // (§AR-002-summons.2).
+        if self.ctx.opener().is_some() {
+            self.message = self
+                .ctx
+                .open_running(running, crate::api::act::Watching::Window)
+                .says;
+            return Ok(());
+        }
+        let (root, id) = match running {
+            crate::api::offers::Running::Run { root, id, .. }
+            | crate::api::offers::Running::Queued { root, id, .. }
+            | crate::api::offers::Running::Waiting { root, id, .. } => {
+                (root.clone(), id.clone().unwrap_or_default())
+            }
+            _ => return Ok(()),
+        };
+        self.handover(
+            terminal,
+            "▶",
+            &format!("watching run {id} — q detaches, the run goes on"),
+            &Site::root(&root),
+            &crate::work::runtime::attach_summons(&self.work, &id),
+        )
     }
 
     /// Everything one job wrote, in the reader's pager (§FS-005-dispatch.17).

@@ -49,12 +49,68 @@ pub struct Offer {
     /// It runs beneath the screen as a job rather than taking the terminal
     /// (§FS-005-dispatch.17).
     pub background: bool,
+    /// It runs in a window of the reader's own where one is bound, and takes
+    /// the terminal where none is (§FS-005-dispatch.22).
+    pub window: bool,
     /// It asks before running (§FS-006-project-interface.9), which on the
     /// command line is `--yes`.
     pub confirm: bool,
     /// The capability rungs it named (§FS-006-project-interface.10).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub requires: Vec<String>,
+    /// What is already going about this entry's subject, where anything is
+    /// (§FS-005-dispatch.21). A program reading the menu learns it here, so it
+    /// cannot start what a person reading it would have opened
+    /// (§REQ-002-parity.2).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub running: Option<Running>,
+}
+
+/// What is going about one entry's subject, and the way in
+/// (§FS-005-dispatch.21, §FS-011-command-line.8).
+///
+/// The way in is printed because the way in is the ability, and spawning the
+/// reader's own program on it is not (§REQ-002-parity.1).
+#[derive(Debug, Clone, Serialize)]
+pub struct Running {
+    /// `job`, `run`, `waiting`, `queued`, or `window`.
+    pub kind: &'static str,
+    /// What it is at right now: the job's own last line, the ticket a run
+    /// holds and the state it is in, `waiting on you` where the ticket it
+    /// opened is parked, `queued` where the root's run will reach it.
+    pub says: String,
+    /// How long it has been going, in seconds, where that is known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub since_seconds: Option<i64>,
+    /// The job it is, on a job or a window — what `ephor job log` takes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job: Option<String>,
+    /// What the job wrote, followed as it writes. Absent on a window, whose
+    /// program's output went to a screen the reader was looking at
+    /// (§FS-005-dispatch.22).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub log: Option<PathBuf>,
+    /// The execution root the run holds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub root: Option<PathBuf>,
+    /// What the run calls itself, where it named itself (§AR-007-runtime.3).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run: Option<String>,
+    /// The runner's own attach command, in the runner's own words.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attach: Option<String>,
+    /// The address of the run's control, while it serves one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub control_url: Option<String>,
+    /// The window's handle, brought forward by the bound opener
+    /// (§FS-005-dispatch.22).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window: Option<String>,
+    /// The plan a parked question is in — where the answer belongs
+    /// (§FS-005-dispatch.9). The way in on a *waiting* row that no run is
+    /// still standing at.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan: Option<PathBuf>,
 }
 
 /// A hand the roster offers, and the efforts it declares (§FS-005-dispatch.14).
@@ -177,6 +233,24 @@ pub struct Operation {
     /// Published only while a live run serves one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dashboard: Option<String>,
+    /// What the live run on this root calls itself, read from the descriptor it
+    /// publishes beside its lock (§FS-005-dispatch.20). Absent where the runner
+    /// left none: the row is live from the lock alone then
+    /// (§AR-007-runtime.3).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run: Option<String>,
+    /// The address of the run's control, while it serves one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub control_url: Option<String>,
+    /// The runner's own command for watching this run, in the runner's own
+    /// words — the way in (§FS-011-command-line.8).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attach: Option<String>,
+    /// The runner's own command for stopping this run, in the runner's own
+    /// words. **Shown, never run** (§FS-005-dispatch.20): the board starts
+    /// nothing and stops nothing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop: Option<String>,
     /// The tickets this root holds, in the order the board puts them: what
     /// asks something of the reader first (§FS-005-dispatch.15).
     #[serde(skip_serializing_if = "Vec::is_empty")]

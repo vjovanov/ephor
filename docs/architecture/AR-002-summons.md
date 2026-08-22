@@ -80,3 +80,45 @@ workspace carries its checkout as the job's first step, with the directory
 verified between steps exactly as the interface verified it
 (§FS-006-project-interface.8); a step that fails ends the job there, and
 `outcome.json` names the step that did it.
+
+## 6. Windowed: the reader's own window
+
+A summons the reader types into has, until now, had one place to run: the
+terminal ephor is in, handed over for the duration (§2). The **window
+opener** is a second place (§FS-005-dispatch.22,
+§DA-007-window-is-a-bound-opener): a binding that opens a
+window of the reader's own with a command in it and hands back a handle, and
+later brings that handle forward. The executor is unchanged — the same
+place resolution, the same `EPHOR_*` dossier, the same exit semantics — and
+what differs, as for the job (§5), is only who holds the other end of the
+streams: here, a terminal the reader can see beside ephor's.
+
+**The binding has two verbs and is selected once.** `open <title> -- <command>`
+prints a handle on its standard output and exits when the window exists, not
+when the program ends; `focus <handle>` brings it forward. Which binding fills
+the seam is `window` in site configuration (§REQ-001-boundary.2); unset, the
+executor recognizes the environment it was started in — the multiplexer's or
+the terminal's own variable, which each of them sets for exactly this — and
+binds the matching shipped one, never spawning anything to find out. ephor
+ships three bindings and names none of them in core (§REQ-001-boundary.5): a
+terminal multiplexer's new window, and two terminals' remote-control spawn,
+each with its own focus verb. A fourth is a pair of commands in configuration.
+Where nothing is bound and nothing is recognized, the executor falls back to
+§2 and says so in the outcome line: the terminal is the floor, and the floor
+is never removed.
+
+**A windowed summons is a job with a window instead of a log.** It is
+written down as a job (§5) — the record, the lock, the `outcome.json` — and
+the supervisor runs inside the window, so liveness is the lock exactly as
+everywhere and a window the reader closed is a job that ended, however it
+ended. The record carries the handle the opener printed, and there is **no
+`log`**: what the program wrote went to a screen the reader was watching and
+is not duplicated into a file (§DA-007-window-is-a-bound-opener.3). The
+`outcome.json` still says how it ended, and what a reader opening the job gets
+is `focus <handle>`, not a pager.
+
+**Attaching to a run is a windowed summons of the runtime's attach verb**
+(§AR-007-runtime.1, §FS-005-dispatch.20), with the terminal as its fallback.
+It is not recorded as a job: the run's identity is the binding's and is read
+from the run's own descriptor, and a surface on a run is not an operation —
+the run is.

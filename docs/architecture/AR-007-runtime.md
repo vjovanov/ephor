@@ -78,6 +78,22 @@ everywhere: an input the workflow declares an execution target for is filled
 with a chosen hand rendered into the binding's selector, the same rendering a
 ticket's execution line takes (§FS-005-dispatch.14).
 
+Detaching and attaching: the run started beneath the screen and the surface
+put on it afterwards (§FS-005-dispatch.20). The detached invocation is the
+runner's own flag beside the plan flag (`rhei run --headless`), part of the
+same coupling, and what the launcher prints is read for the run's id; the
+run's **identity** — id, pid, and the control address it serves while it
+serves one — is read from the descriptor the binding writes beside its lock
+(`runtime/run.json`), probed with the lock and never remembered, so a run
+ephor did not start has the same identity as one it did. The attach verb
+(`rhei attach <id>`) is composed here as a summons the reader types into and
+handed up as one — the executor decides whether it gets the terminal or a
+window (§AR-002-summons.6) — and the stop command is composed here in the
+runner's own words and only ever shown (§FS-005-dispatch.20), as the release
+command is. Whether the binding *can* detach on this platform is this
+module's answer too, so the surfaces ask it before offering: where it cannot,
+the run is the attached invocation of before, and the outcome line says so.
+
 ## 2. What stays outside
 
 The ledger is the engine's and runtime-agnostic: it records what was
@@ -106,4 +122,9 @@ board is then the refresh row alone (§FS-005-dispatch.15) — an operation is
 a run, and where nothing can run there are none. Enumerating a work root's
 plans is part of reading, not of running: a directory listing against the
 binding's own naming, with no runner asked — so every plan is still found
-and still readable with no runner installed.
+and still readable with no runner installed. A runner that is bound and
+present but cannot detach — an older one, or a platform with no detached
+shape — runs attached, the terminal handed over, and a run's identity is
+whatever descriptor it leaves; where it leaves none there is no id to show
+and no surface to attach, and the board says *live* from the lock alone
+(§FS-005-dispatch.20).

@@ -884,6 +884,14 @@ impl Session {
         self.work = work;
     }
 
+    /// The window opener bound here (§FS-005-dispatch.22, §AR-002-summons.6):
+    /// what site configuration names, else the environment ephor was started
+    /// in, else none. None is the terminal, which is the floor and is never
+    /// removed (§DA-007-window-is-a-bound-opener).
+    pub fn opener(&self) -> Option<crate::seams::window::Opener> {
+        crate::seams::window::bound(self.config.defaults.window.as_ref())
+    }
+
     /// Where this matter's work lives: the project's work root, resolved at
     /// the checkout the matter is about (§FS-005-dispatch.4).
     pub fn work_root(&self, item: &Item) -> Option<std::path::PathBuf> {

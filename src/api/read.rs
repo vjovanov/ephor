@@ -132,13 +132,173 @@ impl Session {
         };
         let checkout = self.checkouts.get(&project).cloned();
         let can = self.can(&project);
-        Ok(offers::entries(
-            &placed.state,
-            &checkout,
-            &can,
-            applicable,
-            has_workflows,
-        ))
+        let mut entries =
+            offers::entries(&placed.state, &checkout, &can, applicable, has_workflows);
+        self.mark_running(subject, &mut entries);
+        Ok(entries)
+    }
+
+    /// Mark every entry that has work going about its subject, and say the way
+    /// in (§FS-005-dispatch.21).
+    ///
+    /// One assembly for both surfaces (§AR-009-surfaces.1): the menu sets these
+    /// rows apart and `ephor actions` prints the same mark with the same facts,
+    /// so a program reading the menu cannot start what a person reading it
+    /// would have opened (§REQ-002-parity.2).
+    ///
+    /// Everything here is found by looking. A job is a held lock and a record
+    /// naming the entry it came from (§FS-005-dispatch.17); a run is a held
+    /// lock and the descriptor beside it (§FS-005-dispatch.20). Nothing is
+    /// remembered from the keypress, so a second ephor opening the same menu
+    /// sees the same rows and a job that died is not running.
+    ///
+    /// **Read once for the whole menu** (§FS-005-dispatch.15.1). Every row of
+    /// one menu shares one subject and so one work root: the job list, the lock
+    /// probe, the states document, the plan, the journal and the run descriptor
+    /// are resolved here and asked of once per row, not read once per row.
+    fn mark_running(&self, subject: &Subject, entries: &mut [offers::MenuEntry]) {
+        let project = subject.project();
+        let (item, branch) = match subject {
+            Subject::Item(item) => (Some(*item), None),
+            Subject::Branch { branch, .. } => (None, Some(*branch)),
+        };
+        // Live only: a record that a job started is a different claim from a
+        // job that is running (§AR-002-summons.5).
+        let jobs: Vec<crate::seams::jobs::Job> = crate::seams::jobs::all()
+            .into_iter()
+            .filter(|job| job.live)
+            .collect();
+        // Jobs about *this* subject: the record says which entry it came from
+        // and, on a branch row, which branch, because nothing could otherwise
+        // match one back (§FS-005-dispatch.21).
+        let here: Vec<&crate::seams::jobs::Job> = jobs
+            .iter()
+            .filter(|job| {
+                job.record.project == project
+                    && job.record.item.as_deref() == item.map(|item| item.id.as_str())
+                    && job.record.branch.as_deref() == branch
+            })
+            .collect();
+        // The one reading of this subject's work root, for every row of the
+        // menu (§AR-005-capabilities.1).
+        let at = match (item, self.dispatcher.as_ref()) {
+            (Some(item), Some(dispatcher)) => dispatcher.work_at(item),
+            _ => None,
+        };
+        // The run's own identity, read from the descriptor beside the lock —
+        // the way in is the runner's own attach command (§FS-005-dispatch.20,
+        // §FS-011-command-line.8).
+        let run = at.as_ref().and_then(|at| at.identity.clone());
+        let id = run.as_ref().and_then(|run| run.id.clone());
+        let attach = id
+            .as_deref()
+            .map(|id| crate::work::runtime::attach_command(&self.work_config, id));
+        let now = chrono::Utc::now();
+        let since = run
+            .as_ref()
+            .and_then(|run| run.started_at.as_deref())
+            .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+            .map(|at| (now - at.with_timezone(&chrono::Utc)).num_seconds());
+        for entry in entries.iter_mut() {
+            // The two rows that are not a thing to start again
+            // (§FS-005-dispatch.21): the freehand row starts *whatever the
+            // reader types*, and the workflows row opens a list. A backgrounded
+            // freehand command records the freehand row's own id, so without
+            // this the row that asks for a command was marked running and Enter
+            // followed that command's log instead of prompting.
+            if entry.is_freehand || entry.is_workflows {
+                continue;
+            }
+            let key = entry.key();
+            // The checkout row is running where the job that is making the
+            // workspace is (§FS-005-dispatch.21). That job is never a job of
+            // the checkout row's own — `Session::how` keeps the checkout in the
+            // foreground — it is another entry's job carrying the checkout as
+            // its first step (§FS-005-dispatch.17), so it is matched by the
+            // step rather than by the entry it came from. Without this,
+            // pressing the row started a second checkout of the same workspace
+            // while the first was still writing it.
+            let started_here = match entry.is_checkout {
+                true => here
+                    .iter()
+                    .copied()
+                    .find(|job| job.record.steps.iter().any(|step| step.becomes_workspace)),
+                false => here
+                    .iter()
+                    .copied()
+                    .find(|job| job.record.action.as_deref() == Some(key.as_str())),
+            };
+            if let Some(job) = started_here {
+                entry.running = Some(match job.windowed() {
+                    // A windowed program's inspection is its window: what it
+                    // wrote is on that screen and nowhere else, so there is no
+                    // log to offer even where the opener named no window
+                    // (§FS-005-dispatch.22, §AR-002-summons.6).
+                    true => offers::Running::Window {
+                        job: job.id.clone(),
+                        handle: job.record.window.clone().unwrap_or_default(),
+                        since: job.took(now),
+                        says: job.says(),
+                    },
+                    false => offers::Running::Job {
+                        id: job.id.clone(),
+                        since: job.took(now),
+                        says: job.says(),
+                        log: job.log_path(),
+                    },
+                });
+                continue;
+            }
+            // An entry that hands work over is running where the ticket it
+            // would open, or the plan it would lay, is open and its root is
+            // live or will reach it — and where the ticket it opened is parked,
+            // whether or not a run still holds the root (§FS-005-dispatch.21).
+            if entry.action.agent.is_none() && entry.action.workflow.is_none() {
+                continue;
+            }
+            let Some(going) = at.as_ref().and_then(|at| at.going(&key)) else {
+                continue;
+            };
+            entry.running = Some(match going {
+                crate::work::WorkGoing::Running { root, doing } => offers::Running::Run {
+                    root,
+                    id: id.clone(),
+                    control_url: run.as_ref().and_then(|run| run.control_url.clone()),
+                    attach: attach.clone(),
+                    since,
+                    doing,
+                },
+                crate::work::WorkGoing::Waiting {
+                    root,
+                    ticket,
+                    state,
+                    plan,
+                } => offers::Running::Waiting {
+                    root,
+                    ticket,
+                    state,
+                    plan,
+                    id: id.clone(),
+                    attach: attach.clone(),
+                    // Nothing records when the machine parked it, and the run's
+                    // age is not the question's wait (§FS-005-dispatch.21): a
+                    // row saying `waiting on you · 3h` about a ticket parked a
+                    // minute ago would be the watch inventing news.
+                    since: None,
+                },
+                crate::work::WorkGoing::Queued { root } => offers::Running::Queued {
+                    root,
+                    id: id.clone(),
+                    attach: attach.clone(),
+                    // The run's age is not this entry's wait
+                    // (§FS-005-dispatch.21): a row saying `queued · 3h` about a
+                    // ticket dispatched a minute ago would have the reader
+                    // reading three hours of waiting into it. The row still
+                    // says *queued*, which is the whole of what is known.
+                    since: None,
+                },
+            });
+        }
     }
 
     /// The whole `ephor actions` reading for one subject
@@ -334,6 +494,16 @@ impl Session {
                 plan: row.plan,
                 log: None,
                 dashboard: row.op.dashboard.clone(),
+                // How the reader and the runtime agree on which run they mean,
+                // and the two commands that reach it: the way in, and the way
+                // out shown but never run (§FS-005-dispatch.20).
+                run: row.op.run_id().map(str::to_string),
+                control_url: row.op.control_url().map(str::to_string),
+                attach: row
+                    .op
+                    .run_id()
+                    .map(|id| crate::work::runtime::attach_command(&self.work_config, id)),
+                stop: row.op.stop.clone(),
                 tickets: row.op.tickets.iter().map(ticket_row).collect(),
             });
         }
@@ -374,9 +544,76 @@ pub fn offer_of(entry: &offers::MenuEntry) -> views::Offer {
         brief: None,
         cwd: entry.action.cwd.clone(),
         background: entry.action.background,
+        window: entry.action.window,
         confirm: entry.action.confirm,
         requires: entry.action.requires.clone(),
+        running: entry.running.as_ref().map(running_of),
     }
+}
+
+/// What is going about an entry, as a reading names it (§FS-011-command-line.8).
+/// One rendering of the one mark, so the row a screen sets apart and the line a
+/// command prints carry the same facts (§AR-009-surfaces.1).
+pub fn running_of(running: &offers::Running) -> views::Running {
+    let mut view = views::Running {
+        kind: running.name(),
+        says: running.says(),
+        since_seconds: running.since(),
+        job: None,
+        log: None,
+        root: None,
+        run: None,
+        attach: None,
+        control_url: None,
+        window: None,
+        plan: None,
+    };
+    match running {
+        offers::Running::Job { id, log, .. } => {
+            view.job = Some(id.clone());
+            view.log = Some(log.clone());
+        }
+        offers::Running::Run {
+            root,
+            id,
+            control_url,
+            attach,
+            ..
+        } => {
+            view.root = Some(root.clone());
+            view.run = id.clone();
+            view.attach = attach.clone();
+            view.control_url = control_url.clone();
+        }
+        offers::Running::Queued {
+            root, id, attach, ..
+        } => {
+            view.root = Some(root.clone());
+            view.run = id.clone();
+            view.attach = attach.clone();
+        }
+        // The run where one is still standing at the gate, and the plan the
+        // question is in either way (§FS-005-dispatch.9, §FS-005-dispatch.20).
+        offers::Running::Waiting {
+            root,
+            plan,
+            id,
+            attach,
+            ..
+        } => {
+            view.root = Some(root.clone());
+            view.run = id.clone();
+            view.attach = attach.clone();
+            view.plan = Some(plan.clone());
+        }
+        offers::Running::Window { job, handle, .. } => {
+            view.job = Some(job.clone());
+            // Absent where the opener named no window: a field holding the
+            // empty string would read as a handle that focuses nothing.
+            view.window = (!handle.is_empty()).then(|| handle.clone());
+        }
+    }
+    view
 }
 
 fn workspace_state_name(state: &WorkspaceState) -> &'static str {
@@ -428,8 +665,14 @@ pub fn job_row(job: crate::seams::jobs::Job) -> views::Operation {
         title: Some(job.record.description.clone()),
         root: Some(job.record.root.clone()),
         plan: None,
-        log: Some(job.log_path()),
+        // None for a windowed job: what it wrote is on a screen the reader was
+        // watching, so there is no file to name (§AR-002-summons.6).
+        log: job.log(),
         dashboard: None,
+        run: None,
+        control_url: None,
+        attach: None,
+        stop: None,
         tickets: Vec::new(),
     }
 }

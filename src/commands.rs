@@ -10,8 +10,8 @@ use std::process::ExitCode;
 use crate::api::read::Subject;
 use crate::api::{offers, views, Session};
 use crate::cli::{
-    ActionsArgs, ActionsCommand, ActionsListArgs, ActionsRunArgs, BranchesArgs, OperationsArgs,
-    ReactArgs, ReplyArgs, SubjectArgs, ThreadArgs, TickArgs,
+    ActionsArgs, ActionsCommand, ActionsListArgs, ActionsOpenArgs, ActionsRunArgs, BranchesArgs,
+    OperationsArgs, ReactArgs, ReplyArgs, SubjectArgs, ThreadArgs, TickArgs,
 };
 use crate::error::{registry_error, EphorError, Result};
 use crate::feed::config::load_config;
@@ -94,6 +94,7 @@ impl Named {
 pub fn actions(args: &ActionsArgs) -> Result<ExitCode> {
     match &args.command {
         Some(ActionsCommand::Run(run)) => actions_run(run),
+        Some(ActionsCommand::Open(open)) => actions_open(open),
         Some(ActionsCommand::List(list)) => actions_list(list),
         None => actions_list(&ActionsListArgs {
             subject: args.subject.clone(),
@@ -139,6 +140,45 @@ fn actions_list(args: &ActionsListArgs) -> Result<ExitCode> {
             "{mark} {:width$}  {} {}",
             offer.id, offer.icon, offer.description
         );
+        // What is already going about this row, and the way in — the same mark
+        // the screen sets apart, with the same facts, so a program reading the
+        // menu cannot start what a person reading it would have opened
+        // (§FS-005-dispatch.21, §FS-011-command-line.8).
+        if let Some(running) = &offer.running {
+            // What it is, how long it has been going, and what it is at —
+            // dropping the last where it is the same word as the first, which
+            // is what *queued* is (§FS-005-dispatch.21).
+            let mut said = vec![running.kind.to_string()];
+            // A run's id is how the reader and the runtime agree on which run
+            // they mean, so it is said in its own right and not left to be
+            // read out of the attach command (§FS-011-command-line.8).
+            if let Some(id) = &running.run {
+                said.push(format!("run {id}"));
+            }
+            if let Some(seconds) = running.since_seconds {
+                said.push(crate::feed::render::span(seconds));
+            }
+            if running.says != running.kind {
+                said.push(running.says.clone());
+            }
+            println!("  {:width$}    ▶ {}", "", said.join(" · "));
+            let way_in = running
+                .log
+                .as_ref()
+                .map(|log| log.display().to_string())
+                .or_else(|| running.attach.clone())
+                .or_else(|| running.window.clone())
+                // A parked question nothing is standing at is reached in the
+                // plan it is written in (§FS-005-dispatch.9).
+                .or_else(|| running.plan.as_ref().map(|plan| plan.display().to_string()));
+            if let Some(way_in) = way_in {
+                println!("  {:width$}      {way_in}", "");
+            }
+            if let Some(url) = &running.control_url {
+                println!("  {:width$}      {url}", "");
+            }
+            println!("  {:width$}      ephor actions open {}", "", offer.id);
+        }
         if let Some(hand) = &offer.hand {
             println!("  {:width$}    → {hand}", "");
         }
@@ -157,6 +197,53 @@ fn actions_list(args: &ActionsListArgs) -> Result<ExitCode> {
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// `ephor actions open` (§FS-011-command-line.8): the key on a running row as
+/// a command (§FS-005-dispatch.21). It follows the log, attaches to the run, or
+/// brings the window forward, by the same binding the key uses — and refuses by
+/// name where the entry has nothing going.
+fn actions_open(args: &ActionsOpenArgs) -> Result<ExitCode> {
+    let config = load_config()?;
+    let mut session = Session::open(&config)?;
+    let named = subject_of(&session, &args.subject)?;
+    let subject = named.as_subject();
+    let entries = session.menu(&subject).map_err(EphorError::Command)?;
+    let entry = entries
+        .iter()
+        .find(|entry| entry.key() == args.entry)
+        .ok_or_else(|| {
+            registry_error(format!(
+                "No entry called '{}' here. `ephor actions` lists what there is.",
+                args.entry
+            ))
+        })?;
+    // Refused by name, not silently: an entry with nothing going is not an
+    // entry to open, and a command that quietly did nothing would read exactly
+    // like one that worked (§REQ-001-boundary.1).
+    let Some(running) = entry.running.clone() else {
+        return Ok(report(
+            &views::Outcome::refused(format!(
+                "Nothing is going about '{}': `ephor actions run {}` starts it.",
+                args.entry, args.entry
+            )),
+            args.json,
+        ));
+    };
+    let watching = match &running {
+        // A job's log is text this command prints, and there is no window in
+        // it: under a reading the text goes beside the answer rather than into
+        // it (§FS-011-command-line.7).
+        crate::api::offers::Running::Job { .. } => match args.json {
+            true => crate::api::act::Watching::Aside,
+            false => crate::api::act::Watching::Terminal,
+        },
+        // Everything else opens by the same binding the key uses
+        // (§FS-005-dispatch.22, §FS-011-command-line.8) — a window of the
+        // reader's own where one is bound, and the terminal otherwise.
+        _ => session.watching(args.json),
+    };
+    Ok(report(&session.open_running(&running, watching), args.json))
 }
 
 fn actions_run(args: &ActionsRunArgs) -> Result<ExitCode> {
@@ -283,11 +370,21 @@ fn actions_run(args: &ActionsRunArgs) -> Result<ExitCode> {
     if args.dry_run {
         return Ok(report(&dry_run_of(&request), args.json));
     }
-    // Beneath the terminal where the entry says so, or where the reader asked
-    // (§FS-005-dispatch.17); here otherwise, because a menu entry has always
-    // been allowed to *be* the reader's session.
-    let outcome = match args.background || request.entry.action.background {
-        true => session.start_job(&request),
+    // Beneath the terminal where the entry says so, in a window of the
+    // reader's own where it asked for one and one is bound, or where the reader
+    // asked (§FS-005-dispatch.17, §FS-005-dispatch.22); here otherwise, because
+    // a menu entry has always been allowed to *be* the reader's session. Which
+    // of the three is the session's answer, so the command and the key cannot
+    // disagree (§AR-009-surfaces.1).
+    // `--background` is the reader asking for the place outright, and it is
+    // *beneath the screen* — never a window, which is where a program somebody
+    // types into goes (§FS-005-dispatch.17, §FS-005-dispatch.22).
+    let place = match args.background {
+        true => crate::api::act::Runs::Beneath,
+        false => session.how(&request.entry),
+    };
+    let outcome = match place != crate::api::act::Runs::Here {
+        true => session.start_job(&request, place),
         // Under `--json` the entry's own output goes beside the reading, so
         // that what a program parses is the outcome alone
         // (§FS-011-command-line.7).
@@ -421,6 +518,9 @@ fn as_of(distance: views::Distance) -> String {
 
 /// `ephor operations` (§FS-011-command-line.3).
 pub fn operations(args: &OperationsArgs) -> Result<ExitCode> {
+    if let Some(crate::cli::OperationsCommand::Attach(attach)) = &args.command {
+        return operations_attach(attach);
+    }
     let config = load_config()?;
     let mut session = Session::open(&config)?;
     let mut board = session.operations();
@@ -442,11 +542,46 @@ pub fn operations(args: &OperationsArgs) -> Result<ExitCode> {
         let marker = if op.live { "▶" } else { "✋" };
         println!("{marker} {} · {}   {}", op.project, op.id, op.state);
         println!("    {}", op.says);
+        // The way in, and the way out shown but never run
+        // (§FS-005-dispatch.20, §FS-011-command-line.8).
+        if let Some(attach) = &op.attach {
+            println!("    watch it:  {attach}");
+        }
+        if let Some(url) = &op.control_url {
+            println!("    control:   {url}");
+        }
+        if let Some(stop) = &op.stop {
+            println!("    stop it:   {stop}");
+        }
         for ticket in &op.tickets {
             println!("      {} [{}]  {}", ticket.id, ticket.state, ticket.says);
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// `ephor operations attach` (§FS-011-command-line.8): the board's own key as
+/// a command. It watches; it starts nothing and stops nothing
+/// (§FS-005-dispatch.15).
+fn operations_attach(args: &crate::cli::OperationsAttachArgs) -> Result<ExitCode> {
+    let config = load_config()?;
+    let mut session = Session::open(&config)?;
+    // The root the run is on, where this board still shows it — only somewhere
+    // for the surface to start from, since a run is reached by its id.
+    let board = session.operations();
+    let root = board
+        .operations
+        .iter()
+        .find(|op| op.run.as_deref() == Some(args.run.as_str()))
+        .and_then(|op| op.root.clone())
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    // Attaching goes to a window where one is bound, by the same binding the
+    // board's own key uses (§FS-005-dispatch.22, §FS-011-command-line.8).
+    let watching = session.watching(args.json);
+    Ok(report(
+        &session.attach_run(&root, &args.run, watching),
+        args.json,
+    ))
 }
 
 /// The matter a conversation command was aimed at.

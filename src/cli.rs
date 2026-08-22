@@ -424,6 +424,13 @@ pub struct WorkRunArgs {
     #[arg(long)]
     pub item: Option<String>,
 
+    /// Keep the terminal and watch the run, as this command always did
+    /// (§FS-011-command-line.8). Without it the run starts detached and this
+    /// prints the id it was given — which is also what a runner that cannot
+    /// detach does unasked, saying so (§FS-005-dispatch.20).
+    #[arg(long)]
+    pub watch: bool,
+
     /// Arguments passed through to the runtime, after `--`.
     #[arg(last = true)]
     pub runner_args: Vec<String>,
@@ -850,6 +857,25 @@ pub enum ActionsCommand {
     List(ActionsListArgs),
     /// Run one entry, by the id the listing gives it.
     Run(ActionsRunArgs),
+    /// Go to what is already going about one entry: follow its job's log,
+    /// attach to its run, or bring its window forward (§FS-011-command-line.8).
+    Open(ActionsOpenArgs),
+}
+
+/// `ephor actions open` (§FS-011-command-line.8): the key on a running row as
+/// a command. It starts nothing — where the entry has nothing going it refuses
+/// by name (§FS-005-dispatch.21).
+#[derive(Args, Debug)]
+pub struct ActionsOpenArgs {
+    /// The entry, by the id `ephor actions` gives it.
+    pub entry: String,
+
+    #[command(flatten)]
+    pub subject: SubjectArgs,
+
+    /// Emit the outcome as JSON.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Args, Debug, Default)]
@@ -927,11 +953,33 @@ pub struct BranchesArgs {
 /// `ephor operations` (§FS-011-command-line.3): the board, without the screen.
 #[derive(Args, Debug, Default)]
 pub struct OperationsArgs {
+    #[command(subcommand)]
+    pub command: Option<OperationsCommand>,
+
     /// Only what is running now.
     #[arg(long)]
     pub live: bool,
 
     /// Emit raw JSON instead of a listing.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum OperationsCommand {
+    /// Watch a live run by attaching to it (§FS-011-command-line.8). Leaving
+    /// the surface detaches and never stops the run; stopping it is the
+    /// runner's own command, which the board only ever shows
+    /// (§FS-005-dispatch.20).
+    Attach(OperationsAttachArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct OperationsAttachArgs {
+    /// The run, by the id `ephor operations` prints on its row.
+    pub run: String,
+
+    /// Emit the outcome as JSON.
     #[arg(long)]
     pub json: bool,
 }

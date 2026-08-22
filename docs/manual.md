@@ -277,7 +277,8 @@ ephor ensure-agents --type monorepo --root ~/tmp/scratch \
     "ttl_seconds": 600,               // how old a cache may be before status refetches
     "provider_timeout_seconds": 30,   // per provider call
     "github_user": "you",             // skips one `gh api user` per refresh
-    "recent_days": 7                  // how long finished work stays under Recent
+    "recent_days": 7,                 // how long finished work stays under Recent
+    "window": "tmux"                  // where a program of its own runs (§8.16)
   },
   "sources": [ /* §4.3 — fetched once, placed by ephor */ ],
   "actions": [ /* §7 */ ],
@@ -1227,6 +1228,7 @@ difference is only whether anyone expects to want their own.
 | `requires_checkout` | the action needs the item's branch workspace on disk |
 | `confirm` | ask before running it: the second Enter on the row runs it |
 | `background` | run it beneath the interface as a job rather than taking the terminal (§8.14) |
+| `window` | run its program in a window of your own instead of taking the terminal (§8.16) |
 
 `kinds` is the older spelling of `when.kinds` and still works; `when` is the
 whole language — roles, gate, `needs_response`, sources, `behind` — so an
@@ -2099,7 +2101,7 @@ ephor work dispatch [--project P] [--item ID] [--recipe R] [--kind K]
 ephor work ask --item ID [WORDS…] [--state S] [--dry-run]
 ephor work sync [--project P] [--dry-run]
 ephor work cancel --item ID TICKET… [--why WORDS] [--dry-run]
-ephor work run [--project P] [--item ID] [-- RHEI_ARGS…]
+ephor work run [--project P] [--item ID] [--watch] [-- RHEI_ARGS…]
 ephor work workflows [--project P] [WORKFLOW] [--json]
 ephor work lay ENTRY --item ID [--set INPUT=VALUE]… [--hand H] [--dry-run]
 ephor work forget [--item ID | --done | --missing]
@@ -2119,6 +2121,10 @@ ephor work states
   project you keep in the same checkout for your own work is not swept in. One
   root at a time: tickets in one root are about one checkout, and two agents in
   one working tree edit the same files. Pass runtime flags after `--`.
+  It **starts the run detached** and prints the id it was given
+  ([§FS-005-dispatch.20](../requirements.md#20-a-run-of-the-runtime-starts-beneath-the-screen-and-is-watched-by-attaching));
+  `--watch` keeps your terminal and watches the run here, which is also what a
+  runner with no detached shape does unasked, saying so.
 - **`workflows`** and **`lay`** are the runtime's own workflows, offered as
   actions (§8.15). `lay` writes a plan of its own beside the matter's and runs
   nothing; `--dry-run` shows what would answer every input first.
@@ -2303,8 +2309,17 @@ means something before you open it. And a ticket is a ticket at any depth:
 a subtask the runtime split off reads from the plan like its parent —
 `widget-42.fix-gate-1.1` is a row of its own when it parks.
 
-**Watch-only.** The board starts nothing, stops nothing, and touches no run —
-those need machinery a watcher does not have, and belong to a later chapter.
+**A live row names its run.** A run publishes a descriptor beside its lock, so
+the row carries the id it calls itself, `a` puts the runner's own surface on
+it, and — where the runner has one — the row shows the command that *stops* it,
+in the runner's own words. Shown, never run: a key that stopped a run would be
+a channel to the run ephor promised never to hold
+([§FS-005-dispatch.20](../requirements.md#20-a-run-of-the-runtime-starts-beneath-the-screen-and-is-watched-by-attaching)).
+`ephor operations --json` carries the same four facts — `run`, `control_url`,
+`attach`, `stop`.
+
+**Watch-only.** The board starts nothing and stops nothing — attaching is
+reading, and everything that would change a run belongs to the run itself.
 What ephor runs *itself* is started by the menu entry you pressed and merely
 shown here ([§8.14](#814-jobs--what-ephor-runs-beneath-the-screen)); jobs list
 first, above the runtime's roots, because a job is usually the thing you asked
@@ -2355,6 +2370,7 @@ nothing judged queued or finished`.
 | `j` `k` | move between operations (the view follows the selection) |
 | `Enter` | the matter's thread — or the plan, where the operation has no matter — or, on a job, its log |
 | `e` | read the plan in `$EDITOR`; on a job, its log in `$PAGER` |
+| `a` | watch the run on this root by attaching to it (§8.17) |
 | `o` | open the run's dashboard, where a live run published one |
 | `r` | refresh underneath, exactly as everywhere else |
 | `Esc` `;` `q` | back to where you were |
@@ -2403,7 +2419,7 @@ Press `⤴ rebase onto master` and the menu closes onto the row you were on,
 with one line in the status bar:
 
 ```
-⤴ rebase onto master (1582 behind as of Nov 21, 2025): started · ; to watch
+⤴ rebase onto master (1582 behind as of Nov 21, 2025): started · press ; for the board
 ```
 
 **It is its own process, in its own process group.** Quitting ephor does not
@@ -2436,7 +2452,10 @@ ephor job log <id>      # everything one job wrote, in order
 
 A job is a directory under `~/.local/state/ephor/jobs/` — `job.json` (what it
 is), `log` (what it wrote), `lock`, and `outcome.json` when it ends — and that
-is the whole record. **Liveness is the lock**, probed and never waited on,
+is the whole record. A job whose supervisor runs in a window of your own
+(§8.16) has no `log`: what its program wrote is on a screen you were watching
+and is not duplicated into a file, so its record names the window instead and
+`ephor job log` on it says so. **Liveness is the lock**, probed and never waited on,
 exactly as it is for a run: a job that died holds no lock and wrote no
 outcome, and is reported as *died* rather than as running, because "it
 started" is a claim about the past. Jobs are found by listing that directory,
@@ -2452,7 +2471,9 @@ the job ends there naming the step, and the action after it never runs.
 editor, a pager are legitimate menu entries, and one of those started beneath
 the screen is a program nobody can type into. Write `"background": true` on an
 action or an offer that needs no reader (§7.2). ephor's own `⤴ rebase` entries
-set it themselves.
+set it themselves. An entry that *is* such a program has a third place to run:
+`"window": true` puts it in a window of your own, beside ephor rather than in
+its place (§8.16).
 
 ### 8.15 Workflows the runtime offers
 
@@ -2551,6 +2572,143 @@ missing scalar input is one line typed where you are standing; anything more —
 or anything wanting a list or a record — opens a file in `$EDITOR` with
 everything ephor already resolved in it and each unanswered input named with
 what it wants. Leave that file alone and nothing is laid down.
+
+### 8.16 A window of your own
+
+ephor has one terminal and is sitting in it. Handing it over works everywhere
+and stays the floor. But if you are inside a multiplexer, or in a terminal that
+opens windows on request, there is a better move: the program in a window of
+its own, ephor still on screen, and *open* from then on meaning **bring that
+window forward**
+([§FS-005-dispatch.22](../requirements.md#22-a-window-of-the-readers-own-where-one-is-bound)).
+
+The window is a **seam**, with the anatomy every seam has: two commands, one
+that opens a window running a given command and prints a handle for the window
+it made, one that brings a handle forward. Which one fills it is `window` under
+`defaults` in `status.json`:
+
+```jsonc
+{
+  "defaults": {
+    "window": "tmux"        // or "wezterm", or "kitty"
+  }
+}
+```
+
+```jsonc
+{
+  "defaults": {
+    "window": {             // or a pair of your own — anything that can do the two verbs
+      "open":  "my-terminal --new-window --title {title} -- {command}",
+      "focus": "my-terminal --raise {handle}"
+    }
+  }
+}
+```
+
+`{title}` and `{command}` are filled in the open template, `{handle}` in the
+focus one, each quoted as one shell word; every other brace is left alone, so a
+product's own format language survives. A template that has no `{title}` in it
+is fine — one of the three shipped bindings has no title option on its spawn,
+and the window it opens is named by whatever runs in it — but an `open` with no
+`{command}`, or a `focus` with no `{handle}`, is refused where it is written.
+`open` must print the handle on standard output and exit **when the window
+exists**, not when the program in it ends. A binding that opens the window and
+prints nothing is not a failure: the program is running in it, and what ephor
+cannot then do is bring it forward.
+
+**Unset, ephor recognizes where it is running.** Each of the three shipped
+bindings sets a variable for exactly this purpose (`$TMUX`, `$WEZTERM_PANE`,
+`$KITTY_WINDOW_ID`), and ephor reads it — it never spawns one of them to find
+out. Where nothing is bound and nothing is recognized there is no window, and
+the terminal is handed over as it always was, with the outcome line saying so.
+
+**An entry may ask for a window.** Write `"window": true` on an action or an
+offer whose program is something you type into — an editor, a pager, a coding
+agent's own session (§7.2). It then runs as a job whose supervisor lives inside
+that window: it holds a lock like any job (§8.14), its record keeps the
+handle, and the window is its inspection where a log would have been, because
+what it writes is on that screen and nowhere else. Such a job has **no log** —
+`ephor job log` on one says where the program went rather than answering with an
+empty file, and `outcome.json` still says how it ended. That is what makes an agent
+started from the menu a row that says *running* and opens to the agent, rather
+than a program ephor handed the terminal to and forgot.
+
+**ephor never closes a window and never ends what is in it.** It opens one and
+brings one forward. A window you closed is a job that ended, and the lock says
+so without being asked.
+
+### 8.17 What is already going, where it could be started again
+
+The menu says what can be done about a row; the board says what is being done.
+Kept apart they forget each other — you open the menu on an item whose rebase
+is already replaying, press it, and either get refused by a lock or start a
+second one. So **every entry that has work going about its subject is marked
+running, and set apart**
+([§FS-005-dispatch.21](../requirements.md#21-what-is-already-going-is-shown-where-it-could-be-started-again)):
+
+```
+ actions — Widen the retry window
+  running
+ 1   ▶ ⚙  fix the red gate       12m · acmeforge-app-101.fix-gate-1 [fix]
+ 2   ⤴  rebase onto master (3 behind as of Jul 28)
+ 3   ✎  leave a note about it
+```
+
+The running rows stand first, under a line that says so, a step further in, in
+one colour used for nothing else on that screen. Each says how long it has been
+going and what it is at right now — the job's own last line, the ticket a run
+holds and the state it is in, *waiting on you* where the ticket it opened is
+parked, *queued* where the root's run will reach it.
+
+**What counts as going is found by looking.** A command entry is running where
+a job started from that entry, about this subject, still holds its lock — which
+is why a job records which entry it came from and, on a branch row, which
+branch — and the row that would make a branch workspace is running while the
+job whose first step is making it is. An entry that hands work over is running
+where the ticket it would open is open and its root is live, and where the
+ticket it opened is parked, whether or not a run still holds the root: a
+question standing on this subject is open work about it. An entry whose program
+runs in a window is running while that window holds it. Nothing is remembered
+from the keypress: a second ephor sees the same rows, and a job that died is not
+running whatever started it.
+
+**Pressing a running entry opens it; it never starts it again.** `Enter` (or
+`l`) on such a row goes to the thing that is running — a job's log, followed as
+it writes; a run of the runtime, attached; a program in its own window, brought
+forward — and the footer says *open* rather than *run*. A second copy is not
+what you meant, and where you do mean it the command line starts it and the
+refusal is the lock's own sentence.
+
+**Both surfaces say it.** `ephor actions [--json]` carries the same mark with
+the same facts — what is running, since when, what it is at, and **the way in**:
+a job's log path, a run's id with the runner's own attach command and its
+control address, a window's handle. And `ephor actions open <id>` is that key as
+a command:
+
+```bash
+ephor actions open rebase --item "$id"    # follows the job's log
+ephor actions open fix-gate --item "$id"  # attaches to the run holding it
+ephor actions open edit --item "$id"      # brings its window forward
+```
+
+It starts nothing. Where the entry has nothing going it refuses by name and
+tells you which command would start it. And it opens **by the same binding the
+key uses** (§8.16): with a window bound, `ephor actions open` and
+`ephor operations attach` put the surface in a window of your own exactly as `a`
+on the board does; with none, they take the terminal you typed them in. A job's
+log is the exception — that is text this command prints.
+
+**Watching a run is attaching to it.** A run of the runtime starts detached —
+`R` on the work screen, and `ephor work run`, both print one line saying the run
+began and what it is called — and what watches it afterwards is the runner's own
+surface, opened on the run
+([§FS-005-dispatch.20](../requirements.md#20-a-run-of-the-runtime-starts-beneath-the-screen-and-is-watched-by-attaching)).
+Leaving that surface **detaches and never stops the run**: the reflex that ends
+a foreground command must not end a run another screen may also be watching.
+Stopping stays out of the screen — the row carries the runner's own stop
+command, shown and never run. Where the runner has no detached shape, the run is
+watched as it always was, the terminal handed over, and the line says so.
 
 ---
 
@@ -2753,11 +2911,11 @@ ephor refresh | status | feed | mark-read | failures      # the feed
 ephor restart --scope failed|all                          # run a gate again
 ephor rebase | checkout | branches                        # the checkout
 ephor check | validate --manifest | schema                # the project interface
-ephor actions [list] | actions run <id>                   # what may be done here
+ephor actions [list] | actions run <id> | actions open <id>  # what may be done here
 ephor thread <id> | react | tick | reply                  # a conversation
 ephor work list | offers | dispatch | ask | sync | cancel | lay | run | forget
 ephor work workflows | states                             # what the runtime carries
-ephor operations                                          # the board — alias: ops
+ephor operations [attach <run>]                           # the board — alias: ops
 ephor job list | log <id>                                 # what runs beneath the screen
 ephor tui                                                 # alias: inbox
 ```
@@ -2805,7 +2963,7 @@ A checkout is enough for those three, which is why CI can run them
 | `~/.local/state/ephor/feed/*.json` | one cache per project |
 | `~/.local/state/ephor/seen.json` | unread tracking |
 | `~/.local/state/ephor/work.json` | the work ledger |
-| `~/.local/state/ephor/jobs/<id>/` | one job: `job.json`, `log`, `lock`, `outcome.json` (§8.14) |
+| `~/.local/state/ephor/jobs/<id>/` | one job: `job.json`, `log` (none for a windowed job), `lock`, `outcome.json` (§8.14) |
 | `~/config/secrets/ephor/*.json` | provider secrets |
 | `<forest root>/ephor.json` | the project's own manifest, if it wrote one (§4.2.1) |
 | `<checkout>/panta/` | work roots: plans, state machine, runtime artifacts |
@@ -2822,6 +2980,7 @@ usable by the runtime it hands work to.
 |---|---|
 | `x` — what may be done here | `ephor actions --item ID` (or `--project P --branch B`) |
 | `enter` / `1`–`9` — run one | `ephor actions run <id> --item ID` |
+| `enter` / `l` on a row that says *running* — open it | `ephor actions open <id> --item ID` |
 | `t` — pick who gets the work | `ephor actions run <id> --item ID --hand ada:high` |
 | the freehand row | `ephor actions run --item ID --command '…'` |
 | `v` — the conversation | `ephor thread ID` |
@@ -2833,6 +2992,7 @@ usable by the runtime it hands work to.
 | `z` — the tickets that are over | `ephor work offers --item ID --all` |
 | `c` — the gate spelled out | `ephor failures --item ID` |
 | `;` — the operations board | `ephor operations` |
+| `a` on the board — watch a live run | `ephor operations attach <run>` |
 | `L` — what a job wrote | `ephor job log <id>` (`--follow` keeps up; with `--json` it waits and then answers) |
 | `m` / `d` / space — mark read | `ephor mark-read --id ID` |
 | `u` — only what is unread | `ephor feed --unread` |

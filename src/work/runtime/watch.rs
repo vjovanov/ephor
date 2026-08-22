@@ -42,6 +42,12 @@ const LOGS: &str = "runtime/logs";
 /// as that run is live.
 const DASHBOARD: &str = "runtime/dashboard.json";
 
+/// Where every run — detached or not — publishes what it is: the descriptor
+/// beside the lock (§AR-007-runtime.1). Read, never remembered, so a run
+/// somebody started in another terminal on a root ephor never dispatched into
+/// has the same identity as one ephor started itself (§FS-005-dispatch.20).
+const DESCRIPTOR: &str = "runtime/run.json";
+
 /// How long a live run may write nothing before the board notes it. A badge,
 /// never a liveness signal (§FS-005-dispatch.15): a long tool call is
 /// legitimately quiet, and a run that died released its lock.
@@ -187,13 +193,44 @@ pub fn held_by_live_run(
     if !live(config, root) {
         return false;
     }
-    let lock_born = fs::metadata(root.join(LOCK))
+    held_among(
+        &holding(config, root),
+        root,
+        lock_born(root),
+        plan_id,
+        ticket,
+        state,
+    )
+}
+
+/// When the root's lock file was born, where it exists. Read once by a caller
+/// asking about several tickets: the lock is created before the first run on a
+/// root does anything and never touched again.
+pub fn lock_born(root: &Path) -> Option<SystemTime> {
+    fs::metadata(root.join(LOCK))
         .and_then(|meta| meta.modified())
-        .ok();
-    holding(config, root).iter().any(|entry| {
+        .ok()
+}
+
+/// The same reading [`held_by_live_run`] makes, with the liveness probe and the
+/// journal read already done.
+///
+/// A menu asks this once per candidate ticket, and asking through
+/// [`held_by_live_run`] re-probed the lock and re-read the whole journal for
+/// each of them — the re-reading §FS-005-dispatch.15.1 rules out. The caller
+/// that hoisted those reads passes them in; the answer is the same one.
+pub fn held_among(
+    held: &[Held],
+    root: &Path,
+    born: Option<SystemTime>,
+    plan_id: &str,
+    ticket: &str,
+    state: &str,
+) -> bool {
+    held.iter().any(|entry| {
         (entry.task == ticket || entry.task == format!("{plan_id}.{ticket}"))
             && entry.still_at(state)
-            && !predates_lock(root, entry, lock_born)
+            && !predates_lock(root, entry, born)
     })
 }
 
@@ -224,6 +261,67 @@ pub fn dashboard(_config: &WorkConfig, root: &Path) -> Option<String> {
         .get("url")
         .and_then(serde_json::Value::as_str)
         .map(String::from)
+}
+
+/// What a run says it is, read from the descriptor it publishes beside its
+/// lock (§FS-005-dispatch.20, §AR-007-runtime.1).
+///
+/// Every field is optional-tolerant. The descriptor is the binding's own
+/// document and a run that was killed never rewrote it, so a reader that
+/// insisted on a field would lose the id of exactly the run somebody needs to
+/// reach. Liveness is still the lock and only the lock: this says *which* run,
+/// never *whether* (§FS-005-dispatch.15).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RunIdentity {
+    /// How the reader and the runtime agree on which run they mean.
+    pub id: Option<String>,
+    /// The address of the run's control, served only while it serves one.
+    pub control_url: Option<String>,
+    /// When the run began, in the binding's own words — stamped once it held
+    /// its locks, so a run that queued behind another began when it got them.
+    pub started_at: Option<String>,
+}
+
+impl RunIdentity {
+    /// Whether the descriptor said anything worth carrying — which means
+    /// anything a reader can *reach the run by*. A file that parsed but named
+    /// no run is nothing: a row would rather say *live* from the lock alone
+    /// than show an identity no surface can do anything with
+    /// (§AR-007-runtime.3).
+    ///
+    /// A process id is not one of those. A descriptor carrying only a pid used
+    /// to count as an identity, and every surface then had nothing to show for
+    /// it: the row said *live*, `a` said the run left no id, and the reading
+    /// carried an empty object. What ephor never reads it does not claim —
+    /// which is why the binding's `headless` is not read either.
+    pub fn is_empty(&self) -> bool {
+        self.id.is_none() && self.control_url.is_none()
+    }
+}
+
+/// The identity of the run on this root, from the descriptor beside the lock.
+///
+/// None where the binding left none — an older runner, or a run killed before
+/// it published — and the row then says *live* from the lock alone, with no id
+/// to show and no surface to attach (§AR-007-runtime.3). The caller gates this
+/// on [`live`]: a descriptor outlives the run that wrote it, so reading one on
+/// a free root would name a run that is over.
+pub fn identity(_config: &WorkConfig, root: &Path) -> Option<RunIdentity> {
+    let text = fs::read_to_string(root.join(DESCRIPTOR)).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let word = |key: &str| {
+        value
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .filter(|found| !found.is_empty())
+            .map(String::from)
+    };
+    let identity = RunIdentity {
+        id: word("id"),
+        control_url: word("control_url"),
+        started_at: word("started_at"),
+    };
+    (!identity.is_empty()).then_some(identity)
 }
 
 /// When a run on this root last moved anything the change gate watches: the
@@ -284,10 +382,23 @@ pub struct Pulse {
     /// Minutes since a live run last wrote, where that is long enough to
     /// note. None on a not-live root, and on one writing normally.
     pub quiet: Option<u64>,
+    /// Who the live run says it is (§FS-005-dispatch.20). None on a not-live
+    /// root, and on one whose runner left no descriptor.
+    pub identity: Option<RunIdentity>,
+    /// The bound runner's own command for stopping *this* run — composed
+    /// beside the identity it is about, so a tick that re-reads who the run is
+    /// re-reads how it is stopped (§FS-005-dispatch.20). A row that kept the
+    /// identity and dropped this said which run it was watching and stopped
+    /// saying how to end it, two seconds after the reader opened the board.
+    pub stop: Option<String>,
 }
 
 pub fn pulse(config: &WorkConfig, root: &Path) -> Pulse {
     let live = live(config, root);
+    // Gated on the lock, like the dashboard: a descriptor outlives the run
+    // that wrote it, so reading one on a free root would name a run that is
+    // over (§FS-005-dispatch.20).
+    let identity = live.then(|| identity(config, root)).flatten();
     Pulse {
         dashboard: live.then(|| dashboard(config, root)).flatten(),
         quiet: if live {
@@ -295,6 +406,11 @@ pub fn pulse(config: &WorkConfig, root: &Path) -> Pulse {
         } else {
             None
         },
+        stop: identity
+            .as_ref()
+            .and_then(|run| run.id.as_deref())
+            .map(|id| super::stop_command(config, id)),
+        identity,
         live,
     }
 }
@@ -494,6 +610,16 @@ pub struct Operation {
     pub dashboard: Option<String>,
     /// Minutes of silence worth noting on a live run. A badge, nothing more.
     pub quiet: Option<u64>,
+    /// What the live run on this root calls itself, read from the descriptor
+    /// it publishes beside the lock (§FS-005-dispatch.20). None where the
+    /// runner left none: the row is *live* from the lock alone then, with no
+    /// id to show and no surface to attach (§AR-007-runtime.3).
+    pub identity: Option<RunIdentity>,
+    /// The bound runner's own command for stopping this run, where it named
+    /// itself. **Shown, never run** (§FS-005-dispatch.20): the board starts
+    /// nothing and stops nothing, exactly as a claim carries the command that
+    /// releases it.
+    pub stop: Option<String>,
     pub tickets: Vec<BoardTicket>,
     /// Finished tickets, counted rather than listed: they are history, and
     /// the plan behind Enter holds the whole of it. Tickets taken back are
@@ -566,6 +692,11 @@ impl Operation {
     /// dashboard.
     pub fn badges(&self) -> Vec<String> {
         let mut badges = vec![self.state().to_string()];
+        // An id is how the reader and the runtime agree on which run they
+        // mean, so the row says it (§FS-005-dispatch.20).
+        if let Some(id) = self.run_id() {
+            badges.push(format!("run {id}"));
+        }
         // The machine could not be read: queued and finished are withheld in
         // the data, and the row says so rather than letting the zero read as
         // nothing done (§FS-005-dispatch.15).
@@ -579,6 +710,18 @@ impl Operation {
             badges.push("dashboard".to_string());
         }
         badges
+    }
+
+    /// What the live run on this root is called, where it named itself.
+    pub fn run_id(&self) -> Option<&str> {
+        self.identity.as_ref().and_then(|run| run.id.as_deref())
+    }
+
+    /// The address of the run's control, while it serves one.
+    pub fn control_url(&self) -> Option<&str> {
+        self.identity
+            .as_ref()
+            .and_then(|run| run.control_url.as_deref())
     }
 
     /// The whole row in one line, for a surface that has no second one.
@@ -803,6 +946,10 @@ pub fn board(config: &WorkConfig, roots: &[RootPlans]) -> Board {
         // inside each flavour.
         tickets.sort_by_key(|ticket| ticket.doing.rank());
         if is_live || !tickets.is_empty() {
+            // Who the run says it is, read from the descriptor beside the lock
+            // and never from anything ephor remembers having started
+            // (§FS-005-dispatch.20).
+            let identity = is_live.then(|| identity(config, &group.root)).flatten();
             operations.push(Operation {
                 project: group
                     .plans
@@ -816,6 +963,11 @@ pub fn board(config: &WorkConfig, roots: &[RootPlans]) -> Board {
                 } else {
                     None
                 },
+                stop: identity
+                    .as_ref()
+                    .and_then(|run| run.id.as_deref())
+                    .map(|id| super::stop_command(config, id)),
+                identity,
                 live: is_live,
                 tickets,
                 done,
@@ -870,6 +1022,82 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         panic!("the lock should read released");
+    }
+
+    /// A run's identity is read from the descriptor it publishes beside its
+    /// lock, never from anything ephor remembers having started
+    /// (§FS-005-dispatch.20): a run somebody else began on a root ephor never
+    /// dispatched into has the same identity and is reached the same way. The
+    /// reading is optional-tolerant — `exit_code` is null while a run is going,
+    /// and a run that was killed rewrote nothing.
+    #[test]
+    fn a_run_names_itself_in_the_descriptor_beside_its_lock() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        // No descriptor: no identity, and nothing written to find that out.
+        assert_eq!(identity(&config(), root), None);
+        assert!(!root.join("runtime").exists());
+
+        write(
+            &root.join(DESCRIPTOR),
+            concat!(
+                "{\"id\":\"3f9a2c\",\"pid\":48213,\"status\":\"running\",",
+                "\"control_url\":\"http://127.0.0.1:54321\",",
+                "\"started_at\":\"2026-08-22T14:03:22Z\",\"headless\":true,",
+                "\"exit_code\":null}"
+            ),
+        );
+        let run = identity(&config(), root).expect("the descriptor names a run");
+        assert_eq!(run.id.as_deref(), Some("3f9a2c"));
+        assert_eq!(run.control_url.as_deref(), Some("http://127.0.0.1:54321"));
+        assert_eq!(run.started_at.as_deref(), Some("2026-08-22T14:03:22Z"));
+
+        // A run serving no control has none to give, and is still a run: the
+        // address is present only while the server is live.
+        write(&root.join(DESCRIPTOR), "{\"id\":\"7b1\"}");
+        let run = identity(&config(), root).expect("an id is an identity");
+        assert_eq!(run.id.as_deref(), Some("7b1"));
+        assert_eq!(run.control_url, None);
+
+        // A descriptor that names no run at all is nothing: the row would
+        // rather say live from the lock alone (§AR-007-runtime.3). A process id
+        // is not a name — nothing can be reached by it, and a row that showed
+        // one would be an identity with no way in.
+        write(&root.join(DESCRIPTOR), "{\"status\":\"running\"}");
+        assert_eq!(identity(&config(), root), None);
+        write(&root.join(DESCRIPTOR), "{\"pid\":48213}");
+        assert_eq!(identity(&config(), root), None);
+        write(&root.join(DESCRIPTOR), "not json");
+        assert_eq!(identity(&config(), root), None);
+    }
+
+    /// The identity rides the pulse and the row, and only under a held lock: a
+    /// descriptor outlives the run that wrote it, so reading one on a free root
+    /// would name a run that is over (§FS-005-dispatch.20).
+    #[test]
+    fn the_row_says_which_run_it_is_watching_while_the_lock_is_held() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        write(&root.join(LOCK), "");
+        write(
+            &root.join(DESCRIPTOR),
+            "{\"id\":\"3f9a2c\",\"control_url\":\"http://127.0.0.1:54321\"}",
+        );
+        // The lock free: the descriptor is the last run's, and nothing claims
+        // it.
+        assert_eq!(pulse(&config(), root).identity, None);
+
+        let holder = fs::File::open(root.join(LOCK)).unwrap();
+        holder.lock().unwrap();
+        let beat = pulse(&config(), root);
+        assert!(beat.live);
+        assert_eq!(
+            beat.identity.as_ref().and_then(|run| run.id.as_deref()),
+            Some("3f9a2c")
+        );
+        drop(holder);
+        assert_released(&config(), root);
+        assert_eq!(pulse(&config(), root).identity, None);
     }
 
     #[test]

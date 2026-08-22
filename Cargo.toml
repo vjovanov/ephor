@@ -73,6 +73,10 @@ path = "e2e/cases/E2E-010-restart.rs"
 name = "e2e_011_workflows"
 path = "e2e/cases/E2E-011-workflows.rs"
 
+[[test]]
+name = "e2e_013_what_is_going"
+path = "e2e/cases/E2E-013-what-is-going.rs"
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }

@@ -13,6 +13,27 @@
         "as_of": { "type": "string", "format": "date-time", "description": "When the local copy of what it was measured against last moved here. Absent where no day was recorded — a clone that has never fetched. Nothing is invented to fill it." }
       }
     },
+    "running": {
+      "type": "object",
+      "description": "What is already going about an entry's subject, and the way in (FS-005-dispatch.21, FS-011-command-line.8). The way in is printed because the way in is the ability; spawning the reader's own program on it is not (REQ-002-parity.1).",
+      "required": ["kind", "says"],
+      "properties": {
+        "kind": {
+          "enum": ["job", "run", "waiting", "queued", "window"],
+          "description": "A job of ephor's own (FS-005-dispatch.17), a run of the runtime (FS-005-dispatch.20), a ticket this entry opened that is parked and waiting on the reader (FS-005-dispatch.9, FS-005-dispatch.20), work a live run will reach (FS-005-dispatch.15), or a program in a window of the reader's own (FS-005-dispatch.22)."
+        },
+        "says": { "type": "string", "description": "What it is at right now: the job's own last line, the ticket a run holds and the state it is in, `waiting on you` where the ticket it opened is parked, `queued` where the root's run will reach it." },
+        "since_seconds": { "type": "integer", "description": "How long it has been going, where that is known." },
+        "job": { "type": "string", "description": "The job it is — what `ephor job log` takes." },
+        "log": { "type": "string", "description": "What the job wrote, followed as it writes. Absent on a window, whose program's output went to a screen the reader was looking at." },
+        "root": { "type": "string", "description": "The execution root the run holds." },
+        "run": { "type": "string", "description": "What the run calls itself, where it named itself (AR-007-runtime.3)." },
+        "attach": { "type": "string", "description": "The runner's own attach command, in the runner's own words (FS-005-dispatch.20)." },
+        "control_url": { "type": "string", "description": "The address of the run's control, while it serves one." },
+        "window": { "type": "string", "description": "The window's handle, brought forward by the bound opener (FS-005-dispatch.22)." },
+        "plan": { "type": "string", "description": "The plan a parked question is in — where the answer belongs (FS-005-dispatch.9). The way in on a `waiting` row that no run is still standing at." }
+      }
+    },
     "offer": {
       "type": "object",
       "description": "One entry of a subject's menu (FS-011-command-line.1), in provenance order: what the source offers, then ephor's own, the project's, the person's, and the work that can be handed over.",
@@ -33,13 +54,15 @@
         "command": { "type": "string", "description": "What it would run, where it runs one." },
         "cwd": { "type": "string", "description": "Where it runs: `workspace`, `root`, or `repo:<name>`." },
         "background": { "type": "boolean", "description": "It runs beneath the terminal as a job rather than taking it (FS-005-dispatch.17)." },
+        "window": { "type": "boolean", "description": "It runs in a window of the reader's own where one is bound, and takes the terminal where none is (FS-005-dispatch.22)." },
         "confirm": { "type": "boolean", "description": "It asks before running; on the command line that is --yes." },
         "requires": {
           "type": "array",
           "items": { "type": "string" },
           "description": "The capability rungs it named (FS-006-project-interface.10)."
         },
-        "brief": { "type": "string", "description": "What the ticket would ask for, on an entry that hands work over (FS-005-dispatch.7) — the same words the work screen shows under the row. The `command` of an entry that asks somebody rather than running something." }
+        "brief": { "type": "string", "description": "What the ticket would ask for, on an entry that hands work over (FS-005-dispatch.7) — the same words the work screen shows under the row. The `command` of an entry that asks somebody rather than running something." },
+        "running": { "$ref": "#/$defs/running" }
       }
     },
     "hand": {
@@ -88,6 +111,10 @@
         "plan": { "type": "string" },
         "log": { "type": "string", "description": "On a job: what it wrote, also readable with `ephor job log`." },
         "dashboard": { "type": "string", "description": "Published only while a live run serves one." },
+        "run": { "type": "string", "description": "What the live run on this root calls itself, from the descriptor it publishes beside its lock (FS-005-dispatch.20). Absent where the runner left none — the row is live from the lock alone then (AR-007-runtime.3)." },
+        "control_url": { "type": "string", "description": "The address of the run's control, while it serves one." },
+        "attach": { "type": "string", "description": "The runner's own command for watching this run, in the runner's own words — the way in (FS-011-command-line.8)." },
+        "stop": { "type": "string", "description": "The runner's own command for stopping this run. Shown, never run: the board starts nothing and stops nothing (FS-005-dispatch.20)." },
         "tickets": {
           "type": "array",
           "items": { "$ref": "#/$defs/operation_ticket" }
@@ -206,7 +233,8 @@
         "died": { "type": "boolean", "description": "Neither live nor ended: the supervisor died. Said plainly, because \"started\" would be a claim nothing supports." },
         "outcome": { "type": "string", "description": "done, failed, or parked — the summons' own three (FS-006-project-interface.3). Absent while it runs." },
         "says": { "type": "string", "description": "The one line worth showing: the outcome where there is one, the last thing the log said while it runs." },
-        "log": { "type": "string", "description": "The path to what it wrote. `ephor job log --json` carries the log's contents under this name instead, because that is what the command is for." }
+        "log": { "type": "string", "description": "The path to what it wrote. `ephor job log --json` carries the log's contents under this name instead, because that is what the command is for. Absent on a job whose supervisor runs in a window: it has none (AR-002-summons.6)." },
+        "window": { "type": "string", "description": "The window its program runs in, where the reader's own window opener opened one (FS-005-dispatch.22). Such a job has no log — what it wrote is on that screen and nowhere else — and `focus <handle>` is its inspection." }
       }
     },
     "landing": {
@@ -820,9 +848,10 @@
               },
               "hand": { "type": "string", "description": "Who the run was given to, where the tickets agreed on one (FS-005-dispatch.14)." },
               "outcome": {
-                "enum": ["done", "parked", "failed"],
-                "description": "`parked` is the runtime declining for now, which is not a failed run (FS-006-project-interface.3)."
+                "enum": ["started", "done", "parked", "failed"],
+                "description": "`started` is a run that went beneath the screen, watched afterwards by attaching (FS-005-dispatch.20); the other three are a run watched here, with `parked` the runtime declining for now, which is not a failed run (FS-006-project-interface.3)."
               },
+              "id": { "type": "string", "description": "What the run is called, where it named itself \u2014 the id the board prints and the runner's own attach command takes (FS-005-dispatch.20)." },
               "says": {
                 "type": ["string", "null"]
               }

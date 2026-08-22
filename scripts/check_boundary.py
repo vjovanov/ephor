@@ -97,6 +97,28 @@ PRODUCTS = (
         kind="runtime",
     ),
     Product("beads", r"beads", homes=("src/seams/tasks.rs",), kind="task store"),
+    # The three windows ephor ships a binding for (§FS-005-dispatch.22,
+    # §DA-007-window-is-a-bound-opener). Each product's name, and the variable
+    # it sets for exactly this purpose, live in the opener and nowhere else --
+    # a fourth binding is a pair of commands in configuration, not an edit here.
+    Product(
+        "tmux",
+        r"tmux",
+        homes=("src/seams/window.rs",),
+        kind="terminal multiplexer",
+    ),
+    Product(
+        "wezterm",
+        r"wezterm",
+        homes=("src/seams/window.rs",),
+        kind="terminal",
+    ),
+    Product(
+        "kitty",
+        r"kitty",
+        homes=("src/seams/window.rs",),
+        kind="terminal",
+    ),
 )
 
 

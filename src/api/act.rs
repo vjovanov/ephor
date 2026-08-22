@@ -197,6 +197,23 @@ pub enum Sending {
     Dry,
 }
 
+/// The reader's own editor on one file, as a summons (§AR-002-summons.2).
+///
+/// One spelling of it, so `e` on the work screen and a command that opens a
+/// parked question hand the reader the same program (§AR-009-surfaces.1).
+/// `$EDITOR` where they named one, and a pager otherwise: reading the question
+/// is worth doing even on a machine where nothing is configured to write it.
+pub fn editing(path: &Path) -> summons::Summons {
+    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "less".to_string());
+    summons::Summons::new(
+        "edit",
+        format!(
+            "{editor} {}",
+            crate::feed::providers::shell_quote(&path.to_string_lossy())
+        ),
+    )
+}
+
 /// How the reader is watching, which is the one thing the two surfaces differ
 /// in here (§AR-002-summons.2): the interface hands over its terminal, and a
 /// command already owns one.
@@ -208,9 +225,54 @@ pub enum Watching {
     /// than in it: a surface whose standard output is already spoken for
     /// (§FS-011-command-line.7). The entry can still be typed into.
     Aside,
+    /// A window of the reader's own, where one is bound — ephor stays where it
+    /// was and the reader gets a second terminal beside it
+    /// (§FS-005-dispatch.22). Where nothing is bound this is
+    /// [`Watching::Terminal`] and the outcome line says so: the terminal is the
+    /// floor, and the floor is never removed (§AR-002-summons.6).
+    Window,
+}
+
+/// Where a menu entry runs (§FS-005-dispatch.17, §FS-005-dispatch.22).
+///
+/// Answered below both surfaces (§AR-009-surfaces.1), so the key and the
+/// command cannot come to disagree about which of the three places an entry
+/// takes — which is exactly how one surface comes to background what the other
+/// hands its terminal to.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Runs {
+    /// Here, with the terminal handed over — what a menu entry has always been
+    /// allowed to be (§FS-006-project-interface.9).
+    Here,
+    /// Beneath the screen, as a job (§FS-005-dispatch.17).
+    Beneath,
+    /// In a window of the reader's own, as a job whose supervisor runs inside
+    /// that window (§FS-005-dispatch.22).
+    InAWindow,
 }
 
 impl Session {
+    /// Where this entry runs (§FS-005-dispatch.17, §FS-005-dispatch.22). The
+    /// entry's own word, answered against what is actually bound: an entry that
+    /// asks for a window and finds none takes the terminal as it always did,
+    /// and the outcome line says so.
+    ///
+    /// The checkout row is never one of the other two: it is ephor's own move
+    /// that makes the workspace every later step runs in
+    /// (§FS-004-quick-actions.7).
+    pub fn how(&self, entry: &MenuEntry) -> Runs {
+        if entry.is_checkout {
+            return Runs::Here;
+        }
+        if entry.action.background {
+            return Runs::Beneath;
+        }
+        if entry.action.window && self.opener().is_some() {
+            return Runs::InAWindow;
+        }
+        Runs::Here
+    }
+
     /// Run one entry, here, now (§FS-011-command-line.1). The terminal is the
     /// caller's property, so a surface that has to give it up does that around
     /// this call rather than inside it (§AR-002-summons.2).
@@ -325,11 +387,216 @@ impl Session {
         match says {
             Ok(says) => views::Outcome {
                 steps,
-                ..views::Outcome::ok(says)
+                // Where no window can be opened, the entry takes the terminal
+                // as it always did — and says so rather than leaving the
+                // reader to notice (§FS-005-dispatch.22). Asked here rather
+                // than asserted: the sentence used to be true only because
+                // every caller happened to have checked, and a third one — or
+                // a change to [`Session::how`] — would have made it a
+                // falsehood printed with confidence.
+                ..views::Outcome::ok(match run.entry.action.window && self.opener().is_none() {
+                    true => format!("{says} · nothing bound a window, so it took the terminal"),
+                    false => says,
+                })
             },
             Err(says) => views::Outcome {
                 steps,
                 ..views::Outcome::refused(says)
+            },
+        }
+    }
+
+    /// Watch a live run by attaching to it (§FS-005-dispatch.20): the binding's
+    /// own surface for a run it did not start, opened where the reader can type
+    /// into it. Leaving it detaches and never stops the run.
+    ///
+    /// The board's key and `ephor operations attach` are this one call
+    /// (§FS-011-command-line.8, §AR-009-surfaces.1). `root` is only where the
+    /// surface is started from — a run is reached by its id.
+    pub fn attach_run(&self, root: &Path, id: &str, watching: Watching) -> views::Outcome {
+        self.open_running(
+            &super::offers::Running::Run {
+                root: root.to_path_buf(),
+                id: Some(id.to_string()),
+                control_url: None,
+                attach: None,
+                since: None,
+                doing: String::new(),
+            },
+            watching,
+        )
+    }
+
+    /// Where a command's *open* lands (§FS-011-command-line.8).
+    ///
+    /// A window of the reader's own where one is bound — **by the same binding
+    /// the key uses** (§FS-005-dispatch.22), so that `ephor actions open` and
+    /// the key on the row do not come to differ about where an attach goes.
+    /// Where nothing is bound the terminal is the floor and is never removed;
+    /// and under a reading what the surface writes goes beside the answer
+    /// rather than into it (§FS-011-command-line.7).
+    pub fn watching(&self, json: bool) -> Watching {
+        match (self.opener().is_some(), json) {
+            (true, _) => Watching::Window,
+            (false, true) => Watching::Aside,
+            (false, false) => Watching::Terminal,
+        }
+    }
+
+    /// The runner's own surface on one run, put where the reader can type into
+    /// it: a window of their own where one is bound (§FS-005-dispatch.22), and
+    /// the terminal otherwise — the floor, which is never removed
+    /// (§AR-002-summons.6). Leaving it detaches and never stops the run.
+    ///
+    /// One implementation, because the board's `a`, `ephor operations attach`,
+    /// the key on a running row and `ephor actions open` are one ability
+    /// (§AR-009-surfaces.1). `root` is only where the surface is started from —
+    /// a run is reached by its id.
+    fn attach_to(&self, root: &Path, id: &str, watching: Watching) -> views::Outcome {
+        // A surface on a run is *not* recorded as a job: the run is the
+        // operation, and a surface on it is not a second one
+        // (§AR-002-summons.6).
+        if watching == Watching::Window {
+            if let Some(opener) = self.opener() {
+                let command = crate::work::runtime::attach_command(&self.work_config, id);
+                let at = crate::seams::window::site(root);
+                return match opener.open(&format!("ephor · run {id}"), &command, &at) {
+                    Ok(Some(handle)) => views::Outcome::ok(format!(
+                        "▶ watching run {id} in window {handle} — leaving it detaches"
+                    )),
+                    // The window is open and the surface is in it; what the
+                    // opener did not say is which window (§AR-002-summons.6).
+                    // A surface on a run is not recorded anywhere, so there is
+                    // nothing else the handle would have been for.
+                    Ok(None) => views::Outcome::ok(format!(
+                        "▶ watching run {id} in a window the opener did not name — leaving it \
+                         detaches"
+                    )),
+                    Err(err) => views::Outcome::refused(err.to_string()),
+                };
+            }
+        }
+        let summons = crate::work::runtime::attach_summons(&self.work_config, id);
+        let mode = match watching == Watching::Aside {
+            true => summons::Mode::Aside,
+            false => summons::Mode::Interactive,
+        };
+        match summons::run(&summons, &Site::root(root), mode) {
+            Ok(answer) if answer.is_done() => {
+                views::Outcome::ok(format!("▶ detached from run {id}; it goes on"))
+            }
+            Ok(answer) => {
+                views::Outcome::refused(answer.refusal(&format!("attaching to run {id}")))
+            }
+            Err(err) => views::Outcome::refused(err.to_string()),
+        }
+    }
+
+    /// Go to what is already going about an entry, and never start a second
+    /// copy of it (§FS-005-dispatch.21, §FS-011-command-line.8): follow the
+    /// job's log, attach to the run, or bring the window forward — by the same
+    /// binding the key uses.
+    ///
+    /// The way in was resolved when the menu was assembled, so this acts on
+    /// what the reader was shown rather than looking the subject up a second
+    /// time (§AR-009-surfaces.1).
+    pub fn open_running(
+        &self,
+        running: &super::offers::Running,
+        watching: Watching,
+    ) -> views::Outcome {
+        use super::offers::Running;
+        let aside = watching == Watching::Aside;
+        // `Window` falls back to the terminal where nothing is bound, which is
+        // the floor and is never removed (§AR-002-summons.6).
+        match running {
+            // Everything the reader would have watched, kept and followed as
+            // it is written (§FS-005-dispatch.17). It ends when the job does.
+            Running::Job { id, log, .. } => {
+                let Some(job) = crate::seams::jobs::find(id) else {
+                    return views::Outcome::refused(format!("No job called '{id}' any more"));
+                };
+                let mut out = std::io::stdout();
+                let mut errors = std::io::stderr();
+                crate::seams::jobs::follow(&job, |fresh| {
+                    use std::io::Write;
+                    // Under a reading the log goes beside the answer, never
+                    // into it (§FS-011-command-line.7).
+                    let sink: &mut dyn Write = match aside {
+                        true => &mut errors,
+                        false => &mut out,
+                    };
+                    let _ = sink.write_all(fresh);
+                    let _ = sink.flush();
+                });
+                views::Outcome::ok(format!("📖 {}", log.display()))
+            }
+            // The binding's own surface on a run it did not start. Leaving it
+            // detaches and never stops the run (§FS-005-dispatch.20). A parked
+            // ticket is reached the same way while a run still stands at its
+            // gate: §20's own answer to a question a detached run asks is
+            // *attach*.
+            Running::Run {
+                root, id: Some(id), ..
+            }
+            | Running::Queued {
+                root, id: Some(id), ..
+            }
+            | Running::Waiting {
+                root, id: Some(id), ..
+            } => self.attach_to(root, id, watching),
+            // A question nothing is standing at any more: the answer belongs
+            // beside it, in the plan (§FS-005-dispatch.9). The reader's own
+            // editor, the terminal theirs while they have it — the same move
+            // `e` makes on the work screen (§AR-009-surfaces.1).
+            Running::Waiting { plan, ticket, .. } => {
+                let mode = match aside {
+                    true => summons::Mode::Aside,
+                    false => summons::Mode::Interactive,
+                };
+                let at = plan.parent().unwrap_or(std::path::Path::new("."));
+                match summons::run(&editing(plan), &Site::root(at), mode) {
+                    Ok(answer) if answer.is_done() => {
+                        views::Outcome::ok(format!("📖 {ticket} is in {}", plan.display()))
+                    }
+                    Ok(answer) => views::Outcome::refused(answer.refusal("opening the plan")),
+                    Err(err) => views::Outcome::refused(err.to_string()),
+                }
+            }
+            // A run that named itself nothing has no surface to put on it: the
+            // row is live from the lock alone (§AR-007-runtime.3).
+            Running::Run { root, .. } | Running::Queued { root, .. } => {
+                views::Outcome::refused(format!(
+                    "The run on {} left no id, so there is nothing to attach to",
+                    root.display()
+                ))
+            }
+            // Opening a windowed program is bringing its window forward, and
+            // never a second copy of it (§FS-005-dispatch.22). ephor opens a
+            // window and focuses one; it never closes one and never ends what
+            // is in it.
+            // A window the opener never named is a window all the same: it
+            // holds its lock and its row says where the program went, and what
+            // is missing is only the handle that would bring it forward
+            // (§AR-002-summons.6). Said, not silently done nothing about
+            // (§REQ-001-boundary.1).
+            Running::Window { handle, .. } if handle.is_empty() => views::Outcome::refused(
+                "It is running in a window the opener did not name, so there is nothing to bring \
+                 forward"
+                    .to_string(),
+            ),
+            Running::Window { handle, .. } => match self.opener() {
+                Some(opener) => {
+                    let at = crate::seams::window::site(&crate::paths::state_dir());
+                    match opener.focus(handle, &at) {
+                        Ok(()) => views::Outcome::ok(format!("▶ window {handle} is forward")),
+                        Err(err) => views::Outcome::refused(err.to_string()),
+                    }
+                }
+                None => views::Outcome::refused(format!(
+                    "It is running in window {handle}, and nothing here binds a window to bring \
+                     forward"
+                )),
             },
         }
     }
@@ -339,12 +606,18 @@ impl Session {
     /// Nothing is waited on — the row it takes among the operations is how it
     /// is watched, from either surface.
     ///
+    /// `place` is which of the two beneath-the-screen places this is, decided
+    /// by the caller off [`Session::how`] — or by a reader who asked for the
+    /// background outright. Answered once and handed down, so the key and the
+    /// command cannot come to disagree about where an entry runs
+    /// (§AR-009-surfaces.1).
+    ///
     /// The chain travels with it. An entry needing the branch workspace
     /// carries the checkout as the job's first step, with the directory it has
     /// to create named on the step: the supervisor verifies it rather than
     /// trusting it, exactly as a foreground run does
     /// (§FS-006-project-interface.8).
-    pub fn start_job(&self, run: &Run) -> views::Outcome {
+    pub fn start_job(&self, run: &Run, place: Runs) -> views::Outcome {
         use crate::seams::jobs;
 
         if let Some(reason) = run.entry.gate.refusal() {
@@ -385,9 +658,23 @@ impl Session {
             .placement(run.about.project())
             .map(|placement| placement.forest(&workspace));
         let record = jobs::Record {
-            version: 1,
+            version: jobs::VERSION,
             project: run.about.project().to_string(),
             item: run.about.item().map(|item| item.id.clone()),
+            // Which entry this came from, and — on a branch row — which branch
+            // (§FS-005-dispatch.21): the menu matches a live job back to the
+            // row that started it by exactly these, and a job that recorded
+            // neither could never be matched at all.
+            action: Some(run.entry.key()),
+            branch: match &run.about {
+                About::Branch { branch, .. } => Some(branch.clone()),
+                About::Item(_) => None,
+            },
+            // Both filled in by [`jobs::start_windowed`] where a window was
+            // asked for (§FS-005-dispatch.22); a job that took no window has
+            // neither.
+            window: None,
+            windowed: false,
             icon: action.icon.clone(),
             description: action.description.clone(),
             root: run.root.clone(),
@@ -404,13 +691,45 @@ impl Session {
             ),
             started: chrono::Utc::now().to_rfc3339(),
         };
-        match jobs::start(record) {
+        // An entry that says `window` is a job whose supervisor runs inside a
+        // window of the reader's own (§FS-005-dispatch.22): the record, the
+        // lock and the outcome are a job's, and what changes is only who holds
+        // the other end of the streams (§AR-002-summons.6).
+        //
+        // Which place, off [`Session::how`] rather than re-derived from the
+        // entry here (§AR-009-surfaces.1). Two derivations disagreed: an entry
+        // saying both `background` and `window` was *decided* beneath the screen
+        // and then opened a window anyway, and `--background` on a windowed
+        // entry did the same.
+        let started = match (place, self.opener()) {
+            (Runs::InAWindow, Some(opener)) => {
+                let title = format!("ephor · {}", action.description);
+                let at = crate::seams::window::site(&run.root);
+                jobs::start_windowed(record, |command| opener.open(&title, command, &at))
+            }
+            _ => jobs::start(record),
+        };
+        match started {
             Ok(job) => views::Outcome {
                 job: Some(job.id.clone()),
-                ..views::Outcome::ok(format!(
-                    "{} {}: started",
-                    job.record.icon, job.record.description
-                ))
+                ..views::Outcome::ok(match (&job.record.window, job.windowed()) {
+                    // The window is its inspection where a log would have been,
+                    // so the line that says it started says which window
+                    // (§FS-005-dispatch.22) — and says so even where the opener
+                    // named none, because the program is in a window either way
+                    // and *where it went* is what this line is for.
+                    (Some(handle), _) => format!(
+                        "{} {}: started in window {handle}",
+                        job.record.icon, job.record.description
+                    ),
+                    (None, true) => format!(
+                        "{} {}: started in a window the opener did not name",
+                        job.record.icon, job.record.description
+                    ),
+                    (None, false) => {
+                        format!("{} {}: started", job.record.icon, job.record.description)
+                    }
+                })
             },
             Err(err) => views::Outcome::refused(err.to_string()),
         }
@@ -740,6 +1059,7 @@ mod tests {
             is_workflows: false,
             picked: None,
             gate,
+            running: None,
         }
     }
 
