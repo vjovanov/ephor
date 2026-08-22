@@ -841,18 +841,16 @@ impl App {
     /// Hand a file to the reader's editor, the terminal theirs while they have
     /// it — the same handover the runtime gets (§AR-002-summons).
     fn edit_file(&mut self, terminal: &mut DefaultTerminal, path: &Path) -> Result<()> {
-        let editor = std::env::var("EDITOR").unwrap_or_else(|_| "less".to_string());
         let dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
-        let command = format!(
-            "{editor} {}",
-            crate::feed::providers::shell_quote(&path.to_string_lossy())
-        );
+        // One spelling of what opening a file means, shared with the command
+        // that opens a parked question (§AR-009-surfaces.1).
+        let editing = crate::api::act::editing(path);
         self.handover(
             terminal,
             "📖",
-            &editor,
+            &editing.binding,
             &Site::root(&dir),
-            &summons::Summons::new("edit", command),
+            &editing,
         )?;
         Ok(())
     }
@@ -1412,9 +1410,15 @@ impl App {
         use crate::api::offers::Running;
         match running {
             Running::Job { log, .. } => self.read_log(terminal, &log.clone(), true),
-            Running::Run { id: Some(_), .. } | Running::Queued { id: Some(_), .. } => {
-                self.attach(terminal, running)
-            }
+            // A run still standing at the gate is where the answer goes
+            // (§FS-005-dispatch.20).
+            Running::Run { id: Some(_), .. }
+            | Running::Queued { id: Some(_), .. }
+            | Running::Waiting { id: Some(_), .. } => self.attach(terminal, running),
+            // And where nothing is standing there, the question is in the plan
+            // and so is the answer (§FS-005-dispatch.9) — the same move `e`
+            // makes on the work screen.
+            Running::Waiting { plan, .. } => self.edit_file(terminal, &plan.clone()),
             // A run that named itself nothing has no surface to put on it, and
             // bringing a window forward costs no terminal — both are the
             // session's move, and the interface stays where it is
@@ -1451,7 +1455,8 @@ impl App {
         }
         let (root, id) = match running {
             crate::api::offers::Running::Run { root, id, .. }
-            | crate::api::offers::Running::Queued { root, id, .. } => {
+            | crate::api::offers::Running::Queued { root, id, .. }
+            | crate::api::offers::Running::Waiting { root, id, .. } => {
                 (root.clone(), id.clone().unwrap_or_default())
             }
             _ => return Ok(()),

@@ -197,6 +197,23 @@ pub enum Sending {
     Dry,
 }
 
+/// The reader's own editor on one file, as a summons (§AR-002-summons.2).
+///
+/// One spelling of it, so `e` on the work screen and a command that opens a
+/// parked question hand the reader the same program (§AR-009-surfaces.1).
+/// `$EDITOR` where they named one, and a pager otherwise: reading the question
+/// is worth doing even on a machine where nothing is configured to write it.
+pub fn editing(path: &Path) -> summons::Summons {
+    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "less".to_string());
+    summons::Summons::new(
+        "edit",
+        format!(
+            "{editor} {}",
+            crate::feed::providers::shell_quote(&path.to_string_lossy())
+        ),
+    )
+}
+
 /// How the reader is watching, which is the one thing the two surfaces differ
 /// in here (§AR-002-summons.2): the interface hands over its terminal, and a
 /// command already owns one.
@@ -406,6 +423,47 @@ impl Session {
         )
     }
 
+    /// The runner's own surface on one run, put where the reader can type into
+    /// it: a window of their own where one is bound (§FS-005-dispatch.22), and
+    /// the terminal otherwise — the floor, which is never removed
+    /// (§AR-002-summons.6). Leaving it detaches and never stops the run.
+    ///
+    /// One implementation, because the board's `a`, `ephor operations attach`,
+    /// the key on a running row and `ephor actions open` are one ability
+    /// (§AR-009-surfaces.1). `root` is only where the surface is started from —
+    /// a run is reached by its id.
+    fn attach_to(&self, root: &Path, id: &str, watching: Watching) -> views::Outcome {
+        // A surface on a run is *not* recorded as a job: the run is the
+        // operation, and a surface on it is not a second one
+        // (§AR-002-summons.6).
+        if watching == Watching::Window {
+            if let Some(opener) = self.opener() {
+                let command = crate::work::runtime::attach_command(&self.work_config, id);
+                let at = crate::seams::window::site(root);
+                return match opener.open(&format!("ephor · run {id}"), &command, &at) {
+                    Ok(handle) => views::Outcome::ok(format!(
+                        "▶ watching run {id} in window {handle} — leaving it detaches"
+                    )),
+                    Err(err) => views::Outcome::refused(err.to_string()),
+                };
+            }
+        }
+        let summons = crate::work::runtime::attach_summons(&self.work_config, id);
+        let mode = match watching == Watching::Aside {
+            true => summons::Mode::Aside,
+            false => summons::Mode::Interactive,
+        };
+        match summons::run(&summons, &Site::root(root), mode) {
+            Ok(answer) if answer.is_done() => {
+                views::Outcome::ok(format!("▶ detached from run {id}; it goes on"))
+            }
+            Ok(answer) => {
+                views::Outcome::refused(answer.refusal(&format!("attaching to run {id}")))
+            }
+            Err(err) => views::Outcome::refused(err.to_string()),
+        }
+    }
+
     /// Go to what is already going about an entry, and never start a second
     /// copy of it (§FS-005-dispatch.21, §FS-011-command-line.8): follow the
     /// job's log, attach to the run, or bring the window forward — by the same
@@ -446,41 +504,34 @@ impl Session {
                 views::Outcome::ok(format!("📖 {}", log.display()))
             }
             // The binding's own surface on a run it did not start. Leaving it
-            // detaches and never stops the run (§FS-005-dispatch.20).
+            // detaches and never stops the run (§FS-005-dispatch.20). A parked
+            // ticket is reached the same way while a run still stands at its
+            // gate: §20's own answer to a question a detached run asks is
+            // *attach*.
             Running::Run {
                 root, id: Some(id), ..
             }
             | Running::Queued {
                 root, id: Some(id), ..
-            } => {
-                // A window of the reader's own where one is bound
-                // (§FS-005-dispatch.22) — and *not* recorded as a job: the run
-                // is the operation, and a surface on it is not a second one
-                // (§AR-002-summons.6).
-                if watching == Watching::Window {
-                    if let Some(opener) = self.opener() {
-                        let command = crate::work::runtime::attach_command(&self.work_config, id);
-                        let at = crate::seams::window::site(root);
-                        return match opener.open(&format!("ephor · run {id}"), &command, &at) {
-                            Ok(handle) => views::Outcome::ok(format!(
-                                "▶ watching run {id} in window {handle} — leaving it detaches"
-                            )),
-                            Err(err) => views::Outcome::refused(err.to_string()),
-                        };
-                    }
-                }
-                let summons = crate::work::runtime::attach_summons(&self.work_config, id);
+            }
+            | Running::Waiting {
+                root, id: Some(id), ..
+            } => self.attach_to(root, id, watching),
+            // A question nothing is standing at any more: the answer belongs
+            // beside it, in the plan (§FS-005-dispatch.9). The reader's own
+            // editor, the terminal theirs while they have it — the same move
+            // `e` makes on the work screen (§AR-009-surfaces.1).
+            Running::Waiting { plan, ticket, .. } => {
                 let mode = match aside {
                     true => summons::Mode::Aside,
                     false => summons::Mode::Interactive,
                 };
-                match summons::run(&summons, &Site::root(root), mode) {
+                let at = plan.parent().unwrap_or(std::path::Path::new("."));
+                match summons::run(&editing(plan), &Site::root(at), mode) {
                     Ok(answer) if answer.is_done() => {
-                        views::Outcome::ok(format!("▶ detached from run {id}; it goes on"))
+                        views::Outcome::ok(format!("📖 {ticket} is in {}", plan.display()))
                     }
-                    Ok(answer) => {
-                        views::Outcome::refused(answer.refusal(&format!("attaching to run {id}")))
-                    }
+                    Ok(answer) => views::Outcome::refused(answer.refusal("opening the plan")),
                     Err(err) => views::Outcome::refused(err.to_string()),
                 }
             }

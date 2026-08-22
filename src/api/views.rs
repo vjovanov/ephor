@@ -73,11 +73,11 @@ pub struct Offer {
 /// reader's own program on it is not (§REQ-002-parity.1).
 #[derive(Debug, Clone, Serialize)]
 pub struct Running {
-    /// `job`, `run`, `queued`, or `window`.
+    /// `job`, `run`, `waiting`, `queued`, or `window`.
     pub kind: &'static str,
     /// What it is at right now: the job's own last line, the ticket a run
-    /// holds and the state it is in, `queued` where the root's run will reach
-    /// it.
+    /// holds and the state it is in, `waiting on you` where the ticket it
+    /// opened is parked, `queued` where the root's run will reach it.
     pub says: String,
     /// How long it has been going, in seconds, where that is known.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -106,6 +106,11 @@ pub struct Running {
     /// (§FS-005-dispatch.22).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub window: Option<String>,
+    /// The plan a parked question is in — where the answer belongs
+    /// (§FS-005-dispatch.9). The way in on a *waiting* row that no run is
+    /// still standing at.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan: Option<PathBuf>,
 }
 
 /// A hand the roster offers, and the efforts it declares (§FS-005-dispatch.14).

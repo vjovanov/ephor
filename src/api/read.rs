@@ -151,6 +151,11 @@ impl Session {
     /// lock and the descriptor beside it (§FS-005-dispatch.20). Nothing is
     /// remembered from the keypress, so a second ephor opening the same menu
     /// sees the same rows and a job that died is not running.
+    ///
+    /// **Read once for the whole menu** (§FS-005-dispatch.15.1). Every row of
+    /// one menu shares one subject and so one work root: the job list, the lock
+    /// probe, the states document, the plan, the journal and the run descriptor
+    /// are resolved here and asked of once per row, not read once per row.
     fn mark_running(&self, subject: &Subject, entries: &mut [offers::MenuEntry]) {
         let project = subject.project();
         let (item, branch) = match subject {
@@ -163,19 +168,57 @@ impl Session {
             .into_iter()
             .filter(|job| job.live)
             .collect();
-        let now = chrono::Utc::now();
-        for entry in entries.iter_mut() {
-            let key = entry.key();
-            // A job started from *this* entry, about *this* subject: the
-            // record says which entry it came from and, on a branch row, which
-            // branch, because nothing could otherwise match it back
-            // (§FS-005-dispatch.21).
-            let started_here = jobs.iter().find(|job| {
+        // Jobs about *this* subject: the record says which entry it came from
+        // and, on a branch row, which branch, because nothing could otherwise
+        // match one back (§FS-005-dispatch.21).
+        let here: Vec<&crate::seams::jobs::Job> = jobs
+            .iter()
+            .filter(|job| {
                 job.record.project == project
-                    && job.record.action.as_deref() == Some(key.as_str())
                     && job.record.item.as_deref() == item.map(|item| item.id.as_str())
                     && job.record.branch.as_deref() == branch
-            });
+            })
+            .collect();
+        // The one reading of this subject's work root, for every row of the
+        // menu (§AR-005-capabilities.1).
+        let at = match (item, self.dispatcher.as_ref()) {
+            (Some(item), Some(dispatcher)) => dispatcher.work_at(item),
+            _ => None,
+        };
+        // The run's own identity, read from the descriptor beside the lock —
+        // the way in is the runner's own attach command (§FS-005-dispatch.20,
+        // §FS-011-command-line.8).
+        let run = at.as_ref().and_then(|at| at.identity.clone());
+        let id = run.as_ref().and_then(|run| run.id.clone());
+        let attach = id
+            .as_deref()
+            .map(|id| crate::work::runtime::attach_command(&self.work_config, id));
+        let now = chrono::Utc::now();
+        let since = run
+            .as_ref()
+            .and_then(|run| run.started_at.as_deref())
+            .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+            .map(|at| (now - at.with_timezone(&chrono::Utc)).num_seconds());
+        for entry in entries.iter_mut() {
+            let key = entry.key();
+            // The checkout row is running where the job that is making the
+            // workspace is (§FS-005-dispatch.21). That job is never a job of
+            // the checkout row's own — `Session::how` keeps the checkout in the
+            // foreground — it is another entry's job carrying the checkout as
+            // its first step (§FS-005-dispatch.17), so it is matched by the
+            // step rather than by the entry it came from. Without this,
+            // pressing the row started a second checkout of the same workspace
+            // while the first was still writing it.
+            let started_here = match entry.is_checkout {
+                true => here
+                    .iter()
+                    .copied()
+                    .find(|job| job.record.steps.iter().any(|step| step.becomes_workspace)),
+                false => here
+                    .iter()
+                    .copied()
+                    .find(|job| job.record.action.as_deref() == Some(key.as_str())),
+            };
             if let Some(job) = started_here {
                 entry.running = Some(match job.record.window.clone() {
                     // A windowed program's inspection is its window: what it
@@ -198,43 +241,47 @@ impl Session {
             }
             // An entry that hands work over is running where the ticket it
             // would open, or the plan it would lay, is open and its root is
-            // live or will reach it (§FS-005-dispatch.21).
+            // live or will reach it — and where the ticket it opened is parked,
+            // whether or not a run still holds the root (§FS-005-dispatch.21).
             if entry.action.agent.is_none() && entry.action.workflow.is_none() {
                 continue;
             }
-            let (Some(item), Some(dispatcher)) = (item, self.dispatcher.as_ref()) else {
+            let Some(going) = at.as_ref().and_then(|at| at.going(&key)) else {
                 continue;
             };
-            let Some(going) = dispatcher.work_going(item, &key) else {
-                continue;
-            };
-            // The run's own identity, read from the descriptor beside the lock
-            // — the way in is the runner's own attach command
-            // (§FS-005-dispatch.20, §FS-011-command-line.8).
-            let run = crate::work::runtime::watch::identity(&self.work_config, going.root());
-            let id = run.as_ref().and_then(|run| run.id.clone());
-            let attach = id
-                .as_deref()
-                .map(|id| crate::work::runtime::attach_command(&self.work_config, id));
-            let since = run
-                .as_ref()
-                .and_then(|run| run.started_at.as_deref())
-                .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
-                .map(|at| (now - at.with_timezone(&chrono::Utc)).num_seconds());
             entry.running = Some(match going {
                 crate::work::WorkGoing::Running { root, doing } => offers::Running::Run {
                     root,
-                    id,
-                    control_url: run.and_then(|run| run.control_url),
-                    attach,
+                    id: id.clone(),
+                    control_url: run.as_ref().and_then(|run| run.control_url.clone()),
+                    attach: attach.clone(),
                     since,
                     doing,
                 },
+                crate::work::WorkGoing::Waiting {
+                    root,
+                    ticket,
+                    state,
+                    plan,
+                } => offers::Running::Waiting {
+                    root,
+                    ticket,
+                    state,
+                    plan,
+                    id: id.clone(),
+                    attach: attach.clone(),
+                    since,
+                },
                 crate::work::WorkGoing::Queued { root } => offers::Running::Queued {
                     root,
-                    id,
-                    attach,
-                    since,
+                    id: id.clone(),
+                    attach: attach.clone(),
+                    // The run's age is not this entry's wait
+                    // (§FS-005-dispatch.21): a row saying `queued · 3h` about a
+                    // ticket dispatched a minute ago would have the reader
+                    // reading three hours of waiting into it. The row still
+                    // says *queued*, which is the whole of what is known.
+                    since: None,
                 },
             });
         }
@@ -505,6 +552,7 @@ pub fn running_of(running: &offers::Running) -> views::Running {
         attach: None,
         control_url: None,
         window: None,
+        plan: None,
     };
     match running {
         offers::Running::Job { id, log, .. } => {
@@ -529,6 +577,20 @@ pub fn running_of(running: &offers::Running) -> views::Running {
             view.root = Some(root.clone());
             view.run = id.clone();
             view.attach = attach.clone();
+        }
+        // The run where one is still standing at the gate, and the plan the
+        // question is in either way (§FS-005-dispatch.9, §FS-005-dispatch.20).
+        offers::Running::Waiting {
+            root,
+            plan,
+            id,
+            attach,
+            ..
+        } => {
+            view.root = Some(root.clone());
+            view.run = id.clone();
+            view.attach = attach.clone();
+            view.plan = Some(plan.clone());
         }
         offers::Running::Window { job, handle, .. } => {
             view.job = Some(job.clone());

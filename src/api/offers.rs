@@ -367,6 +367,27 @@ pub enum Running {
         /// board already uses (§FS-005-dispatch.15).
         doing: String,
     },
+    /// A ticket this entry opened that the machine parks for a person: it is
+    /// *waiting on you* (§FS-005-dispatch.9, §FS-005-dispatch.20,
+    /// §FS-005-dispatch.21), whether or not a run still holds the root.
+    ///
+    /// The way in is the run, where one is still there to answer at — a run
+    /// with nobody at its terminal waits at the gate rather than exiting, and
+    /// §20's own answer is *attach*. Where none is, it is the plan: the answer
+    /// belongs beside the question (§FS-005-dispatch.9).
+    Waiting {
+        root: PathBuf,
+        /// The ticket the question is in, plan-qualified as the board names
+        /// it, and the state the machine parked it in.
+        ticket: String,
+        state: String,
+        /// The plan the question is in.
+        plan: PathBuf,
+        /// What the run holding this root calls itself, where one still does.
+        id: Option<String>,
+        attach: Option<String>,
+        since: Option<i64>,
+    },
     /// The root's run is live and will reach this work: the runtime schedules
     /// one run per root (§FS-005-dispatch.15). The way in is that run — it is
     /// the thing that is going, and the reader pressing the row meant it.
@@ -396,6 +417,7 @@ impl Running {
         match self {
             Running::Job { .. } => "job",
             Running::Run { .. } => "run",
+            Running::Waiting { .. } => "waiting",
             Running::Queued { .. } => "queued",
             Running::Window { .. } => "window",
         }
@@ -406,19 +428,27 @@ impl Running {
         match self {
             Running::Job { since, .. }
             | Running::Run { since, .. }
+            | Running::Waiting { since, .. }
             | Running::Queued { since, .. }
             | Running::Window { since, .. } => *since,
         }
     }
 
     /// What it is at right now — the job's own last line, the ticket a run
-    /// holds and the state it is in, *queued* where the root's run will reach
-    /// it (§FS-005-dispatch.21). One sentence, so the screen and the command
-    /// line phrase one situation one way (§AR-009-surfaces.1).
+    /// holds and the state it is in, *waiting on you* where the ticket it
+    /// opened is parked, *queued* where the root's run will reach it
+    /// (§FS-005-dispatch.21). One sentence, so the screen and the command line
+    /// phrase one situation one way (§AR-009-surfaces.1).
     pub fn says(&self) -> String {
         match self {
             Running::Job { says, .. } => says.clone(),
             Running::Run { doing, .. } => doing.clone(),
+            // §15's own word, never *queued*: a parked ticket promised a turn
+            // is a promise that never comes (§FS-005-dispatch.15). The same
+            // phrasing the badge and the board row use.
+            Running::Waiting { ticket, state, .. } => {
+                format!("{ticket} [{state}] · waiting on you")
+            }
             Running::Queued { .. } => "queued".to_string(),
             // The job's own line already says where it is: a windowed program
             // writes to a screen and not to a file (§FS-005-dispatch.22).
@@ -437,6 +467,12 @@ impl Running {
         match self {
             Running::Job { log, .. } => Some(log.display().to_string()),
             Running::Run { attach, .. } | Running::Queued { attach, .. } => attach.clone(),
+            // The run where one is still there to answer at, the plan
+            // otherwise: the answer belongs beside the question
+            // (§FS-005-dispatch.9, §FS-005-dispatch.20).
+            Running::Waiting { attach, plan, .. } => {
+                attach.clone().or_else(|| Some(plan.display().to_string()))
+            }
             Running::Window { handle, .. } => Some(handle.clone()),
         }
     }

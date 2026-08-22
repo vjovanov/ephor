@@ -281,9 +281,10 @@ impl WorkStatus {
 }
 
 /// What the work behind one menu entry is doing, for the row that could start
-/// it again (§FS-005-dispatch.21). Two answers, because the runtime schedules
-/// one run per execution root: the run holds this entry's work, or it is live
-/// on the root and will reach it (§FS-005-dispatch.15).
+/// it again (§FS-005-dispatch.21). Three answers, because the runtime schedules
+/// one run per execution root: the run holds this entry's work, it parked a
+/// question this entry opened, or it is live on the root and will reach it
+/// (§FS-005-dispatch.15).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkGoing {
     Running {
@@ -291,6 +292,24 @@ pub enum WorkGoing {
         /// The ticket the run holds and the state it is in, in the words the
         /// board already uses.
         doing: String,
+    },
+    /// A ticket this entry opened that the machine parks for a person: it is
+    /// *waiting on you* (§FS-005-dispatch.9, §FS-005-dispatch.20), and §21's
+    /// word for it is §15's, never *queued*, which would promise a turn that
+    /// never comes.
+    ///
+    /// Marked whether or not a run still holds the root. A run with nobody at
+    /// its terminal waits at a human gate rather than exiting, and one that
+    /// exited leaves the question standing all the same — either way this is
+    /// open work about this subject, and a second dispatch laid beside it is
+    /// exactly the mistake §21 exists to prevent.
+    Waiting {
+        root: PathBuf,
+        /// The ticket the question is in, and the state the machine parked it
+        /// in — the plan is where the answer belongs (§FS-005-dispatch.9).
+        ticket: String,
+        state: String,
+        plan: PathBuf,
     },
     Queued {
         root: PathBuf,
@@ -300,8 +319,179 @@ pub enum WorkGoing {
 impl WorkGoing {
     pub fn root(&self) -> &std::path::Path {
         match self {
-            WorkGoing::Running { root, .. } | WorkGoing::Queued { root } => root,
+            WorkGoing::Running { root, .. }
+            | WorkGoing::Waiting { root, .. }
+            | WorkGoing::Queued { root } => root,
         }
+    }
+}
+
+/// One item's work root, read once and asked about many times
+/// (§FS-005-dispatch.15.1).
+///
+/// The lock probe, the states document, the plan and the journal answer the
+/// same way for every row of one menu, so they are read here and handed to
+/// each — the rule that an answer is resolved once and reused
+/// (§AR-005-capabilities.1). Nothing is remembered past the menu: this is a
+/// reading of the world, taken when the menu was assembled.
+pub struct WorkAt<'a> {
+    entry: &'a Entry,
+    /// The run lock is held: something is running on this root right now.
+    live: bool,
+    /// The root's own state machine, where it has a readable one. Finality and
+    /// gating are its words: with none to say them nothing here is judged over,
+    /// and nothing is judged a question for a person either
+    /// (§FS-005-dispatch.15).
+    machine: Option<WorkRoot>,
+    /// The matter's own plan.
+    plan: Option<Plan>,
+    /// The journal's unreleased slots, and when the root's lock was born —
+    /// evidence a held reading is made from, read once for every ticket asked
+    /// about (§FS-005-dispatch.15).
+    held: Vec<runtime::watch::Held>,
+    lock_born: Option<std::time::SystemTime>,
+    /// What the live run calls itself, from the descriptor beside its lock
+    /// (§FS-005-dispatch.20).
+    pub identity: Option<runtime::watch::RunIdentity>,
+}
+
+impl WorkAt<'_> {
+    pub fn root(&self) -> &std::path::Path {
+        &self.entry.root
+    }
+
+    pub fn live(&self) -> bool {
+        self.live
+    }
+
+    /// What the work one entry hands over is doing right now
+    /// (§FS-005-dispatch.21), off the reading already taken.
+    ///
+    /// Three answers, ranked as the board ranks them: what waits on the reader
+    /// stands ahead of anything else its work is doing (§FS-005-dispatch.9),
+    /// then the ticket a run holds, then the queue the root's run will reach.
+    /// This is the board's reading narrowed to one row, not a second reading.
+    pub fn going(&self, action: &str) -> Option<WorkGoing> {
+        let mut waiting: Option<WorkGoing> = None;
+        let mut running: Option<WorkGoing> = None;
+        let mut queued = false;
+        let mut consider = |plan_id: &str, path: &std::path::Path, ticket: &plan::PlanTicket| {
+            let Some(machine) = self.machine.as_ref() else {
+                // With no machine nothing here is judged over and nothing is
+                // judged a question: the ticket is open work, and whether a run
+                // holds it is still the journal's to say.
+                return self.hold(plan_id, ticket, &mut running, &mut queued);
+            };
+            let state = ticket.state.as_deref().unwrap_or("?");
+            if ticket
+                .state
+                .as_deref()
+                .is_some_and(|at| machine.is_final(at))
+            {
+                return;
+            }
+            // A ticket the machine parks is waiting on the reader
+            // (§FS-005-dispatch.9, §FS-005-dispatch.20). It is *not* queued:
+            // §15 is explicit that calling it that would promise a turn that
+            // never comes, and it is not the run's to advance either.
+            if ticket
+                .state
+                .as_deref()
+                .is_some_and(|at| machine.is_gating(at))
+            {
+                if waiting.is_none() {
+                    waiting = Some(WorkGoing::Waiting {
+                        root: self.entry.root.clone(),
+                        ticket: format!("{plan_id}.{}", ticket.id),
+                        state: state.to_string(),
+                        plan: path.to_path_buf(),
+                    });
+                }
+                return;
+            }
+            self.hold(plan_id, ticket, &mut running, &mut queued);
+        };
+        // The tickets this entry wrote into the matter's own plan.
+        let mine: std::collections::BTreeSet<&str> = self
+            .entry
+            .dispatches
+            .iter()
+            .filter(|dispatch| dispatch.recipe == action && !dispatch.is_workflow())
+            .map(|dispatch| dispatch.ticket.as_str())
+            .collect();
+        if !mine.is_empty() {
+            if let Some(plan) = self.plan.as_ref() {
+                for ticket in plan.tickets() {
+                    if mine.contains(ticket.id.as_str()) {
+                        consider(&self.entry.plan_id, &self.entry.plan, &ticket);
+                    }
+                }
+            }
+        }
+        // And the plans this entry laid down of its own
+        // (§FS-005-dispatch.19), which are operations exactly as tickets are.
+        // One plan per dispatch and one dispatch per entry, so nothing here is
+        // read twice by a menu asking about every row.
+        for dispatch in self
+            .entry
+            .dispatches
+            .iter()
+            .filter(|dispatch| dispatch.recipe == action && dispatch.is_workflow())
+        {
+            let Some(name) = dispatch.plan.as_deref() else {
+                continue;
+            };
+            let Some(laid) = runtime::workflow::laid(&self.entry.root.join(name)) else {
+                continue;
+            };
+            let Ok(Some(plan)) = Plan::read(&laid.path) else {
+                continue;
+            };
+            for ticket in plan.tickets() {
+                consider(&laid.plan_id, &laid.path, &ticket);
+            }
+        }
+        waiting.or(running).or_else(|| {
+            queued.then(|| WorkGoing::Queued {
+                root: self.entry.root.clone(),
+            })
+        })
+    }
+
+    /// Whether the live run holds this open ticket, off the journal already
+    /// read — and the queue where it does not. A root nothing holds is not an
+    /// operation: an open ticket there is waiting work, which is the work
+    /// screen's business (§FS-005-dispatch.15).
+    fn hold(
+        &self,
+        plan_id: &str,
+        ticket: &plan::PlanTicket,
+        running: &mut Option<WorkGoing>,
+        queued: &mut bool,
+    ) {
+        if !self.live {
+            return;
+        }
+        let state = ticket.state.as_deref().unwrap_or("?");
+        if runtime::watch::held_among(
+            &self.held,
+            &self.entry.root,
+            self.lock_born,
+            plan_id,
+            &ticket.id,
+            state,
+        ) {
+            if running.is_none() {
+                // The board's own phrasing for a held ticket, narrowed to one
+                // row (§FS-005-dispatch.15).
+                *running = Some(WorkGoing::Running {
+                    root: self.entry.root.clone(),
+                    doing: format!("{plan_id}.{} [{state}]", ticket.id),
+                });
+            }
+            return;
+        }
+        *queued = true;
     }
 }
 
@@ -1408,94 +1598,53 @@ impl Dispatcher {
     /// (§FS-005-dispatch.9), narrowed to the one entry that would start it
     /// again.
     ///
+    /// One entry's answer, off the one reading of the root
+    /// ([`Dispatcher::work_at`]). A whole menu asks [`WorkAt::going`] directly,
+    /// so that the lock, the states document, the plan and the journal are read
+    /// once for all its rows rather than once for each (§FS-005-dispatch.15.1).
+    pub fn work_going(&self, item: &Item, action: &str) -> Option<WorkGoing> {
+        self.work_at(item)?.going(action)
+    }
+
+    /// Everything one item's work root has to say about what is going there,
+    /// read once (§FS-005-dispatch.15.1, §AR-005-capabilities.1).
+    ///
     /// Found by looking, never remembered from the keypress: the ledger says
     /// which tickets this entry opened and which plans it laid, the plans say
-    /// what state each is in, and the lock says whether a run holds the root
-    /// at all (§FS-005-dispatch.15). A root nothing holds is not an operation
-    /// — an open ticket there is waiting work, which is the work screen's
-    /// business — so it is not marked running either.
-    pub fn work_going(&self, item: &Item, action: &str) -> Option<WorkGoing> {
+    /// what state each is in, the machine says which of those states are over
+    /// and which are questions for a person, and the lock says whether a run
+    /// holds the root at all (§FS-005-dispatch.15).
+    ///
+    /// Read here rather than in [`WorkAt::going`] because a menu asks about
+    /// every row of one subject, and every row of one subject shares this root:
+    /// six recipe entries used to mean six states-document parses, six plan
+    /// parses, a dozen lock probes and six descriptor reads for one keypress.
+    pub fn work_at(&self, item: &Item) -> Option<WorkAt<'_>> {
         let entry = self.ledger.entries.get(&item.id)?;
-        if !runtime::watch::live(&self.global, &entry.root) {
-            return None;
-        }
-        let machine = WorkRoot::open(&entry.root).ok().flatten();
-        // Finality and gating are the machine's words: with no machine to say
-        // them nothing here is judged over, and a parked ticket is a question
-        // for the reader rather than something going (§FS-005-dispatch.15).
-        let open = |state: Option<&str>| match (state, machine.as_ref()) {
-            (Some(state), Some(machine)) => !machine.is_final(state) && !machine.is_gating(state),
-            _ => true,
-        };
-        let mut queued = false;
-        let mut consider = |plan_id: &str, ticket: &plan::PlanTicket| -> Option<String> {
-            if !open(ticket.state.as_deref()) {
-                return None;
-            }
-            let state = ticket.state.as_deref().unwrap_or("?");
-            if runtime::watch::held_by_live_run(
-                &self.global,
-                &entry.root,
-                plan_id,
-                &ticket.id,
-                state,
-            ) {
-                // The board's own phrasing for a held ticket, narrowed to one
-                // row (§FS-005-dispatch.15).
-                return Some(format!("{plan_id}.{} [{state}]", ticket.id));
-            }
-            queued = true;
-            None
-        };
-        // The tickets this entry wrote into the matter's own plan.
-        let mine: std::collections::BTreeSet<&str> = entry
-            .dispatches
-            .iter()
-            .filter(|dispatch| dispatch.recipe == action && !dispatch.is_workflow())
-            .map(|dispatch| dispatch.ticket.as_str())
-            .collect();
-        if !mine.is_empty() {
-            if let Ok(Some(plan)) = Plan::read(&entry.plan) {
-                for ticket in plan.tickets() {
-                    if !mine.contains(ticket.id.as_str()) {
-                        continue;
-                    }
-                    if let Some(doing) = consider(&entry.plan_id, &ticket) {
-                        return Some(WorkGoing::Running {
-                            root: entry.root.clone(),
-                            doing,
-                        });
-                    }
-                }
-            }
-        }
-        // And the plans this entry laid down of its own
-        // (§FS-005-dispatch.19), which are operations exactly as tickets are.
-        for dispatch in entry
-            .dispatches
-            .iter()
-            .filter(|dispatch| dispatch.recipe == action && dispatch.is_workflow())
-        {
-            let Some(name) = dispatch.plan.as_deref() else {
-                continue;
-            };
-            let Some(laid) = runtime::workflow::laid(&entry.root.join(name)) else {
-                continue;
-            };
-            let Ok(Some(plan)) = Plan::read(&laid.path) else {
-                continue;
-            };
-            for ticket in plan.tickets() {
-                if let Some(doing) = consider(&laid.plan_id, &ticket) {
-                    return Some(WorkGoing::Running {
-                        root: entry.root.clone(),
-                        doing,
-                    });
-                }
-            }
-        }
-        queued.then(|| WorkGoing::Queued {
-            root: entry.root.clone(),
+        let live = runtime::watch::live(&self.global, &entry.root);
+        Some(WorkAt {
+            machine: WorkRoot::open(&entry.root).ok().flatten(),
+            plan: Plan::read(&entry.plan).ok().flatten(),
+            // The journal and the lock's birth are the held reading's two
+            // artifacts, and neither is worth reading on a root nothing holds:
+            // a slot nobody released under a free lock is a dead run's
+            // leavings, which is the board's business and not a running mark
+            // (§FS-005-dispatch.15).
+            held: match live {
+                true => runtime::watch::holding(&self.global, &entry.root),
+                false => Vec::new(),
+            },
+            lock_born: live
+                .then(|| runtime::watch::lock_born(&entry.root))
+                .flatten(),
+            // Who the run says it is, read from the descriptor beside the lock
+            // and gated on it: a descriptor outlives the run that wrote it
+            // (§FS-005-dispatch.20).
+            identity: live
+                .then(|| runtime::watch::identity(&self.global, &entry.root))
+                .flatten(),
+            live,
+            entry,
         })
     }
 

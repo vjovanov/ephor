@@ -149,6 +149,12 @@ fn actions_list(args: &ActionsListArgs) -> Result<ExitCode> {
             // dropping the last where it is the same word as the first, which
             // is what *queued* is (§FS-005-dispatch.21).
             let mut said = vec![running.kind.to_string()];
+            // A run's id is how the reader and the runtime agree on which run
+            // they mean, so it is said in its own right and not left to be
+            // read out of the attach command (§FS-011-command-line.8).
+            if let Some(id) = &running.run {
+                said.push(format!("run {id}"));
+            }
             if let Some(seconds) = running.since_seconds {
                 said.push(crate::feed::render::span(seconds));
             }
@@ -161,7 +167,10 @@ fn actions_list(args: &ActionsListArgs) -> Result<ExitCode> {
                 .as_ref()
                 .map(|log| log.display().to_string())
                 .or_else(|| running.attach.clone())
-                .or_else(|| running.window.clone());
+                .or_else(|| running.window.clone())
+                // A parked question nothing is standing at is reached in the
+                // plan it is written in (§FS-005-dispatch.9).
+                .or_else(|| running.plan.as_ref().map(|plan| plan.display().to_string()));
             if let Some(way_in) = way_in {
                 println!("  {:width$}      {way_in}", "");
             }
