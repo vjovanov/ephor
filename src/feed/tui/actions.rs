@@ -196,12 +196,13 @@ impl ActionMenu {
         }
         if let Some(entry) = self.entries.get(self.selected) {
             let verb = match &entry.gate {
-                // The reason is on the row; there is nothing to press.
-                Gate::Blocked(_) => None,
                 // Built from the row and not from the key
                 // (§FS-004-quick-actions.2): on a row that says *running* the
                 // key opens what is going, so the footer says *open*
-                // (§FS-005-dispatch.21).
+                // (§FS-005-dispatch.21). Ahead of the blocked arm, because a
+                // running row's way in does not depend on the capability its
+                // *start* needed — and the footer, Enter and `l` have to
+                // answer such a row the same way (§FS-004-quick-actions.2).
                 _ if entry.running.is_some() => Some(match &entry.running {
                     Some(running) => match running.way_in() {
                         Some(way) => format!("enter open {way}"),
@@ -209,6 +210,8 @@ impl ActionMenu {
                     },
                     None => "enter open".to_string(),
                 }),
+                // The reason is on the row; there is nothing to press.
+                Gate::Blocked(_) => None,
                 _ if self.confirming == Some(self.selected) => {
                     Some("enter again to confirm".to_string())
                 }
@@ -238,9 +241,17 @@ impl ActionMenu {
     }
 
     /// Whether `t` has anything to open on this entry: work to hand over,
-    /// not refused, and a roster with somebody on it (§FS-005-dispatch.14).
+    /// not refused, nothing already going about it, and a roster with somebody
+    /// on it (§FS-005-dispatch.14).
+    ///
+    /// Not on a row that says *running* (§FS-005-dispatch.21). The picker's
+    /// whole purpose is to start a dispatch with a hand pinned to it, so
+    /// offering it there would teach — in the footer, no less — the second copy
+    /// that pressing such a row must never make. Where somebody does mean it
+    /// the command line starts it and the refusal is the lock's own sentence.
     fn picker_offered(&self, entry: &MenuEntry) -> bool {
         entry.action.agent.is_some()
+            && entry.running.is_none()
             && !matches!(entry.gate, Gate::Blocked(_))
             && !self.roster.is_empty()
     }
@@ -356,8 +367,17 @@ impl ActionMenu {
                     effort: hand.efforts.get(picker.effort).cloned(),
                 };
                 let mut entry = self.entries[self.selected].clone();
-                entry.picked = Some(pin);
                 self.picker = None;
+                // A row that says *running* opens what is going, whatever was
+                // picked on the way here (§FS-005-dispatch.21). The picker is
+                // not offered on such a row at all; this is the second line of
+                // defence, so that no path through this screen can start a
+                // second copy of work the row said was already going.
+                if entry.running.is_some() {
+                    self.confirming = None;
+                    return MenuOutcome::Open(entry);
+                }
+                entry.picked = Some(pin);
                 // Opening the picker and choosing in it is already the
                 // deliberate second step a `confirm` entry asks for.
                 self.confirming = None;
@@ -382,6 +402,19 @@ impl ActionMenu {
         let Some(entry) = self.entries.get(index) else {
             return MenuOutcome::Stay;
         };
+        // A row that says *running* opens what is going; it never starts it
+        // again (§FS-005-dispatch.21). A second copy is not what a reader
+        // pressing such a row meant, and where somebody does mean it the
+        // command line starts it and the refusal is the lock's own sentence.
+        //
+        // Asked before the gate, because opening what is going asks nothing of
+        // the capability the *start* needed: a row the footer says *open* on
+        // has to open on Enter as it does on `l` (§FS-004-quick-actions.2).
+        if entry.running.is_some() {
+            self.confirming = None;
+            self.selected = index;
+            return MenuOutcome::Open(entry.clone());
+        }
         if matches!(entry.gate, Gate::Blocked(_)) {
             // Choosing it is still choosing something else, so a question
             // asked of another entry is dropped rather than left waiting to
@@ -389,15 +422,6 @@ impl ActionMenu {
             self.confirming = None;
             self.selected = index;
             return MenuOutcome::Stay;
-        }
-        // A row that says *running* opens what is going; it never starts it
-        // again (§FS-005-dispatch.21). A second copy is not what a reader
-        // pressing such a row meant, and where somebody does mean it the
-        // command line starts it and the refusal is the lock's own sentence.
-        if entry.running.is_some() {
-            self.confirming = None;
-            self.selected = index;
-            return MenuOutcome::Open(entry.clone());
         }
         if entry.action.confirm && self.confirming != Some(index) {
             self.confirming = Some(index);
@@ -875,23 +899,26 @@ mod tests {
             root: PathBuf::from("/w/demo/panta"),
             id: Some("3f9a2c".to_string()),
             control_url: Some("http://127.0.0.1:54321".to_string()),
-            attach: Some("rhei attach '3f9a2c'".to_string()),
+            attach: Some("the-runner attach '3f9a2c'".to_string()),
             since: Some(600),
             doing: "widget-42.fix-gate-1 [fix]".to_string(),
         };
         assert_eq!(run.name(), "run");
         assert_eq!(run.says(), "widget-42.fix-gate-1 [fix]");
-        assert_eq!(run.way_in().as_deref(), Some("rhei attach '3f9a2c'"));
+        assert_eq!(run.way_in().as_deref(), Some("the-runner attach '3f9a2c'"));
 
         let queued = offers::Running::Queued {
             root: PathBuf::from("/w/demo/panta"),
             id: Some("3f9a2c".to_string()),
-            attach: Some("rhei attach '3f9a2c'".to_string()),
+            attach: Some("the-runner attach '3f9a2c'".to_string()),
             since: None,
         };
         assert_eq!(queued.name(), "queued");
         assert_eq!(queued.says(), "queued");
-        assert_eq!(queued.way_in().as_deref(), Some("rhei attach '3f9a2c'"));
+        assert_eq!(
+            queued.way_in().as_deref(),
+            Some("the-runner attach '3f9a2c'")
+        );
 
         let window = offers::Running::Window {
             job: "j".to_string(),
@@ -1445,6 +1472,90 @@ mod tests {
             ),
             _ => panic!("expected the plain ask"),
         }
+    }
+
+    /// The picker is not a way past the running mark (§FS-005-dispatch.21).
+    ///
+    /// `t` builds a dispatch with a hand pinned to it, which is a *start*: on a
+    /// row that says *running* the footer stops teaching it, the key opens
+    /// nothing, and a picker that was already open when the mark arrived
+    /// chooses *open* rather than the second copy. Every path through this
+    /// screen has to answer a running row the same way, or the one the footer
+    /// advertises is the one that breaks the promise.
+    #[test]
+    fn the_hand_picker_never_starts_a_second_copy_of_what_is_running() {
+        let going = || {
+            Some(offers::Running::Run {
+                root: PathBuf::from("/w/demo/panta"),
+                id: Some("3f9a2c".to_string()),
+                control_url: None,
+                attach: Some("the-runner attach '3f9a2c'".to_string()),
+                since: Some(600),
+                doing: "widget-42.fix-gate-1 [fix]".to_string(),
+            })
+        };
+        let mut menu = menu_with_roster(full_roster());
+        assert!(menu.entries[0].action.agent.is_some());
+        menu.entries[0].running = going();
+
+        // The footer teaches the way in, and not the picker.
+        let footer = menu.footer();
+        assert!(
+            footer.contains("enter open the-runner attach '3f9a2c'"),
+            "{footer}"
+        );
+        assert!(!footer.contains("t pick the hand"), "{footer}");
+        assert!(matches!(
+            menu.handle_key(KeyCode::Char('t')),
+            MenuOutcome::Stay
+        ));
+        assert!(menu.picker.is_none(), "the picker never opened");
+
+        // And with the picker open — a menu built before the mark arrived —
+        // Enter in it opens what is going, with nothing pinned to it.
+        menu.entries[0].running = None;
+        menu.handle_key(KeyCode::Char('t'));
+        assert!(menu.picker.is_some(), "the picker is open");
+        menu.entries[0].running = going();
+        match menu.handle_key(KeyCode::Enter) {
+            MenuOutcome::Open(entry) => assert_eq!(entry.picked, None),
+            _ => panic!("expected Open, not a second dispatch"),
+        }
+        assert!(menu.picker.is_none(), "the picker closed behind it");
+    }
+
+    /// A row that is both refused and running is answered the same way by the
+    /// footer, by Enter and by `l` (§FS-005-dispatch.21): opening what is going
+    /// asks nothing of the capability its *start* needed, so the running arm
+    /// wins in all three places rather than one of them saying *open* while
+    /// another does nothing.
+    #[test]
+    fn a_blocked_row_that_is_running_still_opens_everywhere() {
+        let mut menu = menu(
+            WorkspaceState::Ready,
+            None,
+            vec![action("open the ide", &[])],
+        );
+        menu.entries[0].gate = Gate::Blocked("the workspace is not on this machine".to_string());
+        menu.entries[0].running = Some(offers::Running::Job {
+            id: "20260822T090000.000Z-ide".to_string(),
+            since: Some(12),
+            says: "still going".to_string(),
+            log: PathBuf::from("/state/ephor/jobs/j/log"),
+        });
+        let footer = menu.footer();
+        assert!(
+            footer.contains("enter open /state/ephor/jobs/j/log"),
+            "{footer}"
+        );
+        assert!(matches!(
+            menu.handle_key(KeyCode::Enter),
+            MenuOutcome::Open(_)
+        ));
+        assert!(matches!(
+            menu.handle_key(KeyCode::Char('l')),
+            MenuOutcome::Open(_)
+        ));
     }
 
     /// An unavailable hand is shown with its reason and cannot be chosen —
