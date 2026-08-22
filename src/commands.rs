@@ -145,14 +145,17 @@ fn actions_list(args: &ActionsListArgs) -> Result<ExitCode> {
         // menu cannot start what a person reading it would have opened
         // (§FS-005-dispatch.21, §FS-011-command-line.8).
         if let Some(running) = &offer.running {
-            let since = running
-                .since_seconds
-                .map(|seconds| format!("{} · ", crate::feed::render::span(seconds)))
-                .unwrap_or_default();
-            println!(
-                "  {:width$}    ▶ {} · {since}{}",
-                "", running.kind, running.says
-            );
+            // What it is, how long it has been going, and what it is at —
+            // dropping the last where it is the same word as the first, which
+            // is what *queued* is (§FS-005-dispatch.21).
+            let mut said = vec![running.kind.to_string()];
+            if let Some(seconds) = running.since_seconds {
+                said.push(crate::feed::render::span(seconds));
+            }
+            if running.says != running.kind {
+                said.push(running.says.clone());
+            }
+            println!("  {:width$}    ▶ {}", "", said.join(" · "));
             let way_in = running
                 .log
                 .as_ref()

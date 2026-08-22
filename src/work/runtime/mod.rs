@@ -312,11 +312,35 @@ pub fn start_detached(
     if answer.is_done() {
         return Ok(started_id(printed));
     }
-    let said = said(printed);
+    // The launcher's own diagnostic, which is the child's: an invalid plan, a
+    // held lock and an unresolvable hand all fail here (§FS-005-dispatch.20).
+    // Its error envelope first, since under `--json` that is where it puts the
+    // sentence; the printed lines otherwise.
+    let said = launcher_refusal(printed).unwrap_or_else(|| said(printed));
     Err(crate::error::EphorError::Command(match said.is_empty() {
         true => format!("{} refused: {}", label(config), answer.refusal(DETACH_VERB)),
         false => format!("{} refused: {said}", label(config)),
     }))
+}
+
+/// The sentence out of the launcher's own error envelope, where it printed one.
+/// The binding's own document, read by this one binding the way its listing's
+/// stdout is (§AR-002-summons.3) — and cut to what a message line can carry.
+fn launcher_refusal(output: &str) -> Option<String> {
+    for (at, _) in output.match_indices('{') {
+        let mut values =
+            serde_json::Deserializer::from_str(&output[at..]).into_iter::<serde_json::Value>();
+        if let Some(Ok(value)) = values.next() {
+            if let Some(message) = value
+                .get("error")
+                .and_then(|error| error.get("message"))
+                .and_then(serde_json::Value::as_str)
+            {
+                return Some(said(message)).filter(|said| !said.is_empty());
+            }
+        }
+    }
+    None
 }
 
 /// The run id out of what the launcher printed: its descriptor, wherever in
@@ -695,6 +719,29 @@ mod tests {
         // is still a run, and the row is live from the lock alone.
         assert_eq!(started_id("started\n"), None);
         assert_eq!(started_id("{\"pid\":1}"), None);
+    }
+
+    /// A launcher that refused says so in its own error envelope, and that
+    /// sentence is what the reader is told (§FS-005-dispatch.20): an invalid
+    /// plan, a held lock and an unresolvable hand all fail there, as loudly as
+    /// they do in the foreground.
+    #[test]
+    fn the_launchers_own_diagnostic_is_the_refusal() {
+        let envelope = concat!(
+            "{\"error\":{\"help\":\"the run's console is at runtime/run.log\",",
+            "\"message\":\"the run exited before it started (exit status 1):\\n",
+            "    × failed to parse state machine\\n",
+            "    │ 'states.yaml': missing field `version`\\n",
+            "    help: fix it\"}}"
+        );
+        let said = launcher_refusal(envelope).expect("it said why");
+        assert_eq!(
+            said,
+            "the run exited before it started (exit status 1): failed to parse state machine"
+        );
+        // Nothing shaped like an envelope is nothing to lift: the printed
+        // lines answer instead.
+        assert_eq!(launcher_refusal("could not start\n"), None);
     }
 
     /// The two verbs a run is reached by, in the runner's own words. The stop
