@@ -230,7 +230,27 @@ fn the_runtime_is_asked_what_workflows_it_offers() {
 fn a_workflow_is_laid_down_beside_the_matters_own_plan() {
     let world = watching();
 
-    // A dry run says what would answer every input, and writes no plan.
+    // A dry run says what would answer every input, and writes no plan. Under
+    // `--json` it says the same in the shape it publishes — validated against
+    // the published schema rather than merely named by it, because a declared
+    // shape nobody checks is a declaration and §REQ-002-parity.4 promises a
+    // contract.
+    shaped(
+        "work-lay",
+        &world
+            .ephor()
+            .args([
+                "work",
+                "lay",
+                "review-change",
+                "--item",
+                "acmeforge:app/101",
+                "--dry-run",
+                "--json",
+            ])
+            .output()
+            .expect("the dry run"),
+    );
     world
         .ephor()
         .args([

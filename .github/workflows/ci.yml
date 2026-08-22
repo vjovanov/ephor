@@ -94,6 +94,12 @@ jobs:
       - name: boundary check
         run: python scripts/check_boundary.py
 
+      # §REQ-002-parity.5: a key the interface binds that no command answers is
+      # a build failure, for the same reason the boundary is — parity observed
+      # as a convention is parity that has already drifted.
+      - name: parity check
+        run: python scripts/check_parity.py
+
   # ephor is a project ephor watches, so it consumes what it ships
   # (§FS-009-shipped-actions): its own `ephor.json` is validated against the
   # published schema, and its own style verb runs through the shipped check

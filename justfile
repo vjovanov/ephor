@@ -31,6 +31,11 @@ format-check:
 boundary:
     python3 scripts/check_boundary.py
 
+# Hold the two surfaces to parity: every key the interface binds is an ability
+# a command carries, or a stated exemption (§REQ-002-parity.5)
+parity:
+    python3 scripts/check_parity.py
+
 # Validate the grund tree (citations resolve, canonical formatting)
 grund:
     grund check
@@ -55,8 +60,8 @@ lint:
 manual-page out="target/manual.html":
     python3 scripts/manual-page.py {{out}}
 
-# Full gate, matching CI: format + build + tests + boundary + grund
-check: format-check build test test-python boundary grund
+# Full gate, matching CI: format + build + tests + boundary + parity + grund
+check: format-check build test test-python boundary parity grund
 
 # Everything a release verifies, without publishing anything
 pre-release:

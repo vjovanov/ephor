@@ -20,7 +20,6 @@ mod prompt;
 mod thread;
 mod work;
 
-use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -32,23 +31,19 @@ use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::Paragraph;
 use ratatui::DefaultTerminal;
-use serde_json::Value;
 
-use crate::branches::{Checkout, Placement};
-use crate::capabilities::{Bindings, CapabilitySet, Rung};
 use crate::error::{EphorError, Result};
-use crate::feed::cache::{self, ProjectFeed, Seen};
-use crate::feed::config::{load_config, ActionConfig, CheckoutConfig, Handed, StatusConfig};
+use crate::feed::cache::{self, ProjectFeed};
+use crate::feed::config::{load_config, ActionConfig, StatusConfig};
 use crate::feed::model::Item;
-use crate::feed::react::{self, ReactTarget};
-use crate::feed::reply::{self, ReplyTarget};
-use crate::feed::task::Task;
-use crate::forest::{Staleness, Standing, Upstream};
-use crate::paths;
-use crate::registry;
-use crate::seams::dossier;
-use crate::seams::summons::{self, Outcome, Place, Site};
+use crate::seams::summons::{self, Place, Site};
 
+pub(crate) use crate::api::session::display_root;
+#[allow(unused_imports)]
+pub(crate) use crate::api::OrgInfo;
+pub(crate) use crate::api::{Session as Ctx, WorkBadge};
+pub(crate) use crate::branches::BranchInfo;
+pub(crate) use crate::branches::WorkspaceState;
 use actions::{ActionMenu, MenuOutcome};
 use gate::GateScreen;
 use navigator::NavigatorState;
@@ -56,669 +51,6 @@ use operations::OperationsScreen;
 use prompt::{Asking, Prompt, PromptOutcome};
 use thread::ThreadScreen;
 use work::WorkScreen;
-
-#[derive(Clone)]
-pub(crate) struct OrgInfo {
-    pub id: String,
-    pub name: String,
-    pub root: Option<String>,
-}
-
-pub(crate) use crate::branches::BranchInfo;
-
-/// What an item's work is doing, condensed to what fits on its row
-/// (§FS-005-dispatch.4). Recomputed from the plans whenever anything could
-/// have changed them — never remembered across a change.
-#[derive(Clone)]
-pub(crate) struct WorkBadge {
-    pub text: String,
-    pub open: bool,
-    pub stale: bool,
-}
-
-/// Shared data both screens read. Mutations go through the shell so screens
-/// stay pure key-to-[`Action`] translators.
-pub(crate) struct Ctx {
-    pub feeds: Vec<ProjectFeed>,
-    pub seen: Seen,
-    /// Feed-configured projects, ordered by organization (registry order).
-    pub projects: Vec<String>,
-    pub orgs: Vec<OrgInfo>,
-    pub project_org: BTreeMap<String, String>,
-    /// Where each project is, how a branch becomes a workspace, which branches
-    /// the registry knows, and what its forest is declared to hold — the one
-    /// answer the whole program shares (§AR-004-forest.3).
-    pub placements: BTreeMap<String, Placement>,
-    /// How far each checked-out branch trails main, per repository and summed
-    /// (§AR-004-forest.1); computed at load and refresh time.
-    pub behind: BTreeMap<(String, String), Staleness>,
-    /// Where each checked-out branch stands against its own published copy
-    /// (§DA-003-upstream-is-the-published-copy) — a different fact from
-    /// [`Ctx::behind`]'s distance to main, kept beside it and never summed
-    /// with it. Keyed and recomputed the same way.
-    pub standing: BTreeMap<(String, String), Standing>,
-    /// Which branch each item is on, by `(project, item id)` → index into that
-    /// project's branches, and how many items each branch holds. Worked out
-    /// when the feeds are read, never while drawing: placing an item means
-    /// matching its whole recorded conversation against every branch, and a
-    /// frame that does that once per branch row costs a third of a second to
-    /// move the cursor one line.
-    pub on_branch: BTreeMap<(String, String), usize>,
-    pub linked: BTreeMap<(String, String), usize>,
-    /// Per project: visible items, unread, and unread awaiting a response.
-    /// Counted per rebuild, for the same reason.
-    pub stats: BTreeMap<String, (usize, usize, usize)>,
-    /// What each project can do (§AR-005-capabilities). Resolved at load and
-    /// whenever the world may have moved, and consulted by everything that
-    /// offers, gates, or refuses — nothing here runs its own check.
-    pub capabilities: BTreeMap<String, CapabilitySet>,
-    /// Why a matter is back, keyed by matter key — shown on the row so a
-    /// reappearance never sends the reader to re-read everything
-    /// (§FS-007-matters.5).
-    pub resurfacing: BTreeMap<String, String>,
-    /// Conversations attribution could not place, and ones two projects
-    /// claimed equally. Shown rather than dropped: a guess that lands wrong
-    /// amends someone's matter silently (§FS-008-attribution.4).
-    pub unattributed: Vec<Item>,
-    /// Item actions: global, plus per-project extras.
-    pub actions: Vec<ActionConfig>,
-    pub project_actions: BTreeMap<String, Vec<ActionConfig>>,
-    /// Each project's provider blocks, kept so the source that produced an
-    /// item can be asked what it offers on it (§FS-004-quick-actions.1).
-    pub provider_blocks: BTreeMap<String, Vec<Value>>,
-    /// Per-project branch checkout commands.
-    pub checkouts: BTreeMap<String, CheckoutConfig>,
-    /// How long finished work stays under Recent (§FS-003-feed-categories.3).
-    pub recent_days: u64,
-    pub unread_only: bool,
-    /// Per item id, what has been handed to the runtime about it.
-    pub work: BTreeMap<String, WorkBadge>,
-}
-
-impl Ctx {
-    pub fn feed(&self, project: &str) -> Option<&ProjectFeed> {
-        self.feeds.iter().find(|feed| feed.project == project)
-    }
-
-    /// The item's menu, in provenance order (§FS-006-project-interface.9):
-    /// what its source offers on it unasked (§FS-004-quick-actions.3), then
-    /// what the project offers of itself, then the person's own — an id
-    /// repeated later replacing the entry where it already sits — and then the
-    /// work that can be handed over about it, because the recipes and the
-    /// actions are one menu (§FS-005-dispatch.1).
-    ///
-    /// `recipes` is the project's resolved list, shipped and configured. It is
-    /// handed in rather than read here so that all four sources are selected
-    /// against the same measurement of the same checkout: two folds a moment
-    /// apart would eventually offer a rebase entry beside a recipe that says
-    /// the branch is current.
-    /// The entries written beside the runtime's own workflows
-    /// (§FS-005-dispatch.19). They are handed in rather than read here for the
-    /// reason the recipes are: reading them asks the binding, and every source
-    /// in one menu has to be selected against one measurement of one checkout.
-    /// Each arrives with where its workflow was found, which is where the
-    /// entry ranks — what the binding ships with what ephor ships, the
-    /// project's with the project's offers, the person's with the person's own.
-    pub fn actions_with(
-        &self,
-        item: &Item,
-        recipes: &[crate::work::recipe::Recipe],
-        beside: &[(crate::work::runtime::workflow::Source, ActionConfig)],
-    ) -> Vec<ActionConfig> {
-        let project = self
-            .project_actions
-            .get(&item.project)
-            .map(Vec::as_slice)
-            .unwrap_or_default();
-        let blocks = self
-            .provider_blocks
-            .get(&item.project)
-            .map(Vec::as_slice)
-            .unwrap_or_default();
-        // One fold of the item's checkout answers both rebase offers and every
-        // selector that asks about it (§FS-004-quick-actions.8).
-        let trailing = self.item_trailing(item);
-        let facts = trailing
-            .as_ref()
-            .map(actions::Trailing::facts)
-            .unwrap_or_default();
-        let mut recognized = crate::feed::providers::quick_actions(blocks, item);
-        // ephor's own quick actions, offered because of what is on disk rather
-        // than because a source said something (§FS-004-quick-actions.6).
-        if let Some(trailing) = &trailing {
-            recognized.extend(self.rebase_offers(&item.project, trailing));
-        }
-        let from = |want: crate::work::runtime::workflow::Source| -> Vec<ActionConfig> {
-            beside
-                .iter()
-                .filter(|(source, entry)| *source == want && entry.matches(item, &facts))
-                .map(|(_, entry)| entry.clone())
-                .collect()
-        };
-        recognized.extend(from(crate::work::runtime::workflow::Source::Runtime));
-        let mut offered = self.offers(item, &facts);
-        offered.extend(from(crate::work::runtime::workflow::Source::Project));
-        let mut configured = actions::applicable(&self.actions, project, item, &facts);
-        configured.extend(from(crate::work::runtime::workflow::Source::Person));
-        let mut menu = actions::merge(vec![recognized, offered, configured]);
-        actions::add_unclaimed(
-            &mut menu,
-            recipes
-                .iter()
-                .filter(|recipe| recipe.matches(item, &facts))
-                .map(actions::agent_entry)
-                .collect(),
-        );
-        // What work is offered on, for every entry that asks for it whoever
-        // wrote it: never about an item that is finished
-        // (§FS-005-dispatch.6), and — where the work edits the change — only
-        // where the change is on this machine, which is the checkout's
-        // question rather than the work's (§FS-004-quick-actions.7). An offer
-        // that would be refused on the keystroke is worse than no offer
-        // (§FS-004-quick-actions.2).
-        let here = matches!(
-            self.checkout(item).map(|checkout| checkout.state),
-            Some(WorkspaceState::Ready)
-        );
-        menu.retain(|entry| match (&entry.agent, &entry.workflow) {
-            (Some(recipe), _) => !item.is_finished() && (here || !recipe.needs_checkout),
-            // A workflow hands work over too, so it is gated the same way
-            // (§FS-005-dispatch.19).
-            (None, Some(_)) => !item.is_finished() && (here || !entry.requires_checkout),
-            _ => true,
-        });
-        menu
-    }
-
-    /// What ephor offers on one checkout that trails something: the replay
-    /// onto the project's main branch, and the replay onto the branch's own
-    /// published copy (§FS-004-quick-actions.6, §FS-004-quick-actions.8).
-    ///
-    /// The two are gated apart, because they need different things. The first
-    /// has to name the branch it replays onto, so it is offered only where the
-    /// project declares a main branch; the second resolves its ref inside each
-    /// repository and needs no base named anywhere, so a project that declares
-    /// none is still offered it. One implementation, called from an item's
-    /// menu and from a branch row's, so the two cannot come to disagree about
-    /// what is on offer.
-    fn rebase_offers(&self, project: &str, trailing: &actions::Trailing) -> Vec<ActionConfig> {
-        let mut offers = Vec::new();
-        // Measurable, not behind: the reading that says *level* is the reading
-        // the replay would refresh, and it is only ever as fresh as the last
-        // fetch, so withholding the entry on it hides the one move that would
-        // correct it (§FS-004-quick-actions.6). What is required is a base to
-        // name — the entry has to say what it replays onto.
-        if let (Some(main_branch), Some(trail)) = (self.main_branch(project), trailing.behind) {
-            offers.push(actions::rebase_action(main_branch, trail));
-        }
-        // The same, and the fold already leaves out every repository whose
-        // copy is simply its base — that distance is the first entry's — so a
-        // checkout of nothing but such repositories measures nothing here and
-        // the entry never carries the first one's number under another name
-        // (§FS-004-quick-actions.8).
-        if let Some(trail) = trailing.behind_upstream {
-            offers.push(actions::upstream_rebase_action(
-                trailing.published.as_deref(),
-                trail,
-            ));
-        }
-        offers
-    }
-
-    /// What the project says it can do on this item, where it speaks and the
-    /// row lets it be read (§FS-006-project-interface.2,
-    /// §FS-006-project-interface.9). A manifest trusted for descriptions only
-    /// carries no offers to begin with, so trust needs no second check here.
-    fn offers(&self, item: &Item, facts: &crate::work::recipe::Facts) -> Vec<ActionConfig> {
-        self.placements
-            .get(&item.project)
-            .and_then(crate::branches::Placement::manifest)
-            .map(|manifest| {
-                manifest
-                    .offers
-                    .iter()
-                    .map(crate::manifest::Offer::action)
-                    .filter(|offer| offer.matches(item, facts))
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
-    /// Where the item's own checkout stands. What decides this is whether the
-    /// item resolves to a branch workspace on disk, never what kind of row it
-    /// is (§FS-004-quick-actions.6): a change is stale or it is not, and a
-    /// forge having filed a pull request about it is not the fact being acted
-    /// on. None where nothing resolves — no branch, or a workspace that was
-    /// never checked out — because an offer that would fail on the keystroke
-    /// is worse than no offer (§FS-004-quick-actions.2).
-    fn item_trailing(&self, item: &Item) -> Option<actions::Trailing> {
-        let (name, _) = self.effective_branch(item);
-        self.branch_trailing(&item.project, &name?)
-    }
-
-    /// How far one branch's checkout trails: the project's main branch and its
-    /// own published copy, summed across its forest (§AR-004-forest.1), what
-    /// that copy is called, and whether it is the base again
-    /// (§FS-004-quick-actions.8). One fold, read fresh — a menu is opened
-    /// rarely enough to measure rather than remember. None where the workspace
-    /// is not on disk, which is the checkout's question rather than the
-    /// rebase's (§FS-004-quick-actions.7).
-    fn branch_trailing(&self, project: &str, branch: &str) -> Option<actions::Trailing> {
-        let placement = self.placements.get(project)?;
-        let workspace = placement
-            .workspace_for(branch)
-            // A project without branch workspaces works in its root.
-            .unwrap_or_else(|| placement.root.clone());
-        if !workspace.is_dir() {
-            return None;
-        }
-        let mut trailing = actions::Trailing::of(&placement.forest(&workspace));
-        // A distance to a base nobody named is not a fact anything here acts
-        // on: the row does not show it and the entry has nothing to put in
-        // "rebase onto …" (§FS-004-quick-actions.6), so a selector asking
-        // whether this branch is behind must not be answered `true` from it
-        // either — an entry and the work it hands over cannot be gated on
-        // different measurements of the same checkout (§FS-005-dispatch.1).
-        if placement.main_branch.is_none() {
-            trailing.behind = None;
-        }
-        Some(trailing)
-    }
-
-    /// The menu a branch row opens: ephor's own offers about the branch, with
-    /// no matter behind them (§FS-004-quick-actions.6). Only what ephor
-    /// recognizes on disk — an item's own menu is where a source's, a
-    /// project's and a person's entries belong, since those are selected
-    /// against an item and a branch row has none to select against
-    /// (§FS-004-quick-actions.2).
-    pub fn branch_actions(&self, project: &str, branch: &str) -> Vec<ActionConfig> {
-        match self.branch_trailing(project, branch) {
-            Some(trailing) => self.rebase_offers(project, &trailing),
-            None => Vec::new(),
-        }
-    }
-
-    /// One matter by its key, across every project's feed — for the moments
-    /// that need the model rather than the row rendered from it.
-    pub fn matter(&self, key: &str) -> Option<crate::matter::Matter> {
-        self.feeds.iter().find_map(|feed| {
-            feed.matters()
-                .into_iter()
-                .find(|matter| matter.key.as_str() == key)
-        })
-    }
-
-    /// Why each matter is back in front of the reader, keyed by matter key
-    /// (§FS-007-matters.5). Recomputed with the feed.
-    pub fn recompute_resurfacing(&mut self) {
-        let mut reasons = BTreeMap::new();
-        for feed in &self.feeds {
-            for matter in feed.matters() {
-                if let Some(reason) = cache::resurfacing(&self.seen, &matter) {
-                    reasons.insert(matter.key.as_str().to_string(), reason);
-                }
-            }
-        }
-        self.resurfacing = reasons;
-    }
-
-    /// What a project can do. A project the registry does not describe holds
-    /// nothing, and says so rather than being absent.
-    pub fn can(&self, project: &str) -> CapabilitySet {
-        self.capabilities
-            .get(project)
-            .cloned()
-            .unwrap_or_else(|| CapabilitySet::unknown(project))
-    }
-
-    /// Re-resolve every project's ladder. Cheap by construction — stat calls,
-    /// config lookups, one walk of PATH (§AR-005-capabilities.1) — so it runs
-    /// again whenever a refresh or a checkout may have moved the world.
-    pub fn recompute_capabilities(&mut self) {
-        let mut table = BTreeMap::new();
-        for project in &self.projects {
-            let gate_reported = self
-                .feed(project)
-                .is_some_and(crate::feed::cache::ProjectFeed::reports_a_gate);
-            // What the project says about itself, read once per project here
-            // rather than by each rung (§FS-006-project-interface.2).
-            let manifest = self
-                .placements
-                .get(project)
-                .and_then(crate::branches::Placement::manifest);
-            let bindings = Bindings {
-                sources: self.provider_blocks.get(project).map(Vec::len).unwrap_or(0),
-                // What answered at the last refresh, out of the cache the
-                // refresh wrote (§FS-006-project-interface.10). No cache yet
-                // is nothing answered, which is the honest reading before the
-                // first refresh has run.
-                answering: self
-                    .feed(project)
-                    .and_then(crate::feed::cache::ProjectFeed::answering),
-                checkout: self
-                    .checkouts
-                    .get(project)
-                    .map(|checkout| checkout.command.as_str()),
-                runner: Some(crate::work::runtime::RUNNER),
-                gate_reported,
-                manifest: manifest.as_ref(),
-            };
-            table.insert(
-                project.clone(),
-                CapabilitySet::resolve(project, self.placements.get(project), &bindings),
-            );
-        }
-        self.capabilities = table;
-    }
-
-    /// A project's provider blocks, for a write that has to go back through
-    /// the source that reported what it acts on.
-    pub fn blocks_for(&self, project: &str) -> Vec<Value> {
-        self.provider_blocks
-            .get(project)
-            .cloned()
-            .unwrap_or_default()
-    }
-
-    pub fn org_projects(&self, org_id: &str) -> Vec<String> {
-        self.projects
-            .iter()
-            .filter(|project| {
-                self.project_org
-                    .get(*project)
-                    .map(String::as_str)
-                    .unwrap_or("")
-                    == org_id
-            })
-            .cloned()
-            .collect()
-    }
-
-    pub fn org_label(&self, org: &OrgInfo) -> String {
-        match &org.root {
-            Some(root) => format!("{} — {}", org.name, display_root(root)),
-            None => org.name.clone(),
-        }
-    }
-
-    pub fn unread_stats(&self, project: &str) -> (usize, usize, usize) {
-        self.stats.get(project).copied().unwrap_or((0, 0, 0))
-    }
-
-    /// Count each project's visible, unread, and awaiting-response items.
-    /// One walk of the feed for all three — `items()` rebuilds every matter
-    /// into a row, so asking three times costs three times — and one walk per
-    /// rebuild rather than per frame, since a draw that counts is a draw whose
-    /// cost is paid again every time the cursor moves.
-    pub fn recompute_stats(&mut self) {
-        let now = Utc::now();
-        let mut stats = BTreeMap::new();
-        for project in self.projects.clone() {
-            let Some(feed) = self.feed(&project) else {
-                continue;
-            };
-            let (mut total, mut unread, mut respond) = (0, 0, 0);
-            for item in feed.items() {
-                if !item.is_visible(now, self.recent_days) {
-                    continue;
-                }
-                total += 1;
-                if cache::is_unread(&self.seen, &item) {
-                    unread += 1;
-                    if item.needs_response {
-                        respond += 1;
-                    }
-                }
-            }
-            stats.insert(project, (total, unread, respond));
-        }
-        self.stats = stats;
-    }
-
-    /// One project's placement, or nothing where the registry does not
-    /// describe it.
-    pub fn placement(&self, project: &str) -> Option<&Placement> {
-        self.placements.get(project)
-    }
-
-    /// Where a project is checked out.
-    pub fn root(&self, project: &str) -> Option<&Path> {
-        self.placements
-            .get(project)
-            .map(|placement| placement.root.as_path())
-    }
-
-    /// The registry branches of a project, in registry order.
-    pub fn branches(&self, project: &str) -> &[BranchInfo] {
-        self.placements
-            .get(project)
-            .map(|placement| placement.branches.as_slice())
-            .unwrap_or_default()
-    }
-
-    /// What this project's branches are measured against.
-    pub fn main_branch(&self, project: &str) -> Option<&str> {
-        self.placements
-            .get(project)
-            .and_then(|placement| placement.main_branch.as_deref())
-    }
-
-    /// The item's branch name — the provider-recorded one (ground truth),
-    /// or the matched registry branch's — plus the registry match itself.
-    /// One rule, shared with dispatch and the CLI (§AR-004-forest.3).
-    pub fn effective_branch(&self, item: &Item) -> (Option<String>, Option<BranchInfo>) {
-        let Some(placement) = self.placements.get(&item.project) else {
-            return (None, None);
-        };
-        (
-            placement.branch_name(item),
-            placement.matched(item).cloned(),
-        )
-    }
-
-    /// Whether an item's branch workspace is on disk. None when the state is
-    /// unknowable: no branch workspaces, or no branch name.
-    ///
-    /// Any kind, for the reason the rebase offer is any kind
-    /// (§FS-004-quick-actions.6): what the marker reports is a change on this
-    /// machine, and a forge having filed a pull request about it is not that
-    /// fact. Restricted to pull requests, an issue whose workspace is on disk
-    /// was offered the rebase from its own row and shown nothing saying the
-    /// branch was there.
-    pub fn item_checked_out(&self, item: &Item) -> Option<bool> {
-        let placement = self.placements.get(&item.project)?;
-        let workspace = placement.workspace_for(&placement.branch_name(item)?)?;
-        Some(workspace.is_dir())
-    }
-
-    /// Re-measure where each checked-out branch stands: how far it trails its
-    /// project's main branch, and how far its own published copy
-    /// (§DA-003-upstream-is-the-published-copy) — one fold over the branch
-    /// workspace's forest, per repository and then summed (§AR-004-forest.1),
-    /// with the behind-main half derived from the standing so the two counts
-    /// on a row cannot come from different measurements. Local refs only (no
-    /// fetch), so counts are relative to what was last fetched.
-    pub fn recompute_behind(&mut self) {
-        let mut behind = BTreeMap::new();
-        let mut standing = BTreeMap::new();
-        for project in &self.projects {
-            let Some(placement) = self.placements.get(project) else {
-                continue;
-            };
-            for branch in &placement.branches {
-                if !self.branch_checked_out(project, branch) {
-                    continue;
-                }
-                let workspace = placement
-                    .workspace_for(&branch.branch)
-                    .unwrap_or_else(|| placement.root.clone());
-                let stand = placement.forest(&workspace).standing();
-                let staleness = stand.staleness();
-                // The two facts are gated apart, the same way the two offers
-                // are: the distance to main is only a distance to something a
-                // project named, while the distance to the branch's own copy
-                // is answered inside each repository and needs no such name
-                // (§FS-004-quick-actions.6). A project that declares no main
-                // branch shows, and is offered, the second alone.
-                if placement.main_branch.is_some() && staleness.total().is_some() {
-                    behind.insert((project.clone(), branch.branch.clone()), staleness);
-                }
-                if stand
-                    .repos
-                    .iter()
-                    .any(|repo| repo.upstream != Upstream::Unknown)
-                {
-                    standing.insert((project.clone(), branch.branch.clone()), stand);
-                }
-            }
-        }
-        self.behind = behind;
-        self.standing = standing;
-    }
-
-    /// How far one branch's checkout trails, per repository. None where it was
-    /// never measured — no checkout, or nothing measurable in it.
-    pub fn branch_behind(&self, project: &str, branch: &str) -> Option<&Staleness> {
-        self.behind.get(&(project.to_string(), branch.to_string()))
-    }
-
-    /// Where one branch's checkout stands against its published copies, per
-    /// repository. None where nothing was read — no checkout, or nothing on a
-    /// branch in it (§DA-003-upstream-is-the-published-copy).
-    pub fn branch_standing(&self, project: &str, branch: &str) -> Option<&Standing> {
-        self.standing
-            .get(&(project.to_string(), branch.to_string()))
-    }
-
-    /// Whether a registry branch has its checkout on disk.
-    pub fn branch_checked_out(&self, project: &str, branch: &BranchInfo) -> bool {
-        let Some(placement) = self.placements.get(project) else {
-            return false;
-        };
-        match placement.workspace_for(&branch.branch) {
-            Some(workspace) => workspace.is_dir(),
-            None => placement.root.is_dir(),
-        }
-    }
-
-    /// Where an item's work belongs: the branch it is on, the directory to run
-    /// commands in, and whether its workspace is on disk
-    /// (§AR-004-forest.3). The same answer dispatch and the CLI get.
-    pub fn checkout(&self, item: &Item) -> Option<Checkout> {
-        Some(self.placements.get(&item.project)?.checkout(item))
-    }
-
-    /// Place every item on a branch, once, for every project. Each item is
-    /// matched against the project's whole branch list — so a row's group and
-    /// the count on the branch above it are the same answer — and the result
-    /// is kept, because matching is the expensive thing here and a draw must
-    /// not do it (§FS-008-attribution.2).
-    pub fn recompute_placements(&mut self) {
-        self.place_scope(None);
-    }
-
-    /// The same pass over one project. A refresh lands one project at a time
-    /// (§FS-001-forge-interface.7), and a landing changes that project's feed
-    /// and no other, so re-placing the whole site pays for every project on
-    /// every arrival — the same matching N times over a run of N projects,
-    /// where one project's worth is the whole of what moved.
-    pub fn recompute_placements_for(&mut self, project: &str) {
-        self.place_scope(Some(project));
-    }
-
-    /// One pass, scoped to every project or to one. Both go through this,
-    /// rather than being written twice: a row filed one way while the reader
-    /// is mid-scan and another way when the run finishes is the disagreement
-    /// keeping one answer exists to prevent (§AR-004-forest.3).
-    fn place_scope(&mut self, only: Option<&str>) {
-        let scope: Vec<String> = match only {
-            Some(project) => vec![project.to_string()],
-            None => self.projects.clone(),
-        };
-        let mut on_branch = BTreeMap::new();
-        let mut linked = BTreeMap::new();
-        for project in &scope {
-            let (Some(placement), Some(feed)) = (self.placements.get(project), self.feed(project))
-            else {
-                continue;
-            };
-            for item in feed.items() {
-                let Some(index) = crate::branches::place(&item, &placement.branches) else {
-                    continue;
-                };
-                on_branch.insert((project.clone(), item.id.clone()), index);
-                let key = (project.clone(), placement.branches[index].branch.clone());
-                *linked.entry(key).or_insert(0) += 1;
-            }
-        }
-        match only {
-            // Everything was re-placed, so everything the maps held is
-            // replaced: a project the registry has stopped describing takes
-            // its rows out with it.
-            None => {
-                self.on_branch = on_branch;
-                self.linked = linked;
-            }
-            // Only this project was answered for, so only its entries go —
-            // dropped first, because an item that left its feed must not keep
-            // the branch it had — and the rest of the site stands untouched.
-            Some(project) => {
-                self.on_branch
-                    .retain(|(owner, _), _| owner.as_str() != project);
-                self.linked
-                    .retain(|(owner, _), _| owner.as_str() != project);
-                self.on_branch.extend(on_branch);
-                self.linked.extend(linked);
-            }
-        }
-    }
-
-    /// Which of the project's branches this item is on, as an index into
-    /// [`Ctx::branches`]. None for an item on no branch of this project.
-    pub fn item_branch(&self, project: &str, item: &Item) -> Option<usize> {
-        self.on_branch
-            .get(&(project.to_string(), item.id.clone()))
-            .copied()
-    }
-
-    /// How many of the project's items are on this branch — the size of the
-    /// group the branch row heads.
-    pub fn branch_linked(&self, project: &str, branch: &BranchInfo) -> usize {
-        self.linked
-            .get(&(project.to_string(), branch.branch.clone()))
-            .copied()
-            .unwrap_or(0)
-    }
-
-    /// The project's items that belong to this branch, in feed order.
-    pub fn items_on_branch(&self, project: &str, branch: &BranchInfo) -> Vec<Item> {
-        let Some(position) = self
-            .branches(project)
-            .iter()
-            .position(|other| other.branch == branch.branch)
-        else {
-            return Vec::new();
-        };
-        match self.feed(project) {
-            Some(feed) => feed
-                .items()
-                .filter(|item| self.item_branch(project, item) == Some(position))
-                .collect(),
-            None => Vec::new(),
-        }
-    }
-
-    /// Best link for a branch row: its most urgent matching feed item.
-    pub fn branch_url(&self, project: &str, branch: &BranchInfo) -> Option<String> {
-        self.items_on_branch(project, branch)
-            .into_iter()
-            .filter(|item| item.url.is_some())
-            .max_by_key(|item| (item.needs_response, item.updated_at))
-            .and_then(|item| item.url)
-    }
-}
-
-pub(crate) use crate::branches::WorkspaceState;
 
 /// What a screen asks the shell to do in response to a key.
 pub(crate) enum Action {
@@ -742,29 +74,24 @@ pub(crate) enum Action {
         marks: Vec<(String, DateTime<Utc>, String)>,
         pop: bool,
     },
-    /// Post `content` (palette name) on a message; `message` is the flat
-    /// message index for the optimistic local update. `project` is carried
-    /// because a reaction on a forge item is a write back through that
-    /// project's provider block, not a call ephor makes on its own.
+    /// Post `content` (palette name) on a message. `message` is the flat
+    /// message index — the address the move takes and the one the optimistic
+    /// local update writes at, which are the same number because both surfaces
+    /// walk the conversation once (§AR-009-surfaces.1). `emoji` rides along
+    /// only for what the screen draws before the answer comes back.
     React {
-        target: ReactTarget,
+        item: Item,
+        message: usize,
         content: &'static str,
         emoji: &'static str,
-        project: String,
-        message: usize,
     },
     /// Tick a task on a message (§FS-004-quick-actions.5).
     ResolveTask {
-        task: Task,
-        project: String,
+        item: Item,
         message: usize,
     },
     /// Send the reply a run drafted, as it now stands (§FS-005-dispatch.13).
-    /// The item comes along because posting is also what retires the draft.
     PostReply {
-        target: ReplyTarget,
-        text: String,
-        project: String,
         item: Item,
     },
     /// Open a drafted reply in the reader's editor before it goes anywhere.
@@ -783,10 +110,13 @@ pub(crate) enum Action {
     /// Show what is being done about an item, and what could be
     /// (§FS-005-dispatch).
     OpenWork(Item),
-    /// Hand the item to the runtime under one recipe.
+    /// Hand the item to the runtime under one entry of its work menu: a recipe
+    /// that opens a ticket, or a workflow that gets laid down beside it
+    /// (§FS-005-dispatch.19). Named by the entry's key, which is the name
+    /// `ephor work offers` prints and `ephor actions run` takes.
     DispatchWork {
         item: Item,
-        recipe: String,
+        entry: String,
     },
     /// Reopen work whose item has moved under it (§FS-005-dispatch.5).
     SyncWork(Item),
@@ -849,9 +179,6 @@ struct App {
     menu: Option<ActionMenu>,
     /// A line the reader is typing, drawn over everything else.
     prompt: Option<Prompt>,
-    /// The half of ephor that hands work over (§FS-005-dispatch). None when
-    /// the registry could not be read for it — the inbox still works.
-    dispatcher: Option<crate::work::Dispatcher>,
     /// A refresh running underneath this screen, where one is
     /// (§FS-001-forge-interface.7).
     refresh: Option<crate::feed::refresh::BackgroundRefresh>,
@@ -876,67 +203,6 @@ struct App {
     message: String,
 }
 
-/// What a menu entry's summons is told it is about: a matter where there is
-/// one, and otherwise the project and the branch, because a branch row has no
-/// matter and a stand-in one would put a kind, a source and an id into the
-/// contract that nothing filed (§AR-002-summons.1).
-///
-/// The branch subject says the item id too, and says it empty. A summons
-/// inherits the environment it was started in (§AR-002-summons), so a variable
-/// left unset is whatever the shell that launched ephor happened to hold — and
-/// an entry reading `$EPHOR_ITEM_ID` would bind this branch's rebase to
-/// somebody else's matter.
-fn menu_dossier(
-    menu: &ActionMenu,
-    workspace: &Path,
-    forest: Option<&crate::forest::Forest>,
-) -> Vec<(String, String)> {
-    match menu.subject.item() {
-        Some(item) => dossier::of_item(item, &menu.root, workspace, menu.branch.as_ref(), forest),
-        None => dossier::of_branch(
-            menu.subject.project(),
-            &menu.root,
-            workspace,
-            menu.branch.as_ref(),
-            forest,
-        ),
-    }
-}
-
-/// What an entry says about who gets its work, out of the answer the seven steps
-/// gave (§FS-005-dispatch.14). A hand that cannot be asked right now is named
-/// with the reason rather than hidden; a choice that cannot stand is the whole
-/// reason and refuses the entry; and where nobody named anybody the sentence
-/// is the runtime's own — with no runner bound, the *workable* rung's, because
-/// there is nobody to ask and the ticket is written all the same.
-fn who_gets_it(choice: &crate::work::runtime::roster::Choice, unbound: Option<&str>) -> Handed {
-    use crate::work::runtime::roster::Choice;
-    let says = match choice {
-        Choice::Chosen { hand, effort, .. } => {
-            let at = match effort {
-                Some(effort) => format!(" at {effort}"),
-                None => String::new(),
-            };
-            match &hand.available {
-                Some(why) => format!("{}{at} (unavailable: {why})", hand.id),
-                None => format!("{}{at}", hand.id),
-            }
-        }
-        Choice::Refused(why) => why.clone(),
-        Choice::Unasked { note: Some(note) } => note.clone(),
-        Choice::Unasked { note: None } => unbound
-            .map(str::to_string)
-            .unwrap_or_else(|| "whoever the runtime picks".to_string()),
-    };
-    Handed {
-        says,
-        refusal: match choice {
-            Choice::Refused(why) => Some(why.clone()),
-            _ => None,
-        },
-    }
-}
-
 pub fn run() -> Result<ExitCode> {
     let config = load_config()?;
     let mut app = App::load(&config)?;
@@ -944,64 +210,6 @@ pub fn run() -> Result<ExitCode> {
     let result = app.event_loop(&mut terminal, &config);
     ratatui::restore();
     result
-}
-
-struct RegistryInfo {
-    orgs: Vec<OrgInfo>,
-    project_org: BTreeMap<String, String>,
-    placements: BTreeMap<String, Placement>,
-}
-
-fn load_registry_info(projects: &[String]) -> Result<RegistryInfo> {
-    let registry_doc = crate::feed::commands::load_registry_doc()?;
-
-    let mut orgs: Vec<OrgInfo> = registry::array_field(&registry_doc, "organizations")
-        .iter()
-        .map(|org| OrgInfo {
-            id: registry::id_of(org).to_string(),
-            name: registry::str_field(org, "name").unwrap_or("").to_string(),
-            root: registry::str_field(org, "root").map(String::from),
-        })
-        .collect();
-    orgs.push(OrgInfo {
-        id: String::new(),
-        name: "Other".to_string(),
-        root: None,
-    });
-
-    let mut project_org = BTreeMap::new();
-    let mut placements = BTreeMap::new();
-    for project in registry::array_field(&registry_doc, "projects") {
-        let project_id = registry::id_of(project).to_string();
-        if !projects.contains(&project_id) {
-            continue;
-        }
-        project_org.insert(
-            project_id.clone(),
-            registry::str_field(project, "organization")
-                .unwrap_or("")
-                .to_string(),
-        );
-        // The same reading dispatch and the CLI do — one description of where
-        // a project is, not a second copy of it (§AR-004-forest.3).
-        if let Some(placement) = Placement::load(&registry_doc, &project_id) {
-            placements.insert(project_id, placement);
-        }
-    }
-    Ok(RegistryInfo {
-        orgs,
-        project_org,
-        placements,
-    })
-}
-
-fn display_root(root: &str) -> String {
-    let resolved = paths::resolve_path(root).to_string_lossy().into_owned();
-    let home = paths::home_dir().to_string_lossy().into_owned();
-    match resolved.strip_prefix(&home) {
-        Some(rest) if rest.starts_with('/') || rest.is_empty() => format!("~{rest}"),
-        _ => resolved,
-    }
 }
 
 pub(crate) fn highlight_style() -> Style {
@@ -1012,67 +220,15 @@ pub(crate) fn highlight_style() -> Style {
 
 impl App {
     fn load(config: &StatusConfig) -> Result<Self> {
-        let configured: Vec<String> = config.projects.keys().cloned().collect();
-        let info = load_registry_info(&configured)?;
-
-        // Order projects by organization (registry order), then by name.
-        let org_index = |project: &String| {
-            let org_id = info.project_org.get(project).cloned().unwrap_or_default();
-            info.orgs
-                .iter()
-                .position(|org| org.id == org_id)
-                .unwrap_or(info.orgs.len() - 1)
-        };
-        let mut projects = configured;
-        projects.sort_by(|a, b| org_index(a).cmp(&org_index(b)).then(a.cmp(b)));
-
+        // The same session a command opens (§AR-009-surfaces.2): the screen
+        // reads exactly the data `ephor actions` and `ephor branches` do.
         let mut app = App {
-            ctx: Ctx {
-                feeds: Vec::new(),
-                seen: cache::load_seen()?,
-                projects,
-                orgs: info.orgs,
-                project_org: info.project_org,
-                placements: info.placements,
-                behind: BTreeMap::new(),
-                standing: BTreeMap::new(),
-                on_branch: BTreeMap::new(),
-                linked: BTreeMap::new(),
-                stats: BTreeMap::new(),
-                capabilities: BTreeMap::new(),
-                resurfacing: BTreeMap::new(),
-                unattributed: Vec::new(),
-                actions: config.actions.clone(),
-                project_actions: config
-                    .projects
-                    .iter()
-                    .map(|(id, project)| (id.clone(), project.actions.clone()))
-                    .collect(),
-                provider_blocks: config
-                    .projects
-                    .iter()
-                    .map(|(id, project)| (id.clone(), project.providers.clone()))
-                    .collect(),
-                checkouts: config
-                    .projects
-                    .iter()
-                    .filter_map(|(id, project)| {
-                        project
-                            .checkout
-                            .clone()
-                            .map(|checkout| (id.clone(), checkout))
-                    })
-                    .collect(),
-                recent_days: config.defaults.recent_days,
-                unread_only: true,
-                work: BTreeMap::new(),
-            },
+            ctx: Ctx::open(config)?,
             navigator: NavigatorState::new(),
             screen: Screen::Navigator,
             saved: None,
             menu: None,
             prompt: None,
-            dispatcher: crate::work::Dispatcher::load(config).ok(),
             refresh: None,
             work: config.work.clone(),
             work_groups: Vec::new(),
@@ -1100,25 +256,7 @@ impl App {
     }
 
     fn reload_feeds(&mut self) -> Result<()> {
-        self.ctx.feeds.clear();
-        // What nothing claimed is read like any other feed, so it can be shown
-        // rather than only counted (§FS-008-attribution.4).
-        self.ctx.unattributed = cache::load_feed(crate::feed::refresh::UNATTRIBUTED)?
-            .map(|feed| feed.items().collect())
-            .unwrap_or_default();
-        for project in self.ctx.projects.clone() {
-            match cache::load_feed(&project)? {
-                Some(feed) => self.ctx.feeds.push(feed),
-                None => self.ctx.feeds.push(ProjectFeed {
-                    project,
-                    ..ProjectFeed::default()
-                }),
-            }
-        }
-        self.ctx.recompute_behind();
-        self.ctx.recompute_placements();
-        self.ctx.recompute_capabilities();
-        self.ctx.recompute_resurfacing();
+        self.ctx.reload_feeds()?;
         self.reload_work_groups();
         self.reload_work();
         self.rebuild_view();
@@ -1131,38 +269,19 @@ impl App {
     /// saw something move — never on the bare tick, which only stats what
     /// this last found (§FS-005-dispatch.15.1).
     fn reload_work_groups(&mut self) {
-        self.work_groups = match &mut self.dispatcher {
+        self.work_groups = match &mut self.ctx.dispatcher {
             Some(dispatcher) => dispatcher.work_roots(),
             None => Vec::new(),
         };
     }
 
-    /// Re-read every dispatched item's plan. The state of the work belongs to
-    /// the runtime, so it is read rather than remembered
-    /// (§FS-005-dispatch.4) — including after this interface itself has just
-    /// changed it.
+    /// Re-read every dispatched item's plan (§FS-005-dispatch.4). The
+    /// session's own, because the ledger it reads is the session's own: this
+    /// screen used to keep a second [`crate::work::Dispatcher`] and refresh
+    /// the badges off that one, which left the session holding a ledger a
+    /// dispatch had already moved past (§AR-009-surfaces.2).
     fn reload_work(&mut self) {
-        let Some(dispatcher) = &self.dispatcher else {
-            return;
-        };
-        let mut work = BTreeMap::new();
-        for feed in &self.ctx.feeds {
-            for item in feed.items() {
-                if let Some(status) = dispatcher.status(&item) {
-                    work.insert(
-                        item.id.clone(),
-                        WorkBadge {
-                            // A row has already spent its width on the item;
-                            // what is left is a phrase, not a paragraph.
-                            text: status.badge(40),
-                            open: status.open_tickets() > 0,
-                            stale: status.stale(),
-                        },
-                    );
-                }
-            }
-        }
-        self.ctx.work = work;
+        self.ctx.reload_work();
     }
 
     fn event_loop(
@@ -1333,77 +452,60 @@ impl App {
                     self.screen = Screen::Navigator;
                 }
             }
+            // The three moves inside a conversation are the API's, not this
+            // screen's (§AR-009-surfaces.1): `ephor react`, `ephor tick` and
+            // `ephor reply` call exactly these, so the sentence a status line
+            // shows and the `says` a program reads are one sentence, and the
+            // half a move has to remember — retiring a posted draft — cannot be
+            // remembered by one surface and forgotten by the other. What stays
+            // here is presentation: the note drawn while the far side is being
+            // asked, and the optimistic local update afterwards.
             Action::React {
-                target,
+                item,
+                message,
                 content,
                 emoji,
-                project,
-                message,
             } => {
                 self.message = format!("Reacting {emoji}…");
                 terminal
                     .draw(|frame| self.draw(frame))
                     .map_err(|err| EphorError::Command(format!("draw failed: {err}")))?;
-                let blocks = self.ctx.blocks_for(&project);
-                match react::post(&target, content, emoji, &blocks, &project, &config.defaults) {
-                    Ok(()) => {
-                        self.message = format!("Reacted {emoji}");
-                        if let Screen::Thread(thread) = &mut self.screen {
-                            thread.add_local_reaction(message, emoji);
-                        }
+                let outcome = self.ctx.react(&item, message, content);
+                self.message = outcome.says;
+                if outcome.ok {
+                    if let Screen::Thread(thread) = &mut self.screen {
+                        thread.add_local_reaction(message, emoji);
                     }
-                    Err(err) => self.message = err.to_string(),
                 }
             }
-            Action::ResolveTask {
-                task,
-                project,
-                message,
-            } => {
+            Action::ResolveTask { item, message } => {
                 self.message = "Ticking…".to_string();
                 terminal
                     .draw(|frame| self.draw(frame))
                     .map_err(|err| EphorError::Command(format!("draw failed: {err}")))?;
-                let blocks = self.ctx.blocks_for(&project);
-                match crate::feed::task::resolve(&task, &blocks, &project, &config.defaults) {
-                    Ok(()) => {
-                        self.message = "Ticked".to_string();
-                        if let Screen::Thread(thread) = &mut self.screen {
-                            thread.tick_local(message);
-                        }
+                let outcome = self.ctx.tick(&item, message);
+                self.message = outcome.says;
+                if outcome.ok {
+                    if let Screen::Thread(thread) = &mut self.screen {
+                        thread.tick_local(message);
                     }
-                    Err(err) => self.message = err.to_string(),
                 }
             }
-            Action::PostReply {
-                target,
-                text,
-                project,
-                item,
-            } => {
+            Action::PostReply { item } => {
                 self.message = "Posting the reply…".to_string();
                 terminal
                     .draw(|frame| self.draw(frame))
                     .map_err(|err| EphorError::Command(format!("draw failed: {err}")))?;
-                let blocks = self.ctx.blocks_for(&project);
-                match reply::post(&target, &text, &blocks, &project, &config.defaults) {
-                    Ok(()) => {
-                        // Sent, so the draft is retired where it lives: a
-                        // proposal still offered after it was posted invites
-                        // posting it twice (§FS-005-dispatch.13).
-                        self.message = match self
-                            .dispatcher
-                            .as_ref()
-                            .map(|dispatcher| dispatcher.proposal_posted(&item))
-                        {
-                            Some(Err(err)) => format!("Posted — but {err}"),
-                            _ => "Posted".to_string(),
-                        };
-                        if let Screen::Thread(thread) = &mut self.screen {
-                            thread.reply_posted();
-                        }
+                // With no words of its own this sends the draft as it stands
+                // and retires it, which is the move's own second half: a
+                // proposal still offered after it was posted invites posting it
+                // twice (§FS-005-dispatch.13).
+                let outcome = self.ctx.reply(&item, None, crate::api::act::Sending::Now);
+                self.message = outcome.says;
+                if outcome.ok {
+                    if let Screen::Thread(thread) = &mut self.screen {
+                        thread.reply_posted();
                     }
-                    Err(err) => self.message = err.to_string(),
                 }
             }
             Action::EditReply { path, item } => {
@@ -1415,140 +517,79 @@ impl App {
                     thread.reread(proposal);
                 }
             }
+            // One assembly, below the screen (§AR-009-surfaces.1): this is
+            // the list `ephor actions` prints, gated by the same table
+            // (§AR-005-capabilities.2). The menu opens where the project is
+            // placed; where it is not, the ladder's own sentence says why.
             Action::OpenActionMenu(item) => {
-                // The recipes this project offers, so the menu carries the
-                // work that can be handed over about the item beside the
-                // commands that can be run on it (§FS-005-dispatch.1).
-                let recipes = self
-                    .dispatcher
-                    .as_ref()
-                    .map(|dispatcher| dispatcher.recipes(&item.project))
-                    .unwrap_or_default();
-                // The third home an entry may live in: beside the workflow
-                // itself (§FS-005-dispatch.19).
-                let beside = self
-                    .dispatcher
-                    .as_mut()
-                    .map(|dispatcher| dispatcher.workflow_entries(&item.project))
-                    .unwrap_or_default();
-                // Whether there is anything behind the row that reaches the
-                // rest of them (§FS-004-quick-actions.2). Read from the same
-                // answer the entries above came from, which the dispatcher
-                // holds per root.
-                let has_workflows = self.dispatcher.as_mut().is_some_and(|dispatcher| {
-                    !dispatcher.workflows(&item.project).workflows.is_empty()
-                });
-                let mut applicable = self.ctx.actions_with(&item, &recipes, &beside);
-                self.name_the_hands(&item, &mut applicable, config);
-                // The hands `t` may offer, read once at menu open against the
-                // work root the dispatch will use (§FS-005-dispatch.14) —
-                // already without what the project's narrowing excludes, and
-                // empty where there is no agent entry to pick for or nobody
-                // to pick, which is what withholds the picker entirely.
-                let roster = match applicable.iter().any(|entry| entry.agent.is_some()) {
-                    true => match (self.work_root(&item, config), &mut self.dispatcher) {
-                        (Some(root), Some(dispatcher)) => dispatcher.pickable(&item.project, &root),
-                        _ => Vec::new(),
-                    },
-                    false => Vec::new(),
-                };
-                // An empty menu is no longer empty: the last entry is always
-                // "run a command here…" (§FS-005-dispatch.10), and refusing
-                // to open would hide it exactly where nothing is configured.
-                // The menu opens where the project is placed; where it is not,
-                // the ladder's own sentence says why (§AR-005-capabilities.2).
-                let refusal = self.ctx.can(&item.project).refusal(&[Rung::Placed]);
-                match self.ctx.root(&item.project).map(Path::to_path_buf) {
-                    Some(root) if refusal.is_none() => {
-                        // One resolver answers where the work is, which branch
-                        // it is on, and whether its workspace is there
-                        // (§AR-004-forest.3).
-                        let placed = self.ctx.checkout(&item).expect("the project is placed");
-                        let branch = self
-                            .ctx
-                            .placement(&item.project)
-                            .and_then(|placement| placement.matched(&item).cloned());
+                let subject = crate::api::read::Subject::Item(&item);
+                match (self.ctx.place(&subject), self.ctx.menu(&subject)) {
+                    (Ok(placed), Ok(entries)) => {
+                        // The hands `t` may offer, read once at menu open
+                        // against the work root the dispatch will use
+                        // (§FS-005-dispatch.14) — empty where there is no
+                        // agent entry to pick for or nobody to pick, which is
+                        // what withholds the picker entirely.
+                        let roster = match entries.iter().any(|entry| entry.action.agent.is_some())
+                        {
+                            true => match (self.ctx.work_root(&item), &mut self.ctx.dispatcher) {
+                                (Some(root), Some(dispatcher)) => {
+                                    dispatcher.pickable(&item.project, &root)
+                                }
+                                _ => Vec::new(),
+                            },
+                            false => Vec::new(),
+                        };
                         let checkout = self.ctx.checkouts.get(&item.project).cloned();
-                        // The ladder answers what each entry said it needs, so
-                        // an offer and a configured action are refused in the
-                        // same sentence (§AR-005-capabilities.2).
-                        let can = self.ctx.can(&item.project);
-                        let mut menu = ActionMenu::new(
-                            actions::Subject::Item(Box::new(item)),
-                            root.clone(),
-                            placed.workspace,
-                            branch,
-                            placed.state,
-                            checkout,
-                            &can,
-                            applicable,
-                        )
-                        .with_roster(roster);
-                        if has_workflows {
-                            menu = menu.offering_workflows();
-                        }
-                        self.menu = Some(menu);
+                        self.menu = Some(
+                            ActionMenu::over(
+                                actions::Subject::Item(Box::new(item)),
+                                placed.root,
+                                placed.workspace,
+                                placed.branch,
+                                placed.state,
+                                checkout,
+                                entries,
+                            )
+                            .with_roster(roster),
+                        );
                     }
-                    _ => {
-                        self.message = refusal.unwrap_or_else(|| {
-                            format!("{} has no root in the registry", item.project)
-                        });
-                    }
+                    (Err(refusal), _) | (_, Err(refusal)) => self.message = refusal,
                 }
             }
             // The same menu, opened from the row the fact is shown on
             // (§FS-004-quick-actions.6). It carries ephor's own offers only:
             // there is no item here for a source's, a project's or a person's
-            // entries to be selected against.
-            // A branch row carries no recipes for the same reason it carries
-            // no configured entries: work is asked for about a matter, and
-            // there is none here (§FS-005-dispatch.2).
+            // entries to be selected against, and none for a recipe either —
+            // work is asked for about a matter, and there is none here
+            // (§FS-005-dispatch.2).
             Action::OpenBranchActions { project, branch } => {
-                let applicable = self.ctx.branch_actions(&project, &branch.branch);
-                let refusal = self.ctx.can(&project).refusal(&[Rung::Placed]);
-                match self.ctx.placement(&project).cloned() {
-                    Some(placement) if refusal.is_none() => {
-                        let root = placement.root.clone();
-                        // A branch whose workspace the project puts somewhere
-                        // and has not got there yet is the checkout's question
-                        // first (§FS-004-quick-actions.7); a project that keeps
-                        // one checkout at its root is always ready. Where the
-                        // target is not there the commands run in the root —
-                        // the same fallback [`Placement::checkout`] makes for
-                        // an item (§AR-004-forest.3), because pointing
-                        // `EPHOR_WORKSPACE` at a directory that does not exist
-                        // is an offer that fails on the keystroke
-                        // (§FS-004-quick-actions.2).
-                        let (workspace, state) = match placement.workspace_for(&branch.branch) {
-                            None => (root.clone(), WorkspaceState::Ready),
-                            Some(target) if target.is_dir() => (target, WorkspaceState::Ready),
-                            Some(target) => (root.clone(), WorkspaceState::Missing(target)),
-                        };
+                let subject = crate::api::read::Subject::Branch {
+                    project: &project,
+                    branch: &branch.branch,
+                };
+                match (self.ctx.place(&subject), self.ctx.menu(&subject)) {
+                    (Ok(placed), Ok(entries)) => {
                         let checkout = self.ctx.checkouts.get(&project).cloned();
-                        let can = self.ctx.can(&project);
-                        self.menu = Some(ActionMenu::new(
+                        self.menu = Some(ActionMenu::over(
                             actions::Subject::Branch {
                                 project: project.clone(),
                                 branch: branch.branch.clone(),
                             },
-                            root,
-                            workspace,
+                            placed.root,
+                            placed.workspace,
                             Some(branch),
-                            state,
+                            placed.state,
                             checkout,
-                            &can,
-                            applicable,
+                            entries,
                         ));
                     }
-                    _ => {
-                        self.message = refusal
-                            .unwrap_or_else(|| format!("{project} has no root in the registry"));
-                    }
+                    (Err(refusal), _) | (_, Err(refusal)) => self.message = refusal,
                 }
             }
             Action::OpenWork(item) => self.open_work(item),
-            Action::DispatchWork { item, recipe } => {
-                self.dispatch_work(&item, &recipe);
+            Action::DispatchWork { item, entry } => {
+                self.dispatch_work(terminal, &item, &entry)?;
                 self.open_work(item);
             }
             Action::SyncWork(item) => {
@@ -1585,7 +626,7 @@ impl App {
                 // runtime's own agent flags (§FS-005-dispatch.14). This run
                 // names one plan and advances no other, so that plan's tickets
                 // settle its flags alone and there is nothing to group.
-                let (hand, notes) = match &mut self.dispatcher {
+                let (hand, notes) = match &mut self.ctx.dispatcher {
                     Some(dispatcher) => dispatcher.run_hand_for(&item),
                     None => (None, Vec::new()),
                 };
@@ -1665,7 +706,7 @@ impl App {
     fn submit(&mut self, terminal: &mut DefaultTerminal, asking: Asking, line: &str) -> Result<()> {
         match asking {
             Asking::Work(item) => {
-                let Some(dispatcher) = &mut self.dispatcher else {
+                let Some(dispatcher) = &mut self.ctx.dispatcher else {
                     self.message = "Work needs the registry, which could not be read".to_string();
                     return Ok(());
                 };
@@ -1690,7 +731,7 @@ impl App {
             // message line (§FS-005-dispatch.16); the screen below is rebuilt
             // from the plan, which is where the truth of it now is.
             Asking::Cancel { item, ticket } => {
-                let Some(dispatcher) = &self.dispatcher else {
+                let Some(dispatcher) = &self.ctx.dispatcher else {
                     self.message = "Work needs the registry, which could not be read".to_string();
                     return Ok(());
                 };
@@ -1757,54 +798,46 @@ impl App {
     /// The reply a run drafted about a matter, where there is a dispatcher to
     /// ask and a run that drafted one (§FS-005-dispatch.13).
     fn proposal(&self, item: &Item) -> Option<crate::work::runtime::results::Proposal> {
-        self.dispatcher
+        self.ctx
+            .dispatcher
             .as_ref()
             .and_then(|dispatcher| dispatcher.proposal(item))
     }
 
     fn open_work(&mut self, item: Item) {
-        let Some(dispatcher) = &mut self.dispatcher else {
+        if self.ctx.dispatcher.is_none() {
             self.message =
                 "Work needs the registry, which could not be read at startup".to_string();
             return;
+        }
+        // What could be handed over here, off the API's own derivation
+        // ([`Ctx::work_offers`]) rather than a second one of this screen's:
+        // both answer the question `ephor work offers` answers, so both apply
+        // the gating that decides whether the dispatch would be refused at all
+        // — work is not offered about a finished matter (§FS-005-dispatch.6),
+        // and work that edits the change is not offered where the change is
+        // not on this machine (§FS-004-quick-actions.7). This screen used to
+        // ask the recipes directly and so offered rows `ephor work offers`
+        // said were not on the table, which is the drift §REQ-002-parity.2
+        // forbids. Who each one would go to rides on the entry, resolved when
+        // the menu was built (§FS-005-dispatch.14), so the row and the ticket
+        // cannot come apart.
+        //
+        // *Every* row it derives, workflows included: a screen that kept only
+        // the entries with a recipe behind them was the same drift the other
+        // way round — `ephor work offers` listed a workflow this screen did
+        // not (§FS-005-dispatch.19). And where the menu could not be assembled
+        // at all the reason travels with the empty list, because an absence
+        // reads as an oversight (§REQ-001-boundary.1).
+        let (offers, unavailable) = match self.ctx.work_offers(&item) {
+            Ok(offers) => (offers, None),
+            Err(refusal) => (Vec::new(), Some(refusal)),
         };
-        let status = dispatcher.status(&item);
-        // Who would get each offer, beside it (§FS-005-dispatch.14): the
-        // same resolution the menu shows, against the work root the dispatch
-        // will use, so the row and the ticket cannot come apart. None where
-        // the item cannot be placed — the dispatch's own refusal says why
-        // better than a wrong name would.
-        let unbound = crate::work::runtime::refusal(&self.work);
-        let root = dispatcher.work_root_of(&item);
-        let offers = dispatcher
-            .offers(&item)
-            .into_iter()
-            .map(|recipe| work::Offer {
-                brief: dispatcher.brief(&item, &recipe),
-                hand: root.as_ref().map(|root| {
-                    // A recipe spelling the runtime's own execution identity
-                    // has pinned itself (§FS-006-project-interface.9); the
-                    // row says that rather than resolving a hand the
-                    // dispatch will not use.
-                    if recipe.hand.is_none() && (recipe.target.is_some() || recipe.model.is_some())
-                    {
-                        return "its own pinned execution identity".to_string();
-                    }
-                    who_gets_it(
-                        &dispatcher.hand(
-                            &item.project,
-                            &recipe.id,
-                            None,
-                            recipe.hand.as_ref(),
-                            root,
-                        ),
-                        unbound.as_deref(),
-                    )
-                    .says
-                }),
-                recipe,
-            })
-            .collect();
+        let status = self
+            .ctx
+            .dispatcher
+            .as_ref()
+            .and_then(|dispatcher| dispatcher.status(&item));
         // Whether anything here can run a plan, answered before the screen
         // advertises the key rather than when it is pressed
         // (§FS-004-quick-actions.2).
@@ -1817,22 +850,65 @@ impl App {
             .filter(|job| job.record.item.as_deref() == Some(item.id.as_str()))
             .cloned()
             .collect();
-        self.screen = Screen::Work(WorkScreen::new(item, status, offers, refusal, jobs));
+        self.screen = Screen::Work(WorkScreen::new(
+            item,
+            status,
+            offers,
+            unavailable,
+            refusal,
+            jobs,
+        ));
     }
 
-    fn dispatch_work(&mut self, item: &Item, recipe_id: &str) {
-        let Some(dispatcher) = &mut self.dispatcher else {
-            return;
+    /// Enter on a work-screen row. The entry is looked up in the same list the
+    /// screen was built from ([`Ctx::work_entries`]), so a row that has
+    /// stopped applying since the screen opened says so rather than
+    /// dispatching something the reading no longer offers.
+    ///
+    /// Which move that is belongs to the entry, not to the screen: a recipe
+    /// opens a ticket, and a workflow is laid down after whatever nobody has
+    /// answered has been asked for (§FS-005-dispatch.19) — the same two moves
+    /// the action menu makes, through the same two calls.
+    fn dispatch_work(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        item: &Item,
+        key: &str,
+    ) -> Result<()> {
+        let found = match self.ctx.work_entries(item) {
+            Ok(entries) => entries.into_iter().find(|entry| entry.key() == key),
+            // The menu could not be assembled at all — its sentence, not a
+            // guess about the row (§AR-005-capabilities.2).
+            Err(refusal) => {
+                self.message = refusal;
+                return Ok(());
+            }
         };
-        let Some(recipe) = dispatcher
-            .offers(item)
-            .into_iter()
-            .find(|recipe| recipe.id == recipe_id)
-        else {
-            self.message = format!("'{recipe_id}' does not apply to this item any more");
-            return;
+        let Some(entry) = found else {
+            self.message = format!("'{key}' does not apply to this item any more");
+            return Ok(());
         };
-        self.hand_over(item, &recipe, None);
+        if entry.action.workflow.is_some() {
+            // The gate the row already carried, answered before anything is
+            // asked for: a reader who typed a workflow's inputs and was then
+            // refused answered questions for nothing
+            // (§FS-004-quick-actions.2).
+            if let actions::Gate::Blocked(reason) = &entry.gate {
+                self.message = reason.clone();
+                return Ok(());
+            }
+            let action = entry.action.clone();
+            let picked = entry.picked.clone();
+            return self.lay_workflow(
+                terminal,
+                item,
+                &action,
+                std::collections::BTreeMap::new(),
+                picked,
+            );
+        }
+        self.hand_over(item, &entry);
+        Ok(())
     }
 
     /// An agent entry of the action menu, handed over
@@ -1846,12 +922,11 @@ impl App {
             self.message = reason.clone();
             return;
         }
-        let (Some(item), Some(recipe)) = (menu.subject.item().cloned(), entry.action.agent.clone())
-        else {
+        let Some(item) = menu.subject.item().cloned() else {
             self.message = "There is no matter here to open work about".to_string();
             return;
         };
-        self.hand_over(&item, &recipe, entry.picked.as_ref());
+        self.hand_over(&item, entry);
         // Where the reader pressed is not a fact about the work: they land on
         // the same screen the work key would have shown them.
         self.open_work(item);
@@ -1865,7 +940,7 @@ impl App {
     /// configuration file first (§FS-005-dispatch.10).
     fn open_workflows(&mut self, menu: &ActionMenu) {
         let project = menu.subject.project().to_string();
-        let Some(dispatcher) = &mut self.dispatcher else {
+        let Some(dispatcher) = &mut self.ctx.dispatcher else {
             self.message = "Work needs the registry, which could not be read".to_string();
             return;
         };
@@ -1938,7 +1013,7 @@ impl App {
         typed: std::collections::BTreeMap<String, String>,
         picked: Option<crate::work::recipe::HandPin>,
     ) -> Result<()> {
-        let Some(dispatcher) = &mut self.dispatcher else {
+        let Some(dispatcher) = &mut self.ctx.dispatcher else {
             self.message = "Work needs the registry, which could not be read".to_string();
             return Ok(());
         };
@@ -1999,17 +1074,26 @@ impl App {
             again.extend(answered);
             return self.lay_workflow(terminal, item, entry, again, picked);
         }
-        let Some(dispatcher) = &mut self.dispatcher else {
-            return Ok(());
+        // Everything is answered, so the laying itself is the API's move
+        // (§AR-009-surfaces.1): `ephor actions run --set …` and this key lay
+        // the same plan down through the same code. What is above is the
+        // interaction and nothing else — a screen may *ask* for an input where
+        // a command takes it as an argument (§REQ-002-parity.2), and asking is
+        // presentation. The answers travel as the `--set` pairs the command
+        // takes, which is what makes them the same call.
+        let answers: Vec<String> = typed
+            .iter()
+            .map(|(name, value)| format!("{name}={value}"))
+            .collect();
+        let laid = actions::MenuEntry {
+            action: entry.clone(),
+            is_checkout: false,
+            is_freehand: false,
+            is_workflows: false,
+            picked,
+            gate: actions::Gate::Ready,
         };
-        self.message = match dispatcher.lay(item, &laying, false) {
-            Ok(laid) => match dispatcher.save() {
-                Ok(()) => format!("{} {}", entry.icon, laid.outcome.describe()),
-                Err(err) => err.to_string(),
-            },
-            Err(err) => err.to_string(),
-        };
-        self.reload_work();
+        self.message = self.ctx.hand_over(item, &laid, &answers, false).says;
         self.rebuild_view();
         Ok(())
     }
@@ -2055,33 +1139,22 @@ impl App {
         Ok(path)
     }
 
-    /// Handing one recipe over about one item, and saying what landed. Both
-    /// keys that dispatch come through here (§FS-005-dispatch.4). `picked` is
-    /// the reader's own choice from the picker, spent by this one dispatch
-    /// (§FS-005-dispatch.14): it arrives on the entry that carried it and is
-    /// recorded nowhere.
-    fn hand_over(
-        &mut self,
-        item: &Item,
-        recipe: &crate::work::recipe::Recipe,
-        picked: Option<&crate::work::recipe::HandPin>,
-    ) {
-        let Some(dispatcher) = &mut self.dispatcher else {
-            self.message = "Work needs the registry, which could not be read".to_string();
-            return;
-        };
-        // The screen below already shows the plan and its tickets, so the
-        // header says what was asked for rather than repeating a long path.
-        self.message = match dispatcher.dispatch(item, recipe, picked, false) {
-            Ok(crate::work::Outcome::Opened { ticket, .. })
-            | Ok(crate::work::Outcome::Reopened { ticket, .. }) => match dispatcher.save() {
-                Ok(()) => format!("{} {} — {ticket}", recipe.icon, recipe.description),
-                Err(err) => err.to_string(),
-            },
-            Ok(outcome) => outcome.describe(),
-            Err(err) => err.to_string(),
-        };
-        self.reload_work();
+    /// Handing one entry's work over about one item, and saying what landed.
+    /// Both keys that dispatch come through here (§FS-005-dispatch.4), and
+    /// here goes straight to the API's move. The whole entry travels rather
+    /// than the recipe alone: what the reader picked from the picker rides on
+    /// it, spent by this one dispatch and recorded nowhere
+    /// (§FS-005-dispatch.14), and so does the gate the row was drawn with.
+    fn hand_over(&mut self, item: &Item, entry: &actions::MenuEntry) {
+        // The API's move, not a second one of this screen's
+        // (§AR-009-surfaces.1): `ephor actions run` and this key open the same
+        // ticket through the same code, and the ledger it writes is the
+        // session's own — a dispatch saved through a dispatcher of this
+        // screen's left the session reading a ledger the dispatch had already
+        // moved past. The screen below already shows the plan and its tickets,
+        // so the header says what was asked for rather than repeating a long
+        // path, which is what the outcome's own sentence is.
+        self.message = self.ctx.hand_over(item, entry, &[], false).says;
         self.rebuild_view();
     }
 
@@ -2091,76 +1164,8 @@ impl App {
     /// will use, so what the row says and what the ticket gets cannot come
     /// apart. A choice that cannot stand rides along as its whole reason, and
     /// the entry is shown unable to run (§FS-006-project-interface.9).
-    fn name_the_hands(&mut self, item: &Item, menu: &mut [ActionConfig], config: &StatusConfig) {
-        if !menu.iter().any(|entry| entry.agent.is_some()) {
-            return;
-        }
-        let Some(root) = self.work_root(item, config) else {
-            return;
-        };
-        // With no runner bound there is nobody to ask, and the entry says so
-        // in the workable rung's own words rather than naming a hand it does
-        // not have (§FS-005-dispatch.14). The ticket is written all the same.
-        let unbound = crate::work::runtime::refusal(&self.work);
-        let work = config
-            .projects
-            .get(&item.project)
-            .map(|project| project.work.clone());
-        let Some(dispatcher) = &mut self.dispatcher else {
-            return;
-        };
-        for entry in menu.iter_mut() {
-            let Some(recipe) = &entry.agent else {
-                continue;
-            };
-            // A recipe spelling the runtime's own execution identity has
-            // pinned itself and no table displaces it, narrowing included
-            // (§FS-006-project-interface.9). The row says that rather than
-            // naming a hand the dispatch will not use.
-            if recipe.hand.is_none() && (recipe.target.is_some() || recipe.model.is_some()) {
-                let what = format!(
-                    "recipe '{}' pins the runtime's own execution identity",
-                    recipe.id
-                );
-                let refusal = crate::work::runtime::roster::refuse_unnamed(work.as_ref(), &what);
-                entry.hand = Some(Handed {
-                    says: refusal.clone().unwrap_or(what),
-                    refusal,
-                });
-                continue;
-            }
-            let pinned = recipe.hand.clone();
-            let choice = dispatcher.hand(&item.project, &recipe.id, None, pinned.as_ref(), &root);
-            entry.hand = Some(who_gets_it(&choice, unbound.as_deref()));
-        }
-    }
-
-    /// Where this item's work root would be: the template the dispatcher and
-    /// `ephor checkout` both resolve (§FS-006-project-interface.7), rendered
-    /// from the item's own checkout. Read rather than created — a menu that
-    /// opened would otherwise make a work root on every item it was opened on.
-    fn work_root(&self, item: &Item, config: &StatusConfig) -> Option<PathBuf> {
-        let checkout = self.ctx.checkout(item)?;
-        let root = self.ctx.root(&item.project)?.to_path_buf();
-        let template = crate::work::root_template(
-            &self.work,
-            config
-                .projects
-                .get(&item.project)
-                .map(|project| &project.work),
-        );
-        let subject = crate::work::dossier::Subject {
-            item,
-            checkout: &checkout,
-            root: &root,
-        };
-        Some(PathBuf::from(crate::paths::resolve_path(
-            &crate::work::dossier::render(&template, &subject.placeholders()),
-        )))
-    }
-
     fn sync_work(&mut self, item: &Item) {
-        let Some(dispatcher) = &mut self.dispatcher else {
+        let Some(dispatcher) = &mut self.ctx.dispatcher else {
             return;
         };
         self.message = match dispatcher.sync(item, false) {
@@ -2225,101 +1230,32 @@ impl App {
         menu: &ActionMenu,
         entry: &actions::MenuEntry,
     ) -> Result<()> {
-        if let actions::Gate::Blocked(reason) = &entry.gate {
-            self.message = reason.clone();
-            return Ok(());
-        }
+        // An entry that says it needs no reader never takes the terminal: it
+        // is started beneath the screen and the interface stays where it was
+        // (§FS-005-dispatch.17).
         if !entry.is_checkout && entry.action.background {
             self.start_job(menu, entry);
             return Ok(());
         }
-        ratatui::restore();
-
-        // A menu entry is a summons like every other command ephor runs
-        // (§AR-002-summons): one spawn path, one environment contract, one
-        // reading of the exit code. The terminal is handed over because that is
-        // this call site's property, not the binding's (§AR-002-summons.2).
-        let step = |command: &str,
-                    icon: &str,
-                    description: &str,
-                    where_: &Place,
-                    site: &Site,
-                    workspace: &Path| {
-            let place = site
-                .resolve(where_)
-                .map_err(|err| format!("{description}: {err}"))?;
-            println!("\n▶ {icon} {description}   ({})", place.display());
-            println!("  $ {command}\n");
-            // The forest of the place it runs in, so a command that folds
-            // over repositories folds over the same ones ephor does
-            // (§AR-004-forest.1).
-            let project = menu.subject.project();
-            let forest = self
-                .ctx
-                .placement(project)
-                .map(|placement| placement.forest(workspace));
-            let carrying = menu_dossier(menu, workspace, forest.as_ref());
-            let summons = summons::Summons::new(description, command).carrying(carrying);
-            let answer = summons::run(&summons, site, summons::Mode::Interactive)
-                .map_err(|err| err.to_string())?;
-            match answer.outcome {
-                Outcome::Done => Ok(()),
-                _ => Err(answer.refusal(description)),
-            }
-        };
-
-        let needs_checkout =
-            entry.is_checkout || matches!(entry.gate, actions::Gate::NeedsCheckout);
-        let outcome = (|| {
-            let mut workspace = menu.workspace.clone();
-            if needs_checkout {
-                let (checkout, target) =
-                    menu.checkout_step().expect("gated on a missing workspace");
-                // The checkout runs in the root — its job is to create the
-                // target workspace, which ephor verifies rather than trusts.
-                step(
-                    &checkout.command,
-                    &checkout.icon,
-                    &checkout.description,
-                    &Place::Root,
-                    &Site::root(&menu.root),
-                    &target,
-                )?;
-                if !target.is_dir() {
-                    return Err(format!(
-                        "{}: did not create {}",
-                        checkout.description,
-                        target.display()
-                    ));
-                }
-                workspace = target;
-            }
-            if !entry.is_checkout {
-                let action = &entry.action;
-                // Where the entry said it runs — a project's offer may name
-                // one repository of the forest (§AR-002-summons.1); a person's
-                // action that says nothing runs where it always has.
-                let where_ = match &action.cwd {
-                    Some(spec) => Place::parse(spec).map_err(|err| err.to_string())?,
-                    None => Place::Workspace,
-                };
-                step(
-                    &action.command,
-                    &action.icon,
-                    &action.description,
-                    &where_,
-                    &Site::workspace(&menu.root, &workspace),
-                    &workspace,
-                )?;
-                return Ok(format!("{} {}: ok", action.icon, action.description));
-            }
-            Ok(format!("✓ checked out {}", workspace.display()))
-        })();
-        self.message = match outcome {
-            Ok(message) => message,
-            Err(message) => message,
-        };
-
+        let request = self.request(menu, entry);
+        let needs_checkout = matches!(
+            (entry.is_checkout, &entry.gate),
+            (true, _) | (_, actions::Gate::Blocked(_) | actions::Gate::NeedsCheckout)
+        ) && entry.gate.refusal().is_none();
+        // The terminal is this call site's property, not the move's
+        // (§AR-002-summons.2): the interface gives it up around the call and
+        // takes it back afterwards. What runs, where, and what it is told is
+        // the one implementation both surfaces use (§AR-009-surfaces.1).
+        if entry.gate.refusal().is_none() {
+            ratatui::restore();
+        }
+        let outcome = self
+            .ctx
+            .run_entry(&request, crate::api::act::Watching::Terminal);
+        self.message = outcome.says;
+        if entry.gate.refusal().is_some() {
+            return Ok(());
+        }
         println!("\n{}", self.message);
         print!("Press Enter to return to ephor… ");
         let _ = std::io::stdout().flush();
@@ -2338,85 +1274,50 @@ impl App {
         Ok(())
     }
 
-    /// Start a menu entry beneath the screen (§FS-005-dispatch.17): write
-    /// down what it is, hand it to a supervisor of its own, and stay where
-    /// the reader was. Nothing is waited on — the row the job takes among the
-    /// operations is how it is watched from here.
-    ///
-    /// The chain travels with it. An entry needing the branch workspace
-    /// carries the checkout as the job's first step, with the directory it
-    /// has to create named on the step: the supervisor verifies it rather
-    /// than trusting it, exactly as this call site did while the reader
-    /// watched (§FS-006-project-interface.8).
-    fn start_job(&mut self, menu: &ActionMenu, entry: &actions::MenuEntry) {
-        use crate::seams::jobs;
-
-        let needs_checkout =
-            entry.is_checkout || matches!(entry.gate, actions::Gate::NeedsCheckout);
-        let mut steps = Vec::new();
-        // Where the action itself will run, which is the workspace the
-        // checkout is about to make when there is one to make.
-        let mut workspace = menu.workspace.clone();
-        if needs_checkout {
-            let Some((checkout, target)) = menu.checkout_step() else {
-                self.message = "the workspace is missing and nothing checks it out".to_string();
-                return;
-            };
-            steps.push(jobs::Step {
-                icon: checkout.icon.clone(),
-                description: checkout.description.clone(),
-                command: checkout.command.clone(),
-                // The checkout's job is to make the workspace, so it runs in
-                // the root — the workspace is not there to run in yet.
-                cwd: Some("root".to_string()),
-                creates: Some(target.clone()),
-                becomes_workspace: true,
-            });
-            workspace = target;
-        }
-        let action = &entry.action;
-        steps.push(jobs::Step {
-            icon: action.icon.clone(),
-            description: action.description.clone(),
-            command: action.command.clone(),
-            cwd: action.cwd.clone(),
-            creates: None,
-            becomes_workspace: false,
-        });
-
-        let project = menu.subject.project().to_string();
-        // The forest of the place it runs in, so a command that folds over
-        // repositories folds over the same ones ephor does (§AR-004-forest.1).
-        let forest = self
-            .ctx
-            .placement(&project)
-            .map(|placement| placement.forest(&workspace));
-        let record = jobs::Record {
-            version: 1,
-            project,
-            item: menu.subject.item().map(|item| item.id.clone()),
-            icon: action.icon.clone(),
-            description: action.description.clone(),
+    /// The entry, ready to run, in the shape the move takes
+    /// (§AR-009-surfaces.1). Both keys that run something build it here, so
+    /// the foreground run and the job cannot come to differ in where they
+    /// think the entry belongs.
+    fn request(&self, menu: &ActionMenu, entry: &actions::MenuEntry) -> crate::api::act::Run {
+        crate::api::act::Run {
+            about: match menu.subject.item() {
+                Some(item) => crate::api::act::About::Item(Box::new(item.clone())),
+                None => crate::api::act::About::Branch {
+                    project: menu.subject.project().to_string(),
+                    branch: menu
+                        .branch
+                        .as_ref()
+                        .map(|branch| branch.branch.clone())
+                        .unwrap_or_default(),
+                },
+            },
             root: menu.root.clone(),
-            // None where the checkout is still to make it: a site pointed at a
-            // directory that is not there yet would refuse the first step.
-            workspace: (!needs_checkout).then(|| workspace.clone()),
-            steps,
-            dossier: menu_dossier(menu, &workspace, forest.as_ref()),
-            started: chrono::Utc::now().to_rfc3339(),
+            workspace: menu.workspace.clone(),
+            state: menu.state.clone(),
+            checkout: menu.checkout.clone(),
+            branch: menu.branch.clone(),
+            entry: entry.clone(),
+        }
+    }
+
+    /// Start a menu entry beneath the screen (§FS-005-dispatch.17). The move
+    /// is the session's; what is left here is the row it takes on the board
+    /// and the sentence the reader sees.
+    fn start_job(&mut self, menu: &ActionMenu, entry: &actions::MenuEntry) {
+        let request = self.request(menu, entry);
+        let outcome = self.ctx.start_job(&request);
+        self.message = match &outcome.job {
+            // Nothing is waited on — the row it takes among the operations is
+            // how it is watched from here.
+            Some(_) => format!("{} · ; to watch", outcome.says),
+            None => outcome.says.clone(),
         };
-        self.message = match jobs::start(record) {
-            Ok(job) => {
-                let says = format!(
-                    "{} {}: started · ; to watch",
-                    job.record.icon, job.record.description
-                );
+        if let Some(id) = outcome.job {
+            if let Some(job) = crate::seams::jobs::find(&id) {
                 self.jobs.insert(0, job);
-                self.reload_operations();
-                says
             }
-            Err(err) => err.to_string(),
-        };
+            self.reload_operations();
+        }
     }
 
     /// Everything one job wrote, in the reader's pager (§FS-005-dispatch.17).
@@ -2614,70 +1515,34 @@ impl App {
     /// an enumerated plan ephor never dispatched has none, and its row leads
     /// to the plan itself.
     fn board_rows(&self) -> (Vec<operations::Row>, Option<String>) {
-        use crate::work::runtime::watch;
         // What ephor is running itself needs no runtime and no registry: it is
         // ephor running a command (§FS-005-dispatch.17), so its rows stand
         // even where the runtime's half of the board says why it is empty.
-        let running: Vec<operations::Row> = self
+        // The reader's own move first: a job is something they pressed a key
+        // for moments ago, and a board that filed it under the runtime's work
+        // would answer "did that start?" with a scroll.
+        let mut rows: Vec<operations::Row> = self
             .jobs
             .iter()
             .filter(|job| job.live)
             .cloned()
             .map(operations::Row::Job)
             .collect();
-        if self.dispatcher.is_none() {
-            return (
-                running,
-                Some("Work needs the registry, which could not be read at startup".to_string()),
-            );
-        }
-        let groups = &self.work_groups;
-        let watch::Board {
-            operations,
-            refusal,
-        } = watch::board(&self.work, groups);
-        // Every row's matter in one walk of the feeds, rather than a walk per
-        // row: `items()` rebuilds each matter into a row, so asking it once
-        // per operation pays for the whole feed once per operation.
-        let wanted: std::collections::BTreeSet<String> = operations
-            .iter()
-            .filter_map(|op| op.item().map(str::to_string))
-            .collect();
-        let mut matters: BTreeMap<String, Item> = BTreeMap::new();
-        if !wanted.is_empty() {
-            for feed in &self.ctx.feeds {
-                for item in feed.items() {
-                    if wanted.contains(&item.id) {
-                        matters.insert(item.id.clone(), item);
-                    }
-                }
-            }
-        }
-        let runs: Vec<operations::Row> = operations
-            .into_iter()
-            .map(|op| operations::OpRow {
-                item: op.item().and_then(|id| matters.get(id).cloned()),
-                // The operation's own plan where a ticket of it names one, and
-                // the ledger's for this root otherwise: a live run whose
-                // tickets were all filtered out still has a plan behind it,
-                // and `e` on that row would otherwise answer that there is
-                // none (§FS-005-dispatch.15).
-                plan: op.plan().map(Path::to_path_buf).or_else(|| {
-                    groups
-                        .iter()
-                        .find(|group| group.root == op.root)
-                        .and_then(|group| group.plans.first())
-                        .map(|plan| plan.path.clone())
-                }),
-                op,
-            })
-            .map(|row| operations::Row::Op(Box::new(row)))
-            .collect();
-        // The reader's own move first: a job is something they pressed a key
-        // for moments ago, and a board that filed it under the runtime's work
-        // would answer "did that start?" with a scroll.
-        let mut rows: Vec<operations::Row> = running;
-        rows.extend(runs);
+        // The runtime's half, off the API's own derivation
+        // ([`Ctx::running`]) — the same one `ephor operations` prints, so the
+        // board a key opens and the board a command prints cannot come apart
+        // (§AR-009-surfaces.1). The enumeration handed in is this screen's,
+        // which is the one thing the two surfaces differ in: a command walks
+        // the roots on the spot, and the interface keeps the last walk between
+        // ticks and stats it instead (§FS-005-dispatch.15.1).
+        let (running, refusal) = self.ctx.running(&self.work_groups);
+        rows.extend(running.into_iter().map(|row| {
+            operations::Row::Op(Box::new(operations::OpRow {
+                op: row.op,
+                item: row.item,
+                plan: row.plan,
+            }))
+        }));
         (rows, refusal)
     }
 
@@ -2966,8 +1831,32 @@ fn read_answers(path: &Path) -> std::collections::BTreeMap<String, String> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
+
+    /// What a menu entry's summons is told it is about, asked of the one
+    /// implementation both surfaces use (§AR-009-surfaces.1).
+    fn dossier_of(menu: &ActionMenu, workspace: &Path) -> Vec<(String, String)> {
+        let about = match menu.subject.item() {
+            Some(item) => crate::api::act::About::Item(Box::new(item.clone())),
+            None => crate::api::act::About::Branch {
+                project: menu.subject.project().to_string(),
+                branch: menu
+                    .branch
+                    .as_ref()
+                    .map(|branch| branch.branch.clone())
+                    .unwrap_or_default(),
+            },
+        };
+        crate::api::act::dossier_of(&about, &menu.root, workspace, menu.branch.as_ref(), None)
+    }
+
+    use crate::branches::Placement;
+    use crate::capabilities::Rung;
+    use crate::feed::cache::Seen;
     use crate::feed::model::ItemKind;
+    use crate::forest::{Staleness, Standing, Upstream};
     use serde_json::json;
 
     pub(super) fn ctx_with_branch(root: &Path, template: Option<&str>) -> Ctx {
@@ -3010,7 +1899,7 @@ mod tests {
             checkouts: BTreeMap::new(),
             recent_days: 7,
             unread_only: true,
-            work: BTreeMap::new(),
+            ..Ctx::default()
         }
     }
 
@@ -3832,18 +2721,19 @@ mod tests {
         assert!(unbound.contains("no-such-runner-here"), "{unbound}");
 
         use crate::work::runtime::roster::{Choice, Hand};
-        let nobody = who_gets_it(&Choice::Unasked { note: None }, Some(&unbound));
+        let nobody =
+            crate::api::session::who_gets_it(&Choice::Unasked { note: None }, Some(&unbound));
         assert_eq!(nobody.says, unbound);
         // Said, not refused: the ticket is written all the same.
         assert!(nobody.refusal.is_none());
 
         // With a runner there and nobody named, the runtime picks unasked.
-        let unasked = who_gets_it(&Choice::Unasked { note: None }, None);
+        let unasked = crate::api::session::who_gets_it(&Choice::Unasked { note: None }, None);
         assert_eq!(unasked.says, "whoever the runtime picks");
 
         // A chosen hand names itself, and carries why it cannot be asked right
         // now rather than vanishing (§FS-005-dispatch.14).
-        let chosen = who_gets_it(
+        let chosen = crate::api::session::who_gets_it(
             &Choice::Chosen {
                 hand: Hand {
                     id: "luna".to_string(),
@@ -3866,7 +2756,10 @@ mod tests {
         assert!(chosen.refusal.is_none());
 
         // And a choice that cannot stand is the whole reason, and refuses.
-        let refused = who_gets_it(&Choice::Refused("permits only sonnet".to_string()), None);
+        let refused = crate::api::session::who_gets_it(
+            &Choice::Refused("permits only sonnet".to_string()),
+            None,
+        );
         assert_eq!(refused.refusal.as_deref(), Some("permits only sonnet"));
     }
 
@@ -3934,7 +2827,7 @@ mod tests {
         let ctx = ctx_with_branch(tmp.path(), Some("{project_root}/{branch}"));
         let branch = ctx.branches("widget")[0].clone();
         let target = tmp.path().join(&branch.branch);
-        let entry = actions::checkout_action(&target);
+        let entry = crate::api::offers::checkout_action(&target);
         // Both are named, so the one command serves an item row and a branch
         // row alike.
         assert!(entry.command.contains("--item \"$EPHOR_ITEM_ID\""));
@@ -3953,7 +2846,7 @@ mod tests {
             &ctx.can("widget"),
             Vec::new(),
         );
-        let carried = menu_dossier(&menu, tmp.path(), None);
+        let carried = dossier_of(&menu, tmp.path());
         let value = |key: &str| {
             carried
                 .iter()
@@ -3978,7 +2871,7 @@ mod tests {
             &ctx.can("widget"),
             Vec::new(),
         );
-        let carried = menu_dossier(&item_menu, tmp.path(), None);
+        let carried = dossier_of(&item_menu, tmp.path());
         let value = |key: &str| {
             carried
                 .iter()

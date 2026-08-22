@@ -262,6 +262,13 @@ pub fn summons_with(
 /// directory, and a multi-repository workspace has no single repository to be
 /// found by looking (§FS-005-dispatch.3). The person is watching, so the
 /// terminal is theirs while it runs.
+///
+/// `mode` is the caller's, because it is the caller that knows whether its
+/// standard output is already spoken for: a run started for a person takes the
+/// terminal outright, and one started under `--json` puts the runtime's own
+/// output beside the reading instead ([`Mode::Aside`]) so that what a program
+/// parses is the outcome alone (§REQ-002-parity.3, §FS-011-command-line.7).
+/// The runtime still has a terminal to ask its questions on either way.
 pub fn run(
     config: &crate::work::recipe::WorkConfig,
     root: &Path,
@@ -269,11 +276,12 @@ pub fn run(
     plans: &[String],
     hand: Option<&roster::HandFlags>,
     extra: &[String],
+    mode: Mode,
 ) -> Result<Answer> {
     summons::run(
         &summons_with(config, root, plans, hand, extra),
         &Site::root(checkout),
-        Mode::Interactive,
+        mode,
     )
 }
 

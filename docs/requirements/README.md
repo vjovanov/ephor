@@ -13,6 +13,7 @@ here.
 | ID | Subject |
 |---|---|
 | [REQ-001-boundary](REQ-001-boundary.md) | every capacity ephor lacks crosses a seam |
+| [REQ-002-parity](REQ-002-parity.md) | every ability is reachable without the screen |
 
 This index is navigational — citations should target the law's ID directly,
 never this file.

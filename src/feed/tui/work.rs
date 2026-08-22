@@ -17,28 +17,28 @@ use ratatui::widgets::Paragraph;
 
 use chrono::{DateTime, Utc};
 
+use crate::api::views::Offer;
 use crate::feed::model::Item;
 use crate::feed::render::{age, span};
-use crate::work::recipe::Recipe;
 use crate::work::WorkStatus;
 
 use super::Action;
 
-/// A recipe as this screen shows it: what it is, and the words it would
-/// actually send about this item (§FS-005-dispatch.7).
-pub(crate) struct Offer {
-    pub recipe: Recipe,
-    pub brief: String,
-    /// Who would get it, resolved when the screen opened — the same sentence
-    /// the menu's entry carries (§FS-005-dispatch.14). None where nothing
-    /// can say: the item cannot be placed, or there is no dispatcher.
-    pub hand: Option<String>,
-}
-
 pub(crate) struct WorkScreen {
     pub item: Item,
     status: Option<WorkStatus>,
+    /// What could be handed over here, as the API derived it
+    /// ([`crate::api::Session::work_offers`]) — the same rows `ephor work
+    /// offers` prints, in the same order. A screen that mapped entries to rows
+    /// of its own is how a row one surface offers stops being a row the other
+    /// has (§REQ-002-parity.2): this one used to drop every entry with no
+    /// recipe behind it, so a workflow the command line offered was a workflow
+    /// the screen did not (§FS-005-dispatch.19).
     offers: Vec<Offer>,
+    /// Why there was nothing to offer *at all*, where the menu could not be
+    /// assembled (§AR-004-forest.3). A different sentence from `refusal`, and
+    /// shown rather than left as an empty list (§REQ-001-boundary.1).
+    unavailable: Option<String>,
     /// Why nothing here can run a plan, where nothing can — the runtime rung's
     /// own sentence (§AR-005-capabilities.2), handed in because the screen has
     /// to know before it advertises the key, not after it is pressed. It
@@ -68,6 +68,7 @@ impl WorkScreen {
         item: Item,
         status: Option<WorkStatus>,
         offers: Vec<Offer>,
+        unavailable: Option<String>,
         refusal: Option<String>,
         jobs: Vec<crate::seams::jobs::Job>,
     ) -> Self {
@@ -75,6 +76,7 @@ impl WorkScreen {
             item,
             status,
             offers,
+            unavailable,
             refusal,
             selected: 0,
             picking: None,
@@ -309,11 +311,16 @@ impl WorkScreen {
         }
     }
 
+    /// Enter on a row. The entry is named by its key, which is what the shell
+    /// looks it back up by and what `ephor work offers` prints — so a row that
+    /// lays a workflow down and a row that opens a ticket are asked for the
+    /// same way, and the shell decides which move that is
+    /// (§FS-005-dispatch.19).
     fn dispatch(&self, index: usize) -> Action {
         match self.offers.get(index) {
             Some(offer) => Action::DispatchWork {
                 item: self.item.clone(),
-                recipe: offer.recipe.id.clone(),
+                entry: offer.id.clone(),
             },
             None => Action::None,
         }
@@ -516,14 +523,22 @@ impl WorkScreen {
             "  what can be asked for".to_string(),
             heading,
         )));
-        if self.offers.is_empty() {
-            lines.push(Line::from(Span::styled(
+        // An empty list has two causes and they are different answers: nothing
+        // selected this matter, or nothing could be asked at all because the
+        // project is not placed. Showing the second as the first is the absence
+        // §REQ-001-boundary.1 forbids.
+        match (&self.unavailable, self.offers.is_empty()) {
+            (Some(unavailable), _) => lines.push(Line::from(Span::styled(
+                format!("    nothing could be offered: {unavailable}"),
+                dim,
+            ))),
+            (None, true) => lines.push(Line::from(Span::styled(
                 "    no recipe applies to this item".to_string(),
                 dim,
-            )));
+            ))),
+            (None, false) => {}
         }
         for (index, offer) in self.offers.iter().enumerate() {
-            let recipe = &offer.recipe;
             let selected = index == self.selected;
             let mut spans = vec![
                 Span::styled(
@@ -531,7 +546,7 @@ impl WorkScreen {
                     dim,
                 ),
                 Span::styled(
-                    format!("{} {}", recipe.icon, recipe.description),
+                    format!("{} {}", offer.icon, offer.description),
                     if selected {
                         Style::default().add_modifier(Modifier::BOLD)
                     } else {
@@ -539,8 +554,14 @@ impl WorkScreen {
                     },
                 ),
             ];
-            if recipe.needs_checkout {
-                spans.push(Span::styled("  (needs the branch here)".to_string(), dim));
+            // The gate the menu computed, in its own words — never a second
+            // opinion arrived at here (§FS-006-project-interface.10).
+            match (offer.gate, &offer.refusal) {
+                ("needs-checkout", _) => {
+                    spans.push(Span::styled("  (needs the branch here)".to_string(), dim))
+                }
+                (_, Some(refusal)) => spans.push(Span::styled(format!("  {refusal}"), dim)),
+                _ => {}
             }
             // Who would get this work, before the key is pressed — the same
             // sentence the menu shows (§FS-005-dispatch.14).
@@ -555,9 +576,13 @@ impl WorkScreen {
         // What the selected recipe would actually ask for: dispatching is
         // cheap to press and expensive to run, so the words go on screen
         // before the keystroke rather than into a file afterwards.
-        if let Some(offer) = self.offers.get(self.selected) {
+        if let Some(brief) = self
+            .offers
+            .get(self.selected)
+            .and_then(|offer| offer.brief.as_deref())
+        {
             lines.push(Line::from(""));
-            for line in offer.brief.lines().take(6) {
+            for line in brief.lines().take(6) {
                 lines.push(Line::from(Span::styled(format!("      {line}"), dim)));
             }
         }
@@ -668,17 +693,48 @@ mod tests {
         }
     }
 
-    /// Offers as the shell builds them: each recipe with its brief already
-    /// rendered against the item, and the hand it would go to resolved.
+    /// Offers as the shell builds them (§AR-009-surfaces.1): the API's own
+    /// rows, each with its brief already rendered against the item and the
+    /// hand it would go to resolved. A workflow row rides along, because a row
+    /// `ephor work offers` has is a row this screen has (§REQ-002-parity.2).
     fn offers() -> Vec<Offer> {
-        crate::work::recipe::shipped()
+        let mut offers: Vec<Offer> = crate::work::recipe::shipped()
             .into_iter()
             .map(|recipe| Offer {
-                brief: recipe.brief.replace("{title}", "Humanize durations"),
+                id: recipe.id.clone(),
+                icon: recipe.icon.clone(),
+                description: recipe.description.clone(),
+                kind: "agent",
+                gate: match recipe.needs_checkout {
+                    true => "needs-checkout",
+                    false => "ready",
+                },
+                refusal: None,
                 hand: Some("luna at high".to_string()),
-                recipe,
+                command: None,
+                brief: Some(recipe.brief.replace("{title}", "Humanize durations")),
+                cwd: None,
+                background: false,
+                confirm: false,
+                requires: Vec::new(),
             })
-            .collect()
+            .collect();
+        offers.push(Offer {
+            id: "ship-it".to_string(),
+            icon: "🧩".to_string(),
+            description: "lay the release workflow down".to_string(),
+            kind: "workflow",
+            gate: "ready",
+            refusal: None,
+            hand: None,
+            command: None,
+            brief: None,
+            cwd: None,
+            background: false,
+            confirm: false,
+            requires: Vec::new(),
+        });
+        offers
     }
 
     fn text(screen: &WorkScreen) -> String {
@@ -698,7 +754,7 @@ mod tests {
     #[test]
     fn the_screen_says_what_was_asked_what_it_reached_and_what_else_could_be() {
         let shown = offers();
-        let screen = WorkScreen::new(item(), Some(status(true)), offers(), None, Vec::new());
+        let screen = WorkScreen::new(item(), Some(status(true)), offers(), None, None, Vec::new());
         let text = text(&screen);
         assert!(text.contains("forge-demo-17.rhei.md"), "{text}");
         assert!(text.contains("fix-gate-1"), "{text}");
@@ -711,9 +767,9 @@ mod tests {
         assert!(text.contains("fix the red gate  "), "{text}");
         // Every offer, and the words the first one would actually send —
         // rendered, not the template they came from (§FS-005-dispatch.7).
-        assert!(text.contains(&shown[0].recipe.description), "{text}");
+        assert!(text.contains(&shown[0].description), "{text}");
         assert!(
-            text.contains(shown[0].brief.lines().next().unwrap()),
+            text.contains(shown[0].brief.as_deref().unwrap().lines().next().unwrap()),
             "{text}"
         );
         assert!(!text.contains("{title}"), "{text}");
@@ -722,9 +778,57 @@ mod tests {
         assert!(text.contains("→ luna at high"), "{text}");
     }
 
+    /// A row `ephor work offers` has is a row this screen has
+    /// (§REQ-002-parity.2). The screen used to keep only the entries with a
+    /// recipe behind them, so a workflow the command line listed was a
+    /// workflow the screen silently dropped — and it dropped it *after* the
+    /// numbering, which is why pressing `3` here is not a cosmetic question
+    /// (§FS-005-dispatch.19).
+    #[test]
+    fn a_workflow_the_command_line_offers_is_a_row_on_this_screen_too() {
+        let shown = offers();
+        let workflow = shown.last().expect("the workflow row");
+        assert_eq!(workflow.kind, "workflow");
+        let mut screen = WorkScreen::new(item(), None, offers(), None, None, Vec::new());
+        let text = text(&screen);
+        assert!(text.contains(&workflow.description), "{text}");
+
+        // And Enter on it asks for the entry by its key, which is the name
+        // `ephor work offers` prints and `ephor actions run` takes — the shell
+        // decides from the entry whether that opens a ticket or lays a plan
+        // down.
+        for _ in 0..shown.len() - 1 {
+            screen.handle_key(KeyCode::Char('j'));
+        }
+        match screen.handle_key(KeyCode::Enter) {
+            Action::DispatchWork { entry, .. } => assert_eq!(entry, workflow.id),
+            other => panic!("expected a dispatch, got {}", matches!(other, Action::None)),
+        }
+    }
+
+    /// Nothing to offer *at all* is a different answer from nothing matching,
+    /// and the screen says which (§REQ-001-boundary.1). An empty list under a
+    /// heading reads as an oversight, which is the one thing a refusal must
+    /// never look like.
+    #[test]
+    fn a_menu_that_could_not_be_assembled_says_so_rather_than_showing_nothing() {
+        let screen = WorkScreen::new(
+            item(),
+            None,
+            Vec::new(),
+            Some("demo has no root in the registry".to_string()),
+            None,
+            Vec::new(),
+        );
+        let text = text(&screen);
+        assert!(text.contains("nothing could be offered"), "{text}");
+        assert!(text.contains("no root in the registry"), "{text}");
+        assert!(!text.contains("no recipe applies"), "{text}");
+    }
+
     #[test]
     fn an_item_with_no_work_still_shows_what_could_be_asked_for() {
-        let screen = WorkScreen::new(item(), None, offers(), None, Vec::new());
+        let screen = WorkScreen::new(item(), None, offers(), None, None, Vec::new());
         let text = text(&screen);
         assert!(text.contains("nothing has been handed over"), "{text}");
         assert!(text.contains("what can be asked for"), "{text}");
@@ -732,15 +836,15 @@ mod tests {
 
     #[test]
     fn keys_dispatch_by_number_and_refuse_what_there_is_nothing_to_do() {
-        let ids: Vec<String> = offers().into_iter().map(|o| o.recipe.id).collect();
-        let mut screen = WorkScreen::new(item(), None, offers(), None, Vec::new());
+        let ids: Vec<String> = offers().into_iter().map(|o| o.id).collect();
+        let mut screen = WorkScreen::new(item(), None, offers(), None, None, Vec::new());
         match screen.handle_key(KeyCode::Char('2')) {
-            Action::DispatchWork { recipe, .. } => assert_eq!(recipe, ids[1]),
+            Action::DispatchWork { entry, .. } => assert_eq!(entry, ids[1]),
             _ => panic!("expected a dispatch"),
         }
         screen.handle_key(KeyCode::Char('j'));
         match screen.handle_key(KeyCode::Enter) {
-            Action::DispatchWork { recipe, .. } => assert_eq!(recipe, ids[1]),
+            Action::DispatchWork { entry, .. } => assert_eq!(entry, ids[1]),
             _ => panic!("expected a dispatch"),
         }
         // Nothing dispatched yet: nothing to run, reopen, or read.
@@ -754,7 +858,14 @@ mod tests {
         ));
 
         // With work that is current, reopening says so rather than doing it.
-        let mut screen = WorkScreen::new(item(), Some(status(false)), offers(), None, Vec::new());
+        let mut screen = WorkScreen::new(
+            item(),
+            Some(status(false)),
+            offers(),
+            None,
+            None,
+            Vec::new(),
+        );
         assert!(matches!(
             screen.handle_key(KeyCode::Char('s')),
             Action::SetMessage(_)
@@ -813,6 +924,7 @@ mod tests {
             item(),
             Some(status_with_open_tickets()),
             offers(),
+            None,
             None,
             Vec::new(),
         );
@@ -883,12 +995,19 @@ mod tests {
     /// sentence and is not taught, exactly as `R` is (§FS-005-dispatch.16).
     #[test]
     fn c_refuses_where_nothing_is_open_and_where_nothing_can_move_it() {
-        let mut screen = WorkScreen::new(item(), Some(status(false)), offers(), None, Vec::new());
+        let mut screen = WorkScreen::new(
+            item(),
+            Some(status(false)),
+            offers(),
+            None,
+            None,
+            Vec::new(),
+        );
         match screen.handle_key(KeyCode::Char('c')) {
             Action::SetMessage(said) => assert!(said.contains("Nothing to cancel"), "{said}"),
             _ => panic!("expected a refusal"),
         }
-        let mut screen = WorkScreen::new(item(), None, offers(), None, Vec::new());
+        let mut screen = WorkScreen::new(item(), None, offers(), None, None, Vec::new());
         assert!(matches!(
             screen.handle_key(KeyCode::Char('c')),
             Action::SetMessage(_)
@@ -901,6 +1020,7 @@ mod tests {
             item(),
             Some(status_with_open_tickets()),
             offers(),
+            None,
             Some(unbound.clone()),
             Vec::new(),
         );
@@ -929,6 +1049,7 @@ mod tests {
             item(),
             Some(status(false)),
             offers(),
+            None,
             Some(unbound.clone()),
             Vec::new(),
         );
@@ -948,7 +1069,14 @@ mod tests {
         ));
 
         // Bound: the key is advertised and acts.
-        let mut bound = WorkScreen::new(item(), Some(status(false)), offers(), None, Vec::new());
+        let mut bound = WorkScreen::new(
+            item(),
+            Some(status(false)),
+            offers(),
+            None,
+            None,
+            Vec::new(),
+        );
         assert!(bound.footer().contains("R run"), "{}", bound.footer());
         assert!(matches!(
             bound.handle_key(KeyCode::Char('R')),
@@ -986,7 +1114,7 @@ mod tests {
                 ended: "2026-08-18T09:04:00Z".to_string(),
             }),
         };
-        let mut screen = WorkScreen::new(item(), None, offers(), None, vec![job]);
+        let mut screen = WorkScreen::new(item(), None, offers(), None, None, vec![job]);
         let text = text(&screen);
         assert!(text.contains("what ephor ran here"), "{text}");
         assert!(text.contains("rebase onto master"), "{text}");
@@ -1005,7 +1133,7 @@ mod tests {
     /// than opening an empty pager.
     #[test]
     fn an_item_ephor_ran_nothing_on_says_so() {
-        let mut screen = WorkScreen::new(item(), None, offers(), None, Vec::new());
+        let mut screen = WorkScreen::new(item(), None, offers(), None, None, Vec::new());
         assert!(
             !screen.footer().contains("L job log"),
             "{}",
@@ -1058,6 +1186,7 @@ mod tests {
             Some(status_with_open_tickets()),
             offers(),
             None,
+            None,
             vec![job_ago(65, Some(60), false)],
         );
         let shown = text(&screen);
@@ -1072,6 +1201,7 @@ mod tests {
             Some(status_with_open_tickets()),
             offers(),
             None,
+            None,
             vec![job_ago(3, None, true)],
         );
         assert!(text(&screen).contains("going 3m"), "{}", text(&screen));
@@ -1082,6 +1212,7 @@ mod tests {
             item(),
             Some(status_with_open_tickets()),
             offers(),
+            None,
             None,
             vec![job_ago(90, None, false)],
         );
@@ -1098,7 +1229,7 @@ mod tests {
     fn a_ticket_nothing_dispatched_carries_no_age() {
         let mut status = status(false);
         status.tickets[0].asked = None;
-        let screen = WorkScreen::new(item(), Some(status), offers(), None, Vec::new());
+        let screen = WorkScreen::new(item(), Some(status), offers(), None, None, Vec::new());
         let row = text(&screen)
             .lines()
             .find(|line| line.contains("fix-gate-1"))
@@ -1117,6 +1248,7 @@ mod tests {
             item(),
             Some(status_with_open_tickets()),
             offers(),
+            None,
             None,
             Vec::new(),
         );
@@ -1168,7 +1300,14 @@ mod tests {
     /// heading above an empty space (§FS-005-dispatch.18).
     #[test]
     fn a_plan_with_nothing_open_is_not_folded_to_nothing() {
-        let screen = WorkScreen::new(item(), Some(status(false)), offers(), None, Vec::new());
+        let screen = WorkScreen::new(
+            item(),
+            Some(status(false)),
+            offers(),
+            None,
+            None,
+            Vec::new(),
+        );
         let shown = text(&screen);
         assert!(shown.contains("✓ fix-gate-1"), "{shown}");
         assert!(!shown.contains("more that is over"), "{shown}");

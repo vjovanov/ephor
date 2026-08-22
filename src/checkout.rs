@@ -74,15 +74,31 @@ pub fn checkout(args: &CheckoutArgs) -> Result<ExitCode> {
     if target.is_dir() {
         let missing = placement.forest(&target).absent;
         if missing.is_empty() {
-            println!("{} is already checked out.", target.display());
+            if args.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "workspace": target,
+                        "branch": branch,
+                        "ready": true,
+                        "summary": format!("{} is already checked out", target.display()),
+                        "repos": [],
+                    }))
+                    .unwrap_or_else(|_| "null".to_string())
+                );
+            } else {
+                println!("{} is already checked out.", target.display());
+            }
             return Ok(ExitCode::SUCCESS);
         }
-        println!(
-            "{} is missing {} — making {}.",
-            target.display(),
-            missing.join(", "),
-            if missing.len() == 1 { "it" } else { "them" }
-        );
+        if !args.json {
+            println!(
+                "{} is missing {} — making {}.",
+                target.display(),
+                missing.join(", "),
+                if missing.len() == 1 { "it" } else { "them" }
+            );
+        }
     }
 
     // A working tree is added from a repository, so one has to be on disk —
@@ -119,7 +135,21 @@ pub fn checkout(args: &CheckoutArgs) -> Result<ExitCode> {
     };
 
     let outcome = git::create(&source, &target, &forest, &branch, &base);
-    print!("{}", outcome.report());
+    if args.json {
+        let mut view = outcome.view();
+        if let Some(object) = view.as_object_mut() {
+            object.insert(
+                "report".to_string(),
+                serde_json::Value::String(outcome.report()),
+            );
+        }
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&view).unwrap_or_else(|_| "null".to_string())
+        );
+    } else {
+        print!("{}", outcome.report());
+    }
     if let Some(path) = or_env(&args.report, "REPORT") {
         write_report(&path, &outcome.report())?;
     }
@@ -135,8 +165,10 @@ pub fn checkout(args: &CheckoutArgs) -> Result<ExitCode> {
         // run in here would fail on it.
         return Ok(ExitCode::from(1));
     }
-    println!("{}", outcome.summary());
-    init_store(&project, &target, &placement.root);
+    if !args.json {
+        println!("{}", outcome.summary());
+    }
+    init_store(&project, &target, &placement.root, args.json);
     Ok(ExitCode::SUCCESS)
 }
 
@@ -149,7 +181,7 @@ pub fn checkout(args: &CheckoutArgs) -> Result<ExitCode> {
 /// fail. Where no site configuration can be read, the shipped default answers
 /// — this is `ephor checkout` working on a machine that has a registry and
 /// nothing else.
-fn init_store(project: &str, workspace: &std::path::Path, root: &std::path::Path) {
+fn init_store(project: &str, workspace: &std::path::Path, root: &std::path::Path, quiet: bool) {
     let config = load_config().ok();
     let global = config
         .as_ref()
@@ -160,7 +192,8 @@ fn init_store(project: &str, workspace: &std::path::Path, root: &std::path::Path
         .and_then(|config| config.projects.get(project))
         .map(|project| &project.work);
     match crate::work::ensure_store(&global, per_project, project, workspace, root) {
-        Ok(dir) => println!("  task store at {}", dir.display()),
+        Ok(dir) if !quiet => println!("  task store at {}", dir.display()),
+        Ok(_) => {}
         Err(err) => eprintln!("note: no task store was made — {err}"),
     }
 }

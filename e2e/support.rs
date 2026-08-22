@@ -291,6 +291,29 @@ pub fn json_of(output: &std::process::Output) -> Value {
     })
 }
 
+/// The same, held to the shape the command publishes (§REQ-002-parity.4).
+///
+/// A schema nobody validates against is a declaration rather than a contract:
+/// the lists in `src/api/schema.rs` only ever asked whether a *name* appeared in
+/// the document, which a schema describing something else entirely passes. This
+/// is what makes the published shapes true of what the commands print — every
+/// `--json` a case reads goes through here, so a field that changed type, a
+/// required field that stopped being printed, or a shape declared an object
+/// while the command prints an array fails the case that reads it.
+pub fn shaped(shape: &str, output: &std::process::Output) -> Value {
+    let value = json_of(output);
+    let problems = ephor::api::schema::holds(shape, &value);
+    assert!(
+        problems.is_empty(),
+        "`--json` printed something the published '{shape}' shape does not describe:\n  {}\n\
+         Either the command prints the wrong thing or assets/ephor-views.schema.json \
+         declares the wrong thing — one of them is untrue.\n{}",
+        problems.join("\n  "),
+        serde_json::to_string_pretty(&value).unwrap_or_default()
+    );
+    value
+}
+
 fn executable(path: &Path, body: &str) {
     fs::create_dir_all(path.parent().expect("a parent directory")).expect("make the directory");
     fs::write(path, body).unwrap_or_else(|err| panic!("write {}: {err}", path.display()));

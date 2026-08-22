@@ -124,9 +124,92 @@ pub fn rebase(args: &RebaseArgs) -> Result<ExitCode> {
     };
 
     let outcome = git::rebase(&forest, &onto);
-    print!("{}", outcome.report());
+    let conflicted = outcome.conflicted().len();
+    // Everything the algorithm could do, it did; the rest is a question about
+    // the code (§FS-005-dispatch.12). Handed over *before* anything is
+    // printed, so what it opened is a field of the reading rather than three
+    // lines of prose after it — a script that read only the JSON would
+    // otherwise not learn that a ticket exists, which is exactly the half a
+    // reading may not be missing (§REQ-002-parity.3).
+    let mut refused: Option<EphorError> = None;
+    let handed = match (conflicted > 0 && args.dispatch, &item) {
+        (true, Some(item)) => match hand_over(item, &outcome, picked.as_ref()) {
+            Ok(handed) => Some(handed),
+            // A dispatch that could not be made does not swallow the replay's
+            // own report: it still prints, and the refusal is this command's
+            // exit (§REQ-001-boundary.1).
+            Err(err) => {
+                refused = Some(err);
+                None
+            }
+        },
+        (true, None) => {
+            eprintln!("note: --dispatch needs --item to know whose work this conflict is.");
+            None
+        }
+        _ => None,
+    };
+    // Under `--json` the report is the reading's own field rather than a
+    // second thing on standard output (§FS-011-command-line.7).
+    if args.json {
+        let mut view = outcome.view();
+        if let Some(object) = view.as_object_mut() {
+            object.insert(
+                "report".to_string(),
+                serde_json::Value::String(outcome.report()),
+            );
+            object.insert(
+                "dispatched".to_string(),
+                match &handed {
+                    Some(handed) => {
+                        let mut row = serde_json::json!({
+                            "item": handed.item,
+                            "says": handed.says,
+                            "notes": handed.notes,
+                        });
+                        // A dispatch that reopened nothing opened no ticket, and
+                        // says so by not naming one: the published shape
+                        // declares `ticket` a string (§REQ-002-parity.4).
+                        if let (Some(row), Some(ticket)) =
+                            (row.as_object_mut(), handed.ticket.as_ref())
+                        {
+                            row.insert("ticket".to_string(), serde_json::json!(ticket));
+                        }
+                        row
+                    }
+                    None => serde_json::Value::Null,
+                },
+            );
+        }
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&view).unwrap_or_else(|_| "null".to_string())
+        );
+    } else {
+        print!("{}", outcome.report());
+        if let Some(handed) = &handed {
+            println!("\nhanded over: {}", handed.says);
+            // What the resolution had to say about who got it — an effort
+            // completed, a hand nobody can be asked for — said here, where the
+            // reader still is (§FS-005-dispatch.14).
+            for note in &handed.notes {
+                println!("note: {note}");
+            }
+            println!("  ephor work run --item {}", handed.item);
+        }
+    }
+    // The report lands before anything can leave this function, and in
+    // particular before a refused `--dispatch` becomes this command's exit: a
+    // state machine reads `REPORT` to learn what the replay stopped at, and no
+    // recipe named 'rebase' is exactly the moment it needs the file most
+    // (§FS-005-dispatch.12). Writing it only on the happy path made the
+    // conflict report disappear on ordinary conditions — an unwritable ledger,
+    // an unconfigured recipe — which is the absence §REQ-001-boundary.1 forbids.
     if let Some(path) = or_env(&args.report, "REPORT") {
         write_report(&path, &outcome.report())?;
+    }
+    if let Some(err) = refused {
+        return Err(err);
     }
 
     if outcome.repos.is_empty() {
@@ -136,18 +219,8 @@ pub fn rebase(args: &RebaseArgs) -> Result<ExitCode> {
         )));
     }
 
-    let conflicted = outcome.conflicted().len();
     if conflicted > 0 {
-        // Everything the algorithm could do, it did; the rest is a question
-        // about the code (§FS-005-dispatch.12).
-        if args.dispatch {
-            match &item {
-                Some(item) => hand_over(item, &outcome, picked.as_ref())?,
-                None => {
-                    eprintln!("note: --dispatch needs --item to know whose work this conflict is.")
-                }
-            }
-        } else if let Some(item) = &item {
+        if let (false, Some(item), false) = (args.dispatch, &item, args.json) {
             println!(
                 "Hand the conflict to the runtime:\n  ephor work dispatch --item {} \
                  --recipe rebase",
@@ -162,6 +235,18 @@ pub fn rebase(args: &RebaseArgs) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// What handing the conflict over came to: the ticket it opened, the sentence
+/// the dispatch describes itself with, and whatever resolving who gets it had
+/// to say (§FS-005-dispatch.14). Returned rather than printed, because the
+/// same facts have to reach a line of prose and a field of the reading
+/// (§REQ-002-parity.3).
+struct Handed {
+    item: String,
+    ticket: Option<String>,
+    says: String,
+    notes: Vec<String>,
+}
+
 /// Open the ticket the conflict is about, carrying what the rebase reached.
 /// `picked` is the reader's own choice of who resolves it, spent by this one
 /// dispatch (§FS-005-dispatch.14).
@@ -169,7 +254,7 @@ fn hand_over(
     item: &Item,
     outcome: &git::Rebase,
     picked: Option<&crate::work::recipe::HandPin>,
-) -> Result<()> {
+) -> Result<Handed> {
     let config = load_config()?;
     let mut dispatcher = Dispatcher::load(&config)?;
     let recipe = dispatcher
@@ -191,15 +276,16 @@ fn hand_over(
     };
     let opened = dispatcher.dispatch(item, &recipe, picked, false)?;
     dispatcher.save()?;
-    println!("\nhanded over: {}", opened.describe());
-    // What the resolution had to say about who got it — an effort completed,
-    // a hand nobody can be asked for — said here, where the reader still is
-    // (§FS-005-dispatch.14).
-    for note in dispatcher.notes() {
-        println!("note: {note}");
-    }
-    println!("  ephor work run --item {}", item.id);
-    Ok(())
+    Ok(Handed {
+        item: item.id.clone(),
+        ticket: match &opened {
+            crate::work::Outcome::Opened { ticket, .. }
+            | crate::work::Outcome::Reopened { ticket, .. } => Some(ticket.clone()),
+            _ => None,
+        },
+        says: opened.describe(),
+        notes: dispatcher.notes().iter().map(ToString::to_string).collect(),
+    })
 }
 
 fn write_report(path: &str, contents: &str) -> Result<()> {

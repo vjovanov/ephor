@@ -63,6 +63,20 @@ pub enum Replay {
     Refused(String),
 }
 
+impl Replay {
+    /// What this outcome is called, in one word a reading can carry.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Replay::Current => "current",
+            Replay::Rebased(_) => "rebased",
+            Replay::Conflicted(_) => "conflicted",
+            Replay::Dirty(_) => "dirty",
+            Replay::Unpublished => "unpublished",
+            Replay::Refused(_) => "refused",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct RepoReplay {
     /// The repository's path relative to the checkout (`.` for the root).
@@ -122,6 +136,59 @@ impl Rebase {
             .iter()
             .filter(|repo| matches!(repo.replay, Replay::Dirty(_) | Replay::Refused(_)))
             .collect()
+    }
+
+    /// What each repository came to, as a reading names it
+    /// (§FS-011-command-line.7). One shape for the whole outcome, so a state
+    /// machine reads the same answer the report describes.
+    pub fn view(&self) -> serde_json::Value {
+        serde_json::json!({
+            "checkout": self.checkout,
+            "onto": match &self.onto {
+                Onto::Upstream => "upstream".to_string(),
+                Onto::Base(base) => base.clone(),
+            },
+            "summary": self.summary(),
+            "rebased": self.rebased(),
+            "conflicted": self.conflicted().len(),
+            "absent": self.absent,
+            "repos": self
+                .repos
+                .iter()
+                .map(|repo| {
+                    let mut row = serde_json::json!({
+                        "repo": repo.repo,
+                        "remote": repo.remote,
+                        "replay": repo.replay.name(),
+                        "paths": match &repo.replay {
+                            Replay::Conflicted(paths) | Replay::Dirty(paths) => paths.clone(),
+                            _ => Vec::new(),
+                        },
+                    });
+                    // A fact that is not there is absent, never `null` typed as
+                    // the fact would have been: the published shape says
+                    // `behind` is a count and `says` a sentence, and emitting
+                    // the key anyway made every repository that neither replayed
+                    // nor was refused violate the schema it is meant to hold to
+                    // (§REQ-002-parity.4). Absent is also the shape's own
+                    // wording — "where it replayed any", "where it was".
+                    let row = row.as_object_mut().expect("a row is an object");
+                    if let Some(branch) = &repo.branch {
+                        row.insert("branch".to_string(), serde_json::json!(branch));
+                    }
+                    if let Some(onto) = &repo.onto {
+                        row.insert("onto".to_string(), serde_json::json!(onto));
+                    }
+                    if let Replay::Rebased(behind) = &repo.replay {
+                        row.insert("behind".to_string(), serde_json::json!(behind));
+                    }
+                    if let Replay::Refused(why) = &repo.replay {
+                        row.insert("says".to_string(), serde_json::json!(why));
+                    }
+                    serde_json::Value::Object(row.clone())
+                })
+                .collect::<Vec<_>>(),
+        })
     }
 
     pub fn rebased(&self) -> usize {
@@ -780,6 +847,16 @@ pub enum Created {
 }
 
 impl Created {
+    /// What this outcome is called, in one word a reading can carry.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Created::Tracking => "tracking",
+            Created::Branched(_) => "branched",
+            Created::Present => "present",
+            Created::Refused(_) => "refused",
+        }
+    }
+
     pub fn is_ready(&self) -> bool {
         matches!(
             self,
@@ -817,6 +894,39 @@ impl Creation {
     /// Every repository has a working tree, so the workspace is usable.
     pub fn is_ready(&self) -> bool {
         !self.repos.is_empty() && self.repos.iter().all(|repo| repo.created.is_ready())
+    }
+
+    /// What each repository came to, as a reading names it
+    /// (§FS-011-command-line.7).
+    pub fn view(&self) -> serde_json::Value {
+        serde_json::json!({
+            "workspace": self.target,
+            "branch": self.branch,
+            "ready": self.is_ready(),
+            "summary": self.summary(),
+            "repos": self
+                .repos
+                .iter()
+                .map(|repo| {
+                    let mut row = serde_json::json!({
+                        "repo": repo.repo,
+                        "remote": repo.remote,
+                        "created": repo.created.name(),
+                    });
+                    // Absent rather than null, for the same reason the replay
+                    // rows above are: the shape says these are strings
+                    // (§REQ-002-parity.4).
+                    let row = row.as_object_mut().expect("a row is an object");
+                    if let Created::Branched(base) = &repo.created {
+                        row.insert("from".to_string(), serde_json::json!(base));
+                    }
+                    if let Created::Refused(why) = &repo.created {
+                        row.insert("says".to_string(), serde_json::json!(why));
+                    }
+                    serde_json::Value::Object(row.clone())
+                })
+                .collect::<Vec<_>>(),
+        })
     }
 
     pub fn summary(&self) -> String {
@@ -1612,5 +1722,92 @@ mod tests {
         run_in(&checkout, &["fetch", "origin", "-q"]);
         assert_eq!(count(&checkout), Some(1));
         assert_eq!(count(temp.path()), None);
+    }
+
+    /// Every replay outcome, and every checkout outcome, holds to the shape it
+    /// publishes — with the facts it does not have *absent* rather than
+    /// spelled `null` (§REQ-002-parity.4).
+    ///
+    /// The published shapes say `behind` is a count, `says` a sentence, `from`
+    /// a branch: a repository that neither replayed nor was refused used to
+    /// print all three as `null`, so every ordinary replay and every ordinary
+    /// checkout violated the schema ephor ships for it. Walked over every
+    /// variant here rather than through whichever one a scenario happens to
+    /// reach, because that is how the two that were never reached stayed
+    /// wrong.
+    #[test]
+    fn every_replay_and_every_checkout_row_holds_to_its_published_shape() {
+        use crate::api::schema::holds;
+
+        let replays = [
+            Replay::Current,
+            Replay::Rebased(3),
+            Replay::Conflicted(vec!["f.txt".to_string()]),
+            Replay::Dirty(vec!["f.txt".to_string()]),
+            Replay::Unpublished,
+            Replay::Refused("no upstream".to_string()),
+        ];
+        for replay in replays {
+            let name = replay.name();
+            let outcome = Rebase {
+                checkout: PathBuf::from("/w/demo"),
+                onto: Onto::Base("main".to_string()),
+                repos: vec![RepoReplay {
+                    repo: "app".to_string(),
+                    remote: ORIGIN.to_string(),
+                    branch: None,
+                    onto: None,
+                    replay,
+                }],
+                absent: Vec::new(),
+            };
+            let view = outcome.view();
+            assert!(
+                holds("rebase", &view).is_empty(),
+                "a '{name}' replay does not hold to the published shape: {:?}\n{view}",
+                holds("rebase", &view)
+            );
+            let row = &view["repos"][0];
+            assert_eq!(row["replay"], name);
+            assert_eq!(row.get("branch").is_none(), true, "{row}");
+            assert_eq!(
+                row.get("behind").is_some(),
+                name == "rebased",
+                "only a replay that replayed says how far: {row}"
+            );
+            assert_eq!(
+                row.get("says").is_some(),
+                name == "refused",
+                "only a refusal says why: {row}"
+            );
+        }
+
+        for created in [
+            Created::Tracking,
+            Created::Branched("main".to_string()),
+            Created::Present,
+            Created::Refused("no remote".to_string()),
+        ] {
+            let name = created.name();
+            let creation = Creation {
+                target: PathBuf::from("/w/demo-you/retry"),
+                branch: "you/retry".to_string(),
+                repos: vec![RepoCreated {
+                    repo: "app".to_string(),
+                    remote: ORIGIN.to_string(),
+                    created,
+                }],
+            };
+            let view = creation.view();
+            assert!(
+                holds("checkout", &view).is_empty(),
+                "a '{name}' checkout does not hold to the published shape: {:?}\n{view}",
+                holds("checkout", &view)
+            );
+            let row = &view["repos"][0];
+            assert_eq!(row["created"], name);
+            assert_eq!(row.get("from").is_some(), name == "branched", "{row}");
+            assert_eq!(row.get("says").is_some(), name == "refused", "{row}");
+        }
     }
 }

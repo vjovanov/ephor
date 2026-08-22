@@ -14,7 +14,7 @@ use serde_json::Value;
 use crate::error::{registry_error, Result};
 use crate::paths;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StatusConfig {
     #[serde(default)]
@@ -221,6 +221,15 @@ impl TryFrom<RawAction> for ActionConfig {
             true => format!("'{}'", raw.description),
             false => format!("'{}'", raw.id),
         };
+        // The names ephor mints for its own rows are ephor's
+        // (§AR-009-surfaces.1). Refused here, where the person can still see
+        // what they wrote: an entry configured as `@command` would otherwise
+        // stand beside the freehand row under the same name, and the command
+        // that runs an entry by id — which takes the first that answers to it
+        // — would run whichever of the two came first.
+        if let Some(why) = crate::api::offers::reserved(&raw.id) {
+            return Err(format!("action {named} is refused: {why}"));
+        }
         // One entry says one thing: it runs something here, it asks somebody
         // for a ticket, or it lays down a workflow the runtime offers
         // (§FS-005-dispatch.1, §FS-005-dispatch.19). Two of them would leave
@@ -545,6 +554,27 @@ mod tests {
         }))
         .is_err());
     }
+
+    /// An id in ephor's own namespace is refused where it is written, not
+    /// discovered by a reader whose `ephor actions run @command` ran their
+    /// entry instead of the freehand row (§FS-005-dispatch.10).
+    #[test]
+    fn a_configured_id_may_not_claim_one_of_ephors_own_rows() {
+        let refused = serde_json::from_value::<ActionConfig>(serde_json::json!({
+            "id": "@command", "icon": "⌨", "description": "mine", "command": "true"
+        }))
+        .expect_err("'@command' is not a name configuration may take")
+        .to_string();
+        assert!(refused.contains("@command"), "{refused}");
+        assert!(refused.contains("Give it a name of your own"), "{refused}");
+
+        // A name of one's own is untouched, including one that merely contains
+        // the marker.
+        assert!(serde_json::from_value::<ActionConfig>(serde_json::json!({
+            "id": "note@work", "icon": "✎", "description": "d", "command": "true"
+        }))
+        .is_ok());
+    }
 }
 
 pub fn config_path() -> PathBuf {
@@ -570,6 +600,29 @@ pub fn load_config() -> Result<StatusConfig> {
                     "Feed config project '{project_id}' has a provider entry without a 'provider' name."
                 )));
             }
+        }
+    }
+    // A recipe is a menu entry under another name (§FS-005-dispatch.1), so it
+    // is held to the same rule about ephor's own namespace as an action is —
+    // and here rather than in `Recipe` itself, because the recipes a project's
+    // manifest and the runtime supply do not come through this file.
+    let recipes = config
+        .work
+        .recipes
+        .iter()
+        .map(|recipe| ("work.recipes".to_string(), recipe))
+        .chain(config.projects.iter().flat_map(|(id, project)| {
+            project
+                .work
+                .recipes
+                .iter()
+                .map(move |recipe| (format!("projects.{id}.work.recipes"), recipe))
+        }));
+    for (where_, recipe) in recipes {
+        if let Some(why) = crate::api::offers::reserved(&recipe.id) {
+            return Err(registry_error(format!(
+                "Feed config {where_} has a recipe that is refused: {why}"
+            )));
         }
     }
     Ok(config)

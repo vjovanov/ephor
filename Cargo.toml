@@ -50,6 +50,10 @@ name = "e2e_006_offers"
 path = "e2e/cases/E2E-006-offers.rs"
 
 [[test]]
+name = "e2e_012_command_line_parity"
+path = "e2e/cases/E2E-012-command-line-parity.rs"
+
+[[test]]
 name = "e2e_008_operations"
 path = "e2e/cases/E2E-008-operations.rs"
 

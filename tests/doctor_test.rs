@@ -418,11 +418,21 @@ fn the_self_pass_walks_the_seams_against_a_site_it_made_up() {
         .args(["doctor", "--self-only", "--json"])
         .output()
         .unwrap();
-    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    // One document with both passes under their own keys, even where only one
+    // ran: `ephor doctor --json` used to print the site's and then the self's
+    // as two objects on one stream, which is not JSON at all
+    // (§FS-011-command-line.7).
+    let document: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let report = &document["self"];
     assert_eq!(
         report["passed"],
         true,
         "the self pass failed: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    assert!(
+        document.get("projects").is_none(),
+        "--self-only leaves the site half out: {}",
         String::from_utf8_lossy(&out.stdout)
     );
     assert_eq!(out.status.code(), Some(0));

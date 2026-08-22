@@ -17,7 +17,7 @@ use crate::feed::cache;
 use crate::feed::config::{load_config, StatusConfig};
 use crate::feed::model::{Item, ItemKind};
 use crate::feed::render::Style;
-use crate::seams::summons::Outcome as SummonsOutcome;
+use crate::seams::summons::{self, Outcome as SummonsOutcome};
 use crate::work::ledger::Entry;
 use crate::work::runtime;
 
@@ -31,6 +31,7 @@ pub fn work(args: &WorkArgs) -> Result<ExitCode> {
         .unwrap_or(&WorkCommand::List(crate::cli::WorkListArgs::default()))
     {
         WorkCommand::List(list) => list_work(&config, list),
+        WorkCommand::Offers(offers) => work_offers(&config, offers),
         WorkCommand::Dispatch(dispatch) => dispatch_work(&config, dispatch),
         WorkCommand::Ask(ask) => ask_work(&config, ask),
         WorkCommand::Sync(sync) => sync_work(&config, sync),
@@ -39,33 +40,78 @@ pub fn work(args: &WorkArgs) -> Result<ExitCode> {
         WorkCommand::Workflows(workflows) => list_workflows(&config, workflows),
         WorkCommand::Lay(lay) => lay_workflow(&config, lay),
         WorkCommand::Forget(forget) => forget_work(&config, forget),
-        WorkCommand::States => {
-            // The one configured for these projects when there is one, so what
-            // is printed is what tickets would actually run under.
-            let configured = config
-                .work
-                .states
-                .as_ref()
-                .or_else(|| {
-                    config
-                        .projects
-                        .values()
-                        .find_map(|project| project.work.states.as_ref())
-                })
-                .map(|path| crate::paths::resolve_path(path));
-            match configured {
-                Some(path) => print!(
-                    "{}",
-                    std::fs::read_to_string(&path).map_err(|err| EphorError::Command(format!(
-                        "Cannot read the configured state machine {}: {err}",
-                        path.display()
-                    )))?
-                ),
-                None => print!("{}", crate::work::runtime::plan::SHIPPED_STATES),
-            }
-            Ok(ExitCode::SUCCESS)
-        }
+        WorkCommand::States(states) => work_states(&config, states),
     }
+}
+
+/// `ephor work states` — the machine ephor's tickets actually run under
+/// (§FS-005-dispatch.11).
+///
+/// Under `--json` it says *which* machine as well as what is in it, which is a
+/// fact the prose form never carried: a program reading a YAML document on
+/// standard output could not tell the one ephor ships from the one this site
+/// configured, and those are different answers to "what states can a ticket be
+/// in". The document rides in a field rather than being the whole output
+/// because it is not JSON and never will be — the machine is the runtime's
+/// language, not ephor's (§REQ-001-boundary.1).
+fn work_states(config: &StatusConfig, args: &crate::cli::WorkStatesArgs) -> Result<ExitCode> {
+    // The one configured for these projects when there is one, so what is
+    // printed is what tickets would actually run under.
+    let configured = config
+        .work
+        .states
+        .as_ref()
+        .or_else(|| {
+            config
+                .projects
+                .values()
+                .find_map(|project| project.work.states.as_ref())
+        })
+        .map(|path| crate::paths::resolve_path(path));
+    let (source, path, states) = match configured {
+        Some(path) => {
+            let text = std::fs::read_to_string(&path).map_err(|err| {
+                EphorError::Command(format!(
+                    "Cannot read the configured state machine {}: {err}",
+                    path.display()
+                ))
+            })?;
+            ("configured", Some(path.display().to_string()), text)
+        }
+        None => (
+            "shipped",
+            None,
+            crate::work::runtime::plan::SHIPPED_STATES.to_string(),
+        ),
+    };
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "source": source,
+                "path": path,
+                "states": states,
+            }))
+            .unwrap_or_else(|_| "null".to_string())
+        );
+        return Ok(ExitCode::SUCCESS);
+    }
+    print!("{states}");
+    Ok(ExitCode::SUCCESS)
+}
+
+/// One row with every absent fact left out rather than spelled `null`.
+///
+/// The published shapes say what these fields *are* — a state is a string, a
+/// verdict is a sentence — and a fact that is not there is absent, which is
+/// what the API's own views say with `skip_serializing_if` (§REQ-002-parity.4).
+/// `serde_json`'s macro turns a `None` into a `null` typed as neither, so a row
+/// built by hand has to say it by hand.
+fn stated(mut row: serde_json::Value) -> serde_json::Value {
+    if let Some(object) = row.as_object_mut() {
+        object.retain(|_, value| !value.is_null());
+    }
+    row
 }
 
 /// Every item in the cached feed of the selected projects, with the project's
@@ -123,7 +169,7 @@ fn list_work(config: &StatusConfig, args: &crate::cli::WorkListArgs) -> Result<E
             .iter()
             .map(|(id, entry)| {
                 let status = dispatcher.status_of(entry, items.get(*id));
-                serde_json::json!({
+                stated(serde_json::json!({
                     "item": id,
                     "project": entry.project,
                     "title": entry.title,
@@ -132,14 +178,14 @@ fn list_work(config: &StatusConfig, args: &crate::cli::WorkListArgs) -> Result<E
                     "missing": status.missing,
                     "stale": status.stale(),
                     "changes": status.changes,
-                    "tickets": status.tickets.iter().map(|ticket| serde_json::json!({
+                    "tickets": status.tickets.iter().map(|ticket| stated(serde_json::json!({
                         "id": ticket.id,
                         "recipe": ticket.recipe,
                         "state": ticket.state,
                         "finished": ticket.finished,
                         "cancelled": ticket.cancelled,
                         "verdict": ticket.verdict,
-                    })).collect::<Vec<_>>(),
+                    }))).collect::<Vec<_>>(),
                     // The plans workflows laid down beside this matter's own
                     // (§FS-005-dispatch.19). They carry no ticket inside the
                     // matter's plan, so without this the ledger's record of
@@ -151,7 +197,7 @@ fn list_work(config: &StatusConfig, args: &crate::cli::WorkListArgs) -> Result<E
                             "at": dispatch.at,
                         }))
                     }).collect::<Vec<_>>(),
-                })
+                }))
             })
             .collect();
         println!("{}", serde_json::to_string_pretty(&rows).unwrap());
@@ -203,6 +249,84 @@ fn list_work(config: &StatusConfig, args: &crate::cli::WorkListArgs) -> Result<E
     Ok(ExitCode::SUCCESS)
 }
 
+/// `ephor work offers` — one matter's work screen, without the screen
+/// (§FS-011-command-line.5).
+fn work_offers(config: &StatusConfig, args: &crate::cli::WorkOffersArgs) -> Result<ExitCode> {
+    let mut session = crate::api::Session::open(config)?;
+    let item = session.item(&args.item).ok_or_else(|| {
+        registry_error(format!(
+            "'{}' is not in any cached feed — `ephor feed` lists what is.",
+            args.item
+        ))
+    })?;
+    let mut view = session.work_of(&item);
+    // Finished tickets are folded away by default, exactly as the work screen
+    // folds them: they are history, and the plan holds the whole of it
+    // (§FS-005-dispatch.18).
+    if !args.all {
+        if let Some(status) = &mut view.status {
+            status
+                .tickets
+                .retain(|ticket| !ticket.finished && !ticket.cancelled);
+        }
+    }
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&view).unwrap_or_else(|_| "null".to_string())
+        );
+        return Ok(ExitCode::SUCCESS);
+    }
+    let style = Style::detect();
+    println!("{}\n", style.bold(&view.title));
+    if let Some(status) = &view.status {
+        println!("  {}", style.dim(&status.plan.display().to_string()));
+        if status.stale {
+            println!("  it has moved since: {}", status.changes.join("; "));
+        }
+        for ticket in &status.tickets {
+            println!(
+                "  {} [{}]  {}{}",
+                ticket.id,
+                ticket.state.as_deref().unwrap_or("?"),
+                ticket.recipe,
+                match &ticket.verdict {
+                    Some(verdict) => format!(" — {verdict}"),
+                    None => String::new(),
+                }
+            );
+        }
+        println!();
+    }
+    println!("{}", style.bold("what could be asked for"));
+    // An empty list has two causes and they are different answers: nothing
+    // selected this matter, or nothing could be asked at all. Saying the second
+    // as the first is the absence §REQ-001-boundary.1 forbids.
+    match (&view.unavailable, view.offers.is_empty()) {
+        (Some(unavailable), _) => println!("  nothing could be offered: {unavailable}"),
+        (None, true) => {
+            println!("  nothing matches this matter — `ephor work ask` asks in your own words")
+        }
+        (None, false) => {}
+    }
+    for offer in &view.offers {
+        println!("  {} {} {}", offer.id, offer.icon, offer.description);
+        if let Some(hand) = &offer.hand {
+            println!("      → {hand}");
+        }
+        if let Some(refusal) = &offer.refusal {
+            println!("      {refusal}");
+        }
+    }
+    for job in &view.jobs {
+        println!("\n{} {}", style.bold("ephor ran"), job.says);
+    }
+    if let Some(refusal) = &view.refusal {
+        println!("\nnothing here runs: {refusal}");
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 fn title(text: &str) -> String {
     let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if one_line.chars().count() <= 72 {
@@ -241,6 +365,9 @@ fn dispatch_work(config: &StatusConfig, args: &crate::cli::WorkDispatchArgs) -> 
     let now = Utc::now();
     let mut opened = 0usize;
     let mut refused = 0usize;
+    // What each item came to, kept as it goes so the machine form is the same
+    // sweep the prose describes (§FS-011-command-line.7).
+    let mut landed: Vec<serde_json::Value> = Vec::new();
     // Items whose deterministic opening move finished, so there was nothing to
     // dispatch (§FS-005-dispatch.12).
     let mut settled = 0usize;
@@ -291,11 +418,29 @@ fn dispatch_work(config: &StatusConfig, args: &crate::cli::WorkDispatchArgs) -> 
         let has_work = dispatcher.ledger.entries.contains_key(&item.id);
         if !args.again && (already || (has_work && args.recipe.is_none())) {
             if asked_for_one {
-                println!(
+                // The same fact in both forms, never one of them
+                // (§REQ-002-parity.3): the prose says it and the reading
+                // carries a row for it, so a script that asked about one
+                // matter learns *why* nothing was opened rather than only
+                // that nothing was.
+                let says = format!(
                     "{} already has work — `--again` adds another ticket, `sync` reopens it \
                      when the item has moved",
                     item.id
                 );
+                match args.json {
+                    // Under `--json` standard output is the reading's alone
+                    // (§FS-011-command-line.7), as it is for every other line
+                    // this sweep prints.
+                    true => landed.push(serde_json::json!({
+                        "item": item.id,
+                        "title": item.title,
+                        "recipe": recipe.id,
+                        "outcome": "has-work",
+                        "says": says,
+                    })),
+                    false => println!("{says}"),
+                }
             }
             continue;
         }
@@ -305,23 +450,55 @@ fn dispatch_work(config: &StatusConfig, args: &crate::cli::WorkDispatchArgs) -> 
             // nothing was handed over.
             Ok(outcome @ Outcome::Settled { .. }) => {
                 settled += 1;
-                println!(
-                    "{}\n  {}",
-                    title(&item.title),
-                    style.dim(&outcome.describe())
-                );
+                landed.push(serde_json::json!({
+                    "item": item.id,
+                    "title": item.title,
+                    "recipe": recipe.id,
+                    "outcome": "settled",
+                    "says": outcome.describe(),
+                }));
+                if !args.json {
+                    println!(
+                        "{}\n  {}",
+                        title(&item.title),
+                        style.dim(&outcome.describe())
+                    );
+                }
             }
             Ok(outcome) => {
                 opened += 1;
-                println!(
-                    "{} {}\n  {}",
-                    if args.dry_run { "would open" } else { "opened" },
-                    title(&item.title),
-                    style.dim(&outcome.describe())
-                );
+                let ticket = match &outcome {
+                    Outcome::Opened { ticket, .. } | Outcome::Reopened { ticket, .. } => {
+                        Some(ticket.clone())
+                    }
+                    _ => None,
+                };
+                landed.push(serde_json::json!({
+                    "item": item.id,
+                    "title": item.title,
+                    "recipe": recipe.id,
+                    "outcome": if args.dry_run { "would-open" } else { "opened" },
+                    "ticket": ticket,
+                    "says": outcome.describe(),
+                }));
+                if !args.json {
+                    println!(
+                        "{} {}\n  {}",
+                        if args.dry_run { "would open" } else { "opened" },
+                        title(&item.title),
+                        style.dim(&outcome.describe())
+                    );
+                }
             }
             Err(err) => {
                 refused += 1;
+                landed.push(serde_json::json!({
+                    "item": item.id,
+                    "title": item.title,
+                    "recipe": recipe.id,
+                    "outcome": "refused",
+                    "says": err.to_string(),
+                }));
                 eprintln!("note: {}: {err}", item.id);
             }
         }
@@ -334,14 +511,34 @@ fn dispatch_work(config: &StatusConfig, args: &crate::cli::WorkDispatchArgs) -> 
     // be named to, a pair ephor cannot check, an agent with no model of its
     // own (§FS-006-project-interface.9). Said once, after the sweep, because a
     // sweep resolves the same table over and over.
-    for note in dispatcher.notes() {
-        println!("note: {}", style.dim(note));
+    if !args.json {
+        for note in dispatcher.notes() {
+            println!("note: {}", style.dim(note));
+        }
     }
     if args.item.is_some() && !asked_for_one {
         return Err(EphorError::Command(format!(
             "{} is not in any cached feed — run `ephor refresh` first.",
             args.item.as_deref().unwrap_or("")
         )));
+    }
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "opened": opened,
+                "settled": settled,
+                "refused": refused,
+                "dry_run": args.dry_run,
+                "items": landed,
+                "notes": dispatcher.notes(),
+            }))
+            .unwrap_or_else(|_| "null".to_string())
+        );
+        if asked_for_one && opened == 0 && settled == 0 {
+            return Ok(ExitCode::from(1));
+        }
+        return Ok(ExitCode::SUCCESS);
     }
     println!(
         "\n{opened} ticket(s){}{}{}",
@@ -400,6 +597,20 @@ fn ask_work(config: &StatusConfig, args: &crate::cli::WorkAskArgs) -> Result<Exi
     if !args.dry_run {
         dispatcher.save()?;
     }
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "item": item.id,
+                "title": item.title,
+                "dry_run": args.dry_run,
+                "says": outcome.describe(),
+                "notes": dispatcher.notes(),
+            }))
+            .unwrap_or_else(|_| "null".to_string())
+        );
+        return Ok(ExitCode::SUCCESS);
+    }
     let style = Style::detect();
     println!(
         "{} {}\n  {}",
@@ -430,8 +641,21 @@ fn list_workflows(config: &StatusConfig, args: &crate::cli::WorkWorkflowsArgs) -
             .ok_or_else(|| EphorError::Command("No project is configured.".to_string()))?,
     };
     let offered = dispatcher.workflows(&project);
+    // Nothing offered is an answer, and under `--json` it is an empty array
+    // rather than a line of prose: the three ways there can be no workflows —
+    // a refusal from the binding, a name that matches none, none at all — used
+    // to leave standard output carrying a sentence, so a program asking what
+    // the runtime offers got something it could not parse (§REQ-002-parity.3).
+    // The reason still reaches whoever is watching, on the error stream
+    // (§FS-011-command-line.7).
     if let Some(refusal) = &offered.refusal {
-        println!("{refusal}");
+        match args.json {
+            true => println!("[]"),
+            false => println!("{refusal}"),
+        }
+        if args.json {
+            eprintln!("note: {refusal}");
+        }
         return Ok(ExitCode::SUCCESS);
     }
     let style = Style::detect();
@@ -444,16 +668,24 @@ fn list_workflows(config: &StatusConfig, args: &crate::cli::WorkWorkflowsArgs) -
         None => offered.workflows.iter().collect(),
     };
     if named.is_empty() {
-        match &args.workflow {
-            Some(wanted) => {
-                println!("The runtime offers no workflow called '{wanted}'.");
-                return Ok(ExitCode::FAILURE);
+        let (says, code) = match &args.workflow {
+            Some(wanted) => (
+                format!("The runtime offers no workflow called '{wanted}'."),
+                ExitCode::FAILURE,
+            ),
+            None => (
+                "The runtime offers no workflows here.".to_string(),
+                ExitCode::SUCCESS,
+            ),
+        };
+        match args.json {
+            true => {
+                println!("[]");
+                eprintln!("note: {says}");
             }
-            None => {
-                println!("The runtime offers no workflows here.");
-                return Ok(ExitCode::SUCCESS);
-            }
+            false => println!("{says}"),
         }
+        return Ok(code);
     }
     if args.json {
         println!(
@@ -563,30 +795,66 @@ fn lay_workflow(config: &StatusConfig, args: &crate::cli::WorkLayArgs) -> Result
     let entry = workflow_entry(&mut dispatcher, config, &item, &args.entry)?;
     let laying = dispatcher.laying(&item, &entry, &typed, picked.as_ref())?;
     let style = Style::detect();
-    println!(
-        "{} {} {}",
-        match args.dry_run {
-            true => "would lay",
-            false => "laying",
-        },
-        laying.workflow.id,
-        style.dim(&format!("about {}", title(&item.title)))
-    );
-    // What answered every input, before anything is written: the account a
-    // reader is owed of a plan they are about to get (§FS-005-dispatch.19).
-    for answer in &laying.answered.answers {
+    if !args.json {
         println!(
-            "  {}  {}",
-            answer.input,
-            style.dim(&match answer.shown.is_empty() {
-                true => format!("({})", answer.from.label()),
-                false => format!("{}  ({})", one_line(&answer.shown), answer.from.label()),
-            })
+            "{} {} {}",
+            match args.dry_run {
+                true => "would lay",
+                false => "laying",
+            },
+            laying.workflow.id,
+            style.dim(&format!("about {}", title(&item.title)))
         );
+        // What answered every input, before anything is written: the account a
+        // reader is owed of a plan they are about to get (§FS-005-dispatch.19).
+        for answer in &laying.answered.answers {
+            println!(
+                "  {}  {}",
+                answer.input,
+                style.dim(&match answer.shown.is_empty() {
+                    true => format!("({})", answer.from.label()),
+                    false => format!("{}  ({})", one_line(&answer.shown), answer.from.label()),
+                })
+            );
+        }
     }
+    // What answered every input, in the machine form too: a reader is owed the
+    // account of a plan they are about to get, and so is a script
+    // (§FS-005-dispatch.19).
+    let answers: Vec<serde_json::Value> = laying
+        .answered
+        .answers
+        .iter()
+        .map(|answer| {
+            serde_json::json!({
+                "input": answer.input,
+                "shown": answer.shown,
+                "from": answer.from.label(),
+            })
+        })
+        .collect();
+    let workflow = laying.workflow.id.clone();
+    let plan = laying.root().join(&laying.plan_id);
     let laid = dispatcher.lay(&item, &laying, args.dry_run)?;
     if !args.dry_run {
         dispatcher.save()?;
+    }
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "item": item.id,
+                "workflow": workflow,
+                "plan": plan,
+                "dry_run": args.dry_run,
+                "says": laid.outcome.describe(),
+                "report": laid.report,
+                "answers": answers,
+                "notes": dispatcher.notes(),
+            }))
+            .unwrap_or_else(|_| "null".to_string())
+        );
+        return Ok(ExitCode::SUCCESS);
     }
     println!("{}", style.dim(&laid.outcome.describe()));
     if !laid.report.trim().is_empty() {
@@ -670,27 +938,58 @@ fn cancel_work(config: &StatusConfig, args: &crate::cli::WorkCancelArgs) -> Resu
     let style = Style::detect();
     let why = args.why.as_deref().unwrap_or("");
     let mut refused = 0usize;
+    let mut landed: Vec<serde_json::Value> = Vec::new();
     for ticket in &args.tickets {
         match dispatcher.cancel(&args.item, ticket, why, args.dry_run) {
-            Ok(cancelled) => println!(
-                "{}{}\n  {}",
-                if args.dry_run {
-                    "would cancel — "
-                } else {
-                    ""
-                },
-                cancelled.describe(),
-                style.dim(&format!(
-                    "from '{}' in {}",
-                    cancelled.from,
-                    cancelled.plan.display()
-                ))
-            ),
+            Ok(cancelled) => {
+                landed.push(serde_json::json!({
+                    "ticket": ticket,
+                    "cancelled": true,
+                    "from": cancelled.from,
+                    "plan": cancelled.plan,
+                    "says": cancelled.describe(),
+                    "left_waiting": cancelled.left_waiting,
+                }));
+                if args.json {
+                    continue;
+                }
+                println!(
+                    "{}{}\n  {}",
+                    if args.dry_run {
+                        "would cancel — "
+                    } else {
+                        ""
+                    },
+                    cancelled.describe(),
+                    style.dim(&format!(
+                        "from '{}' in {}",
+                        cancelled.from,
+                        cancelled.plan.display()
+                    ))
+                );
+            }
             Err(err) => {
                 refused += 1;
+                landed.push(serde_json::json!({
+                    "ticket": ticket,
+                    "cancelled": false,
+                    "says": err.to_string(),
+                }));
                 eprintln!("note: {ticket}: {err}");
             }
         }
+    }
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "item": args.item,
+                "dry_run": args.dry_run,
+                "refused": refused,
+                "tickets": landed,
+            }))
+            .unwrap_or_else(|_| "null".to_string())
+        );
     }
     // The ledger records what was asked, and it still was: nothing to save.
     if refused > 0 {
@@ -703,6 +1002,7 @@ fn sync_work(config: &StatusConfig, args: &crate::cli::WorkSyncArgs) -> Result<E
     let mut dispatcher = Dispatcher::load(config)?;
     let items = selected_items(config, &args.project)?;
     let mut reopened = 0usize;
+    let mut landed: Vec<serde_json::Value> = Vec::new();
     for item in &items {
         if !dispatcher.ledger.entries.contains_key(&item.id) {
             continue;
@@ -711,32 +1011,63 @@ fn sync_work(config: &StatusConfig, args: &crate::cli::WorkSyncArgs) -> Result<E
             Ok(Outcome::Current) => {}
             // Reported, not counted: nothing was written, and the reader still
             // wants to know their work is about something that is over.
-            Ok(Outcome::Dormant { changes }) => println!(
-                "{}\n  {}",
-                title(&item.title),
-                Style::detect().dim(&format!(
-                    "{} — no recipe applies to it now; `ephor work forget --done` clears it",
-                    changes.join("; ")
-                ))
-            ),
+            Ok(Outcome::Dormant { changes }) => {
+                landed.push(serde_json::json!({
+                    "item": item.id,
+                    "title": item.title,
+                    "outcome": "dormant",
+                    "changes": changes,
+                }));
+                if !args.json {
+                    println!(
+                        "{}\n  {}",
+                        title(&item.title),
+                        Style::detect().dim(&format!(
+                            "{} — no recipe applies to it now; \
+                             `ephor work forget --done` clears it",
+                            changes.join("; ")
+                        ))
+                    );
+                }
+            }
             Ok(outcome) => {
                 reopened += 1;
-                println!(
-                    "{} {}\n  {}",
-                    if args.dry_run {
-                        "would reopen"
-                    } else {
-                        "reopened"
-                    },
-                    title(&item.title),
-                    Style::detect().dim(&outcome.describe())
-                );
+                landed.push(serde_json::json!({
+                    "item": item.id,
+                    "title": item.title,
+                    "outcome": if args.dry_run { "would-reopen" } else { "reopened" },
+                    "says": outcome.describe(),
+                }));
+                if !args.json {
+                    println!(
+                        "{} {}\n  {}",
+                        if args.dry_run {
+                            "would reopen"
+                        } else {
+                            "reopened"
+                        },
+                        title(&item.title),
+                        Style::detect().dim(&outcome.describe())
+                    );
+                }
             }
             Err(err) => eprintln!("note: {}: {err}", item.id),
         }
     }
     if !args.dry_run {
         dispatcher.save()?;
+    }
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "reopened": reopened,
+                "dry_run": args.dry_run,
+                "items": landed,
+            }))
+            .unwrap_or_else(|_| "null".to_string())
+        );
+        return Ok(ExitCode::SUCCESS);
     }
     println!(
         "\n{reopened} ticket(s) {}",
@@ -808,27 +1139,56 @@ fn run_work(config: &StatusConfig, args: &crate::cli::WorkRunArgs) -> Result<Exi
     // unbound, a name nothing resolves — said once, before the terminal is
     // handed over (§FS-006-project-interface.9).
     for note in dispatcher.notes() {
-        println!("note: {}", Style::detect().dim(note));
+        match args.json {
+            // The reading is alone on standard output (§FS-011-command-line.7);
+            // a note still reaches whoever is watching.
+            true => eprintln!("note: {note}"),
+            false => println!("note: {}", Style::detect().dim(note)),
+        }
     }
     if roots.is_empty() {
+        if args.json {
+            println!("{}", serde_json::json!({ "runs": [], "failed": 0 }));
+            return Ok(ExitCode::SUCCESS);
+        }
         println!("Nothing to run: no dispatched ticket is still open.");
         return Ok(ExitCode::SUCCESS);
     }
 
     let mut failed = 0usize;
+    let mut runs: Vec<serde_json::Value> = Vec::new();
     for (root, checkout, hand, plans) in &roots {
-        println!(
-            "\n▶ {} {} ({} plan(s){})",
-            runtime::label(&config.work),
-            root.display(),
-            plans.len(),
-            match hand {
-                // The same phrase the key in the interface shows: one run,
-                // one sentence about who is getting it (§FS-005-dispatch.14).
-                Some(hand) => format!(", {}", hand.describe()),
-                None => String::new(),
+        if !args.json {
+            println!(
+                "\n▶ {} {} ({} plan(s){})",
+                runtime::label(&config.work),
+                root.display(),
+                plans.len(),
+                match hand {
+                    // The same phrase the key in the interface shows: one run,
+                    // one sentence about who is getting it (§FS-005-dispatch.14).
+                    Some(hand) => format!(", {}", hand.describe()),
+                    None => String::new(),
+                }
+            );
+        }
+        let landed = |outcome: &str, says: Option<String>| {
+            let mut row = serde_json::json!({
+                "root": root,
+                "checkout": checkout,
+                "plans": plans,
+                "outcome": outcome,
+                "says": says,
+            });
+            // Absent where the tickets agreed on nobody, which is what the
+            // published shape declares — a `null` typed as a string is a
+            // reading that does not hold to its own schema
+            // (§REQ-002-parity.4).
+            if let (Some(row), Some(hand)) = (row.as_object_mut(), hand.as_ref()) {
+                row.insert("hand".to_string(), serde_json::json!(hand.describe()));
             }
-        );
+            row
+        };
         match runtime::run(
             &config.work,
             root,
@@ -836,25 +1196,36 @@ fn run_work(config: &StatusConfig, args: &crate::cli::WorkRunArgs) -> Result<Exi
             plans,
             hand.as_ref(),
             &args.runner_args,
+            // Under `--json` this command's standard output is the reading's,
+            // so the runtime's own output goes beside it rather than into it
+            // — a run that narrated itself onto the reading would hand a
+            // script ephor's prose to parse (§REQ-002-parity.3,
+            // §FS-011-command-line.7). It still has a terminal to ask on.
+            match args.json {
+                true => summons::Mode::Aside,
+                false => summons::Mode::Interactive,
+            },
         ) {
             Ok(answer) => match answer.outcome {
-                SummonsOutcome::Done => {}
+                SummonsOutcome::Done => runs.push(landed("done", None)),
                 // The runtime declining for now is not a failed run
                 // (§FS-006-project-interface.3).
                 SummonsOutcome::Parked => {
-                    println!("  parked: {}", root.display());
+                    runs.push(landed("parked", None));
+                    if !args.json {
+                        println!("  parked: {}", root.display());
+                    }
                 }
                 SummonsOutcome::Failed => {
                     failed += 1;
-                    eprintln!(
-                        "error: {} — {}",
-                        answer.refusal(&runtime::label(&config.work)),
-                        root.display()
-                    );
+                    let says = answer.refusal(&runtime::label(&config.work));
+                    runs.push(landed("failed", Some(says.clone())));
+                    eprintln!("error: {says} — {}", root.display());
                 }
             },
             Err(err) => {
                 failed += 1;
+                runs.push(landed("failed", Some(err.to_string())));
                 eprintln!(
                     "error: {} {}: {err}",
                     runtime::label(&config.work),
@@ -862,6 +1233,16 @@ fn run_work(config: &StatusConfig, args: &crate::cli::WorkRunArgs) -> Result<Exi
                 );
             }
         }
+    }
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "runs": runs,
+                "failed": failed,
+            }))
+            .unwrap_or_else(|_| "null".to_string())
+        );
     }
     if failed > 0 {
         return Ok(ExitCode::from(1));
@@ -888,14 +1269,29 @@ fn forget_work(config: &StatusConfig, args: &crate::cli::WorkForgetArgs) -> Resu
         .map(|(id, _)| id.clone())
         .collect();
     if ids.is_empty() {
+        if args.json {
+            println!("{}", serde_json::json!({ "forgot": [] }));
+            return Ok(ExitCode::SUCCESS);
+        }
         println!("Nothing to forget (pass --item, --done, or --missing).");
         return Ok(ExitCode::SUCCESS);
     }
+    let mut forgot: Vec<serde_json::Value> = Vec::new();
     for id in &ids {
         if let Some(entry) = dispatcher.ledger.entries.remove(id) {
-            println!("forgot {id} — its plan stays at {}", entry.plan.display());
+            forgot.push(serde_json::json!({ "item": id, "plan": entry.plan }));
+            if !args.json {
+                println!("forgot {id} — its plan stays at {}", entry.plan.display());
+            }
         }
     }
     dispatcher.save()?;
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({ "forgot": forgot }))
+                .unwrap_or_else(|_| "null".to_string())
+        );
+    }
     Ok(ExitCode::SUCCESS)
 }

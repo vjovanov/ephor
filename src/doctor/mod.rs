@@ -384,9 +384,19 @@ pub fn doctor(args: &DoctorArgs) -> Result<ExitCode> {
         style: Style::detect(),
     };
     let mut worst = Health::Well;
+    // One document, assembled from both passes and printed once at the end.
+    // Each pass used to print its own under `--json`, so `ephor doctor --json`
+    // put two JSON objects on standard output and every parser in the world
+    // failed on the second one — a machine form nothing can read is not a
+    // machine form (§REQ-002-parity.3).
+    let mut document = serde_json::Map::new();
 
     if !args.self_only {
-        worst = worst.max(site(args, &style, &say)?);
+        let (health, half) = site(args, &style, &say)?;
+        worst = worst.max(health);
+        if let Some(Value::Object(half)) = half {
+            document.extend(half);
+        }
     }
     if !args.skip_self {
         if !args.self_only && !args.json {
@@ -409,17 +419,23 @@ pub fn doctor(args: &DoctorArgs) -> Result<ExitCode> {
             }
         });
         if args.json {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&report.to_json()).unwrap()
-            );
+            // Under its own key, because "did ephor's own scratch site pass"
+            // and "is this site well" are two questions, and a flat merge would
+            // have put a second `passed` beside the site's projects.
+            document.insert("self".to_string(), report.to_json());
         }
         if !report.passed() {
             worst = Health::Broken;
         }
     }
 
-    if !args.json {
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&Value::Object(document))
+                .unwrap_or_else(|_| "null".to_string())
+        );
+    } else {
         println!();
         println!("{}", summary(worst, &style));
     }
@@ -429,7 +445,10 @@ pub fn doctor(args: &DoctorArgs) -> Result<ExitCode> {
 /// The site pass: refresh every configured source, then read each project's
 /// ladder (§FS-010-doctor.3). Refreshed rather than cached, because a cached
 /// answer cannot say whether a source still answers.
-fn site(args: &DoctorArgs, style: &Style, say: &Narrator) -> Result<Health> {
+/// Returns the health it found and, under `--json`, its half of the one
+/// document `doctor` prints — never printed here, because two documents on one
+/// stream is not JSON at all (§FS-011-command-line.7).
+fn site(args: &DoctorArgs, style: &Style, say: &Narrator) -> Result<(Health, Option<Value>)> {
     let config = load_config()?;
     let registry_doc = crate::feed::commands::load_registry_doc()?;
     let projects = selected(&config, args.project.as_deref())?;
@@ -498,12 +517,13 @@ fn site(args: &DoctorArgs, style: &Style, say: &Narrator) -> Result<Health> {
         .unwrap_or(Health::Well);
 
     if args.json {
-        let out = json!({
-            "projects": rows.iter().map(Diagnosis::to_json).collect::<Vec<_>>(),
-            "roster": roster_json(&roster, &config),
-        });
-        println!("{}", serde_json::to_string_pretty(&out).unwrap());
-        return Ok(worst);
+        return Ok((
+            worst,
+            Some(json!({
+                "projects": rows.iter().map(Diagnosis::to_json).collect::<Vec<_>>(),
+                "roster": roster_json(&roster, &config),
+            })),
+        ));
     }
 
     println!("{}", style.bold("The site"));
@@ -521,7 +541,7 @@ fn site(args: &DoctorArgs, style: &Style, say: &Narrator) -> Result<Health> {
     // as the workable rung it speaks for does not.
     println!();
     render_roster(&roster, &config, style);
-    Ok(worst)
+    Ok((worst, None))
 }
 
 /// One project's line, and the detail only a reader with a problem wants: a

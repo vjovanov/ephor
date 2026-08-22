@@ -43,28 +43,84 @@ pub fn check(args: &CheckArgs) -> Result<ExitCode> {
 
     let bound = wanted(&root, manifest.as_ref(), &args.verbs)?;
     let mut failed = Vec::new();
+    let mut verbs = Vec::new();
     for verb in &bound {
         // Streamed, not captured: the project's own output — standard error
         // included — is what a CI log is for, and a gate's log does not
-        // belong in memory (§AR-002-summons.2).
+        // belong in memory (§AR-002-summons.2). Under `--json` it streams to
+        // the error stream instead, because standard output is spoken for by
+        // the reading and a build log interleaved with it is a program parsing
+        // somebody's compiler warnings (§FS-011-command-line.7).
         let answer = checks::run(
             verb,
             &root,
             Vec::new(),
             args.feature.as_deref(),
-            Mode::Interactive,
+            match args.json {
+                true => Mode::Aside,
+                false => Mode::Interactive,
+            },
         )?;
-        if !report(verb, &answer) {
+        let passed = match args.json {
+            true => noted(verb, &answer, &mut verbs),
+            false => report(verb, &answer),
+        };
+        if !passed {
             failed.push(verb.verb.name());
         }
+    }
+    // The same account the prose gives, in the shape a workflow acts on: which
+    // verb ran, what it came to, and the failures it named. `ephor check
+    // --json` printed the project's own output and no JSON at all, so the one
+    // command a shipped CI step stands on was the one with no machine form
+    // (§FS-009-shipped-actions.1, §REQ-002-parity.3).
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "passed": failed.is_empty(),
+                "verbs": verbs,
+            }))
+            .unwrap_or_else(|_| "null".to_string())
+        );
     }
     if failed.is_empty() {
         return Ok(ExitCode::SUCCESS);
     }
-    // Named rather than counted: which verb failed is the first thing a
-    // person reads a red gate for.
-    eprintln!("\nfailed: {}", failed.join(", "));
+    if !args.json {
+        // Named rather than counted: which verb failed is the first thing a
+        // person reads a red gate for.
+        eprintln!("\nfailed: {}", failed.join(", "));
+    }
     Ok(ExitCode::from(1))
+}
+
+/// One verb as a row of the reading, and whether it passed. The same three
+/// facts `report` puts on a line — what ran, how it ended, what it said — so
+/// the prose form cannot know something the machine form does not
+/// (§REQ-002-parity.3).
+fn noted(bound: &Bound, answer: &Answer, verbs: &mut Vec<serde_json::Value>) -> bool {
+    let outcome = match answer.outcome {
+        Outcome::Done => "done",
+        // Not applicable now, ask again later (§FS-006-project-interface.3) —
+        // a verb that parks has not failed, and a CI step that fails on it
+        // would be reading the exit code the way this contract exists to stop.
+        Outcome::Parked => "parked",
+        Outcome::Failed => "failed",
+    };
+    verbs.push(serde_json::json!({
+        "verb": bound.verb.name(),
+        "outcome": outcome,
+        "summary": checks::summary_of(answer),
+        "failures": checks::failures_of(answer)
+            .into_iter()
+            .map(|failure| serde_json::json!({
+                "job": failure.job,
+                "trace": failure.trace,
+            }))
+            .collect::<Vec<_>>(),
+    }));
+    !matches!(answer.outcome, Outcome::Failed)
 }
 
 /// Which verbs to run: what was asked for, or the project's own answer to "am
