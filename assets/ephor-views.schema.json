@@ -820,9 +820,10 @@
               },
               "hand": { "type": "string", "description": "Who the run was given to, where the tickets agreed on one (FS-005-dispatch.14)." },
               "outcome": {
-                "enum": ["done", "parked", "failed"],
-                "description": "`parked` is the runtime declining for now, which is not a failed run (FS-006-project-interface.3)."
+                "enum": ["started", "done", "parked", "failed"],
+                "description": "`started` is a run that went beneath the screen, watched afterwards by attaching (FS-005-dispatch.20); the other three are a run watched here, with `parked` the runtime declining for now, which is not a failed run (FS-006-project-interface.3)."
               },
+              "id": { "type": "string", "description": "What the run is called, where it named itself \u2014 the id the board prints and the runner's own attach command takes (FS-005-dispatch.20)." },
               "says": {
                 "type": ["string", "null"]
               }

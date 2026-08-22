@@ -633,28 +633,62 @@ impl App {
                 // The checkout, not the plan directory: it is where the work
                 // is, and where the runtime falls back to when a workspace has
                 // no one repository to be found by looking.
-                self.handover(
-                    terminal,
-                    "▶",
-                    &format!(
-                        "{} — {label}{}",
-                        crate::work::runtime::label(&config.work),
-                        match &hand {
-                            Some(hand) => format!(" · {}", hand.describe()),
-                            None => String::new(),
-                        }
-                    ),
-                    &Site::root(&checkout),
-                    &crate::work::runtime::summons_with(
+                let said = format!(
+                    "{} — {label}{}",
+                    crate::work::runtime::label(&config.work),
+                    match &hand {
+                        Some(hand) => format!(" · {}", hand.describe()),
+                        None => String::new(),
+                    }
+                );
+                // A run starts beneath the screen (§FS-005-dispatch.20): the
+                // work was handed over precisely so that nobody had to stay,
+                // and a screen given away to one run cannot watch the other
+                // items. What the reader gets is one line saying the run began
+                // and what it is called; the root turns live on the board from
+                // the lock, as every run does.
+                if crate::work::runtime::can_detach(&config.work) {
+                    self.message = match crate::work::runtime::start_detached(
                         &config.work,
                         &root,
+                        &checkout,
                         std::slice::from_ref(&plan_id),
                         hand.as_ref(),
                         &[],
-                    ),
-                )?;
-                // The runtime just advanced the plans this reads.
+                    ) {
+                        Ok(Some(id)) => format!("▶ run {id} started · ; to watch"),
+                        // A run that named itself nothing is still a run: the
+                        // row is live from the lock alone (§AR-007-runtime.3).
+                        Ok(None) => "▶ run started · ; to watch".to_string(),
+                        Err(err) => err.to_string(),
+                    };
+                } else {
+                    // Where the binding cannot detach the run is watched as it
+                    // was — the terminal handed over — and the line says so
+                    // rather than pretending (§AR-007-runtime.3).
+                    self.handover(
+                        terminal,
+                        "▶",
+                        &said,
+                        &Site::root(&checkout),
+                        &crate::work::runtime::summons_with(
+                            &config.work,
+                            &root,
+                            std::slice::from_ref(&plan_id),
+                            hand.as_ref(),
+                            &[],
+                        ),
+                    )?;
+                    self.message = format!(
+                        "{} · {} cannot start a run detached here",
+                        self.message,
+                        crate::work::runtime::runner(&config.work)
+                    );
+                }
+                // The runtime just advanced the plans this reads — and, where
+                // it detached, took the lock the board watches.
                 self.reload_work();
+                self.reload_operations();
                 self.rebuild_view();
                 if let Screen::Work(screen) = &self.screen {
                     let item = screen.item.clone();

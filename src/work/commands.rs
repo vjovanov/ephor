@@ -1157,6 +1157,22 @@ fn run_work(config: &StatusConfig, args: &crate::cli::WorkRunArgs) -> Result<Exi
 
     let mut failed = 0usize;
     let mut runs: Vec<serde_json::Value> = Vec::new();
+    // A run starts beneath the screen unless the reader asked to watch it
+    // (§FS-005-dispatch.20) — and unless the binding has no detached shape, in
+    // which case it runs attached as it always did and this says so rather
+    // than pretending (§AR-007-runtime.3). Decided once, before any root: the
+    // answer is the binding's and does not change between two of them.
+    let detaching = !args.watch && runtime::can_detach(&config.work);
+    if !args.watch && !detaching {
+        let note = format!(
+            "{} cannot start a run detached here — watching it in this terminal",
+            runtime::runner(&config.work)
+        );
+        match args.json {
+            true => eprintln!("note: {note}"),
+            false => println!("note: {}", Style::detect().dim(&note)),
+        }
+    }
     for (root, checkout, hand, plans) in &roots {
         if !args.json {
             println!(
@@ -1172,7 +1188,7 @@ fn run_work(config: &StatusConfig, args: &crate::cli::WorkRunArgs) -> Result<Exi
                 }
             );
         }
-        let landed = |outcome: &str, says: Option<String>| {
+        let landed = |outcome: &str, says: Option<String>, id: Option<&str>| {
             let mut row = serde_json::json!({
                 "root": root,
                 "checkout": checkout,
@@ -1187,8 +1203,47 @@ fn run_work(config: &StatusConfig, args: &crate::cli::WorkRunArgs) -> Result<Exi
             if let (Some(row), Some(hand)) = (row.as_object_mut(), hand.as_ref()) {
                 row.insert("hand".to_string(), serde_json::json!(hand.describe()));
             }
+            // What the run is called, where it named itself — the id the
+            // reader and the runtime agree on (§FS-005-dispatch.20).
+            if let (Some(row), Some(id)) = (row.as_object_mut(), id) {
+                row.insert("id".to_string(), serde_json::json!(id));
+            }
             row
         };
+        if detaching {
+            // Started and left: the launcher waits for the child to publish
+            // its descriptor and returns, and what comes back is the one line
+            // saying the run began and what it is called
+            // (§FS-005-dispatch.20). The root turns live on the board from the
+            // lock, as every run does.
+            match runtime::start_detached(
+                &config.work,
+                root,
+                checkout,
+                plans,
+                hand.as_ref(),
+                &args.runner_args,
+            ) {
+                Ok(id) => {
+                    let says = match &id {
+                        Some(id) => format!("▶ run {id} started"),
+                        // A run that named itself nothing is still a run: the
+                        // row is live from the lock alone (§AR-007-runtime.3).
+                        None => "▶ run started".to_string(),
+                    };
+                    if !args.json {
+                        println!("{says}");
+                    }
+                    runs.push(landed("started", Some(says), id.as_deref()));
+                }
+                Err(err) => {
+                    failed += 1;
+                    runs.push(landed("failed", Some(err.to_string()), None));
+                    eprintln!("error: {err} — {}", root.display());
+                }
+            }
+            continue;
+        }
         match runtime::run(
             &config.work,
             root,
@@ -1207,11 +1262,11 @@ fn run_work(config: &StatusConfig, args: &crate::cli::WorkRunArgs) -> Result<Exi
             },
         ) {
             Ok(answer) => match answer.outcome {
-                SummonsOutcome::Done => runs.push(landed("done", None)),
+                SummonsOutcome::Done => runs.push(landed("done", None, None)),
                 // The runtime declining for now is not a failed run
                 // (§FS-006-project-interface.3).
                 SummonsOutcome::Parked => {
-                    runs.push(landed("parked", None));
+                    runs.push(landed("parked", None, None));
                     if !args.json {
                         println!("  parked: {}", root.display());
                     }
@@ -1219,13 +1274,13 @@ fn run_work(config: &StatusConfig, args: &crate::cli::WorkRunArgs) -> Result<Exi
                 SummonsOutcome::Failed => {
                     failed += 1;
                     let says = answer.refusal(&runtime::label(&config.work));
-                    runs.push(landed("failed", Some(says.clone())));
+                    runs.push(landed("failed", Some(says.clone()), None));
                     eprintln!("error: {says} — {}", root.display());
                 }
             },
             Err(err) => {
                 failed += 1;
-                runs.push(landed("failed", Some(err.to_string())));
+                runs.push(landed("failed", Some(err.to_string()), None));
                 eprintln!(
                     "error: {} {}: {err}",
                     runtime::label(&config.work),

@@ -424,6 +424,13 @@ pub struct WorkRunArgs {
     #[arg(long)]
     pub item: Option<String>,
 
+    /// Keep the terminal and watch the run, as this command always did
+    /// (§FS-011-command-line.8). Without it the run starts detached and this
+    /// prints the id it was given — which is also what a runner that cannot
+    /// detach does unasked, saying so (§FS-005-dispatch.20).
+    #[arg(long)]
+    pub watch: bool,
+
     /// Arguments passed through to the runtime, after `--`.
     #[arg(last = true)]
     pub runner_args: Vec<String>,
