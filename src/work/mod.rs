@@ -285,7 +285,7 @@ impl WorkStatus {
 /// one run per execution root: the run holds this entry's work, it parked a
 /// question this entry opened, or it is live on the root and will reach it
 /// (§FS-005-dispatch.15).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum WorkGoing {
     Running {
         root: PathBuf,
@@ -1593,19 +1593,6 @@ impl Dispatcher {
         runtime::results::mark_posted(&entry.root, &entry.plan_id)
     }
 
-    /// What the work one menu entry hands over is doing right now
-    /// (§FS-005-dispatch.21) — the same facts the badge on the row is made of
-    /// (§FS-005-dispatch.9), narrowed to the one entry that would start it
-    /// again.
-    ///
-    /// One entry's answer, off the one reading of the root
-    /// ([`Dispatcher::work_at`]). A whole menu asks [`WorkAt::going`] directly,
-    /// so that the lock, the states document, the plan and the journal are read
-    /// once for all its rows rather than once for each (§FS-005-dispatch.15.1).
-    pub fn work_going(&self, item: &Item, action: &str) -> Option<WorkGoing> {
-        self.work_at(item)?.going(action)
-    }
-
     /// Everything one item's work root has to say about what is going there,
     /// read once (§FS-005-dispatch.15.1, §AR-005-capabilities.1).
     ///
@@ -1619,6 +1606,8 @@ impl Dispatcher {
     /// every row of one subject, and every row of one subject shares this root:
     /// six recipe entries used to mean six states-document parses, six plan
     /// parses, a dozen lock probes and six descriptor reads for one keypress.
+    /// [`WorkAt::going`] then answers each row off what is already in hand
+    /// (§FS-005-dispatch.21).
     pub fn work_at(&self, item: &Item) -> Option<WorkAt<'_>> {
         let entry = self.ledger.entries.get(&item.id)?;
         let live = runtime::watch::live(&self.global, &entry.root);
