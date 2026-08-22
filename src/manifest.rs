@@ -282,31 +282,47 @@ impl Manifest {
 pub fn parse(text: &str, source: &str) -> Result<Manifest> {
     let value: Value = serde_json::from_str(text)
         .map_err(|err| EphorError::Registry(format!("{source} is not JSON: {err}")))?;
+    // Ahead of the schema, which says this too — a `not`, so that a manifest
+    // validated by anything but ephor hears it as well — but says it as a
+    // shape. The reader gets the sentence, and it is the one a person's own
+    // configuration is refused in (§AR-005-capabilities.2).
+    if let Some(why) = says_two_places(&value) {
+        return Err(EphorError::Registry(format!("{source}: {why}")));
+    }
     if let Some(error) = validator().iter_errors(&value).next() {
         return Err(EphorError::Registry(format!(
             "{source} does not match the manifest schema at '{}': {error}",
             error.instance_path
         )));
     }
-    let manifest: Manifest = serde_json::from_value(value)
-        .map_err(|err| EphorError::Registry(format!("{source} could not be read: {err}")))?;
-    // Beneath the screen and in a window of the reader's own are two different
-    // places, and an offer saying both leaves one of them silently unused
-    // (§FS-005-dispatch.17, §FS-005-dispatch.22). The same refusal a person's
-    // own configuration gets, in the same words: a rule about *values* has to
-    // be enforced as one, and the schema's `not` says it too so that a manifest
-    // validated by anything else hears it as well.
-    for offer in &manifest.offers {
-        if offer.background && offer.window {
-            return Err(EphorError::Registry(format!(
-                "{source}: offer '{}' says both 'background' and 'window': a move that needs \
-                 nobody runs beneath the screen, and a program somebody types into runs in a \
-                 window — never both",
-                offer.id
-            )));
-        }
-    }
-    Ok(manifest)
+    serde_json::from_value(value)
+        .map_err(|err| EphorError::Registry(format!("{source} could not be read: {err}")))
+}
+
+/// Why an offer here names two places to run in, or None where none does.
+///
+/// Beneath the screen and in a window of the reader's own are two different
+/// places (§FS-005-dispatch.17, §FS-005-dispatch.22), and an offer saying both
+/// leaves one of them silently unused: [`Session::how`] answered *beneath* and
+/// the start opened a window anyway.
+fn says_two_places(value: &Value) -> Option<String> {
+    let flag = |offer: &Value, key: &str| offer.get(key).and_then(Value::as_bool).unwrap_or(false);
+    value
+        .get("actions")?
+        .as_array()?
+        .iter()
+        .find(|offer| flag(offer, "background") && flag(offer, "window"))
+        .map(|offer| {
+            format!(
+                "offer '{}' says both 'background' and 'window': a move that needs nobody runs \
+                 beneath the screen, and a program somebody types into runs in a window — never \
+                 both",
+                offer
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("(unnamed)")
+            )
+        })
 }
 
 fn validator() -> &'static jsonschema::Validator {
@@ -360,6 +376,32 @@ mod tests {
         let style = manifest.checks.style.as_ref().unwrap();
         assert_eq!(style.command(), "./style.sh");
         assert_eq!(style.cwd(), Some("repo:ce"));
+    }
+
+    /// Beneath the screen and in a window of the reader's own are two different
+    /// places, and an offer saying both leaves one of them silently unused
+    /// (§FS-005-dispatch.17, §FS-005-dispatch.22). Refused where it is written,
+    /// in the same words a person's own configuration is refused in — the two
+    /// paths used to disagree, one deciding *beneath* and the other opening a
+    /// window anyway.
+    #[test]
+    fn an_offer_saying_both_background_and_window_is_refused() {
+        let both = r#"{"actions": [
+            {"id": "edit", "description": "open it", "command": "true",
+             "background": true, "window": true}
+        ]}"#;
+        let err = parse(both, "ephor.json").expect_err("it is refused");
+        assert!(err.to_string().contains("edit"), "{err}");
+        assert!(err.to_string().contains("never both"), "{err}");
+
+        // Either alone is an offer.
+        for one in ["\"background\": true", "\"window\": true"] {
+            let text = format!(
+                r#"{{"actions": [{{"id": "edit", "description": "open it",
+                    "command": "true", {one}}}]}}"#
+            );
+            parse(&text, "ephor.json").expect("one place is a place");
+        }
     }
 
     #[test]
