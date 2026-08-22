@@ -33,7 +33,7 @@ ships, the previous "latest" section moves verbatim to
 - **Everything the screen holds is a command, and every answer has a machine
   form** ([§REQ-002-parity](requirements/REQ-002-parity.md),
   [§FS-011-command-line](../requirements.md#fs-011-command-line-every-ability-is-a-command-and-every-answer-has-a-json-form),
-  [§AR-009-surfaces](architecture/AR-009-surfaces.md)). The interactive
+  [§AR-009-surfaces](architecture/AR-009-surfaces.md), PR #2). The interactive
   interface is a convenience over the watch, never the place the watch lives —
   but a good third of what it could do had no command behind it, so a runtime
   ephor hands work to could read a feed and not finish a move. That is now a
