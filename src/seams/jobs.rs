@@ -65,6 +65,11 @@ pub struct Step {
     pub becomes_workspace: bool,
 }
 
+/// What this seam writes today. A record from an older ephor still reads: every
+/// field added since is defaulted, so a job started before the version moved is
+/// a row like any other rather than a directory nothing can open.
+pub const VERSION: u32 = 2;
+
 /// What a job is, written once before it starts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Record {
@@ -82,6 +87,25 @@ pub struct Record {
     #[serde(default)]
     pub workspace: Option<PathBuf>,
     pub steps: Vec<Step>,
+    /// Which menu entry this job came from, by the name a command calls it —
+    /// the configured id, or the description where the entry is anonymous
+    /// (§FS-005-dispatch.21). A job records which entry it came from because
+    /// nothing could otherwise match it back to the row that started it.
+    #[serde(default)]
+    pub action: Option<String>,
+    /// The branch the entry was pressed on, where the subject was a branch row
+    /// rather than a matter (§FS-004-quick-actions.6). A replay is offered per
+    /// branch, so a job on one branch is not the running mark of another
+    /// (§FS-005-dispatch.21).
+    #[serde(default)]
+    pub branch: Option<String>,
+    /// The handle the reader's own window opener printed, where this job's
+    /// supervisor runs inside a window (§FS-005-dispatch.22). What opening the
+    /// job gets the reader, in place of a log: the program's own output went to
+    /// a screen they were looking at and is not duplicated
+    /// (§AR-002-summons.6).
+    #[serde(default)]
+    pub window: Option<String>,
     /// The matter as `EPHOR_*` pairs, resolved where the entry was pressed —
     /// one vocabulary, identical to what a watched action receives
     /// (§FS-005-dispatch.8). Carried rather than recomputed: the supervisor
@@ -721,6 +745,43 @@ mod tests {
     use super::*;
 
     /// The directory name leads with the instant, so the plain sort of a
+    /// A record written by an older ephor is still a job: the fields added
+    /// since default, so a job started before the version moved keeps its row
+    /// rather than becoming a directory nothing can open
+    /// (§FS-005-dispatch.17). And what a job records now is what matches it
+    /// back to the row that started it (§FS-005-dispatch.21).
+    #[test]
+    fn a_record_from_before_the_version_moved_still_reads() {
+        let older = r#"{
+            "version": 1,
+            "project": "widget",
+            "icon": "⤴",
+            "description": "rebase onto master",
+            "root": "/w",
+            "steps": [],
+            "started": "2026-08-18T09:00:00Z"
+        }"#;
+        let record: Record = serde_json::from_str(older).expect("a v1 record reads");
+        assert_eq!(record.version, 1);
+        assert_eq!(record.action, None);
+        assert_eq!(record.branch, None);
+        assert_eq!(record.window, None);
+
+        let now = Record {
+            version: VERSION,
+            action: Some("rebase".to_string()),
+            branch: Some("you/ABC-42".to_string()),
+            window: Some("@7".to_string()),
+            ..record
+        };
+        let text = serde_json::to_string(&now).expect("it serializes");
+        let back: Record = serde_json::from_str(&text).expect("and reads back");
+        assert_eq!(back.version, 2);
+        assert_eq!(back.action.as_deref(), Some("rebase"));
+        assert_eq!(back.branch.as_deref(), Some("you/ABC-42"));
+        assert_eq!(back.window.as_deref(), Some("@7"));
+    }
+
     /// listing is time's order and nothing has to read a record to sort rows.
     #[test]
     fn a_job_is_named_for_when_it_started_and_what_it_is() {
@@ -732,6 +793,9 @@ mod tests {
             description: "rebase onto master (3 behind as of Jul 28)".to_string(),
             root: PathBuf::from("/w"),
             workspace: None,
+            action: None,
+            branch: None,
+            window: None,
             steps: Vec::new(),
             dossier: Vec::new(),
             started: String::new(),
@@ -759,6 +823,9 @@ mod tests {
                 description: "replay".to_string(),
                 root: PathBuf::from("/w"),
                 workspace: None,
+                action: None,
+                branch: None,
+                window: None,
                 steps: Vec::new(),
                 dossier: Vec::new(),
                 started: String::new(),

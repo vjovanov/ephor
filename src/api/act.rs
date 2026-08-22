@@ -385,9 +385,21 @@ impl Session {
             .placement(run.about.project())
             .map(|placement| placement.forest(&workspace));
         let record = jobs::Record {
-            version: 1,
+            version: jobs::VERSION,
             project: run.about.project().to_string(),
             item: run.about.item().map(|item| item.id.clone()),
+            // Which entry this came from, and — on a branch row — which branch
+            // (§FS-005-dispatch.21): the menu matches a live job back to the
+            // row that started it by exactly these, and a job that recorded
+            // neither could never be matched at all.
+            action: Some(run.entry.key()),
+            branch: match &run.about {
+                About::Branch { branch, .. } => Some(branch.clone()),
+                About::Item(_) => None,
+            },
+            // Filled in by the caller that opened one (§FS-005-dispatch.22);
+            // a job that took no window has none.
+            window: None,
             icon: action.icon.clone(),
             description: action.description.clone(),
             root: run.root.clone(),
