@@ -142,12 +142,18 @@ impl OperationsScreen {
             if pulse.live != row.op.live
                 || pulse.dashboard != row.op.dashboard
                 || pulse.quiet != row.op.quiet
+                || pulse.identity != row.op.identity
             {
                 found.changed = true;
             }
             row.op.live = pulse.live;
             row.op.dashboard = pulse.dashboard;
             row.op.quiet = pulse.quiet;
+            // A run that ended and one that started in its place are two runs,
+            // and the row says which it is looking at (§FS-005-dispatch.20).
+            // The stop command follows the id it is about.
+            row.op.stop = None;
+            row.op.identity = pulse.identity;
         }
         found
     }
@@ -583,6 +589,8 @@ mod tests {
                 done: 2,
                 cancelled: 1,
                 machine_unread: None,
+                identity: None,
+                stop: None,
                 plans: vec![plan()],
             },
             item: Some(item()),
@@ -610,6 +618,8 @@ mod tests {
                 done: 0,
                 cancelled: 0,
                 machine_unread: None,
+                identity: None,
+                stop: None,
                 plans: vec![plan()],
             },
             item: None,
@@ -782,6 +792,7 @@ mod tests {
             live: true,
             dashboard: None,
             quiet: Some(13),
+            identity: None,
         });
         assert!(found.changed);
         assert!(!found.flipped);
@@ -794,6 +805,7 @@ mod tests {
             live: true,
             dashboard: None,
             quiet: Some(13),
+            identity: None,
         });
         assert!(!found.changed);
         assert!(!found.flipped);
@@ -804,6 +816,7 @@ mod tests {
             live: false,
             dashboard: None,
             quiet: None,
+            identity: None,
         });
         assert!(found.changed);
         assert!(found.flipped);
