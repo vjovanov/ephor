@@ -280,7 +280,11 @@ impl Session {
                     plan,
                     id: id.clone(),
                     attach: attach.clone(),
-                    since,
+                    // Nothing records when the machine parked it, and the run's
+                    // age is not the question's wait (§FS-005-dispatch.21): a
+                    // row saying `waiting on you · 3h` about a ticket parked a
+                    // minute ago would be the watch inventing news.
+                    since: None,
                 },
                 crate::work::WorkGoing::Queued { root } => offers::Running::Queued {
                     root,

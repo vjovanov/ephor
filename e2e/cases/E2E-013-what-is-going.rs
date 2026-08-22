@@ -458,6 +458,9 @@ fn a_parked_ticket_is_waiting_on_you_with_a_run_and_without_one() {
         "{running}"
     );
     assert!(running["run"].is_null(), "{running}");
+    // Nothing records when the machine parked it, so the row claims no
+    // duration: the run's age is not the question's wait.
+    assert!(running["since_seconds"].is_null(), "{running}");
 
     // And with a run still standing at the gate, the way in is that run: §20's
     // own answer to a question a detached run asks is *attach*.
