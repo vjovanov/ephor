@@ -208,9 +208,54 @@ pub enum Watching {
     /// than in it: a surface whose standard output is already spoken for
     /// (§FS-011-command-line.7). The entry can still be typed into.
     Aside,
+    /// A window of the reader's own, where one is bound — ephor stays where it
+    /// was and the reader gets a second terminal beside it
+    /// (§FS-005-dispatch.22). Where nothing is bound this is
+    /// [`Watching::Terminal`] and the outcome line says so: the terminal is the
+    /// floor, and the floor is never removed (§AR-002-summons.6).
+    Window,
+}
+
+/// Where a menu entry runs (§FS-005-dispatch.17, §FS-005-dispatch.22).
+///
+/// Answered below both surfaces (§AR-009-surfaces.1), so the key and the
+/// command cannot come to disagree about which of the three places an entry
+/// takes — which is exactly how one surface comes to background what the other
+/// hands its terminal to.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Runs {
+    /// Here, with the terminal handed over — what a menu entry has always been
+    /// allowed to be (§FS-006-project-interface.9).
+    Here,
+    /// Beneath the screen, as a job (§FS-005-dispatch.17).
+    Beneath,
+    /// In a window of the reader's own, as a job whose supervisor runs inside
+    /// that window (§FS-005-dispatch.22).
+    InAWindow,
 }
 
 impl Session {
+    /// Where this entry runs (§FS-005-dispatch.17, §FS-005-dispatch.22). The
+    /// entry's own word, answered against what is actually bound: an entry that
+    /// asks for a window and finds none takes the terminal as it always did,
+    /// and the outcome line says so.
+    ///
+    /// The checkout row is never one of the other two: it is ephor's own move
+    /// that makes the workspace every later step runs in
+    /// (§FS-004-quick-actions.7).
+    pub fn how(&self, entry: &MenuEntry) -> Runs {
+        if entry.is_checkout {
+            return Runs::Here;
+        }
+        if entry.action.background {
+            return Runs::Beneath;
+        }
+        if entry.action.window && self.opener().is_some() {
+            return Runs::InAWindow;
+        }
+        Runs::Here
+    }
+
     /// Run one entry, here, now (§FS-011-command-line.1). The terminal is the
     /// caller's property, so a surface that has to give it up does that around
     /// this call rather than inside it (§AR-002-summons.2).
@@ -325,7 +370,13 @@ impl Session {
         match says {
             Ok(says) => views::Outcome {
                 steps,
-                ..views::Outcome::ok(says)
+                // Where no window can be opened, the entry takes the terminal
+                // as it always did — and says so rather than leaving the
+                // reader to notice (§FS-005-dispatch.22).
+                ..views::Outcome::ok(match run.entry.action.window {
+                    true => format!("{says} · nothing bound a window, so it took the terminal"),
+                    false => says,
+                })
             },
             Err(says) => views::Outcome {
                 steps,
@@ -349,6 +400,8 @@ impl Session {
     ) -> views::Outcome {
         use super::offers::Running;
         let aside = watching == Watching::Aside;
+        // `Window` falls back to the terminal where nothing is bound, which is
+        // the floor and is never removed (§AR-002-summons.6).
         match running {
             // Everything the reader would have watched, kept and followed as
             // it is written (§FS-005-dispatch.17). It ends when the job does.
@@ -379,6 +432,22 @@ impl Session {
             | Running::Queued {
                 root, id: Some(id), ..
             } => {
+                // A window of the reader's own where one is bound
+                // (§FS-005-dispatch.22) — and *not* recorded as a job: the run
+                // is the operation, and a surface on it is not a second one
+                // (§AR-002-summons.6).
+                if watching == Watching::Window {
+                    if let Some(opener) = self.opener() {
+                        let command = crate::work::runtime::attach_command(&self.work_config, id);
+                        let at = crate::seams::window::site(root);
+                        return match opener.open(&format!("ephor · run {id}"), &command, &at) {
+                            Ok(handle) => views::Outcome::ok(format!(
+                                "▶ watching run {id} in window {handle} — leaving it detaches"
+                            )),
+                            Err(err) => views::Outcome::refused(err.to_string()),
+                        };
+                    }
+                }
                 let summons = crate::work::runtime::attach_summons(&self.work_config, id);
                 let mode = match aside {
                     true => summons::Mode::Aside,
@@ -402,9 +471,23 @@ impl Session {
                     root.display()
                 ))
             }
-            Running::Window { handle, .. } => {
-                views::Outcome::ok(format!("▶ it is running in window {handle}"))
-            }
+            // Opening a windowed program is bringing its window forward, and
+            // never a second copy of it (§FS-005-dispatch.22). ephor opens a
+            // window and focuses one; it never closes one and never ends what
+            // is in it.
+            Running::Window { handle, .. } => match self.opener() {
+                Some(opener) => {
+                    let at = crate::seams::window::site(&crate::paths::state_dir());
+                    match opener.focus(handle, &at) {
+                        Ok(()) => views::Outcome::ok(format!("▶ window {handle} is forward")),
+                        Err(err) => views::Outcome::refused(err.to_string()),
+                    }
+                }
+                None => views::Outcome::refused(format!(
+                    "It is running in window {handle}, and nothing here binds a window to bring \
+                     forward"
+                )),
+            },
         }
     }
 
@@ -490,13 +573,31 @@ impl Session {
             ),
             started: chrono::Utc::now().to_rfc3339(),
         };
-        match jobs::start(record) {
+        // An entry that says `window` is a job whose supervisor runs inside a
+        // window of the reader's own (§FS-005-dispatch.22): the record, the
+        // lock and the outcome are a job's, and what changes is only who holds
+        // the other end of the streams (§AR-002-summons.6).
+        let started = match (run.entry.action.window, self.opener()) {
+            (true, Some(opener)) => {
+                let title = format!("ephor · {}", action.description);
+                let at = crate::seams::window::site(&run.root);
+                jobs::start_windowed(record, |command| opener.open(&title, command, &at))
+            }
+            _ => jobs::start(record),
+        };
+        match started {
             Ok(job) => views::Outcome {
                 job: Some(job.id.clone()),
-                ..views::Outcome::ok(format!(
-                    "{} {}: started",
-                    job.record.icon, job.record.description
-                ))
+                ..views::Outcome::ok(match &job.record.window {
+                    // The window is its inspection where a log would have been,
+                    // so the line that says it started says which window
+                    // (§FS-005-dispatch.22).
+                    Some(handle) => format!(
+                        "{} {}: started in window {handle}",
+                        job.record.icon, job.record.description
+                    ),
+                    None => format!("{} {}: started", job.record.icon, job.record.description),
+                })
             },
             Err(err) => views::Outcome::refused(err.to_string()),
         }

@@ -420,9 +420,11 @@ impl Running {
             Running::Job { says, .. } => says.clone(),
             Running::Run { doing, .. } => doing.clone(),
             Running::Queued { .. } => "queued".to_string(),
+            // The job's own line already says where it is: a windowed program
+            // writes to a screen and not to a file (§FS-005-dispatch.22).
             Running::Window { says, handle, .. } => match says.is_empty() {
-                true => format!("in window {handle}"),
-                false => format!("{says} · in window {handle}"),
+                true => format!("running in window {handle}"),
+                false => says.clone(),
             },
         }
     }

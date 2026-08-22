@@ -161,9 +161,15 @@ impl Job {
         match &self.ended {
             Some(ended) => ended.says.clone(),
             None if self.died() => format!("{}: the job died", self.record.description),
-            None => tail(&self.log_path(), 1)
-                .pop()
-                .unwrap_or_else(|| "started".to_string()),
+            None => tail(&self.log_path(), 1).pop().unwrap_or_else(|| {
+                match &self.record.window {
+                    // A windowed program writes to a screen the reader is
+                    // looking at, not to a file, so the row says where it is
+                    // rather than nothing (§FS-005-dispatch.22).
+                    Some(handle) => format!("running in window {handle}"),
+                    None => "started".to_string(),
+                }
+            }),
         }
     }
 
@@ -304,19 +310,7 @@ pub fn tail(path: &Path, lines: usize) -> Vec<String> {
 /// the returned [`Job`] is what was just written, and the lock the supervisor
 /// takes is what will answer for it from here on.
 pub fn start(record: Record) -> Result<Job> {
-    let id = name(&record);
-    let dir = jobs_dir().join(&id);
-    fs::create_dir_all(&dir)
-        .map_err(|err| EphorError::Command(format!("Cannot create {}: {err}", dir.display())))?;
-    let text = serde_json::to_string_pretty(&record)
-        .map_err(|err| EphorError::Command(format!("Cannot write the job: {err}")))?;
-    fs::write(dir.join(RECORD), text)
-        .map_err(|err| EphorError::Command(format!("Cannot write {}: {err}", dir.display())))?;
-    // Created here rather than by the supervisor: a job whose directory exists
-    // and whose log does not would read as a job that wrote nothing, when what
-    // happened is that the supervisor never got as far as starting.
-    let log = fs::File::create(dir.join(LOG))
-        .map_err(|err| EphorError::Command(format!("Cannot open the job log: {err}")))?;
+    let (dir, log) = write_down(&record)?;
     let errors = log
         .try_clone()
         .map_err(|err| EphorError::Command(format!("Cannot open the job log: {err}")))?;
@@ -345,6 +339,83 @@ pub fn start(record: Record) -> Result<Job> {
     summons::spawn(&mut command)
         .map_err(|err| EphorError::Command(format!("Cannot start the job: {err}")))?;
 
+    started(&dir)
+}
+
+/// Write a job down without starting it: the directory, the record, and the log
+/// its supervisor will write into.
+///
+/// The log is created here rather than by the supervisor: a job whose directory
+/// exists and whose log does not would read as a job that wrote nothing, when
+/// what happened is that the supervisor never got as far as starting.
+fn write_down(record: &Record) -> Result<(PathBuf, fs::File)> {
+    let dir = jobs_dir().join(name(record));
+    fs::create_dir_all(&dir)
+        .map_err(|err| EphorError::Command(format!("Cannot create {}: {err}", dir.display())))?;
+    save(&dir, record)?;
+    let log = fs::File::create(dir.join(LOG))
+        .map_err(|err| EphorError::Command(format!("Cannot open the job log: {err}")))?;
+    Ok((dir, log))
+}
+
+/// The record, written whole. Through a neighbouring file and a rename, because
+/// [`start_windowed`] rewrites it while the supervisor may already be reading
+/// it: a rename is atomic, so a reader sees one complete record or the other
+/// and never half of each.
+fn save(dir: &Path, record: &Record) -> Result<()> {
+    let text = serde_json::to_string_pretty(record)
+        .map_err(|err| EphorError::Command(format!("Cannot write the job: {err}")))?;
+    let scratch = dir.join("job.json.writing");
+    fs::write(&scratch, text)
+        .map_err(|err| EphorError::Command(format!("Cannot write {}: {err}", dir.display())))?;
+    fs::rename(&scratch, dir.join(RECORD))
+        .map_err(|err| EphorError::Command(format!("Cannot write {}: {err}", dir.display())))
+}
+
+/// The command that runs a job's supervisor. One spelling of it, so the
+/// interface and the window opener start the same supervisor
+/// (§AR-002-summons.5).
+pub fn supervisor_command(dir: &Path) -> Result<String> {
+    let exe = std::env::current_exe()
+        .map_err(|err| EphorError::Command(format!("Cannot find ephor itself: {err}")))?;
+    Ok(format!(
+        "{} job run {}",
+        summons::quote(&exe.to_string_lossy()),
+        summons::quote(&dir.to_string_lossy())
+    ))
+}
+
+/// Start a job in a window of the reader's own (§FS-005-dispatch.22,
+/// §AR-002-summons.6): the supervisor runs *inside* the window, so what the
+/// program writes is on a screen the reader is looking at rather than in a
+/// file, and the handle the opener printed goes into the record — that handle,
+/// not a pager, is what opening this job gets them.
+///
+/// It is a job in every other way. The record, the lock and the `outcome.json`
+/// are the same, so liveness is the lock exactly as everywhere and a window the
+/// reader closed is a job that ended, however it ended.
+///
+/// `open` is handed the supervisor's own command and hands back the handle. The
+/// binding is the caller's, so nothing here names a product
+/// (§REQ-001-boundary.5).
+pub fn start_windowed(
+    mut record: Record,
+    open: impl FnOnce(&str) -> Result<String>,
+) -> Result<Job> {
+    let (dir, _log) = write_down(&record)?;
+    let handle = open(&supervisor_command(&dir)?).inspect_err(|_| {
+        // The window never opened, so no supervisor ever will: the directory
+        // would otherwise stand as a job that died without ever having run.
+        let _ = fs::remove_dir_all(&dir);
+    })?;
+    record.window = Some(handle);
+    save(&dir, &record)?;
+    started(&dir)
+}
+
+/// The job as it now stands, once its supervisor has had a moment to take the
+/// lock.
+fn started(dir: &Path) -> Result<Job> {
     // Wait for the supervisor to take the lock, briefly. Not for the job —
     // nothing here waits for a job — but so that the caller's first look at it
     // is the truth: liveness is the lock (§FS-005-dispatch.17), and a job
@@ -353,13 +424,13 @@ pub fn start(record: Record) -> Result<Job> {
     // starts is a job that died, and that is a row of its own rather than
     // something to hang on.
     for _ in 0..STARTING.as_millis() / STARTED_EVERY.as_millis() {
-        if live(&dir) {
+        if live(dir) {
             break;
         }
         std::thread::sleep(STARTED_EVERY);
     }
 
-    read(&dir).ok_or_else(|| EphorError::Command("The job could not be read back".to_string()))
+    read(dir).ok_or_else(|| EphorError::Command("The job could not be read back".to_string()))
 }
 
 /// How long [`start`] will watch for the supervisor's lock, and how often.

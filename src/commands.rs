@@ -351,10 +351,14 @@ fn actions_run(args: &ActionsRunArgs) -> Result<ExitCode> {
     if args.dry_run {
         return Ok(report(&dry_run_of(&request), args.json));
     }
-    // Beneath the terminal where the entry says so, or where the reader asked
-    // (§FS-005-dispatch.17); here otherwise, because a menu entry has always
-    // been allowed to *be* the reader's session.
-    let outcome = match args.background || request.entry.action.background {
+    // Beneath the terminal where the entry says so, in a window of the
+    // reader's own where it asked for one and one is bound, or where the reader
+    // asked (§FS-005-dispatch.17, §FS-005-dispatch.22); here otherwise, because
+    // a menu entry has always been allowed to *be* the reader's session. Which
+    // of the three is the session's answer, so the command and the key cannot
+    // disagree (§AR-009-surfaces.1).
+    let beneath = !matches!(session.how(&request.entry), crate::api::act::Runs::Here);
+    let outcome = match args.background || beneath {
         true => session.start_job(&request),
         // Under `--json` the entry's own output goes beside the reading, so
         // that what a program parses is the outcome alone

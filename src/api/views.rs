@@ -49,6 +49,9 @@ pub struct Offer {
     /// It runs beneath the screen as a job rather than taking the terminal
     /// (§FS-005-dispatch.17).
     pub background: bool,
+    /// It runs in a window of the reader's own where one is bound, and takes
+    /// the terminal where none is (§FS-005-dispatch.22).
+    pub window: bool,
     /// It asks before running (§FS-006-project-interface.9), which on the
     /// command line is `--yes`.
     pub confirm: bool,

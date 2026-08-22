@@ -130,6 +130,13 @@ pub struct ActionConfig {
     /// started beneath the screen is a program nobody can type into. ephor's
     /// own deterministic moves set it themselves (§FS-005-dispatch.12).
     pub background: bool,
+    /// Its program runs in a window of the reader's own instead of taking the
+    /// terminal, and ephor stays where it was (§FS-005-dispatch.22). Said as
+    /// `background` is said, and for the entry that *is* a program somebody
+    /// types into — an editor, a pager, a coding agent's own session
+    /// (§FS-006-project-interface.9). Where no window can be opened the entry
+    /// takes the terminal as it always did, and says so.
+    pub window: bool,
 }
 
 /// Who a piece of agent work would go to, resolved when the menu opens
@@ -211,6 +218,8 @@ struct RawAction {
     confirm: bool,
     #[serde(default)]
     background: bool,
+    #[serde(default)]
+    window: bool,
 }
 
 impl TryFrom<RawAction> for ActionConfig {
@@ -256,6 +265,16 @@ impl TryFrom<RawAction> for ActionConfig {
             return Err(format!(
                 "action {named} carries none of 'command', 'agent' or 'workflow': an entry has to \
                  say what it does"
+            ));
+        }
+        // Beneath the screen and in a window of the reader's own are two
+        // different places, and an entry saying both leaves one of them
+        // silently unused (§FS-005-dispatch.17, §FS-005-dispatch.22).
+        if raw.background && raw.window {
+            return Err(format!(
+                "action {named} says both 'background' and 'window': a move that needs nobody runs \
+                 beneath the screen, and a program somebody types into runs in a window — never \
+                 both"
             ));
         }
         let ask = raw.agent;
@@ -307,6 +326,7 @@ impl TryFrom<RawAction> for ActionConfig {
             requires_checkout: raw.requires_checkout,
             confirm: raw.confirm,
             background: raw.background,
+            window: raw.window,
         })
     }
 }
@@ -377,6 +397,13 @@ pub struct Defaults {
     /// (§FS-003-feed-categories.3). Zero drops it as soon as it finishes.
     #[serde(default = "default_recent_days")]
     pub recent_days: u64,
+    /// Which window opener fills the seam (§FS-005-dispatch.22): a shipped
+    /// binding by name, or a pair of commands of the reader's own. Unset, the
+    /// environment ephor was started in is recognized; where nothing is bound
+    /// and nothing is recognized the terminal is handed over as it always was
+    /// (§AR-002-summons.6).
+    #[serde(default)]
+    pub window: Option<crate::seams::window::Binding>,
 }
 
 impl Default for Defaults {
@@ -386,6 +413,7 @@ impl Default for Defaults {
             provider_timeout_seconds: default_timeout(),
             github_user: None,
             recent_days: default_recent_days(),
+            window: None,
         }
     }
 }

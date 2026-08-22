@@ -53,6 +53,7 @@
         "command": { "type": "string", "description": "What it would run, where it runs one." },
         "cwd": { "type": "string", "description": "Where it runs: `workspace`, `root`, or `repo:<name>`." },
         "background": { "type": "boolean", "description": "It runs beneath the terminal as a job rather than taking it (FS-005-dispatch.17)." },
+        "window": { "type": "boolean", "description": "It runs in a window of the reader's own where one is bound, and takes the terminal where none is (FS-005-dispatch.22)." },
         "confirm": { "type": "boolean", "description": "It asks before running; on the command line that is --yes." },
         "requires": {
           "type": "array",

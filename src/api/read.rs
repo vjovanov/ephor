@@ -473,6 +473,7 @@ pub fn offer_of(entry: &offers::MenuEntry) -> views::Offer {
         brief: None,
         cwd: entry.action.cwd.clone(),
         background: entry.action.background,
+        window: entry.action.window,
         confirm: entry.action.confirm,
         requires: entry.action.requires.clone(),
         running: entry.running.as_ref().map(running_of),

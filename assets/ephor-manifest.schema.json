@@ -168,7 +168,8 @@
           "description": "Capability rungs this offer needs (FS-006-project-interface.10); unmet rungs render '(unavailable: …)'. 'ticketed' and 'local-issues' are older spellings of 'tasks' and still resolve."
         },
         "confirm": { "type": "boolean", "description": "Ask before running." },
-        "background": { "type": "boolean", "description": "Run beneath the interface as a job rather than taking the terminal (FS-005-dispatch.17). Default false: an offer may be a pager or an editor." }
+        "background": { "type": "boolean", "description": "Run beneath the interface as a job rather than taking the terminal (FS-005-dispatch.17). Default false: an offer may be a pager or an editor." },
+        "window": { "type": "boolean", "description": "Run in a window of the reader's own where one is bound, instead of taking the terminal (FS-005-dispatch.22). For the offer that is a program somebody types into — an editor, a pager, a coding agent's own session. Never with `background`: those are two different places." }
       }
     },
     "selector": {

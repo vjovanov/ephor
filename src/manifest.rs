@@ -184,6 +184,11 @@ pub struct Offer {
     /// (§FS-006-project-interface.9).
     #[serde(default)]
     pub background: bool,
+    /// It is such a program and should not take the terminal: it runs in a
+    /// window of the reader's own where one is bound, and ephor stays beside it
+    /// (§FS-005-dispatch.22, §FS-006-project-interface.9).
+    #[serde(default)]
+    pub window: bool,
 }
 
 /// What a project offers, as a menu entry. The icon is the only thing ephor
@@ -220,6 +225,7 @@ impl Offer {
             requires_checkout: false,
             confirm: self.confirm,
             background: self.background,
+            window: self.window,
         }
     }
 }

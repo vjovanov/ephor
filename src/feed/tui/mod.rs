@@ -1274,10 +1274,13 @@ impl App {
         menu: &ActionMenu,
         entry: &actions::MenuEntry,
     ) -> Result<()> {
-        // An entry that says it needs no reader never takes the terminal: it
-        // is started beneath the screen and the interface stays where it was
-        // (§FS-005-dispatch.17).
-        if !entry.is_checkout && entry.action.background {
+        // An entry that needs no reader never takes the terminal, and neither
+        // does one whose program runs in a window of the reader's own: both are
+        // started beneath the screen and the interface stays where it was
+        // (§FS-005-dispatch.17, §FS-005-dispatch.22). Where each entry runs is
+        // the session's answer, so the key and `ephor actions run` cannot come
+        // to disagree about it (§AR-009-surfaces.1).
+        if !matches!(self.ctx.how(entry), crate::api::act::Runs::Here) {
             self.start_job(menu, entry);
             return Ok(());
         }
@@ -1376,23 +1379,18 @@ impl App {
         use crate::api::offers::Running;
         match running {
             Running::Job { log, .. } => self.read_log(terminal, &log.clone(), true),
-            Running::Run {
-                root, id: Some(id), ..
+            Running::Run { id: Some(_), .. } | Running::Queued { id: Some(_), .. } => {
+                self.attach(terminal, running)
             }
-            | Running::Queued {
-                root, id: Some(id), ..
-            } => {
-                let (root, id) = (root.clone(), id.clone());
-                self.attach(terminal, &root, &id)
-            }
-            // A run that named itself nothing has no surface to put on it: the
-            // row is live from the lock alone (§AR-007-runtime.3).
-            Running::Run { .. } | Running::Queued { .. } => {
-                self.message = "The run left no id, so there is nothing to attach to".to_string();
-                Ok(())
-            }
-            Running::Window { handle, .. } => {
-                self.message = format!("It is running in window {handle}");
+            // A run that named itself nothing has no surface to put on it, and
+            // bringing a window forward costs no terminal — both are the
+            // session's move, and the interface stays where it is
+            // (§AR-007-runtime.3, §FS-005-dispatch.22).
+            Running::Run { .. } | Running::Queued { .. } | Running::Window { .. } => {
+                self.message = self
+                    .ctx
+                    .open_running(running, crate::api::act::Watching::Window)
+                    .says;
                 Ok(())
             }
         }
@@ -1401,13 +1399,36 @@ impl App {
     /// The runner's own surface on a run, opened where the reader can type into
     /// it (§FS-005-dispatch.20). Leaving it detaches and never stops the run —
     /// the binding's own contract, which ephor neither adds to nor takes from.
-    fn attach(&mut self, terminal: &mut DefaultTerminal, root: &Path, id: &str) -> Result<()> {
+    fn attach(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        running: &crate::api::offers::Running,
+    ) -> Result<()> {
+        // A window of the reader's own where one is bound, and the terminal
+        // otherwise (§FS-005-dispatch.22). Not one call, because the terminal
+        // is this call site's property: the interface gives it up around a
+        // surface that takes it, and must not around one that does not
+        // (§AR-002-summons.2).
+        if self.ctx.opener().is_some() {
+            self.message = self
+                .ctx
+                .open_running(running, crate::api::act::Watching::Window)
+                .says;
+            return Ok(());
+        }
+        let (root, id) = match running {
+            crate::api::offers::Running::Run { root, id, .. }
+            | crate::api::offers::Running::Queued { root, id, .. } => {
+                (root.clone(), id.clone().unwrap_or_default())
+            }
+            _ => return Ok(()),
+        };
         self.handover(
             terminal,
             "▶",
             &format!("watching run {id} — q detaches, the run goes on"),
-            &Site::root(root),
-            &crate::work::runtime::attach_summons(&self.work, id),
+            &Site::root(&root),
+            &crate::work::runtime::attach_summons(&self.work, &id),
         )
     }
 

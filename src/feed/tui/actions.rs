@@ -900,7 +900,7 @@ mod tests {
             says: String::new(),
         };
         assert_eq!(window.name(), "window");
-        assert_eq!(window.says(), "in window @7");
+        assert_eq!(window.says(), "running in window @7");
         assert_eq!(window.way_in().as_deref(), Some("@7"));
     }
 
