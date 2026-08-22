@@ -110,6 +110,10 @@
         "plan": { "type": "string" },
         "log": { "type": "string", "description": "On a job: what it wrote, also readable with `ephor job log`." },
         "dashboard": { "type": "string", "description": "Published only while a live run serves one." },
+        "run": { "type": "string", "description": "What the live run on this root calls itself, from the descriptor it publishes beside its lock (FS-005-dispatch.20). Absent where the runner left none — the row is live from the lock alone then (AR-007-runtime.3)." },
+        "control_url": { "type": "string", "description": "The address of the run's control, while it serves one." },
+        "attach": { "type": "string", "description": "The runner's own command for watching this run, in the runner's own words — the way in (FS-011-command-line.8)." },
+        "stop": { "type": "string", "description": "The runner's own command for stopping this run. Shown, never run: the board starts nothing and stops nothing (FS-005-dispatch.20)." },
         "tickets": {
           "type": "array",
           "items": { "$ref": "#/$defs/operation_ticket" }

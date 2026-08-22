@@ -55,6 +55,11 @@ pub(crate) struct WorkScreen {
     /// after it has left the board, which is what makes "what happened when I
     /// pressed that" answerable an hour later.
     jobs: Vec<crate::seams::jobs::Job>,
+    /// The run live on this matter's execution root, where one is — its id and
+    /// the runner's own command for stopping it, already phrased
+    /// (§FS-005-dispatch.20). Read from the descriptor beside the lock when the
+    /// screen was built, never remembered from a keypress.
+    run: Option<String>,
     /// Tickets that are over are collected behind one line until the reader
     /// asks for them (§FS-005-dispatch.18). A reading, never a change to the
     /// plan: `z` shows every one of them, in their place in the order.
@@ -64,6 +69,7 @@ pub(crate) struct WorkScreen {
 }
 
 impl WorkScreen {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         item: Item,
         status: Option<WorkStatus>,
@@ -71,6 +77,7 @@ impl WorkScreen {
         unavailable: Option<String>,
         refusal: Option<String>,
         jobs: Vec<crate::seams::jobs::Job>,
+        run: Option<String>,
     ) -> Self {
         WorkScreen {
             item,
@@ -81,6 +88,7 @@ impl WorkScreen {
             selected: 0,
             picking: None,
             jobs,
+            run,
             folded: true,
             scroll: 0,
             viewport: 0,
@@ -347,6 +355,15 @@ impl WorkScreen {
                     format!("    {}", status.plan.display()),
                     dim,
                 )));
+                // An id is how the reader and the runtime agree on which run
+                // they mean, so the operation says it here as the board says it
+                // on its row (§FS-005-dispatch.20).
+                if let Some(run) = &self.run {
+                    lines.push(Line::from(Span::styled(
+                        format!("    ▶ {run}"),
+                        Style::default().fg(Color::Cyan),
+                    )));
+                }
                 if status.missing {
                     lines.push(Line::from(Span::styled(
                         "    the plan this points at is gone".to_string(),
@@ -741,6 +758,38 @@ mod tests {
         offers
     }
 
+    /// The work screen says which run is live on this matter's execution root,
+    /// and how it is stopped in the runner's own words — shown, never run
+    /// (§FS-005-dispatch.20).
+    #[test]
+    fn the_operation_says_which_run_is_on_it() {
+        let screen = WorkScreen::new(
+            item(),
+            Some(status(true)),
+            offers(),
+            None,
+            None,
+            Vec::new(),
+            Some("run 3f9a2c · stop it: the-runner stop 3f9a2c".to_string()),
+        );
+        let said = text(&screen);
+        assert!(said.contains("▶ run 3f9a2c"), "{said}");
+        assert!(said.contains("stop it: the-runner stop 3f9a2c"), "{said}");
+
+        // A root nothing is running on says nothing about a run.
+        let quiet = WorkScreen::new(
+            item(),
+            Some(status(true)),
+            offers(),
+            None,
+            None,
+            Vec::new(),
+            None,
+        );
+        let quiet = text(&quiet);
+        assert!(!quiet.contains("▶ run"), "{quiet}");
+    }
+
     fn text(screen: &WorkScreen) -> String {
         screen
             .lines()
@@ -758,7 +807,15 @@ mod tests {
     #[test]
     fn the_screen_says_what_was_asked_what_it_reached_and_what_else_could_be() {
         let shown = offers();
-        let screen = WorkScreen::new(item(), Some(status(true)), offers(), None, None, Vec::new());
+        let screen = WorkScreen::new(
+            item(),
+            Some(status(true)),
+            offers(),
+            None,
+            None,
+            Vec::new(),
+            None,
+        );
         let text = text(&screen);
         assert!(text.contains("forge-demo-17.rhei.md"), "{text}");
         assert!(text.contains("fix-gate-1"), "{text}");
@@ -793,7 +850,7 @@ mod tests {
         let shown = offers();
         let workflow = shown.last().expect("the workflow row");
         assert_eq!(workflow.kind, "workflow");
-        let mut screen = WorkScreen::new(item(), None, offers(), None, None, Vec::new());
+        let mut screen = WorkScreen::new(item(), None, offers(), None, None, Vec::new(), None);
         let text = text(&screen);
         assert!(text.contains(&workflow.description), "{text}");
 
@@ -823,6 +880,7 @@ mod tests {
             Some("demo has no root in the registry".to_string()),
             None,
             Vec::new(),
+            None,
         );
         let text = text(&screen);
         assert!(text.contains("nothing could be offered"), "{text}");
@@ -832,7 +890,7 @@ mod tests {
 
     #[test]
     fn an_item_with_no_work_still_shows_what_could_be_asked_for() {
-        let screen = WorkScreen::new(item(), None, offers(), None, None, Vec::new());
+        let screen = WorkScreen::new(item(), None, offers(), None, None, Vec::new(), None);
         let text = text(&screen);
         assert!(text.contains("nothing has been handed over"), "{text}");
         assert!(text.contains("what can be asked for"), "{text}");
@@ -841,7 +899,7 @@ mod tests {
     #[test]
     fn keys_dispatch_by_number_and_refuse_what_there_is_nothing_to_do() {
         let ids: Vec<String> = offers().into_iter().map(|o| o.id).collect();
-        let mut screen = WorkScreen::new(item(), None, offers(), None, None, Vec::new());
+        let mut screen = WorkScreen::new(item(), None, offers(), None, None, Vec::new(), None);
         match screen.handle_key(KeyCode::Char('2')) {
             Action::DispatchWork { entry, .. } => assert_eq!(entry, ids[1]),
             _ => panic!("expected a dispatch"),
@@ -869,6 +927,7 @@ mod tests {
             None,
             None,
             Vec::new(),
+            None,
         );
         assert!(matches!(
             screen.handle_key(KeyCode::Char('s')),
@@ -931,6 +990,7 @@ mod tests {
             None,
             None,
             Vec::new(),
+            None,
         );
         // It is over, so it is folded away until asked for
         // (§FS-005-dispatch.18) — and then reads as taken back, in its place
@@ -1006,12 +1066,13 @@ mod tests {
             None,
             None,
             Vec::new(),
+            None,
         );
         match screen.handle_key(KeyCode::Char('c')) {
             Action::SetMessage(said) => assert!(said.contains("Nothing to cancel"), "{said}"),
             _ => panic!("expected a refusal"),
         }
-        let mut screen = WorkScreen::new(item(), None, offers(), None, None, Vec::new());
+        let mut screen = WorkScreen::new(item(), None, offers(), None, None, Vec::new(), None);
         assert!(matches!(
             screen.handle_key(KeyCode::Char('c')),
             Action::SetMessage(_)
@@ -1027,6 +1088,7 @@ mod tests {
             None,
             Some(unbound.clone()),
             Vec::new(),
+            None,
         );
         assert!(!screen.footer().contains("c cancel"), "{}", screen.footer());
         match screen.handle_key(KeyCode::Char('c')) {
@@ -1056,6 +1118,7 @@ mod tests {
             None,
             Some(unbound.clone()),
             Vec::new(),
+            None,
         );
         assert!(!screen.footer().contains("R run"), "{}", screen.footer());
         match screen.handle_key(KeyCode::Char('R')) {
@@ -1080,6 +1143,7 @@ mod tests {
             None,
             None,
             Vec::new(),
+            None,
         );
         assert!(bound.footer().contains("R run"), "{}", bound.footer());
         assert!(matches!(
@@ -1121,7 +1185,7 @@ mod tests {
                 ended: "2026-08-18T09:04:00Z".to_string(),
             }),
         };
-        let mut screen = WorkScreen::new(item(), None, offers(), None, None, vec![job]);
+        let mut screen = WorkScreen::new(item(), None, offers(), None, None, vec![job], None);
         let text = text(&screen);
         assert!(text.contains("what ephor ran here"), "{text}");
         assert!(text.contains("rebase onto master"), "{text}");
@@ -1140,7 +1204,7 @@ mod tests {
     /// than opening an empty pager.
     #[test]
     fn an_item_ephor_ran_nothing_on_says_so() {
-        let mut screen = WorkScreen::new(item(), None, offers(), None, None, Vec::new());
+        let mut screen = WorkScreen::new(item(), None, offers(), None, None, Vec::new(), None);
         assert!(
             !screen.footer().contains("L job log"),
             "{}",
@@ -1198,6 +1262,7 @@ mod tests {
             None,
             None,
             vec![job_ago(65, Some(60), false)],
+            None,
         );
         let shown = text(&screen);
         assert!(shown.contains("fix-gate-1"), "{shown}");
@@ -1213,6 +1278,7 @@ mod tests {
             None,
             None,
             vec![job_ago(3, None, true)],
+            None,
         );
         assert!(text(&screen).contains("going 3m"), "{}", text(&screen));
 
@@ -1225,6 +1291,7 @@ mod tests {
             None,
             None,
             vec![job_ago(90, None, false)],
+            None,
         );
         let shown = text(&screen);
         assert!(shown.contains("started 1h ago"), "{shown}");
@@ -1239,7 +1306,7 @@ mod tests {
     fn a_ticket_nothing_dispatched_carries_no_age() {
         let mut status = status(false);
         status.tickets[0].asked = None;
-        let screen = WorkScreen::new(item(), Some(status), offers(), None, None, Vec::new());
+        let screen = WorkScreen::new(item(), Some(status), offers(), None, None, Vec::new(), None);
         let row = text(&screen)
             .lines()
             .find(|line| line.contains("fix-gate-1"))
@@ -1261,6 +1328,7 @@ mod tests {
             None,
             None,
             Vec::new(),
+            None,
         );
         let shown = text(&screen);
         assert!(shown.contains("fix-gate-1"), "{shown}");
@@ -1317,6 +1385,7 @@ mod tests {
             None,
             None,
             Vec::new(),
+            None,
         );
         let shown = text(&screen);
         assert!(shown.contains("✓ fix-gate-1"), "{shown}");

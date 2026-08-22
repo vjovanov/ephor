@@ -108,6 +108,11 @@ pub const ABILITIES: &[Ability] = &[
         command: "operations",
     },
     Ability {
+        what: "watch a live run by attaching to it",
+        keys: &["a"],
+        command: "operations attach",
+    },
+    Ability {
         what: "what a job wrote",
         keys: &["L"],
         command: "job log",

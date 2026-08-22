@@ -493,6 +493,9 @@ fn as_of(distance: views::Distance) -> String {
 
 /// `ephor operations` (§FS-011-command-line.3).
 pub fn operations(args: &OperationsArgs) -> Result<ExitCode> {
+    if let Some(crate::cli::OperationsCommand::Attach(attach)) = &args.command {
+        return operations_attach(attach);
+    }
     let config = load_config()?;
     let mut session = Session::open(&config)?;
     let mut board = session.operations();
@@ -514,11 +517,47 @@ pub fn operations(args: &OperationsArgs) -> Result<ExitCode> {
         let marker = if op.live { "▶" } else { "✋" };
         println!("{marker} {} · {}   {}", op.project, op.id, op.state);
         println!("    {}", op.says);
+        // The way in, and the way out shown but never run
+        // (§FS-005-dispatch.20, §FS-011-command-line.8).
+        if let Some(attach) = &op.attach {
+            println!("    watch it:  {attach}");
+        }
+        if let Some(url) = &op.control_url {
+            println!("    control:   {url}");
+        }
+        if let Some(stop) = &op.stop {
+            println!("    stop it:   {stop}");
+        }
         for ticket in &op.tickets {
             println!("      {} [{}]  {}", ticket.id, ticket.state, ticket.says);
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// `ephor operations attach` (§FS-011-command-line.8): the board's own key as
+/// a command. It watches; it starts nothing and stops nothing
+/// (§FS-005-dispatch.15).
+fn operations_attach(args: &crate::cli::OperationsAttachArgs) -> Result<ExitCode> {
+    let config = load_config()?;
+    let mut session = Session::open(&config)?;
+    // The root the run is on, where this board still shows it — only somewhere
+    // for the surface to start from, since a run is reached by its id.
+    let board = session.operations();
+    let root = board
+        .operations
+        .iter()
+        .find(|op| op.run.as_deref() == Some(args.run.as_str()))
+        .and_then(|op| op.root.clone())
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let watching = match args.json {
+        true => crate::api::act::Watching::Aside,
+        false => crate::api::act::Watching::Terminal,
+    };
+    Ok(report(
+        &session.attach_run(&root, &args.run, watching),
+        args.json,
+    ))
 }
 
 /// The matter a conversation command was aimed at.

@@ -953,11 +953,33 @@ pub struct BranchesArgs {
 /// `ephor operations` (§FS-011-command-line.3): the board, without the screen.
 #[derive(Args, Debug, Default)]
 pub struct OperationsArgs {
+    #[command(subcommand)]
+    pub command: Option<OperationsCommand>,
+
     /// Only what is running now.
     #[arg(long)]
     pub live: bool,
 
     /// Emit raw JSON instead of a listing.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum OperationsCommand {
+    /// Watch a live run by attaching to it (§FS-011-command-line.8). Leaving
+    /// the surface detaches and never stops the run; stopping it is the
+    /// runner's own command, which the board only ever shows
+    /// (§FS-005-dispatch.20).
+    Attach(OperationsAttachArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct OperationsAttachArgs {
+    /// The run, by the id `ephor operations` prints on its row.
+    pub run: String,
+
+    /// Emit the outcome as JSON.
     #[arg(long)]
     pub json: bool,
 }

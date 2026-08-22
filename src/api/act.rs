@@ -385,6 +385,27 @@ impl Session {
         }
     }
 
+    /// Watch a live run by attaching to it (§FS-005-dispatch.20): the binding's
+    /// own surface for a run it did not start, opened where the reader can type
+    /// into it. Leaving it detaches and never stops the run.
+    ///
+    /// The board's key and `ephor operations attach` are this one call
+    /// (§FS-011-command-line.8, §AR-009-surfaces.1). `root` is only where the
+    /// surface is started from — a run is reached by its id.
+    pub fn attach_run(&self, root: &Path, id: &str, watching: Watching) -> views::Outcome {
+        self.open_running(
+            &super::offers::Running::Run {
+                root: root.to_path_buf(),
+                id: Some(id.to_string()),
+                control_url: None,
+                attach: None,
+                since: None,
+                doing: String::new(),
+            },
+            watching,
+        )
+    }
+
     /// Go to what is already going about an entry, and never start a second
     /// copy of it (§FS-005-dispatch.21, §FS-011-command-line.8): follow the
     /// job's log, attach to the run, or bring the window forward — by the same

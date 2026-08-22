@@ -228,6 +228,24 @@ pub struct Operation {
     /// Published only while a live run serves one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dashboard: Option<String>,
+    /// What the live run on this root calls itself, read from the descriptor it
+    /// publishes beside its lock (§FS-005-dispatch.20). Absent where the runner
+    /// left none: the row is live from the lock alone then
+    /// (§AR-007-runtime.3).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run: Option<String>,
+    /// The address of the run's control, while it serves one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub control_url: Option<String>,
+    /// The runner's own command for watching this run, in the runner's own
+    /// words — the way in (§FS-011-command-line.8).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attach: Option<String>,
+    /// The runner's own command for stopping this run, in the runner's own
+    /// words. **Shown, never run** (§FS-005-dispatch.20): the board starts
+    /// nothing and stops nothing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop: Option<String>,
     /// The tickets this root holds, in the order the board puts them: what
     /// asks something of the reader first (§FS-005-dispatch.15).
     #[serde(skip_serializing_if = "Vec::is_empty")]

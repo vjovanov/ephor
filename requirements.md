@@ -2645,6 +2645,10 @@ stopping it (§FS-005-dispatch.20) — shown, never run.
 (§FS-005-dispatch.21) as a command: it follows the log, attaches to the run,
 or brings the window forward, by the same binding the key uses
 (§FS-005-dispatch.22), and refuses by name where the entry has nothing going.
+`ephor operations attach <run>` is the same move from the board's side, where
+the row is an execution root and not an entry (§FS-005-dispatch.15): every key
+the board holds is a command too (§REQ-002-parity.2), and a run somebody
+started in another terminal is reachable by its id alone.
 
 `ephor work run` starts the runtime detached and prints the run's id
 (§FS-005-dispatch.20); `--watch` keeps the terminal and watches the run as

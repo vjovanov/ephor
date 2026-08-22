@@ -103,7 +103,8 @@ impl OperationsScreen {
     /// again — said here rather than left for the reader to guess, the way
     /// every other screen now says `; ops` (§FS-005-dispatch.15).
     pub fn footer(&self) -> &'static str {
-        " j/k move  enter matter/plan/log  e plan/log  o dashboard  r refresh  esc/; back"
+        " j/k move  enter matter/plan/log  e plan/log  a watch the run  o dashboard  r refresh  \
+         esc/; back"
     }
 
     /// Fresh rows from a rebuild, with the cursor still on the operation it
@@ -198,7 +199,9 @@ impl OperationsScreen {
         match row {
             Row::Job(_) => 2,
             Row::Op(row) => {
-                1 + row.op.tickets.len() + usize::from(row.op.done > 0 || row.op.cancelled > 0)
+                1 + usize::from(row.op.stop.is_some())
+                    + row.op.tickets.len()
+                    + usize::from(row.op.done > 0 || row.op.cancelled > 0)
             }
         }
     }
@@ -302,6 +305,26 @@ impl OperationsScreen {
                     Some(plan) => Action::ReadPlan(plan),
                     None => Action::SetMessage("No plan behind this row".to_string()),
                 },
+            },
+            // Watching is attaching (§FS-005-dispatch.20). It watches: the
+            // board starts nothing and stops nothing, and leaving the surface
+            // detaches and never ends the run. A row with no identity behind it
+            // says so rather than doing nothing (§REQ-001-boundary.1).
+            KeyCode::Char('a') => match self.selected_row() {
+                Some(row) if !row.op.live => {
+                    Action::SetMessage("Nothing is running on this root".to_string())
+                }
+                Some(row) => match row.op.run_id() {
+                    Some(id) => Action::AttachRun {
+                        root: row.op.root.clone(),
+                        id: id.to_string(),
+                    },
+                    None => Action::SetMessage(
+                        "This run left no id beside its lock, so there is nothing to attach to"
+                            .to_string(),
+                    ),
+                },
+                None => Action::SetMessage("Nothing is running".to_string()),
             },
             KeyCode::Char('o') => match self.selected_row() {
                 // A job serves nothing to open: it writes a log, and that is
@@ -412,6 +435,11 @@ impl OperationsScreen {
             if let Some(unread) = &op.machine_unread {
                 badges.push(unread.clone());
             }
+            // An id is how the reader and the runtime agree on which run they
+            // mean, so the row says it (§FS-005-dispatch.20).
+            if let Some(id) = op.run_id() {
+                badges.push(format!("run {id} (a)"));
+            }
             if let Some(minutes) = op.quiet {
                 badges.push(format!("quiet {minutes}m"));
             }
@@ -432,6 +460,15 @@ impl OperationsScreen {
                 ),
                 Span::styled(format!("   {}", badges.join(" · ")), dim),
             ]));
+            // The runner's own command for stopping this run, shown and never
+            // run: a key that stopped a run would be a channel to the run ephor
+            // promised never to hold (§FS-005-dispatch.20).
+            if let Some(stop) = &op.stop {
+                lines.push(Line::from(Span::styled(
+                    format!("        stop it: {stop}"),
+                    dim,
+                )));
+            }
             for ticket in &op.tickets {
                 let state = ticket.state.as_deref().unwrap_or("?");
                 let name = format!("{}.{}", ticket.plan_id, ticket.ticket);
@@ -598,6 +635,55 @@ mod tests {
             },
             item: Some(item()),
             plan: Some(plan()),
+        }
+    }
+
+    /// A live run that named itself, with the way in and the way out beside it.
+    fn identified_row() -> OpRow {
+        let mut row = running_row();
+        row.op.identity = Some(crate::work::runtime::watch::RunIdentity {
+            id: Some("3f9a2c".to_string()),
+            pid: Some(48213),
+            control_url: Some("http://127.0.0.1:54321".to_string()),
+            started_at: None,
+            headless: true,
+        });
+        row.op.stop = Some("the-runner stop 3f9a2c".to_string());
+        row
+    }
+
+    /// A live run says which run it is, and carries the runner's own command
+    /// for stopping it — shown, never run (§FS-005-dispatch.20). `a` puts the
+    /// runner's own surface on it; a row with no identity says so rather than
+    /// doing nothing, and an idle root has nothing to attach to at all.
+    #[test]
+    fn the_row_names_its_run_shows_the_stop_and_attaches_on_a() {
+        let mut screen = OperationsScreen::new(rows(vec![identified_row()]), None);
+        let text = text(&screen, None);
+        assert!(text.contains("run 3f9a2c (a)"), "{text}");
+        assert!(text.contains("stop it: the-runner stop 3f9a2c"), "{text}");
+
+        match screen.handle_key(KeyCode::Char('a')) {
+            Action::AttachRun { id, root } => {
+                assert_eq!(id, "3f9a2c");
+                assert_eq!(root, PathBuf::from("/w/demo/panta"));
+            }
+            _ => panic!("expected AttachRun"),
+        }
+
+        // A live run that left no descriptor is live from the lock alone
+        // (§AR-007-runtime.3): there is nothing to attach to, and the row says
+        // that rather than doing nothing (§REQ-001-boundary.1).
+        let mut screen = OperationsScreen::new(rows(vec![running_row()]), None);
+        match screen.handle_key(KeyCode::Char('a')) {
+            Action::SetMessage(said) => assert!(said.contains("no id"), "{said}"),
+            _ => panic!("expected a sentence"),
+        }
+        // And a root nothing is running on is not a run to watch.
+        let mut screen = OperationsScreen::new(rows(vec![claimed_row()]), None);
+        match screen.handle_key(KeyCode::Char('a')) {
+            Action::SetMessage(said) => assert!(said.contains("Nothing is running"), "{said}"),
+            _ => panic!("expected a sentence"),
         }
     }
 

@@ -433,6 +433,16 @@ impl Session {
                 plan: row.plan,
                 log: None,
                 dashboard: row.op.dashboard.clone(),
+                // How the reader and the runtime agree on which run they mean,
+                // and the two commands that reach it: the way in, and the way
+                // out shown but never run (§FS-005-dispatch.20).
+                run: row.op.run_id().map(str::to_string),
+                control_url: row.op.control_url().map(str::to_string),
+                attach: row
+                    .op
+                    .run_id()
+                    .map(|id| crate::work::runtime::attach_command(&self.work_config, id)),
+                stop: row.op.stop.clone(),
                 tickets: row.op.tickets.iter().map(ticket_row).collect(),
             });
         }
@@ -579,6 +589,10 @@ pub fn job_row(job: crate::seams::jobs::Job) -> views::Operation {
         plan: None,
         log: Some(job.log_path()),
         dashboard: None,
+        run: None,
+        control_url: None,
+        attach: None,
+        stop: None,
         tickets: Vec::new(),
     }
 }

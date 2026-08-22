@@ -139,6 +139,12 @@ pub(crate) enum Action {
         path: PathBuf,
         following: bool,
     },
+    /// Watch a live run by attaching to it (§FS-005-dispatch.20). Leaving the
+    /// surface detaches and never stops the run.
+    AttachRun {
+        root: PathBuf,
+        id: String,
+    },
     /// Ask this item for something no recipe covers (§FS-005-dispatch.10).
     AskWork(Item),
     /// Take one of this item's tickets back (§FS-005-dispatch.16): the shell
@@ -738,6 +744,19 @@ impl App {
                 self.reload_operations();
             }
             Action::ReadLog { path, following } => self.read_log(terminal, &path, following)?,
+            // A window of the reader's own where one is bound, and the terminal
+            // otherwise (§FS-005-dispatch.22).
+            Action::AttachRun { root, id } => self.attach(
+                terminal,
+                &crate::api::offers::Running::Run {
+                    root,
+                    id: Some(id),
+                    control_url: None,
+                    attach: None,
+                    since: None,
+                    doing: String::new(),
+                },
+            )?,
             Action::Refresh => self.start_refresh(config),
         }
         Ok(false)
@@ -893,6 +912,19 @@ impl App {
             .filter(|job| job.record.item.as_deref() == Some(item.id.as_str()))
             .cloned()
             .collect();
+        // Which run is live on this matter's execution root, and how it is
+        // stopped in the runner's own words — shown, never run
+        // (§FS-005-dispatch.20).
+        let run = status.as_ref().and_then(|status| {
+            if !crate::work::runtime::watch::live(&self.work, &status.root) {
+                return None;
+            }
+            let id = crate::work::runtime::watch::identity(&self.work, &status.root)?.id?;
+            Some(format!(
+                "run {id} · stop it: {}",
+                crate::work::runtime::stop_command(&self.work, &id)
+            ))
+        });
         self.screen = Screen::Work(WorkScreen::new(
             item,
             status,
@@ -900,6 +932,7 @@ impl App {
             unavailable,
             refusal,
             jobs,
+            run,
         ));
     }
 
