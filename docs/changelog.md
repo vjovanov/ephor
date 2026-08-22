@@ -33,7 +33,7 @@ ships, the previous "latest" section moves verbatim to
 - **A run of the runtime starts beneath the screen, and is watched by
   attaching**
   ([§FS-005-dispatch.20](../requirements.md#20-a-run-of-the-runtime-starts-beneath-the-screen-and-is-watched-by-attaching),
-  [§AR-007-runtime](architecture/AR-007-runtime.md), PR #3). Pressing `R` used
+  [§AR-007-runtime](architecture/AR-007-runtime.md), PR #4). Pressing `R` used
   to hand the whole interface to one run for as long as the work took — and the
   work was handed over precisely so that nobody had to stay. `R` and
   `ephor work run` now start the run **detached**, in a session of its own that
@@ -60,7 +60,7 @@ ships, the previous "latest" section moves verbatim to
 - **What is already going is shown where it could be started again**
   ([§FS-005-dispatch.21](../requirements.md#21-what-is-already-going-is-shown-where-it-could-be-started-again),
   [§FS-011-command-line.8](../requirements.md#8-what-is-going-is-said-and-the-way-in-is-printed),
-  PR #3). The menu said what could be done and the board said what was being
+  PR #4). The menu said what could be done and the board said what was being
   done, and neither said the other: opening the menu on an item whose rebase was
   already replaying showed the rebase as something to start. Every entry with
   work going about its subject is now **marked running and set apart** — first,
@@ -91,7 +91,7 @@ ships, the previous "latest" section moves verbatim to
   ([§FS-005-dispatch.22](../requirements.md#22-a-window-of-the-readers-own-where-one-is-bound),
   [§AR-002-summons.6](architecture/AR-002-summons.md),
   [§DA-007-window-is-a-bound-opener](decisions/architectural/DA-007-window-is-a-bound-opener.md),
-  PR #3). ephor has one terminal and is sitting in it, and handing it over
+  PR #4). ephor has one terminal and is sitting in it, and handing it over
   stays the floor — but a reader inside a multiplexer, or in a terminal that
   opens windows on request, had to make the better move by hand. The window is
   now a **seam**: two commands, one that opens a window running a given command
