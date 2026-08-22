@@ -35,6 +35,9 @@ pub(crate) enum MenuOutcome {
     Stay,
     Close,
     Run(MenuEntry),
+    /// The key on a row that says *running* goes to the thing that is running
+    /// and never starts a second one (§FS-005-dispatch.21).
+    Open(MenuEntry),
 }
 
 /// The reader's own pick, made over one entry at the moment of asking
@@ -94,6 +97,12 @@ impl ActionMenu {
         checkout: Option<CheckoutConfig>,
         entries: Vec<MenuEntry>,
     ) -> Self {
+        // What is already going stands first (§FS-005-dispatch.21). A stable
+        // partition, so provenance still orders everything within each half
+        // (§FS-006-project-interface.9) — and the numbers are the rows', so
+        // the digit that picks a row goes on picking the row it is beside.
+        let mut entries = entries;
+        entries.sort_by_key(|entry| entry.running.is_none());
         ActionMenu {
             subject,
             root,
@@ -189,6 +198,17 @@ impl ActionMenu {
             let verb = match &entry.gate {
                 // The reason is on the row; there is nothing to press.
                 Gate::Blocked(_) => None,
+                // Built from the row and not from the key
+                // (§FS-004-quick-actions.2): on a row that says *running* the
+                // key opens what is going, so the footer says *open*
+                // (§FS-005-dispatch.21).
+                _ if entry.running.is_some() => Some(match &entry.running {
+                    Some(running) => match running.way_in() {
+                        Some(way) => format!("enter open {way}"),
+                        None => format!("enter open the {}", running.name()),
+                    },
+                    None => "enter open".to_string(),
+                }),
                 _ if self.confirming == Some(self.selected) => {
                     Some("enter again to confirm".to_string())
                 }
@@ -246,6 +266,13 @@ impl ActionMenu {
                 MenuOutcome::Stay
             }
             KeyCode::Enter => self.choose(self.selected),
+            // `l` goes *in*, which on a row that says *running* is the thing
+            // that is running (§FS-005-dispatch.21). It starts nothing: on
+            // every other row there is nothing to go into.
+            KeyCode::Char('l') => match self.entries.get(self.selected) {
+                Some(entry) if entry.running.is_some() => MenuOutcome::Open(entry.clone()),
+                _ => MenuOutcome::Stay,
+            },
             // `t`: the pick for this dispatch alone (§FS-005-dispatch.14).
             // Only over an entry that hands work over, and only where there
             // is somebody to pick — with an empty roster the picker is not
@@ -363,6 +390,15 @@ impl ActionMenu {
             self.selected = index;
             return MenuOutcome::Stay;
         }
+        // A row that says *running* opens what is going; it never starts it
+        // again (§FS-005-dispatch.21). A second copy is not what a reader
+        // pressing such a row meant, and where somebody does mean it the
+        // command line starts it and the refusal is the lock's own sentence.
+        if entry.running.is_some() {
+            self.confirming = None;
+            self.selected = index;
+            return MenuOutcome::Open(entry.clone());
+        }
         if entry.action.confirm && self.confirming != Some(index) {
             self.confirming = Some(index);
             self.selected = index;
@@ -380,8 +416,12 @@ impl ActionMenu {
 
     /// Centered overlay over the given area.
     pub fn draw(&self, frame: &mut ratatui::Frame, area: Rect) {
+        // The line that says what the rows above the rest are
+        // (§FS-005-dispatch.21). It is not a row: the cursor never lands on it
+        // and no number picks it.
+        let heading = self.entries.iter().any(|entry| entry.running.is_some()) as u16;
         let width = area.width.saturating_sub(4).min(72).max(20);
-        let height = (self.entries.len() as u16 + 2).min(area.height);
+        let height = (self.entries.len() as u16 + heading + 2).min(area.height);
         let rect = Rect {
             x: area.x + (area.width.saturating_sub(width)) / 2,
             y: area.y + (area.height.saturating_sub(height)) / 2,
@@ -390,65 +430,89 @@ impl ActionMenu {
         };
         frame.render_widget(Clear, rect);
 
-        let rows: Vec<ListItem> = self
-            .entries
-            .iter()
-            .enumerate()
-            .map(|(index, entry)| {
-                let number = if index < 9 {
-                    format!(" {} ", index + 1)
-                } else {
-                    "   ".to_string()
-                };
-                let mut spans = vec![
-                    Span::styled(number, Style::default().fg(Color::DarkGray)),
-                    Span::raw(format!(
+        let mut rows: Vec<ListItem> = Vec::new();
+        if heading == 1 {
+            rows.push(ListItem::new(Line::from(Span::styled(
+                "  running",
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD),
+            ))));
+        }
+        rows.extend(self.entries.iter().enumerate().map(|(index, entry)| {
+            let number = if index < 9 {
+                format!(" {} ", index + 1)
+            } else {
+                "   ".to_string()
+            };
+            // One colour reserved for what is going and used for nothing
+            // else on this screen (§FS-005-dispatch.21) — and a step
+            // further in, so the running rows are set apart as a group.
+            let going = Style::default().fg(Color::Cyan);
+            let mut spans = vec![
+                Span::styled(number, Style::default().fg(Color::DarkGray)),
+                match &entry.running {
+                    Some(_) => Span::styled(
+                        format!("  ▶ {}  {}", entry.action.icon, entry.action.description),
+                        going,
+                    ),
+                    None => Span::raw(format!(
                         "{}  {}",
                         entry.action.icon, entry.action.description
                     )),
-                ];
-                // Who would get this work, before the key is pressed
-                // (§FS-005-dispatch.14). Where the choice was refused the row
-                // already carries the whole reason below, so it is not said
-                // twice.
-                if let Some(hand) = entry
-                    .action
-                    .hand
-                    .as_ref()
-                    .filter(|hand| hand.refusal.is_none())
-                {
-                    spans.push(Span::styled(
-                        format!("  → {}", hand.says),
-                        Style::default().fg(Color::Cyan),
-                    ));
-                }
-                if self.confirming == Some(index) {
-                    spans.push(Span::styled(
-                        "  press again to run",
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD),
-                    ));
-                }
-                match &entry.gate {
-                    Gate::NeedsCheckout if !entry.is_checkout => spans.push(Span::styled(
-                        "  (will check out first)",
-                        Style::default().fg(Color::Yellow),
-                    )),
-                    // The reason is rendered where the entry is, not saved for
-                    // whoever presses it: an entry marked only "unavailable"
-                    // teaches nothing (§AR-002-summons.4).
-                    Gate::Blocked(reason) => spans.push(Span::styled(
-                        format!("  (unavailable: {reason})"),
-                        Style::default()
-                            .fg(Color::DarkGray)
-                            .add_modifier(Modifier::ITALIC),
-                    )),
-                    _ => {}
-                }
-                ListItem::new(Line::from(spans))
-            })
-            .collect();
+                },
+            ];
+            // How long it has been going and what it is at right now, in
+            // the words the board already uses (§FS-005-dispatch.21).
+            if let Some(running) = &entry.running {
+                let since = running
+                    .since()
+                    .map(|seconds| format!("{} · ", crate::feed::render::span(seconds)))
+                    .unwrap_or_default();
+                spans.push(Span::styled(format!("   {since}{}", running.says()), going));
+            }
+            // Who would get this work, before the key is pressed
+            // (§FS-005-dispatch.14). Dim, because cyan means running and
+            // nothing else here. Where the choice was refused the row
+            // already carries the whole reason below, so it is not said
+            // twice.
+            if let Some(hand) = entry
+                .action
+                .hand
+                .as_ref()
+                .filter(|hand| hand.refusal.is_none())
+            {
+                spans.push(Span::styled(
+                    format!("  → {}", hand.says),
+                    Style::default().fg(Color::DarkGray),
+                ));
+            }
+            if self.confirming == Some(index) {
+                spans.push(Span::styled(
+                    "  press again to run",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ));
+            }
+            match &entry.gate {
+                Gate::NeedsCheckout if !entry.is_checkout => spans.push(Span::styled(
+                    "  (will check out first)",
+                    Style::default().fg(Color::Yellow),
+                )),
+                // The reason is rendered where the entry is, not saved for
+                // whoever presses it: an entry marked only "unavailable"
+                // teaches nothing (§AR-002-summons.4).
+                Gate::Blocked(reason) => spans.push(Span::styled(
+                    format!("  (unavailable: {reason})"),
+                    Style::default()
+                        .fg(Color::DarkGray)
+                        .add_modifier(Modifier::ITALIC),
+                )),
+                _ => {}
+            }
+            ListItem::new(Line::from(spans))
+        }));
         let title: String = self
             .subject
             .title()
@@ -463,7 +527,8 @@ impl ActionMenu {
             )
             .highlight_style(highlight_style());
         let mut state = ListState::default();
-        state.select(Some(self.selected));
+        // Past the heading, which is a line and not a row.
+        state.select(Some(self.selected + heading as usize));
         frame.render_stateful_widget(list, rect, &mut state);
         if let Some(picker) = &self.picker {
             self.draw_picker(frame, area, picker);
@@ -716,6 +781,127 @@ mod tests {
             MenuOutcome::Stay
         ));
         assert!(matches!(menu.handle_key(KeyCode::Esc), MenuOutcome::Close));
+    }
+
+    /// What is already going stands first, is opened rather than started
+    /// again, and says so on the footer (§FS-005-dispatch.21). The key on such
+    /// a row goes to the thing that is running; a second copy is not what a
+    /// reader pressing a row that says *running* meant.
+    #[test]
+    fn a_running_entry_stands_first_and_opens_instead_of_running() {
+        let actions = vec![action("first", &[]), action("second", &[])];
+        let entries = offers::entries(
+            &WorkspaceState::Ready,
+            &None,
+            &can_everything(),
+            actions,
+            false,
+        );
+        // The second entry has a job going about it.
+        let mut entries = entries;
+        let at = entries
+            .iter()
+            .position(|entry| entry.action.description == "second")
+            .expect("the entry is there");
+        entries[at].running = Some(offers::Running::Job {
+            id: "20260822T090000.000Z-second".to_string(),
+            since: Some(90),
+            says: "still replaying".to_string(),
+            log: PathBuf::from("/state/ephor/jobs/j/log"),
+        });
+        let pr = item(ItemKind::Pr, "github-prs:acme/widget#42", json!({}));
+        let mut menu = ActionMenu::over(
+            Subject::Item(Box::new(pr)),
+            PathBuf::from("/tmp"),
+            PathBuf::from("/tmp"),
+            None,
+            WorkspaceState::Ready,
+            None,
+            entries,
+        );
+        // It leads, whatever provenance put it where it was.
+        assert_eq!(menu.entries[0].action.description, "second");
+        assert!(menu.entries[0].running.is_some());
+        assert!(menu.entries[1..]
+            .iter()
+            .all(|entry| entry.running.is_none()));
+
+        // The footer is built from the row, so it says *open* and names the
+        // way in (§FS-004-quick-actions.2).
+        let footer = menu.footer();
+        assert!(
+            footer.contains("enter open /state/ephor/jobs/j/log"),
+            "{footer}"
+        );
+
+        // Enter opens it; it never runs it again.
+        match menu.handle_key(KeyCode::Enter) {
+            MenuOutcome::Open(entry) => {
+                assert_eq!(entry.action.description, "second");
+            }
+            _ => panic!("expected Open"),
+        }
+        // And so does going *in* on it.
+        match menu.handle_key(KeyCode::Char('l')) {
+            MenuOutcome::Open(entry) => assert_eq!(entry.action.description, "second"),
+            _ => panic!("expected Open"),
+        }
+        // On a row with nothing going, `l` is not a key at all.
+        menu.handle_key(KeyCode::Char('j'));
+        assert!(matches!(
+            menu.handle_key(KeyCode::Char('l')),
+            MenuOutcome::Stay
+        ));
+        let footer = menu.footer();
+        assert!(footer.contains("enter run"), "{footer}");
+    }
+
+    /// A row that says *running* names the way in on every flavour of running
+    /// there is (§FS-011-command-line.8): a job's log, a run's attach command,
+    /// a window's handle.
+    #[test]
+    fn every_flavour_of_running_names_the_way_in() {
+        let job = offers::Running::Job {
+            id: "j".to_string(),
+            since: Some(30),
+            says: "fetching".to_string(),
+            log: PathBuf::from("/state/ephor/jobs/j/log"),
+        };
+        assert_eq!(job.name(), "job");
+        assert_eq!(job.says(), "fetching");
+        assert_eq!(job.way_in().as_deref(), Some("/state/ephor/jobs/j/log"));
+
+        let run = offers::Running::Run {
+            root: PathBuf::from("/w/demo/panta"),
+            id: Some("3f9a2c".to_string()),
+            control_url: Some("http://127.0.0.1:54321".to_string()),
+            attach: Some("rhei attach '3f9a2c'".to_string()),
+            since: Some(600),
+            doing: "widget-42.fix-gate-1 [fix]".to_string(),
+        };
+        assert_eq!(run.name(), "run");
+        assert_eq!(run.says(), "widget-42.fix-gate-1 [fix]");
+        assert_eq!(run.way_in().as_deref(), Some("rhei attach '3f9a2c'"));
+
+        let queued = offers::Running::Queued {
+            root: PathBuf::from("/w/demo/panta"),
+            id: Some("3f9a2c".to_string()),
+            attach: Some("rhei attach '3f9a2c'".to_string()),
+            since: None,
+        };
+        assert_eq!(queued.name(), "queued");
+        assert_eq!(queued.says(), "queued");
+        assert_eq!(queued.way_in().as_deref(), Some("rhei attach '3f9a2c'"));
+
+        let window = offers::Running::Window {
+            job: "j".to_string(),
+            handle: "@7".to_string(),
+            since: Some(5),
+            says: String::new(),
+        };
+        assert_eq!(window.name(), "window");
+        assert_eq!(window.says(), "in window @7");
+        assert_eq!(window.way_in().as_deref(), Some("@7"));
     }
 
     fn requires_checkout(description: &str) -> ActionConfig {

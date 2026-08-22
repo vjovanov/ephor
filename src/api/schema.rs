@@ -41,6 +41,7 @@ pub const SHAPES: &[(&str, &str)] = &[
     ("actions", "actions"),
     ("actions list", "actions"),
     ("actions run", "outcome"),
+    ("actions open", "outcome"),
     ("branches", "branches"),
     ("operations", "operations"),
     ("thread", "thread"),

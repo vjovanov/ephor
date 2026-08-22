@@ -327,6 +327,119 @@ pub enum Gate {
     Blocked(String),
 }
 
+/// What is already going about an entry's subject (§FS-005-dispatch.21).
+///
+/// Found by looking, never remembered from the keypress: a job is a held lock
+/// and a record saying which entry it came from (§FS-005-dispatch.17), a run is
+/// a held lock and the descriptor beside it (§FS-005-dispatch.20), and a window
+/// is a job whose record carries the opener's handle (§FS-005-dispatch.22). A
+/// second ephor opening the same menu sees the same marks, and a job that died
+/// is not running whatever started it.
+///
+/// Each carries **the way in**, because the way in is the ability and spawning
+/// the reader's own program on it is not (§FS-011-command-line.8,
+/// §REQ-002-parity.1).
+#[derive(Clone, Debug)]
+pub enum Running {
+    /// A job of ephor's own, still holding its lock. The way in is its log,
+    /// followed as it writes (§FS-005-dispatch.17).
+    Job {
+        id: String,
+        /// How long it has been going, in seconds.
+        since: Option<i64>,
+        /// What it is at right now: the last line its log said.
+        says: String,
+        log: PathBuf,
+    },
+    /// A run of the runtime holding this entry's work. The way in is the
+    /// runner's own attach command (§FS-005-dispatch.20).
+    Run {
+        root: PathBuf,
+        /// What the run calls itself, where it named itself
+        /// (§AR-007-runtime.3).
+        id: Option<String>,
+        /// The address of its control, while it serves one.
+        control_url: Option<String>,
+        /// The runner's own attach command, in the runner's own words.
+        attach: Option<String>,
+        since: Option<i64>,
+        /// The ticket the run holds and the state it is in, in the words the
+        /// board already uses (§FS-005-dispatch.15).
+        doing: String,
+    },
+    /// The root's run is live and will reach this work: the runtime schedules
+    /// one run per root (§FS-005-dispatch.15). The way in is that run — it is
+    /// the thing that is going, and the reader pressing the row meant it.
+    Queued {
+        root: PathBuf,
+        id: Option<String>,
+        attach: Option<String>,
+        since: Option<i64>,
+    },
+    /// A program in a window of the reader's own (§FS-005-dispatch.22). The
+    /// way in is the handle, brought forward: what the program wrote is on
+    /// that screen and nowhere else, so there is no log to read
+    /// (§AR-002-summons.6).
+    Window {
+        /// The job the window's supervisor is: liveness stays the lock.
+        job: String,
+        /// What the opener printed, and what focusing it takes.
+        handle: String,
+        since: Option<i64>,
+        says: String,
+    },
+}
+
+impl Running {
+    /// What this is, in one word a reading can carry (§REQ-002-parity.3).
+    pub fn name(&self) -> &'static str {
+        match self {
+            Running::Job { .. } => "job",
+            Running::Run { .. } => "run",
+            Running::Queued { .. } => "queued",
+            Running::Window { .. } => "window",
+        }
+    }
+
+    /// How long it has been going, in seconds, where that is known.
+    pub fn since(&self) -> Option<i64> {
+        match self {
+            Running::Job { since, .. }
+            | Running::Run { since, .. }
+            | Running::Queued { since, .. }
+            | Running::Window { since, .. } => *since,
+        }
+    }
+
+    /// What it is at right now — the job's own last line, the ticket a run
+    /// holds and the state it is in, *queued* where the root's run will reach
+    /// it (§FS-005-dispatch.21). One sentence, so the screen and the command
+    /// line phrase one situation one way (§AR-009-surfaces.1).
+    pub fn says(&self) -> String {
+        match self {
+            Running::Job { says, .. } => says.clone(),
+            Running::Run { doing, .. } => doing.clone(),
+            Running::Queued { .. } => "queued".to_string(),
+            Running::Window { says, handle, .. } => match says.is_empty() {
+                true => format!("in window {handle}"),
+                false => format!("{says} · in window {handle}"),
+            },
+        }
+    }
+
+    /// What pressing this row opens, said in one line for a footer or a
+    /// refusal (§FS-004-quick-actions.2). None where there is nothing to open:
+    /// a run that named itself nothing has no surface to put on it
+    /// (§AR-007-runtime.3).
+    pub fn way_in(&self) -> Option<String> {
+        match self {
+            Running::Job { log, .. } => Some(log.display().to_string()),
+            Running::Run { attach, .. } | Running::Queued { attach, .. } => attach.clone(),
+            Running::Window { handle, .. } => Some(handle.clone()),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct MenuEntry {
     pub action: ActionConfig,
@@ -344,6 +457,11 @@ pub struct MenuEntry {
     /// dispatch resolves from the second step down.
     pub picked: Option<HandPin>,
     pub gate: Gate,
+    /// What is already going about this entry's subject, where anything is
+    /// (§FS-005-dispatch.21). Filled in by the session that assembles the
+    /// menu, because it is a reading of the world and not a property of the
+    /// entry (§AR-009-surfaces.1).
+    pub running: Option<Running>,
 }
 
 /// The whole list a subject carries, gated: the checkout row where the branch
@@ -374,6 +492,7 @@ pub fn entries(
             is_workflows: false,
             picked: None,
             gate: Gate::NeedsCheckout,
+            running: None,
         });
     }
     for action in actions {
@@ -404,6 +523,7 @@ pub fn entries(
             is_workflows: false,
             picked: None,
             gate,
+            running: None,
         });
     }
     // The row that reaches the runtime's workflows no entry names
@@ -424,6 +544,7 @@ pub fn entries(
             is_workflows: true,
             picked: None,
             gate: Gate::Ready,
+            running: None,
         });
     }
     // Last, and always there: what the reader wants to run once
@@ -441,6 +562,7 @@ pub fn entries(
         is_workflows: false,
         picked: None,
         gate: Gate::Ready,
+        running: None,
     });
     entries
 }

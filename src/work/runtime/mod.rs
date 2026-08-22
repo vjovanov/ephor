@@ -419,15 +419,18 @@ fn probe_detaches(runner: &str) -> bool {
         &Site::root(&here),
         Mode::Captured(DETACHES_TIMEOUT),
     ) {
-        Ok(answer) => answer
-            .output
-            .as_deref()
-            .is_some_and(|help| help.contains(HEADLESS_FLAG)),
+        Ok(answer) => answer.output.as_deref().is_some_and(help_detaches),
         // A runner that could not be asked is a runner ephor cannot claim
         // detaches: the floor is the attached run, and the floor is never
         // removed (§AR-007-runtime.3).
         Err(_) => false,
     }
+}
+
+/// Whether a runner's own help names a detached shape. The whole of what the
+/// probe reads, so the reading can be held to on its own.
+fn help_detaches(help: &str) -> bool {
+    help.contains(HEADLESS_FLAG)
 }
 
 /// Why running is refused, or None where the runtime is there
@@ -709,37 +712,17 @@ mod tests {
         assert_eq!(stop_command(&bound, "3f9a2c"), "my-runtime stop 3f9a2c");
     }
 
-    /// Whether the binding can detach is asked of the binding, once
-    /// (§AR-007-runtime.3): a runner whose help names the flag detaches, one
-    /// whose help does not runs attached as it always did, and nothing bound
-    /// detaches at all.
+    /// Whether the binding can detach is asked of the binding
+    /// (§AR-007-runtime.3), and read out of its own help: a runner that names
+    /// the flag detaches, one that does not runs attached as it always did,
+    /// and nothing bound detaches at all — and is never even asked. The probe
+    /// itself is proven from the outside, against a stand-in runner on PATH.
     #[test]
-    fn whether_the_runner_detaches_is_asked_of_the_runner() {
-        let tmp = tempfile::tempdir().unwrap();
-        let write = |name: &str, body: &str| {
-            let path = tmp.path().join(name);
-            std::fs::write(&path, body).unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-            }
-            crate::work::recipe::WorkConfig {
-                runner: Some(path.to_string_lossy().into_owned()),
-                ..crate::work::recipe::WorkConfig::default()
-            }
-        };
-        let new = write(
-            "new-runtime",
-            "#!/bin/sh\nprintf 'Usage: run\\n      --headless  detach it\\n'\n",
-        );
-        assert!(can_detach(&new));
-        let old = write(
-            "old-runtime",
-            "#!/bin/sh\nprintf 'Usage: run\\n --tui\\n'\n",
-        );
-        assert!(!can_detach(&old));
-        // Nothing bound cannot detach, and is not asked (§AR-007-runtime.3).
+    fn whether_the_runner_detaches_is_read_out_of_its_own_help() {
+        assert!(help_detaches(
+            "Options:\n      --headless  Detach the run into its own session\n"
+        ));
+        assert!(!help_detaches("Options:\n      --tui  Force TUI mode\n"));
         let absent = crate::work::recipe::WorkConfig {
             runner: Some("no-such-runtime-anywhere".to_string()),
             ..crate::work::recipe::WorkConfig::default()

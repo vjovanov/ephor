@@ -377,6 +377,14 @@ impl App {
                             self.run_menu_entry(terminal, &menu, &entry)?;
                         }
                     }
+                    // The key on a row that says *running* goes to the thing
+                    // that is running (§FS-005-dispatch.21).
+                    MenuOutcome::Open(entry) => {
+                        self.menu = None;
+                        if let Some(running) = entry.running.clone() {
+                            self.open_running(terminal, &running)?;
+                        }
+                    }
                 }
                 continue;
             }
@@ -802,6 +810,7 @@ impl App {
                     is_workflows: false,
                     picked: None,
                     gate: actions::Gate::Ready,
+                    running: None,
                 };
                 self.run_menu_entry(terminal, &menu, &entry)?;
             }
@@ -1126,6 +1135,7 @@ impl App {
             is_workflows: false,
             picked,
             gate: actions::Gate::Ready,
+            running: None,
         };
         self.message = self.ctx.hand_over(item, &laid, &answers, false).says;
         self.rebuild_view();
@@ -1352,6 +1362,53 @@ impl App {
             }
             self.reload_operations();
         }
+    }
+
+    /// Go to the thing that is going (§FS-005-dispatch.21): a job's log,
+    /// followed as it writes (§FS-005-dispatch.17); a run of the runtime,
+    /// attached (§FS-005-dispatch.20); a program in its own window, that window
+    /// brought forward (§FS-005-dispatch.22). Never a second copy of it.
+    fn open_running(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        running: &crate::api::offers::Running,
+    ) -> Result<()> {
+        use crate::api::offers::Running;
+        match running {
+            Running::Job { log, .. } => self.read_log(terminal, &log.clone(), true),
+            Running::Run {
+                root, id: Some(id), ..
+            }
+            | Running::Queued {
+                root, id: Some(id), ..
+            } => {
+                let (root, id) = (root.clone(), id.clone());
+                self.attach(terminal, &root, &id)
+            }
+            // A run that named itself nothing has no surface to put on it: the
+            // row is live from the lock alone (§AR-007-runtime.3).
+            Running::Run { .. } | Running::Queued { .. } => {
+                self.message = "The run left no id, so there is nothing to attach to".to_string();
+                Ok(())
+            }
+            Running::Window { handle, .. } => {
+                self.message = format!("It is running in window {handle}");
+                Ok(())
+            }
+        }
+    }
+
+    /// The runner's own surface on a run, opened where the reader can type into
+    /// it (§FS-005-dispatch.20). Leaving it detaches and never stops the run —
+    /// the binding's own contract, which ephor neither adds to nor takes from.
+    fn attach(&mut self, terminal: &mut DefaultTerminal, root: &Path, id: &str) -> Result<()> {
+        self.handover(
+            terminal,
+            "▶",
+            &format!("watching run {id} — q detaches, the run goes on"),
+            &Site::root(root),
+            &crate::work::runtime::attach_summons(&self.work, id),
+        )
     }
 
     /// Everything one job wrote, in the reader's pager (§FS-005-dispatch.17).

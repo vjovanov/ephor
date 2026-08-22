@@ -38,6 +38,11 @@ pub const ABILITIES: &[Ability] = &[
         command: "actions run",
     },
     Ability {
+        what: "open what is already going about a row, rather than starting it again",
+        keys: &["enter"],
+        command: "actions open",
+    },
+    Ability {
         what: "pick who a piece of work goes to, for this dispatch alone",
         keys: &["t"],
         command: "actions run --hand",

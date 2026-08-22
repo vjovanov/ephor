@@ -10,8 +10,8 @@ use std::process::ExitCode;
 use crate::api::read::Subject;
 use crate::api::{offers, views, Session};
 use crate::cli::{
-    ActionsArgs, ActionsCommand, ActionsListArgs, ActionsRunArgs, BranchesArgs, OperationsArgs,
-    ReactArgs, ReplyArgs, SubjectArgs, ThreadArgs, TickArgs,
+    ActionsArgs, ActionsCommand, ActionsListArgs, ActionsOpenArgs, ActionsRunArgs, BranchesArgs,
+    OperationsArgs, ReactArgs, ReplyArgs, SubjectArgs, ThreadArgs, TickArgs,
 };
 use crate::error::{registry_error, EphorError, Result};
 use crate::feed::config::load_config;
@@ -94,6 +94,7 @@ impl Named {
 pub fn actions(args: &ActionsArgs) -> Result<ExitCode> {
     match &args.command {
         Some(ActionsCommand::Run(run)) => actions_run(run),
+        Some(ActionsCommand::Open(open)) => actions_open(open),
         Some(ActionsCommand::List(list)) => actions_list(list),
         None => actions_list(&ActionsListArgs {
             subject: args.subject.clone(),
@@ -139,6 +140,33 @@ fn actions_list(args: &ActionsListArgs) -> Result<ExitCode> {
             "{mark} {:width$}  {} {}",
             offer.id, offer.icon, offer.description
         );
+        // What is already going about this row, and the way in — the same mark
+        // the screen sets apart, with the same facts, so a program reading the
+        // menu cannot start what a person reading it would have opened
+        // (§FS-005-dispatch.21, §FS-011-command-line.8).
+        if let Some(running) = &offer.running {
+            let since = running
+                .since_seconds
+                .map(|seconds| format!("{} · ", crate::feed::render::span(seconds)))
+                .unwrap_or_default();
+            println!(
+                "  {:width$}    ▶ {} · {since}{}",
+                "", running.kind, running.says
+            );
+            let way_in = running
+                .log
+                .as_ref()
+                .map(|log| log.display().to_string())
+                .or_else(|| running.attach.clone())
+                .or_else(|| running.window.clone());
+            if let Some(way_in) = way_in {
+                println!("  {:width$}      {way_in}", "");
+            }
+            if let Some(url) = &running.control_url {
+                println!("  {:width$}      {url}", "");
+            }
+            println!("  {:width$}      ephor actions open {}", "", offer.id);
+        }
         if let Some(hand) = &offer.hand {
             println!("  {:width$}    → {hand}", "");
         }
@@ -157,6 +185,46 @@ fn actions_list(args: &ActionsListArgs) -> Result<ExitCode> {
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// `ephor actions open` (§FS-011-command-line.8): the key on a running row as
+/// a command (§FS-005-dispatch.21). It follows the log, attaches to the run, or
+/// brings the window forward, by the same binding the key uses — and refuses by
+/// name where the entry has nothing going.
+fn actions_open(args: &ActionsOpenArgs) -> Result<ExitCode> {
+    let config = load_config()?;
+    let mut session = Session::open(&config)?;
+    let named = subject_of(&session, &args.subject)?;
+    let subject = named.as_subject();
+    let entries = session.menu(&subject).map_err(EphorError::Command)?;
+    let entry = entries
+        .iter()
+        .find(|entry| entry.key() == args.entry)
+        .ok_or_else(|| {
+            registry_error(format!(
+                "No entry called '{}' here. `ephor actions` lists what there is.",
+                args.entry
+            ))
+        })?;
+    // Refused by name, not silently: an entry with nothing going is not an
+    // entry to open, and a command that quietly did nothing would read exactly
+    // like one that worked (§REQ-001-boundary.1).
+    let Some(running) = entry.running.clone() else {
+        return Ok(report(
+            &views::Outcome::refused(format!(
+                "Nothing is going about '{}': `ephor actions run {}` starts it.",
+                args.entry, args.entry
+            )),
+            args.json,
+        ));
+    };
+    // Under `--json` what the surface writes goes beside the reading rather
+    // than into it (§FS-011-command-line.7).
+    let watching = match args.json {
+        true => crate::api::act::Watching::Aside,
+        false => crate::api::act::Watching::Terminal,
+    };
+    Ok(report(&session.open_running(&running, watching), args.json))
 }
 
 fn actions_run(args: &ActionsRunArgs) -> Result<ExitCode> {

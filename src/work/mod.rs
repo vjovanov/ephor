@@ -280,6 +280,31 @@ impl WorkStatus {
     }
 }
 
+/// What the work behind one menu entry is doing, for the row that could start
+/// it again (§FS-005-dispatch.21). Two answers, because the runtime schedules
+/// one run per execution root: the run holds this entry's work, or it is live
+/// on the root and will reach it (§FS-005-dispatch.15).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkGoing {
+    Running {
+        root: PathBuf,
+        /// The ticket the run holds and the state it is in, in the words the
+        /// board already uses.
+        doing: String,
+    },
+    Queued {
+        root: PathBuf,
+    },
+}
+
+impl WorkGoing {
+    pub fn root(&self) -> &std::path::Path {
+        match self {
+            WorkGoing::Running { root, .. } | WorkGoing::Queued { root } => root,
+        }
+    }
+}
+
 /// Reads the work configuration, offers recipes, writes tickets, and keeps the
 /// ledger.
 pub struct Dispatcher {
@@ -1376,6 +1401,102 @@ impl Dispatcher {
             return Ok(());
         };
         runtime::results::mark_posted(&entry.root, &entry.plan_id)
+    }
+
+    /// What the work one menu entry hands over is doing right now
+    /// (§FS-005-dispatch.21) — the same facts the badge on the row is made of
+    /// (§FS-005-dispatch.9), narrowed to the one entry that would start it
+    /// again.
+    ///
+    /// Found by looking, never remembered from the keypress: the ledger says
+    /// which tickets this entry opened and which plans it laid, the plans say
+    /// what state each is in, and the lock says whether a run holds the root
+    /// at all (§FS-005-dispatch.15). A root nothing holds is not an operation
+    /// — an open ticket there is waiting work, which is the work screen's
+    /// business — so it is not marked running either.
+    pub fn work_going(&self, item: &Item, action: &str) -> Option<WorkGoing> {
+        let entry = self.ledger.entries.get(&item.id)?;
+        if !runtime::watch::live(&self.global, &entry.root) {
+            return None;
+        }
+        let machine = WorkRoot::open(&entry.root).ok().flatten();
+        // Finality and gating are the machine's words: with no machine to say
+        // them nothing here is judged over, and a parked ticket is a question
+        // for the reader rather than something going (§FS-005-dispatch.15).
+        let open = |state: Option<&str>| match (state, machine.as_ref()) {
+            (Some(state), Some(machine)) => !machine.is_final(state) && !machine.is_gating(state),
+            _ => true,
+        };
+        let mut queued = false;
+        let mut consider = |plan_id: &str, ticket: &plan::PlanTicket| -> Option<String> {
+            if !open(ticket.state.as_deref()) {
+                return None;
+            }
+            let state = ticket.state.as_deref().unwrap_or("?");
+            if runtime::watch::held_by_live_run(
+                &self.global,
+                &entry.root,
+                plan_id,
+                &ticket.id,
+                state,
+            ) {
+                // The board's own phrasing for a held ticket, narrowed to one
+                // row (§FS-005-dispatch.15).
+                return Some(format!("{plan_id}.{} [{state}]", ticket.id));
+            }
+            queued = true;
+            None
+        };
+        // The tickets this entry wrote into the matter's own plan.
+        let mine: std::collections::BTreeSet<&str> = entry
+            .dispatches
+            .iter()
+            .filter(|dispatch| dispatch.recipe == action && !dispatch.is_workflow())
+            .map(|dispatch| dispatch.ticket.as_str())
+            .collect();
+        if !mine.is_empty() {
+            if let Ok(Some(plan)) = Plan::read(&entry.plan) {
+                for ticket in plan.tickets() {
+                    if !mine.contains(ticket.id.as_str()) {
+                        continue;
+                    }
+                    if let Some(doing) = consider(&entry.plan_id, &ticket) {
+                        return Some(WorkGoing::Running {
+                            root: entry.root.clone(),
+                            doing,
+                        });
+                    }
+                }
+            }
+        }
+        // And the plans this entry laid down of its own
+        // (§FS-005-dispatch.19), which are operations exactly as tickets are.
+        for dispatch in entry
+            .dispatches
+            .iter()
+            .filter(|dispatch| dispatch.recipe == action && dispatch.is_workflow())
+        {
+            let Some(name) = dispatch.plan.as_deref() else {
+                continue;
+            };
+            let Some(laid) = runtime::workflow::laid(&entry.root.join(name)) else {
+                continue;
+            };
+            let Ok(Some(plan)) = Plan::read(&laid.path) else {
+                continue;
+            };
+            for ticket in plan.tickets() {
+                if let Some(doing) = consider(&laid.plan_id, &ticket) {
+                    return Some(WorkGoing::Running {
+                        root: entry.root.clone(),
+                        doing,
+                    });
+                }
+            }
+        }
+        queued.then(|| WorkGoing::Queued {
+            root: entry.root.clone(),
+        })
     }
 
     /// What an item's work is doing, read from the plan.

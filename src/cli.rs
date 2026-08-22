@@ -857,6 +857,25 @@ pub enum ActionsCommand {
     List(ActionsListArgs),
     /// Run one entry, by the id the listing gives it.
     Run(ActionsRunArgs),
+    /// Go to what is already going about one entry: follow its job's log,
+    /// attach to its run, or bring its window forward (§FS-011-command-line.8).
+    Open(ActionsOpenArgs),
+}
+
+/// `ephor actions open` (§FS-011-command-line.8): the key on a running row as
+/// a command. It starts nothing — where the entry has nothing going it refuses
+/// by name (§FS-005-dispatch.21).
+#[derive(Args, Debug)]
+pub struct ActionsOpenArgs {
+    /// The entry, by the id `ephor actions` gives it.
+    pub entry: String,
+
+    #[command(flatten)]
+    pub subject: SubjectArgs,
+
+    /// Emit the outcome as JSON.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Args, Debug, Default)]

@@ -620,7 +620,7 @@ fn log_text(path: &Path) -> String {
 /// `emit` is handed each fresh slice: the terminal for a person, and nothing
 /// at all under `--json`, where the log belongs to the reading printed after
 /// this returns (§FS-011-command-line.7).
-fn follow(job: &Job, mut emit: impl FnMut(&[u8])) {
+pub fn follow(job: &Job, mut emit: impl FnMut(&[u8])) {
     let path = job.log_path();
     let mut at = 0u64;
     loop {

@@ -717,6 +717,7 @@ mod tests {
                 background: false,
                 confirm: false,
                 requires: Vec::new(),
+                running: None,
             })
             .collect();
         offers.push(Offer {
@@ -733,6 +734,7 @@ mod tests {
             background: false,
             confirm: false,
             requires: Vec::new(),
+            running: None,
         });
         offers
     }

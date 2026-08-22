@@ -334,6 +334,80 @@ impl Session {
         }
     }
 
+    /// Go to what is already going about an entry, and never start a second
+    /// copy of it (§FS-005-dispatch.21, §FS-011-command-line.8): follow the
+    /// job's log, attach to the run, or bring the window forward — by the same
+    /// binding the key uses.
+    ///
+    /// The way in was resolved when the menu was assembled, so this acts on
+    /// what the reader was shown rather than looking the subject up a second
+    /// time (§AR-009-surfaces.1).
+    pub fn open_running(
+        &self,
+        running: &super::offers::Running,
+        watching: Watching,
+    ) -> views::Outcome {
+        use super::offers::Running;
+        let aside = watching == Watching::Aside;
+        match running {
+            // Everything the reader would have watched, kept and followed as
+            // it is written (§FS-005-dispatch.17). It ends when the job does.
+            Running::Job { id, log, .. } => {
+                let Some(job) = crate::seams::jobs::find(id) else {
+                    return views::Outcome::refused(format!("No job called '{id}' any more"));
+                };
+                let mut out = std::io::stdout();
+                let mut errors = std::io::stderr();
+                crate::seams::jobs::follow(&job, |fresh| {
+                    use std::io::Write;
+                    // Under a reading the log goes beside the answer, never
+                    // into it (§FS-011-command-line.7).
+                    let sink: &mut dyn Write = match aside {
+                        true => &mut errors,
+                        false => &mut out,
+                    };
+                    let _ = sink.write_all(fresh);
+                    let _ = sink.flush();
+                });
+                views::Outcome::ok(format!("📖 {}", log.display()))
+            }
+            // The binding's own surface on a run it did not start. Leaving it
+            // detaches and never stops the run (§FS-005-dispatch.20).
+            Running::Run {
+                root, id: Some(id), ..
+            }
+            | Running::Queued {
+                root, id: Some(id), ..
+            } => {
+                let summons = crate::work::runtime::attach_summons(&self.work_config, id);
+                let mode = match aside {
+                    true => summons::Mode::Aside,
+                    false => summons::Mode::Interactive,
+                };
+                match summons::run(&summons, &Site::root(root), mode) {
+                    Ok(answer) if answer.is_done() => {
+                        views::Outcome::ok(format!("▶ detached from run {id}; it goes on"))
+                    }
+                    Ok(answer) => {
+                        views::Outcome::refused(answer.refusal(&format!("attaching to run {id}")))
+                    }
+                    Err(err) => views::Outcome::refused(err.to_string()),
+                }
+            }
+            // A run that named itself nothing has no surface to put on it: the
+            // row is live from the lock alone (§AR-007-runtime.3).
+            Running::Run { root, .. } | Running::Queued { root, .. } => {
+                views::Outcome::refused(format!(
+                    "The run on {} left no id, so there is nothing to attach to",
+                    root.display()
+                ))
+            }
+            Running::Window { handle, .. } => {
+                views::Outcome::ok(format!("▶ it is running in window {handle}"))
+            }
+        }
+    }
+
     /// Start one entry beneath the screen (§FS-005-dispatch.17): write down
     /// what it is, hand it to a supervisor of its own, and return at once.
     /// Nothing is waited on — the row it takes among the operations is how it
@@ -752,6 +826,7 @@ mod tests {
             is_workflows: false,
             picked: None,
             gate,
+            running: None,
         }
     }
 
