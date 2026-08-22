@@ -200,6 +200,15 @@ impl Session {
             .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
             .map(|at| (now - at.with_timezone(&chrono::Utc)).num_seconds());
         for entry in entries.iter_mut() {
+            // The two rows that are not a thing to start again
+            // (§FS-005-dispatch.21): the freehand row starts *whatever the
+            // reader types*, and the workflows row opens a list. A backgrounded
+            // freehand command records the freehand row's own id, so without
+            // this the row that asks for a command was marked running and Enter
+            // followed that command's log instead of prompting.
+            if entry.is_freehand || entry.is_workflows {
+                continue;
+            }
             let key = entry.key();
             // The checkout row is running where the job that is making the
             // workspace is (§FS-005-dispatch.21). That job is never a job of

@@ -141,6 +141,13 @@
         { "required": ["command"] },
         { "required": ["workflow"] }
       ],
+      "not": {
+        "required": ["background", "window"],
+        "properties": {
+          "background": { "const": true },
+          "window": { "const": true }
+        }
+      },
       "description": "One menu entry the project offers. It either runs a command here or lays down one of the runtime's workflows — never both and never neither (FS-006-project-interface.9, FS-005-dispatch.19).",
       "properties": {
         "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },

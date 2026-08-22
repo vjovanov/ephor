@@ -670,16 +670,49 @@ impl App {
                         hand.as_ref(),
                         &[],
                     ) {
-                        Ok(Some(id)) => format!("▶ run {id} started · ; to watch"),
+                        Ok(crate::work::runtime::Started {
+                            id: Some(id),
+                            finished: false,
+                        }) => {
+                            format!("▶ run {id} started · press ; for the board")
+                        }
                         // A run that named itself nothing is still a run: the
                         // row is live from the lock alone (§AR-007-runtime.3).
-                        Ok(None) => "▶ run started · ; to watch".to_string(),
+                        Ok(crate::work::runtime::Started {
+                            id: None,
+                            finished: false,
+                        }) => "▶ run started · press ; for the board".to_string(),
+                        // The launcher's own descriptor said the run was over
+                        // before it returned: there was nothing to do. Saying
+                        // *started* would send the reader to an empty board
+                        // (§FS-005-dispatch.20).
+                        Ok(crate::work::runtime::Started {
+                            id: Some(id),
+                            finished: true,
+                        }) => {
+                            format!("✓ run {id} finished already")
+                        }
+                        Ok(crate::work::runtime::Started { finished: true, .. }) => {
+                            "✓ the run finished already".to_string()
+                        }
                         Err(err) => err.to_string(),
                     };
                 } else {
                     // Where the binding cannot detach the run is watched as it
                     // was — the terminal handed over — and the line says so
                     // rather than pretending (§AR-007-runtime.3).
+                    //
+                    // *Before* the handover, not after it. The handover blocks
+                    // for the whole run, so a note appended to the message
+                    // afterwards told the reader why they had lost their
+                    // terminal only once they had it back. It rides the banner
+                    // the handover prints, which is the last thing on the
+                    // screen before the run takes it.
+                    let said = format!(
+                        "{said} · {} cannot start a run detached here, so it runs in this \
+                         terminal",
+                        crate::work::runtime::runner(&config.work)
+                    );
                     self.handover(
                         terminal,
                         "▶",
@@ -693,11 +726,6 @@ impl App {
                             &[],
                         ),
                     )?;
-                    self.message = format!(
-                        "{} · {} cannot start a run detached here",
-                        self.message,
-                        crate::work::runtime::runner(&config.work)
-                    );
                 }
                 // The runtime just advanced the plans this reads — and, where
                 // it detached, took the lock the board watches.
@@ -1383,11 +1411,14 @@ impl App {
     /// and the sentence the reader sees.
     fn start_job(&mut self, menu: &ActionMenu, entry: &actions::MenuEntry) {
         let request = self.request(menu, entry);
-        let outcome = self.ctx.start_job(&request);
+        // Where it runs is the session's answer, the same one the key that
+        // routed it here asked for (§AR-009-surfaces.1).
+        let place = self.ctx.how(entry);
+        let outcome = self.ctx.start_job(&request, place);
         self.message = match &outcome.job {
             // Nothing is waited on — the row it takes among the operations is
             // how it is watched from here.
-            Some(_) => format!("{} · ; to watch", outcome.says),
+            Some(_) => format!("{} · press ; for the board", outcome.says),
             None => outcome.says.clone(),
         };
         if let Some(id) = outcome.job {

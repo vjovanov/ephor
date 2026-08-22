@@ -151,6 +151,12 @@ pub const PRESENTATION: &[(&str, &str)] = &[
     ("f", "a page down"),
     ("b", "a page up"),
     ("h", "back"),
+    // `l` goes *in* — into a thread, a plan, and on a row that says *running*
+    // into the thing that is running (§FS-005-dispatch.21). That last one is an
+    // ability, and it is carried by a command: `ephor actions open` is the same
+    // move (§FS-011-command-line.8). The key stays here rather than moving to
+    // [`ABILITIES`] because it is the one motion key that happens to land on an
+    // ability on one row, and a key on both lists is refused by the check.
     ("l", "in"),
     ("n", "the next project"),
     ("P", "the previous project"),

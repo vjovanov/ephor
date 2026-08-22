@@ -1224,17 +1224,24 @@ fn run_work(config: &StatusConfig, args: &crate::cli::WorkRunArgs) -> Result<Exi
                 hand.as_ref(),
                 &args.runner_args,
             ) {
-                Ok(id) => {
-                    let says = match &id {
-                        Some(id) => format!("▶ run {id} started"),
+                Ok(started) => {
+                    // What the launcher's own descriptor said, both halves of
+                    // it: a run that had nothing to do and exited inside the
+                    // handshake is reported as over rather than as started, so
+                    // that nobody is sent to a board with nothing on it
+                    // (§FS-005-dispatch.20).
+                    let (outcome, says) = match (&started.id, started.finished) {
+                        (Some(id), false) => ("started", format!("▶ run {id} started")),
+                        (Some(id), true) => ("done", format!("✓ run {id} finished already")),
                         // A run that named itself nothing is still a run: the
                         // row is live from the lock alone (§AR-007-runtime.3).
-                        None => "▶ run started".to_string(),
+                        (None, false) => ("started", "▶ run started".to_string()),
+                        (None, true) => ("done", "✓ the run finished already".to_string()),
                     };
                     if !args.json {
                         println!("{says}");
                     }
-                    runs.push(landed("started", Some(says), id.as_deref()));
+                    runs.push(landed(outcome, Some(says), started.id.as_deref()));
                 }
                 Err(err) => {
                     failed += 1;

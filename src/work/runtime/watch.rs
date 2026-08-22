@@ -275,22 +275,27 @@ pub fn dashboard(_config: &WorkConfig, root: &Path) -> Option<String> {
 pub struct RunIdentity {
     /// How the reader and the runtime agree on which run they mean.
     pub id: Option<String>,
-    pub pid: Option<i64>,
     /// The address of the run's control, served only while it serves one.
     pub control_url: Option<String>,
     /// When the run began, in the binding's own words — stamped once it held
     /// its locks, so a run that queued behind another began when it got them.
     pub started_at: Option<String>,
-    /// Whether the run was started beneath a screen (§FS-005-dispatch.20).
-    pub headless: bool,
 }
 
 impl RunIdentity {
-    /// Whether the descriptor said anything worth carrying. A file that parsed
-    /// but named no run is nothing: a row would rather say *live* from the
-    /// lock alone than show an empty identity (§AR-007-runtime.3).
+    /// Whether the descriptor said anything worth carrying — which means
+    /// anything a reader can *reach the run by*. A file that parsed but named
+    /// no run is nothing: a row would rather say *live* from the lock alone
+    /// than show an identity no surface can do anything with
+    /// (§AR-007-runtime.3).
+    ///
+    /// A process id is not one of those. A descriptor carrying only a pid used
+    /// to count as an identity, and every surface then had nothing to show for
+    /// it: the row said *live*, `a` said the run left no id, and the reading
+    /// carried an empty object. What ephor never reads it does not claim —
+    /// which is why the binding's `headless` is not read either.
     pub fn is_empty(&self) -> bool {
-        self.id.is_none() && self.pid.is_none() && self.control_url.is_none()
+        self.id.is_none() && self.control_url.is_none()
     }
 }
 
@@ -313,13 +318,8 @@ pub fn identity(_config: &WorkConfig, root: &Path) -> Option<RunIdentity> {
     };
     let identity = RunIdentity {
         id: word("id"),
-        pid: value.get("pid").and_then(serde_json::Value::as_i64),
         control_url: word("control_url"),
         started_at: word("started_at"),
-        headless: value
-            .get("headless")
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false),
     };
     (!identity.is_empty()).then_some(identity)
 }
@@ -1049,25 +1049,23 @@ mod tests {
         );
         let run = identity(&config(), root).expect("the descriptor names a run");
         assert_eq!(run.id.as_deref(), Some("3f9a2c"));
-        assert_eq!(run.pid, Some(48213));
         assert_eq!(run.control_url.as_deref(), Some("http://127.0.0.1:54321"));
         assert_eq!(run.started_at.as_deref(), Some("2026-08-22T14:03:22Z"));
-        assert!(run.headless);
 
         // A run serving no control has none to give, and is still a run: the
         // address is present only while the server is live.
-        write(
-            &root.join(DESCRIPTOR),
-            "{\"id\":\"7b1\",\"headless\":false}",
-        );
+        write(&root.join(DESCRIPTOR), "{\"id\":\"7b1\"}");
         let run = identity(&config(), root).expect("an id is an identity");
         assert_eq!(run.id.as_deref(), Some("7b1"));
         assert_eq!(run.control_url, None);
-        assert!(!run.headless);
 
         // A descriptor that names no run at all is nothing: the row would
-        // rather say live from the lock alone (§AR-007-runtime.3).
+        // rather say live from the lock alone (§AR-007-runtime.3). A process id
+        // is not a name — nothing can be reached by it, and a row that showed
+        // one would be an identity with no way in.
         write(&root.join(DESCRIPTOR), "{\"status\":\"running\"}");
+        assert_eq!(identity(&config(), root), None);
+        write(&root.join(DESCRIPTOR), "{\"pid\":48213}");
         assert_eq!(identity(&config(), root), None);
         write(&root.join(DESCRIPTOR), "not json");
         assert_eq!(identity(&config(), root), None);

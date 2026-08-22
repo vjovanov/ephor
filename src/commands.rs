@@ -376,9 +376,15 @@ fn actions_run(args: &ActionsRunArgs) -> Result<ExitCode> {
     // a menu entry has always been allowed to *be* the reader's session. Which
     // of the three is the session's answer, so the command and the key cannot
     // disagree (§AR-009-surfaces.1).
-    let beneath = !matches!(session.how(&request.entry), crate::api::act::Runs::Here);
-    let outcome = match args.background || beneath {
-        true => session.start_job(&request),
+    // `--background` is the reader asking for the place outright, and it is
+    // *beneath the screen* — never a window, which is where a program somebody
+    // types into goes (§FS-005-dispatch.17, §FS-005-dispatch.22).
+    let place = match args.background {
+        true => crate::api::act::Runs::Beneath,
+        false => session.how(&request.entry),
+    };
+    let outcome = match place != crate::api::act::Runs::Here {
+        true => session.start_job(&request, place),
         // Under `--json` the entry's own output goes beside the reading, so
         // that what a program parses is the outcome alone
         // (§FS-011-command-line.7).

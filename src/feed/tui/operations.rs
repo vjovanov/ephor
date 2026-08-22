@@ -658,10 +658,8 @@ mod tests {
         let mut row = running_row();
         row.op.identity = Some(crate::work::runtime::watch::RunIdentity {
             id: Some("3f9a2c".to_string()),
-            pid: Some(48213),
             control_url: Some("http://127.0.0.1:54321".to_string()),
             started_at: None,
-            headless: true,
         });
         row.op.stop = Some("the-runner stop 3f9a2c".to_string());
         row
@@ -941,10 +939,8 @@ mod tests {
         let identity = || {
             Some(RunIdentity {
                 id: Some("3f9a2c".to_string()),
-                pid: Some(48213),
                 control_url: Some("http://127.0.0.1:54321".to_string()),
                 started_at: None,
-                headless: true,
             })
         };
         let mut screen = OperationsScreen::new(rows(vec![identified_row()]), None);

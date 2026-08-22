@@ -389,8 +389,12 @@ impl Session {
                 steps,
                 // Where no window can be opened, the entry takes the terminal
                 // as it always did — and says so rather than leaving the
-                // reader to notice (§FS-005-dispatch.22).
-                ..views::Outcome::ok(match run.entry.action.window {
+                // reader to notice (§FS-005-dispatch.22). Asked here rather
+                // than asserted: the sentence used to be true only because
+                // every caller happened to have checked, and a third one — or
+                // a change to [`Session::how`] — would have made it a
+                // falsehood printed with confidence.
+                ..views::Outcome::ok(match run.entry.action.window && self.opener().is_none() {
                     true => format!("{says} · nothing bound a window, so it took the terminal"),
                     false => says,
                 })
@@ -602,12 +606,18 @@ impl Session {
     /// Nothing is waited on — the row it takes among the operations is how it
     /// is watched, from either surface.
     ///
+    /// `place` is which of the two beneath-the-screen places this is, decided
+    /// by the caller off [`Session::how`] — or by a reader who asked for the
+    /// background outright. Answered once and handed down, so the key and the
+    /// command cannot come to disagree about where an entry runs
+    /// (§AR-009-surfaces.1).
+    ///
     /// The chain travels with it. An entry needing the branch workspace
     /// carries the checkout as the job's first step, with the directory it has
     /// to create named on the step: the supervisor verifies it rather than
     /// trusting it, exactly as a foreground run does
     /// (§FS-006-project-interface.8).
-    pub fn start_job(&self, run: &Run) -> views::Outcome {
+    pub fn start_job(&self, run: &Run, place: Runs) -> views::Outcome {
         use crate::seams::jobs;
 
         if let Some(reason) = run.entry.gate.refusal() {
@@ -685,8 +695,14 @@ impl Session {
         // window of the reader's own (§FS-005-dispatch.22): the record, the
         // lock and the outcome are a job's, and what changes is only who holds
         // the other end of the streams (§AR-002-summons.6).
-        let started = match (run.entry.action.window, self.opener()) {
-            (true, Some(opener)) => {
+        //
+        // Which place, off [`Session::how`] rather than re-derived from the
+        // entry here (§AR-009-surfaces.1). Two derivations disagreed: an entry
+        // saying both `background` and `window` was *decided* beneath the screen
+        // and then opened a window anyway, and `--background` on a windowed
+        // entry did the same.
+        let started = match (place, self.opener()) {
+            (Runs::InAWindow, Some(opener)) => {
                 let title = format!("ephor · {}", action.description);
                 let at = crate::seams::window::site(&run.root);
                 jobs::start_windowed(record, |command| opener.open(&title, command, &at))

@@ -284,6 +284,22 @@ pub const DETACH_VERB: &str = "work.run.headless";
 /// was (§FS-005-dispatch.20).
 const DETACH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
 
+/// What the launcher handed back about the run it started
+/// (§FS-005-dispatch.20, §AR-007-runtime.1).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Started {
+    /// What the run calls itself, where the launcher named it. None is a run
+    /// that started and named itself nothing ephor could read — the row is
+    /// still live from the lock, with nothing to attach to
+    /// (§AR-007-runtime.3).
+    pub id: Option<String>,
+    /// The launcher's own descriptor already said the run was over: it had
+    /// nothing to do and exited inside the handshake. Read from the same
+    /// document the id is, because announcing such a run as *started* sends a
+    /// reader who presses the board key straight to an empty board.
+    pub finished: bool,
+}
+
 /// Start a run beneath the screen and come back with what it is called
 /// (§FS-005-dispatch.20).
 ///
@@ -291,9 +307,7 @@ const DETACH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
 /// waits for the child to publish its descriptor, prints it, and exits, and
 /// what ephor wants from it is the id. `Err` is the launcher's own diagnostic,
 /// which is the child's: an invalid plan, a held lock and an unresolvable hand
-/// all fail here, as loudly as they do in the foreground. `Ok(None)` is a run
-/// that started and named itself nothing ephor could read — the row is still
-/// live from the lock, with nothing to attach to (§AR-007-runtime.3).
+/// all fail here, as loudly as they do in the foreground.
 pub fn start_detached(
     config: &crate::work::recipe::WorkConfig,
     root: &Path,
@@ -301,7 +315,7 @@ pub fn start_detached(
     plans: &[String],
     hand: Option<&roster::HandFlags>,
     extra: &[String],
-) -> Result<Option<String>> {
+) -> Result<Started> {
     let command = detached_invocation_with(runner(config), root, plans, hand, extra);
     let answer = summons::run(
         &Summons::new(DETACH_VERB, command),
@@ -310,7 +324,7 @@ pub fn start_detached(
     )?;
     let printed = answer.output.as_deref().unwrap_or("");
     if answer.is_done() {
-        return Ok(started_id(printed));
+        return Ok(started(printed));
     }
     // The launcher's own diagnostic, which is the child's: an invalid plan, a
     // held lock and an unresolvable hand all fail here (§FS-005-dispatch.20).
@@ -343,26 +357,44 @@ fn launcher_refusal(output: &str) -> Option<String> {
     None
 }
 
-/// The run id out of what the launcher printed: its descriptor, wherever in
-/// the captured text it sits. Read leniently on purpose — the launcher's own
-/// warnings share the stream with it, and a reader that insisted the object
-/// began at byte zero would lose the id to a note about a registry file.
-fn started_id(output: &str) -> Option<String> {
+/// What the launcher said about the run, out of the descriptor it printed —
+/// wherever in the captured text that sits. Read leniently on purpose: the
+/// launcher's own warnings share the stream with it, and a reader that insisted
+/// the object began at byte zero would lose the id to a note about a registry
+/// file.
+///
+/// Both facts come out of the *same* document. A launcher that returns
+/// `{"id": …, "status": "finished"}` started a run that had nothing to do and
+/// was over before the handshake returned; reading only the id announced it as
+/// started and sent the reader to a board with nothing on it.
+fn started(output: &str) -> Started {
     for (at, _) in output.match_indices('{') {
         let mut values =
             serde_json::Deserializer::from_str(&output[at..]).into_iter::<serde_json::Value>();
         if let Some(Ok(value)) = values.next() {
-            if let Some(id) = value
+            let id = value
                 .get("id")
                 .and_then(serde_json::Value::as_str)
-                .filter(|id| !id.is_empty())
-            {
-                return Some(id.to_string());
+                .filter(|id| !id.is_empty());
+            if let Some(id) = id {
+                let over = value
+                    .get("status")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|status| FINISHED.contains(&status))
+                    || value.get("exit_code").is_some_and(|code| !code.is_null());
+                return Started {
+                    id: Some(id.to_string()),
+                    finished: over,
+                };
             }
         }
     }
-    None
+    Started::default()
 }
+
+/// The launcher's own words for a run that is over. Part of the coupling, and
+/// so part of this module (§AR-007-runtime.1).
+const FINISHED: &[&str] = &["finished", "done", "complete", "completed", "failed"];
 
 /// How a reader watches a run they did not start: the runner's own surface on
 /// it, in the runner's own words (§FS-005-dispatch.20, §AR-007-runtime.1).
@@ -715,15 +747,30 @@ mod tests {
 
     /// The id comes out of the launcher's own descriptor, wherever in what it
     /// printed the object sits: warnings share the stream with it
-    /// (§FS-005-dispatch.20).
+    /// (§FS-005-dispatch.20). And so does whether the run is already over —
+    /// out of the *same* document, because a run reported as started sends a
+    /// reader to the board, and a run that had nothing to do and exited inside
+    /// the handshake would send them to an empty one.
     #[test]
     fn the_run_id_is_read_out_of_what_the_launcher_printed() {
         let printed = "warning: could not write the registry entry\n                       {\"id\":\"3f9a2c\",\"pid\":48213,\"status\":\"running\",\"exit_code\":null}\n";
-        assert_eq!(started_id(printed), Some("3f9a2c".to_string()));
+        assert_eq!(
+            started(printed),
+            Started {
+                id: Some("3f9a2c".to_string()),
+                finished: false
+            }
+        );
         // Nothing to read is nothing claimed: a run that named itself nothing
         // is still a run, and the row is live from the lock alone.
-        assert_eq!(started_id("started\n"), None);
-        assert_eq!(started_id("{\"pid\":1}"), None);
+        assert_eq!(started("started\n"), Started::default());
+        assert_eq!(started("{\"pid\":1}"), Started::default());
+
+        // Over before the launcher returned, said either way the launcher says
+        // it: by its own word for finished, or by an exit code.
+        assert!(started("{\"id\":\"3f9a2c\",\"status\":\"finished\"}").finished);
+        assert!(started("{\"id\":\"3f9a2c\",\"status\":\"running\",\"exit_code\":0}").finished);
+        assert!(!started("{\"id\":\"3f9a2c\",\"status\":\"running\"}").finished);
     }
 
     /// A launcher that refused says so in its own error envelope, and that

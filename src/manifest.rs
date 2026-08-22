@@ -288,8 +288,25 @@ pub fn parse(text: &str, source: &str) -> Result<Manifest> {
             error.instance_path
         )));
     }
-    serde_json::from_value(value)
-        .map_err(|err| EphorError::Registry(format!("{source} could not be read: {err}")))
+    let manifest: Manifest = serde_json::from_value(value)
+        .map_err(|err| EphorError::Registry(format!("{source} could not be read: {err}")))?;
+    // Beneath the screen and in a window of the reader's own are two different
+    // places, and an offer saying both leaves one of them silently unused
+    // (§FS-005-dispatch.17, §FS-005-dispatch.22). The same refusal a person's
+    // own configuration gets, in the same words: a rule about *values* has to
+    // be enforced as one, and the schema's `not` says it too so that a manifest
+    // validated by anything else hears it as well.
+    for offer in &manifest.offers {
+        if offer.background && offer.window {
+            return Err(EphorError::Registry(format!(
+                "{source}: offer '{}' says both 'background' and 'window': a move that needs \
+                 nobody runs beneath the screen, and a program somebody types into runs in a \
+                 window — never both",
+                offer.id
+            )));
+        }
+    }
+    Ok(manifest)
 }
 
 fn validator() -> &'static jsonschema::Validator {
