@@ -929,6 +929,48 @@ mod tests {
         assert_eq!(window.name(), "window");
         assert_eq!(window.says(), "running in window @7");
         assert_eq!(window.way_in().as_deref(), Some("@7"));
+
+        // A window the opener never named is a window all the same, and has no
+        // way in: nothing ephor holds could bring it forward
+        // (§AR-002-summons.6).
+        let unnamed = offers::Running::Window {
+            job: "j".to_string(),
+            handle: String::new(),
+            since: Some(5),
+            says: String::new(),
+        };
+        assert_eq!(
+            unnamed.says(),
+            "running in a window the opener did not name"
+        );
+        assert_eq!(unnamed.way_in(), None);
+
+        // A parked ticket says §15's word, and its way in is the run still
+        // standing at the gate — the plan where none is
+        // (§FS-005-dispatch.9, §FS-005-dispatch.20).
+        let waiting = |id: Option<&str>| offers::Running::Waiting {
+            root: PathBuf::from("/w/demo/panta"),
+            ticket: "widget-42.answer-2".to_string(),
+            state: "needs-human".to_string(),
+            plan: PathBuf::from("/w/demo/panta/widget-42.md"),
+            id: id.map(str::to_string),
+            attach: id.map(|id| format!("the-runner attach '{id}'")),
+            since: Some(120),
+        };
+        let parked = waiting(Some("3f9a2c"));
+        assert_eq!(parked.name(), "waiting");
+        assert_eq!(
+            parked.says(),
+            "widget-42.answer-2 [needs-human] · waiting on you"
+        );
+        assert_eq!(
+            parked.way_in().as_deref(),
+            Some("the-runner attach '3f9a2c'")
+        );
+        assert_eq!(
+            waiting(None).way_in().as_deref(),
+            Some("/w/demo/panta/widget-42.md")
+        );
     }
 
     fn requires_checkout(description: &str) -> ActionConfig {

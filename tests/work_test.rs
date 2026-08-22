@@ -857,6 +857,63 @@ fn work_run_starts_the_run_beneath_the_screen_and_prints_its_id() {
     assert!(!recorded.contains("--headless"), "{recorded}");
 }
 
+/// Where the binding cannot detach, the run is watched as it was — the terminal
+/// handed over — **and the line says so rather than pretending**
+/// (§FS-005-dispatch.20, §AR-007-runtime.3).
+///
+/// The note arrives *before* the run takes the terminal, not after it gives it
+/// back: a reader told why they lost their terminal once they have it again has
+/// been told nothing they could act on. And nothing asks such a runner to
+/// detach, which is the whole point of asking its help first.
+#[test]
+fn a_runner_with_no_detached_shape_runs_here_and_says_so_first() {
+    let tmp = tempdir();
+    fixture(tmp.path(), Value::Null);
+    ephor(tmp.path())
+        .args(["refresh", "demo"])
+        .assert()
+        .success();
+    ephor(tmp.path())
+        .args(["work", "dispatch"])
+        .assert()
+        .success();
+
+    // A runner whose own help names no detached shape: it runs attached, as it
+    // always did.
+    let log = tmp.path().join("runner.log");
+    make_executable(
+        &tmp.path().join("fakebin/rhei"),
+        &format!(
+            "#!/usr/bin/env bash\n\
+             case \"$*\" in\n\
+             *--help*) printf 'Options:\\n      --tui  force the interface\\n'; exit 0 ;;\n\
+             *) printf 'watched %s\\n' \"$*\" >> {}; exit 0 ;;\n\
+             esac\n",
+            log.to_string_lossy(),
+        ),
+    );
+
+    let output = ephor(tmp.path())
+        .args(["work", "run"])
+        .output()
+        .expect("ephor work run");
+    let said = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        said.contains("cannot start a run detached here"),
+        "the note says why the terminal went: {said}"
+    );
+    // Before the run, not after it: the note stands above the line that says
+    // which root is running.
+    let note = said.find("cannot start a run detached here");
+    let run = said.find("▶ ");
+    assert!(note < run, "the note comes first: {said}");
+
+    // And it was never asked to detach.
+    let recorded = fs::read_to_string(&log).unwrap();
+    assert!(recorded.starts_with("watched run "), "{recorded}");
+    assert!(!recorded.contains("--headless"), "{recorded}");
+}
+
 /// Who does the work is the project's to default
 /// (§FS-006-project-interface.9): its table names a hand for this action, the
 /// roster turns that name into what the runtime will execute, and the ticket

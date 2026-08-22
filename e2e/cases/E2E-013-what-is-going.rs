@@ -366,6 +366,212 @@ fn a_live_job_marks_the_entry_it_came_from_and_no_other() {
     assert!(offer(&view, "other")["running"].is_null(), "{view}");
 }
 
+/// A machine with a state the runtime will not leave on its own: where work
+/// waits for a person (§FS-005-dispatch.9). Written over the one a dispatch
+/// installs, because the shipped machine declares no such state and the row's
+/// *waiting on you* is exactly what a gating state means.
+const PARKING_MACHINE: &str = r#"name: ephor-work
+version: 1.0
+
+states:
+  fix:
+    description: Do what the ticket asks.
+  needs-human:
+    description: A person has to answer before this goes on.
+    gating: true
+  done:
+    description: Over.
+    final: true
+
+transitions:
+  - from: fix
+    to: needs-human
+  - from: needs-human
+    to: done
+"#;
+
+/// The plan a dispatch wrote in this root, found by what a plan *is* rather
+/// than by a suffix — the suffix is the runtime's own word, not ephor's
+/// (§REQ-001-boundary.5).
+fn the_plan(root: &Path) -> PathBuf {
+    fs::read_dir(root)
+        .expect("the work root")
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| {
+            fs::read_to_string(path)
+                .map(|text| text.contains("**State:**"))
+                .unwrap_or(false)
+        })
+        .expect("a dispatch wrote a plan")
+}
+
+/// Move the dispatched ticket into the state the machine parks work in, the
+/// way the runtime would have: the plan is the artifact, and every surface
+/// reads it back from there.
+fn park(root: &Path) -> PathBuf {
+    write(&root.join("states.yaml"), PARKING_MACHINE);
+    let plan = the_plan(root);
+    let text = fs::read_to_string(&plan).expect("the plan");
+    let parked = text.replace("**State:** fix", "**State:** needs-human");
+    assert_ne!(parked, text, "the plan holds a ticket in `fix`");
+    fs::write(&plan, parked).expect("the plan is rewritten");
+    plan
+}
+
+/// A ticket the run parked is *waiting on you*, and the row that opened it says
+/// so rather than offering to lay a second one beside it
+/// (§FS-005-dispatch.20, §FS-005-dispatch.21).
+///
+/// It counts whether or not a run still holds the root — a run with nobody at
+/// its terminal waits at the gate rather than exiting, and one that exited
+/// leaves the question standing all the same. What changes is the way in: the
+/// run where one is still standing there, and the plan the question is written
+/// in where none is, because that is where the answer belongs
+/// (§FS-005-dispatch.9).
+#[test]
+fn a_parked_ticket_is_waiting_on_you_with_a_run_and_without_one() {
+    let world = watching();
+    world
+        .ephor()
+        .args(["work", "dispatch", "--item", ITEM])
+        .assert()
+        .success();
+    let root = work_root(&world);
+    let plan = park(&root);
+
+    // Nothing is holding the root. The question stands, and the way in is the
+    // plan — never *queued*, which would promise a turn that never comes.
+    let view = actions(&world);
+    let running = &offer(&view, "fix-gate")["running"];
+    assert_eq!(running["kind"], "waiting", "{running}");
+    assert!(
+        running["says"]
+            .as_str()
+            .expect("what it is at")
+            .contains("waiting on you"),
+        "{running}"
+    );
+    assert_eq!(
+        running["plan"],
+        plan.to_string_lossy().as_ref(),
+        "{running}"
+    );
+    assert!(running["run"].is_null(), "{running}");
+
+    // And with a run still standing at the gate, the way in is that run: §20's
+    // own answer to a question a detached run asks is *attach*.
+    let _holder = a_run_is_live_on(&root, "fix-gate-1", "needs-human");
+    let view = actions(&world);
+    let running = &offer(&view, "fix-gate")["running"];
+    assert_eq!(running["kind"], "waiting", "{running}");
+    assert_eq!(running["run"], "3f9a2c", "{running}");
+    assert_eq!(
+        running["attach"], "acme-runtime attach '3f9a2c'",
+        "{running}"
+    );
+}
+
+/// A run live on the root that is not holding this entry's ticket will reach
+/// it: the runtime schedules one run per execution root, so the row says
+/// *queued* and the way in is that run (§FS-005-dispatch.15,
+/// §FS-005-dispatch.21).
+///
+/// And *queued* is all it says. The run's age is the run's, not this entry's
+/// wait: a row reading `queued · 3h` about a ticket dispatched a minute ago
+/// would have a reader believing it had been waiting three hours.
+#[test]
+fn an_open_ticket_a_live_run_has_not_taken_up_is_queued() {
+    let world = watching();
+    world
+        .ephor()
+        .args(["work", "dispatch", "--item", ITEM])
+        .assert()
+        .success();
+    let root = work_root(&world);
+    // Live, and holding some *other* ticket: the journal names one this entry
+    // never opened.
+    let _holder = a_run_is_live_on(&root, "something-else-1", "fix");
+
+    let view = actions(&world);
+    let running = &offer(&view, "fix-gate")["running"];
+    assert_eq!(running["kind"], "queued", "{running}");
+    assert_eq!(running["says"], "queued", "{running}");
+    assert_eq!(running["run"], "3f9a2c", "{running}");
+    assert_eq!(
+        running["attach"], "acme-runtime attach '3f9a2c'",
+        "{running}"
+    );
+    assert!(running["since_seconds"].is_null(), "{running}");
+}
+
+/// The checkout row is running where the job that is making the workspace is
+/// (§FS-005-dispatch.21).
+///
+/// That job is never the checkout row's own — the checkout always runs in the
+/// foreground — it is another entry's job carrying the checkout as its first
+/// step. Pressing the row while that job is still writing the workspace used to
+/// start a second checkout of the same directory.
+///
+/// And an entry with no id of its own is matched back by its description, which
+/// is the only thing that distinguishes it on a screen either
+/// (§FS-006-project-interface.9).
+#[test]
+fn the_checkout_row_is_running_while_the_job_making_the_workspace_is() {
+    let world = watching();
+    // A project whose branches live in workspaces of their own, and a branch
+    // whose workspace is not on this machine yet: the menu then carries the row
+    // that would make it (§FS-004-quick-actions.7).
+    world.register(json!({
+        "branch_root_template": "{project_root}/ws/{branch}",
+        "branches": [
+            { "id": "demo-retry", "branch": "you/ABC-42-retry", "active": true,
+              "ticket": "ABC-42" }
+        ]
+    }));
+    world.configure(json!({
+        "actions": [
+            { "icon": "⤴", "description": "rebase onto master", "command": "true" }
+        ],
+        "projects": { PROJECT: { "providers": [
+            { "provider": "acmeforge", "user": "you", "repos": ["app"] }
+        ] } },
+        "work": { "runner": "acme-runtime" }
+    }));
+
+    // A job from the anonymous entry, carrying the checkout as its first step —
+    // exactly what an entry pressed on a branch whose workspace is missing
+    // writes down.
+    let dir = write_job(
+        &world,
+        "20260822T090000.000Z-rebase",
+        json!({
+            "action": "rebase onto master",
+            "description": "rebase onto master",
+            "workspace": Value::Null,
+            "steps": [
+                { "icon": "⇣", "description": "check out branch workspace",
+                  "command": "true", "creates": world.forest().join("ws"),
+                  "becomes_workspace": true },
+                { "icon": "⤴", "description": "rebase onto master", "command": "true" }
+            ]
+        }),
+    );
+    let _holder = hold(&dir.join("lock"));
+
+    let view = actions(&world);
+    assert_eq!(view["workspace_state"], "missing", "{view}");
+    // The anonymous entry answers to its description, and its own job marks it.
+    let running = &offer(&view, "rebase onto master")["running"];
+    assert_eq!(running["kind"], "job", "{running}");
+    assert_eq!(running["job"], "20260822T090000.000Z-rebase", "{running}");
+    // And the row that would make the workspace is running too, on the same
+    // job: the checkout is that job's first step.
+    let checkout = &offer(&view, "checkout")["running"];
+    assert_eq!(checkout["kind"], "job", "{checkout}");
+    assert_eq!(checkout["job"], "20260822T090000.000Z-rebase", "{checkout}");
+}
+
 /// A window of the reader's own, where one is bound (§FS-005-dispatch.22).
 ///
 /// The seam is two commands in materials: one opens a window running a command
