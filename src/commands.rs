@@ -230,11 +230,18 @@ fn actions_open(args: &ActionsOpenArgs) -> Result<ExitCode> {
             args.json,
         ));
     };
-    // Under `--json` what the surface writes goes beside the reading rather
-    // than into it (§FS-011-command-line.7).
-    let watching = match args.json {
-        true => crate::api::act::Watching::Aside,
-        false => crate::api::act::Watching::Terminal,
+    let watching = match &running {
+        // A job's log is text this command prints, and there is no window in
+        // it: under a reading the text goes beside the answer rather than into
+        // it (§FS-011-command-line.7).
+        crate::api::offers::Running::Job { .. } => match args.json {
+            true => crate::api::act::Watching::Aside,
+            false => crate::api::act::Watching::Terminal,
+        },
+        // Everything else opens by the same binding the key uses
+        // (§FS-005-dispatch.22, §FS-011-command-line.8) — a window of the
+        // reader's own where one is bound, and the terminal otherwise.
+        _ => session.watching(args.json),
     };
     Ok(report(&session.open_running(&running, watching), args.json))
 }
@@ -562,10 +569,9 @@ fn operations_attach(args: &crate::cli::OperationsAttachArgs) -> Result<ExitCode
         .find(|op| op.run.as_deref() == Some(args.run.as_str()))
         .and_then(|op| op.root.clone())
         .unwrap_or_else(|| std::path::PathBuf::from("."));
-    let watching = match args.json {
-        true => crate::api::act::Watching::Aside,
-        false => crate::api::act::Watching::Terminal,
-    };
+    // Attaching goes to a window where one is bound, by the same binding the
+    // board's own key uses (§FS-005-dispatch.22, §FS-011-command-line.8).
+    let watching = session.watching(args.json);
     Ok(report(
         &session.attach_run(&root, &args.run, watching),
         args.json,

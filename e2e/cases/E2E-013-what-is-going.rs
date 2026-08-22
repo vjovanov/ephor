@@ -463,6 +463,97 @@ fn an_entry_that_asks_for_a_window_gets_one_and_opening_it_brings_it_forward() {
     );
 }
 
+/// A window pair written down in configuration, with the files each half writes
+/// what it was called with into (§REQ-001-boundary.1): the whole contract is
+/// two commands in materials.
+fn a_window_is_bound(world: &World) -> (PathBuf, PathBuf) {
+    let opened = world.path().join("opened");
+    let focused = world.path().join("focused");
+    let open = world.stub(
+        "stand-in-open",
+        &format!(
+            "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" > {}\nprintf '@7\\n'\n",
+            opened.to_string_lossy()
+        ),
+    );
+    let focus = world.stub(
+        "stand-in-focus",
+        &format!(
+            "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" > {}\n",
+            focused.to_string_lossy()
+        ),
+    );
+    world.configure(json!({
+        "defaults": {
+            "window": {
+                "open": format!("{} {{title}} {{command}}", open.to_string_lossy()),
+                "focus": format!("{} {{handle}}", focus.to_string_lossy()),
+            }
+        },
+        "projects": { PROJECT: { "providers": [
+            { "provider": "acmeforge", "user": "you", "repos": ["app"] }
+        ] } },
+        "work": { "runner": "acme-runtime" }
+    }));
+    (opened, focused)
+}
+
+/// Attaching goes to a window where one is bound — **by the same binding the
+/// key uses** (§FS-005-dispatch.22, §FS-011-command-line.8).
+///
+/// Both commands that put a surface on a run go through the opener: the key on
+/// a running row as a command (`ephor actions open`) and the board's own key as
+/// a command (`ephor operations attach`). What the opener is handed is the
+/// runner's own attach command, and what comes back is the handle it printed —
+/// so a reader whose `a` opens a window does not get a terminal taken from them
+/// by the same ability typed out.
+#[test]
+fn attaching_from_the_command_line_goes_to_the_bound_window() {
+    let world = watching();
+    world
+        .ephor()
+        .args(["work", "dispatch", "--item", ITEM])
+        .assert()
+        .success();
+    let (opened, _focused) = a_window_is_bound(&world);
+    let root = work_root(&world);
+    let _holder = a_run_is_live_on(&root, "fix-gate-1", "fix");
+
+    // The key on the running row, as a command.
+    let out = world
+        .ephor()
+        .args(["actions", "open", "fix-gate", "--item", ITEM, "--json"])
+        .output()
+        .expect("ephor actions open");
+    let outcome = shaped("outcome", &out);
+    assert_eq!(outcome["ok"], true, "{outcome}");
+    let says = outcome["says"].as_str().expect("a sentence");
+    assert!(says.contains("run 3f9a2c"), "{says}");
+    assert!(says.contains("window @7"), "{says}");
+    let called = fs::read_to_string(&opened).expect("the opener was called");
+    assert!(called.contains("acme-runtime attach"), "{called}");
+    assert!(called.contains("3f9a2c"), "{called}");
+
+    // And the board's own key, as a command: one ability, one binding.
+    fs::remove_file(&opened).expect("the record of the last call");
+    let out = world
+        .ephor()
+        .args(["operations", "attach", "3f9a2c", "--json"])
+        .output()
+        .expect("ephor operations attach");
+    let outcome = shaped("outcome", &out);
+    assert_eq!(outcome["ok"], true, "{outcome}");
+    assert!(
+        outcome["says"]
+            .as_str()
+            .expect("a sentence")
+            .contains("window @7"),
+        "{outcome}"
+    );
+    let called = fs::read_to_string(&opened).expect("the opener was called again");
+    assert!(called.contains("acme-runtime attach"), "{called}");
+}
+
 /// `ephor actions open` starts nothing, and refuses by name where the entry has
 /// nothing going (§FS-011-command-line.8).
 #[test]

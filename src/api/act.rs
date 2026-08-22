@@ -423,6 +423,22 @@ impl Session {
         )
     }
 
+    /// Where a command's *open* lands (§FS-011-command-line.8).
+    ///
+    /// A window of the reader's own where one is bound — **by the same binding
+    /// the key uses** (§FS-005-dispatch.22), so that `ephor actions open` and
+    /// the key on the row do not come to differ about where an attach goes.
+    /// Where nothing is bound the terminal is the floor and is never removed;
+    /// and under a reading what the surface writes goes beside the answer
+    /// rather than into it (§FS-011-command-line.7).
+    pub fn watching(&self, json: bool) -> Watching {
+        match (self.opener().is_some(), json) {
+            (true, _) => Watching::Window,
+            (false, true) => Watching::Aside,
+            (false, false) => Watching::Terminal,
+        }
+    }
+
     /// The runner's own surface on one run, put where the reader can type into
     /// it: a window of their own where one is bound (§FS-005-dispatch.22), and
     /// the terminal otherwise — the floor, which is never removed
