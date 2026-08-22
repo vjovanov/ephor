@@ -113,16 +113,24 @@ impl Site {
         }
     }
 
+    /// Where a place lands, without asking the disk. What a reading that
+    /// describes a run rather than making one needs: the directory a checkout
+    /// is about to create is the right answer about where the step after it
+    /// runs, and it is not there yet (§FS-011-command-line.1).
+    pub fn place_of(&self, place: &Place) -> PathBuf {
+        let base = || self.workspace.clone().unwrap_or_else(|| self.root.clone());
+        match place {
+            Place::Workspace => base(),
+            Place::Root => self.root.clone(),
+            Place::Repo(name) => base().join(name),
+        }
+    }
+
     /// The directory a summons runs in. A place that does not exist is a
     /// refusal naming it, never a command run somewhere surprising
     /// (§AR-002-summons.1).
     pub fn resolve(&self, place: &Place) -> Result<PathBuf> {
-        let base = || self.workspace.clone().unwrap_or_else(|| self.root.clone());
-        let resolved = match place {
-            Place::Workspace => base(),
-            Place::Root => self.root.clone(),
-            Place::Repo(name) => base().join(name),
-        };
+        let resolved = self.place_of(place);
         if !resolved.is_dir() {
             return Err(EphorError::Command(format!(
                 "{} is not there",
@@ -178,6 +186,14 @@ impl Summons {
 pub enum Mode {
     /// The command inherits the terminal — its output is the person's.
     Interactive,
+    /// The terminal, but with the command's own output sent to the error
+    /// stream. For a surface whose standard output is already spoken for by a
+    /// reading (§REQ-002-parity.3): the command still has a terminal to be
+    /// typed into and its output still reaches whoever is watching, and
+    /// nothing a program is parsing is interleaved with it. Not captured —
+    /// a menu entry may be a pager, and a pager with a timeout on it is a
+    /// pager that dies mid-read.
+    Aside,
     /// Output is captured and the command is given this long to finish.
     Captured(Duration),
 }
@@ -263,7 +279,8 @@ pub fn run(summons: &Summons, site: &Site, mode: Mode) -> Result<Answer> {
         .env(ANSWER_VAR, crate::paths::for_shell(&answer_file.path));
 
     let (status, output) = match mode {
-        Mode::Interactive => (interactive(command, &summons.verb)?, None),
+        Mode::Interactive => (interactive(command, &summons.verb, false)?, None),
+        Mode::Aside => (interactive(command, &summons.verb, true)?, None),
         Mode::Captured(timeout) => {
             let (status, stdout) = captured(command, &summons.verb, timeout)?;
             (status, Some(stdout))
@@ -318,10 +335,18 @@ fn missing_binding(binding: &str, place: &std::path::Path) -> Option<PathBuf> {
 
 /// Hand over the terminal and wait. No timeout: the person is at the keyboard,
 /// and a command they are watching is theirs to stop.
-fn interactive(mut command: Command, verb: &str) -> Result<std::process::ExitStatus> {
+/// The terminal, whole. With `aside`, the command's standard output goes to
+/// the error stream instead — the caller's standard output belongs to a
+/// reading, and a command's chatter landing in it would be ephor writing to
+/// its own contract (§FS-011-command-line.7).
+fn interactive(mut command: Command, verb: &str, aside: bool) -> Result<std::process::ExitStatus> {
+    let out = match aside {
+        true => Stdio::from(std::io::stderr()),
+        false => Stdio::inherit(),
+    };
     command
         .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
+        .stdout(out)
         .stderr(Stdio::inherit())
         .status()
         .map_err(|err| EphorError::Command(format!("{verb}: failed to run: {err}")))

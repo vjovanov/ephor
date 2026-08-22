@@ -19,39 +19,26 @@
 use std::ops::Range;
 use std::path::PathBuf;
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use ratatui::crossterm::event::KeyCode;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use serde_json::Value;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::feed::model::Item;
-use crate::feed::react::{self, ReactTarget, PALETTE};
+use crate::feed::react::PALETTE;
 use crate::feed::render::age;
-use crate::feed::reply::{self, ReplyTarget};
-use crate::feed::task::{self, Task};
+use crate::feed::reply::ReplyTarget;
 use crate::work::runtime::results::Proposal;
 
 use super::Action;
 
-struct Reaction {
-    emoji: String,
-    users: Vec<String>,
-}
-
-struct Msg {
-    /// Index of the thread this message belongs to (for separators).
-    thread: usize,
-    author: String,
-    when: Option<DateTime<Utc>>,
-    text: String,
-    reactions: Vec<Reaction>,
-    react: Option<ReactTarget>,
-    task: Option<Task>,
-}
+/// The walk is the session's (§AR-009-surfaces.1), so the index this screen
+/// selects is the index `ephor react` and `ephor tick` take.
+use crate::api::conversation::{Conversation, Message as Msg};
+use crate::api::views::Reaction;
 
 /// A reply a run drafted, waiting under the conversation it answers
 /// (§FS-005-dispatch.13). It is a file until a person sends it, which is why
@@ -95,27 +82,17 @@ impl ThreadScreen {
     /// reply a run drafted about this matter, where one is waiting
     /// (§FS-005-dispatch.13).
     pub fn open(item: Item, proposal: Option<Proposal>) -> Option<Self> {
-        let threads = item
-            .raw
-            .get("threads")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        let mut messages = Vec::new();
-        for (thread_index, thread) in threads.iter().enumerate() {
-            for message in thread
-                .get("messages")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-            {
-                messages.push(parse_msg(thread_index, message, &item.source));
-            }
-        }
+        let Conversation { messages, draft } = Conversation::of(&item, proposal);
         if messages.is_empty() {
             return None;
         }
-        let draft = proposal.map(|proposal| draft_of(proposal, &threads, &item.source, &messages));
+        let draft = draft.map(|draft| Draft {
+            text: draft.text,
+            path: draft.path,
+            thread: draft.thread,
+            target: draft.target,
+            posted: false,
+        });
         Some(ThreadScreen {
             item,
             messages,
@@ -266,11 +243,13 @@ impl ThreadScreen {
             Some(draft) if draft.posted => {
                 Action::SetMessage("This reply has already been posted".to_string())
             }
+            // The move re-reads the draft as it now stands and sends *that*
+            // (§FS-005-dispatch.13), so nothing is carried from here but the
+            // matter: a screen that handed over the text it was showing would
+            // send an edit the reader had since made to a file, or one they
+            // had since undone.
             Some(draft) => match &draft.target {
-                Some(target) => Action::PostReply {
-                    target: target.clone(),
-                    text: draft.text.clone(),
-                    project: self.item.project.clone(),
+                Some(_) => Action::PostReply {
                     item: self.item.clone(),
                 },
                 None => Action::SetMessage(format!(
@@ -312,9 +291,8 @@ impl ThreadScreen {
             Some(task) if task.resolved => {
                 Action::SetMessage("This task is already ticked".to_string())
             }
-            Some(task) => Action::ResolveTask {
-                task: task.clone(),
-                project: self.item.project.clone(),
+            Some(_) => Action::ResolveTask {
+                item: self.item.clone(),
                 message: self.selected,
             },
             None => Action::SetMessage("This message is not a task".to_string()),
@@ -363,16 +341,19 @@ impl ThreadScreen {
 
     fn post(&mut self, pick: usize) -> Action {
         self.picker = None;
-        let Some(target) = self.messages[self.selected].react.clone() else {
+        // The screen still asks whether the message carries a way to react, so
+        // that closing the picker on one that does not is silent rather than a
+        // refusal the reader did not ask for; the move re-derives the target
+        // itself from the same walk (§AR-009-surfaces.1).
+        if self.messages[self.selected].react.is_none() {
             return Action::None;
-        };
+        }
         let (emoji, content) = PALETTE[pick];
         Action::React {
-            target,
+            item: self.item.clone(),
+            message: self.selected,
             content,
             emoji,
-            project: self.item.project.clone(),
-            message: self.selected,
         }
     }
 
@@ -672,77 +653,6 @@ fn draft_lines(draft: &Draft, wrap_width: usize, lines: &mut Vec<Line<'static>>)
     lines.push(Line::default());
 }
 
-/// Where a proposal belongs and how it would be sent: under the last
-/// conversation that can carry a reply, and under the last one there is where
-/// none can (§FS-007-matters.4).
-fn draft_of(proposal: Proposal, threads: &[Value], source: &str, messages: &[Msg]) -> Draft {
-    let targets: Vec<Option<ReplyTarget>> = threads
-        .iter()
-        .map(|thread| reply::parse_target(thread, source))
-        .collect();
-    // Only threads that made it onto the screen: one with no messages is not
-    // somewhere a reader can be shown anything.
-    let shown = |index: usize| messages.iter().any(|msg| msg.thread == index);
-    let thread = (0..threads.len())
-        .filter(|index| shown(*index) && targets.get(*index).is_some_and(Option::is_some))
-        .next_back()
-        .or_else(|| (0..threads.len()).filter(|index| shown(*index)).next_back())
-        .unwrap_or(0);
-    Draft {
-        text: proposal.text,
-        path: proposal.path,
-        target: targets.get(thread).cloned().flatten(),
-        thread,
-        posted: false,
-    }
-}
-
-fn parse_msg(thread: usize, value: &Value, source: &str) -> Msg {
-    let reactions = value
-        .get("reactions")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|reaction| {
-            let emoji = reaction.get("emoji").and_then(Value::as_str)?.to_string();
-            let users = reaction
-                .get("users")
-                .and_then(Value::as_array)
-                .map(|users| {
-                    users
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .filter(|user| !user.is_empty())
-                        .map(String::from)
-                        .collect()
-                })
-                .unwrap_or_default();
-            Some(Reaction { emoji, users })
-        })
-        .collect();
-    Msg {
-        thread,
-        author: value
-            .get("author")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string(),
-        when: value
-            .get("when")
-            .and_then(Value::as_str)
-            .and_then(|when| DateTime::parse_from_rfc3339(when).ok())
-            .map(|when| when.with_timezone(&Utc)),
-        text: value
-            .get("text")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string(),
-        reactions,
-        react: react::parse_target(value, source),
-        task: task::parse(value, source),
-    }
-}
-
 /// Stable per-author color so each participant keeps theirs across messages.
 fn author_color(author: &str) -> Color {
     const COLORS: [Color; 6] = [
@@ -811,6 +721,7 @@ mod tests {
     use super::*;
     use crate::feed::model::{ItemKind, ItemRole};
     use serde_json::json;
+    use serde_json::Value;
 
     fn item_with_threads(threads: Value) -> Item {
         Item {
@@ -1111,14 +1022,12 @@ mod tests {
         let (mut screen, _) = rendered(checklist(), 80);
         screen.handle_key(KeyCode::Char('j'));
         match screen.handle_key(KeyCode::Char('t')) {
-            Action::ResolveTask {
-                task,
-                project,
-                message,
-            } => {
-                assert_eq!(task.source, "github-prs");
-                assert_eq!(task.target, json!({ "state": "open", "comment": 1432050 }));
-                assert_eq!((project.as_str(), message), ("widget", 1));
+            // Which task that is, and how the source is asked to tick it, is
+            // the move's to resolve from the same walk this screen selected in
+            // (§AR-009-surfaces.1); the key owes the matter and the index.
+            Action::ResolveTask { item, message } => {
+                assert_eq!(item.id, "github-prs:acme/widget#77");
+                assert_eq!(message, 1);
             }
             _ => panic!("expected a ResolveTask action"),
         }
@@ -1198,24 +1107,12 @@ mod tests {
             screen.footer()
         );
 
+        // The key asks the API to send this matter's draft; what it resolves
+        // the words and the target to is the move's, tested where the move is
+        // (§AR-009-surfaces.1). What this screen owes is that the key reaches
+        // the move at all, and about the right matter.
         match screen.handle_key(KeyCode::Char('p')) {
-            Action::PostReply {
-                target,
-                text,
-                project,
-                ..
-            } => {
-                let descriptor = crate::feed::providers::github::target_json(None, "PR_1");
-                assert_eq!(
-                    target,
-                    ReplyTarget::Native(
-                        crate::feed::providers::native_write(&descriptor)
-                            .expect("a usable descriptor")
-                    )
-                );
-                assert_eq!(text, "Yes — it resets per attempt.");
-                assert_eq!(project, "widget");
-            }
+            Action::PostReply { item } => assert_eq!(item.id, "github-prs:acme/widget#77"),
             _ => panic!("expected a reply to be posted"),
         }
 
@@ -1329,7 +1226,7 @@ mod tests {
         screen.reread(Some(proposal("what I actually want to say")));
         screen.rebuild_lines(80);
         match screen.handle_key(KeyCode::Char('p')) {
-            Action::PostReply { text, .. } => assert_eq!(text, "what I actually want to say"),
+            Action::PostReply { item } => assert_eq!(item.id, "github-prs:acme/widget#77"),
             _ => panic!("expected a reply to be posted"),
         }
     }

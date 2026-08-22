@@ -519,14 +519,149 @@ pub fn job(args: &crate::cli::JobArgs) -> Result<std::process::ExitCode> {
             Ok(std::process::ExitCode::SUCCESS)
         }
         Some(JobCommand::Log(log)) => {
-            let job = find(&log.id)
+            let mut job = find(&log.id)
                 .ok_or_else(|| EphorError::Command(format!("No job called '{}'", log.id)))?;
-            print!("{}", fs::read_to_string(job.log_path()).unwrap_or_default());
+            // `--follow` waits for the job to end, whichever form the answer
+            // takes. Following is how a script waits on a job, so the two
+            // flags together are the useful pair, not a contradiction: under
+            // `--json` nothing is streamed — standard output belongs to the
+            // reading alone (§FS-011-command-line.7) — and the whole log lands
+            // in it as a field once the job is over.
+            if log.follow {
+                let quiet = log.json;
+                let mut out = std::io::stdout();
+                follow(&job, |fresh| {
+                    if quiet {
+                        return;
+                    }
+                    use std::io::Write;
+                    let _ = out.write_all(fresh);
+                    let _ = out.flush();
+                });
+                // The job as it *ended*, not as it stood when the command was
+                // typed: what the follow waited for is the final state, and
+                // answering with the one from before the wait would be
+                // answering a question nobody asked.
+                job = find(&log.id).unwrap_or(job);
+            }
+            if log.json {
+                // The log is the reading's own field rather than raw text on
+                // standard output, so a script gets the job's state with it
+                // (§FS-011-command-line.7).
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "id": job.id,
+                        "project": job.record.project,
+                        "item": job.record.item,
+                        "description": job.record.description,
+                        "started": job.record.started,
+                        "live": job.live,
+                        "died": job.died(),
+                        "outcome": job.ended.as_ref().map(|ended| ended.outcome.clone()),
+                        "says": job.says(),
+                        "log": log_text(&job.log_path()),
+                    }))
+                    .unwrap_or_default()
+                );
+            } else if !log.follow {
+                print!("{}", log_text(&job.log_path()));
+            }
             Ok(std::process::ExitCode::SUCCESS)
         }
         Some(JobCommand::List(list)) => print_jobs(list),
         None => print_jobs(&crate::cli::JobListArgs::default()),
     }
+}
+
+/// A job's log as text, whatever the job actually wrote.
+///
+/// Lossy rather than all-or-nothing. A log is bytes — a runtime that printed a
+/// stray `0x80` wrote a log, not a broken one — and reading it into a `String`
+/// answered the empty string for the whole file, so `ephor job log` and its
+/// `--json` reported nothing at all where `--follow` printed the log fine
+/// (§FS-005-dispatch.17). Two answers to "what did this job say", from one
+/// command, decided by a byte.
+fn log_text(path: &Path) -> String {
+    match fs::read(path) {
+        Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+        Err(_) => String::new(),
+    }
+}
+
+/// Keep up with a job that is still writing (§FS-005-dispatch.17) — what the
+/// interface asks its pager for, done here without one. It ends when the job
+/// does, so a script can wait on a job by reading its log to the end.
+///
+/// `emit` is handed each fresh slice: the terminal for a person, and nothing
+/// at all under `--json`, where the log belongs to the reading printed after
+/// this returns (§FS-011-command-line.7).
+fn follow(job: &Job, mut emit: impl FnMut(&[u8])) {
+    let path = job.log_path();
+    let mut at = 0u64;
+    loop {
+        // Liveness *before* the read, never after it. The lock's answer, never
+        // the record's: a job whose supervisor died is over, however it died
+        // (§AR-002-summons.5). Asked first because a job that ends between the
+        // two is still read one more time afterwards, so the bytes it wrote on
+        // its way out reach the reader — the other order drops exactly the
+        // last thing the job said, which is usually why anyone followed it.
+        let live = matches!(find(&job.id), Some(fresh) if fresh.live);
+        // The last pass takes everything that is there, including a character
+        // cut short: with the job over, the rest of it is never coming, and
+        // holding those bytes back would drop the end of the log for good.
+        at += fresh_bytes(&path, at, !live, &mut emit);
+        if !live {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+}
+
+/// What the log has gained since `at`, handed to `emit`, and how far that
+/// moves the cursor.
+///
+/// Bytes rather than a string. A log is whatever the job wrote, and a
+/// multi-byte character split across two writes makes a read into a `String`
+/// fail — which, with the cursor left where it was, is a follow that spins
+/// forever printing nothing. What is whole is emitted now; a character still
+/// arriving waits for the rest of itself, and a byte that is simply not text
+/// is taken with the rest rather than stalling the follow on it.
+///
+/// `last` says nothing more is coming. Waiting for the rest of a cut character
+/// is right while the job is still writing and wrong once it has stopped: the
+/// rest never arrives, and the bytes would be held back for ever — a follow
+/// that silently ends one or two bytes short of what the job actually wrote.
+fn fresh_bytes(path: &Path, at: u64, last: bool, emit: &mut impl FnMut(&[u8])) -> u64 {
+    use std::io::{Read, Seek, SeekFrom};
+
+    // Re-opened each pass rather than held: the supervisor may still be
+    // creating the file, and a handle taken before it existed reads nothing
+    // forever.
+    let Ok(mut file) = fs::File::open(path) else {
+        return 0;
+    };
+    if file.seek(SeekFrom::Start(at)).is_err() {
+        return 0;
+    }
+    let mut fresh = Vec::new();
+    if file.read_to_end(&mut fresh).is_err() || fresh.is_empty() {
+        return 0;
+    }
+    let whole = match std::str::from_utf8(&fresh) {
+        Ok(_) => fresh.len(),
+        // No `error_len` is a character cut short by where the read stopped:
+        // the rest of it is still coming — unless nothing more is coming at
+        // all, in which case this is the whole of it. A real invalid byte is
+        // never going to become valid, so it goes out with everything else.
+        Err(err) if err.error_len().is_none() && !last => err.valid_up_to(),
+        Err(_) => fresh.len(),
+    };
+    if whole == 0 {
+        return 0;
+    }
+    emit(&fresh[..whole]);
+    whole as u64
 }
 
 fn print_jobs(args: &crate::cli::JobListArgs) -> Result<std::process::ExitCode> {
@@ -633,5 +768,108 @@ mod tests {
         };
         assert!(job.died());
         assert_eq!(job.says(), "replay: the job died");
+    }
+
+    /// A character split across two writes waits for the rest of itself
+    /// rather than failing the read: the cursor would stay where it was and
+    /// the follow would spin forever printing nothing (§FS-005-dispatch.17).
+    #[test]
+    fn a_character_cut_in_half_by_a_write_waits_for_its_other_half() {
+        let dir = tempfile::tempdir().expect("a place to write a log");
+        let path = dir.path().join("log");
+        // "ok ▶" — the arrow is three bytes, and only two of them have landed.
+        let whole = "ok \u{25b6}".as_bytes().to_vec();
+        std::fs::write(&path, &whole[..whole.len() - 1]).expect("the partial write");
+
+        let mut seen: Vec<u8> = Vec::new();
+        let read = fresh_bytes(&path, 0, false, &mut |fresh| seen.extend_from_slice(fresh));
+        assert_eq!(
+            read, 3,
+            "the three whole bytes, and not the split character"
+        );
+        assert_eq!(String::from_utf8_lossy(&seen), "ok ");
+
+        // The rest lands, and the follow picks up the character entire.
+        std::fs::write(&path, &whole).expect("the rest of the write");
+        let more = fresh_bytes(&path, read, false, &mut |fresh| {
+            seen.extend_from_slice(fresh)
+        });
+        assert_eq!(more, 3);
+        assert_eq!(String::from_utf8_lossy(&seen), "ok \u{25b6}");
+    }
+
+    /// …unless nothing more is coming. Once the job is over, the rest of a cut
+    /// character never arrives, and holding those bytes back would end the
+    /// follow one or two bytes short of what the job actually wrote — silently,
+    /// which is the worst way to lose the end of a log (§FS-005-dispatch.17).
+    #[test]
+    fn the_last_read_takes_the_cut_character_too_because_nothing_more_is_coming() {
+        let dir = tempfile::tempdir().expect("a place to write a log");
+        let path = dir.path().join("log");
+        let whole = "ok \u{25b6}".as_bytes().to_vec();
+        let partial = &whole[..whole.len() - 1];
+        std::fs::write(&path, partial).expect("the partial write");
+
+        let mut seen: Vec<u8> = Vec::new();
+        let read = fresh_bytes(&path, 0, true, &mut |fresh| seen.extend_from_slice(fresh));
+        assert_eq!(read as usize, partial.len(), "everything that is there");
+        assert_eq!(seen, partial, "the cut character included");
+    }
+
+    /// `ephor job log` answers with what the job wrote, whatever it wrote. A
+    /// log holding one byte that is not text used to read as the empty string
+    /// for the whole file, so the command and its `--json` reported nothing
+    /// where `--follow` printed the log fine — two answers to one question,
+    /// decided by a byte (§FS-005-dispatch.17, §REQ-002-parity.3).
+    #[test]
+    fn a_log_with_a_byte_that_is_not_text_still_reads_as_what_the_job_wrote() {
+        let dir = tempfile::tempdir().expect("a place to write a log");
+        let path = dir.path().join("log");
+        std::fs::write(&path, [b'b', b'u', b'i', b'l', b't', 0xff, b'\n']).expect("the write");
+        let text = log_text(&path);
+        assert!(text.starts_with("built"), "{text:?}");
+        assert!(text.ends_with('\n'), "{text:?}");
+        // And a log that is not there is empty rather than an error: a job
+        // that has not written yet has written nothing.
+        assert_eq!(log_text(&dir.path().join("nothing")), "");
+    }
+
+    /// A byte that is simply not text does not stall the follow. It will never
+    /// become valid, so waiting for it is waiting forever — it goes out with
+    /// the rest and the cursor moves past it.
+    #[test]
+    fn a_byte_that_is_not_text_goes_out_rather_than_stalling() {
+        let dir = tempfile::tempdir().expect("a place to write a log");
+        let path = dir.path().join("log");
+        std::fs::write(&path, [b'a', 0xff, b'b']).expect("the write");
+        let mut seen: Vec<u8> = Vec::new();
+        let read = fresh_bytes(&path, 0, false, &mut |fresh| seen.extend_from_slice(fresh));
+        assert_eq!(read, 3);
+        assert_eq!(seen, vec![b'a', 0xff, b'b']);
+    }
+
+    /// Nothing new is not an error, and moves nothing.
+    #[test]
+    fn an_unmoved_log_reads_nothing_and_stays_where_it_was() {
+        let dir = tempfile::tempdir().expect("a place to write a log");
+        let path = dir.path().join("log");
+        std::fs::write(&path, "done\n").expect("the write");
+        let mut seen = Vec::new();
+        assert_eq!(
+            fresh_bytes(&path, 5, false, &mut |fresh| seen.extend_from_slice(fresh)),
+            0
+        );
+        assert!(seen.is_empty());
+        // And a log that is not there yet is not an error either: the
+        // supervisor may still be creating it.
+        assert_eq!(
+            fresh_bytes(
+                &dir.path().join("nothing"),
+                0,
+                false,
+                &mut |_| unreachable!()
+            ),
+            0
+        );
     }
 }

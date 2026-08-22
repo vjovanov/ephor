@@ -14,11 +14,65 @@ use crate::feed::refresh::refresh_project;
 use crate::feed::render::{self, Style};
 use crate::registry;
 
+/// What the registry says, read once per run and remembered for as long as
+/// the file has not moved under us.
+///
+/// Several things want it in one invocation — the session's placements
+/// (§AR-004-forest.3) and the dispatcher's own copy among them — and each read
+/// is a file, a parse and a whole-document schema validation. Reading it four
+/// times to answer one question is four chances to answer from four different
+/// registries, which is the drift §AR-009-surfaces.2 puts one session below
+/// both surfaces to stop.
+///
+/// Keyed on where the file is and on *what it says*, never on the path alone
+/// and never on when the filesystem thinks it last said it: a command that
+/// rewrites the registry and reads it back in the same process gets what it
+/// wrote.
+///
+/// The stamp used to be `(path, mtime, len)`, which cannot keep that promise.
+/// A modification time is the filesystem's opinion at whatever resolution it
+/// keeps, and two writes of the same length inside one tick share it: measured
+/// here, 152 of 200 immediate same-length rewrites came back with an identical
+/// `st_mtime_ns`. Nothing in the tree rewrites the registry in-process today,
+/// so nothing was wrong — but a guard that states an invariant it does not hold
+/// is worse than one that states a weaker one, because the next caller reads
+/// the comment rather than the key. The bytes are hashed instead, and parsed
+/// from the same read, so the key and the document can never come from two
+/// different registries.
 pub(crate) fn load_registry_doc() -> Result<Value> {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    use std::sync::Mutex;
+
+    type Stamp = (std::path::PathBuf, u64);
+    static SEEN: Mutex<Option<(Stamp, Value)>> = Mutex::new(None);
+
     let registry_path = crate::paths::default_registry_path();
+    // Unreadable is not a cache key: the error below says why, in its own
+    // words, every time it is asked.
+    let text = std::fs::read_to_string(&registry_path)
+        .map_err(|err| registry_error(format!("Cannot read {}: {err}", registry_path.display())))?;
+    let stamp: Stamp = {
+        let mut hasher = DefaultHasher::new();
+        text.hash(&mut hasher);
+        (registry_path.clone(), hasher.finish())
+    };
+    // A poisoned lock is a panic in another thread while it held nothing but
+    // a cache; the answer is still to read the registry.
+    if let Ok(seen) = SEEN.lock() {
+        if let Some((was, document)) = seen.as_ref() {
+            if was == &stamp {
+                return Ok(document.clone());
+            }
+        }
+    }
     let schema: Value = serde_json::from_str(registry::EMBEDDED_SCHEMA)
         .map_err(|err| registry_error(format!("Invalid embedded schema: {err}")))?;
-    registry::load_registry(&registry_path, &schema)
+    let document = registry::parse_registry(&text, &registry_path, &schema)?;
+    if let Ok(mut seen) = SEEN.lock() {
+        *seen = Some((stamp, document.clone()));
+    }
+    Ok(document)
 }
 
 fn known_project<'a>(
@@ -64,6 +118,7 @@ fn refresh_projects(
     let mut total_failures = 0usize;
     let mut degraded = 0usize;
     let mut refreshed = 0usize;
+    let mut per_project: Vec<serde_json::Value> = Vec::new();
     for project in selected {
         let project_config = known_project(config, project)?;
         let outcome = refresh_project(&registry_doc, project, project_config, &config.defaults)?;
@@ -79,6 +134,16 @@ fn refresh_projects(
         } else if !outcome.failures.is_empty() {
             degraded += 1;
         }
+        per_project.push(serde_json::json!({
+            "project": project,
+            "items": outcome.item_count,
+            "lost": outcome.total_failure,
+            "failures": outcome
+                .failures
+                .iter()
+                .map(|failure| failure.describe())
+                .collect::<Vec<_>>(),
+        }));
         if !quiet {
             println!("{project}: {} items", outcome.item_count);
         }
@@ -104,6 +169,18 @@ fn refresh_projects(
             degraded += 1;
         }
     }
+    if !config.sources.is_empty() {
+        per_project.push(serde_json::json!({
+            "project": "sources",
+            "items": shared.item_count,
+            "lost": shared.total_failure,
+            "failures": shared
+                .failures
+                .iter()
+                .map(|failure| failure.describe())
+                .collect::<Vec<_>>(),
+        }));
+    }
     if !quiet && shared.item_count > 0 {
         println!("sources: {} items placed", shared.item_count);
     }
@@ -112,6 +189,7 @@ fn refresh_projects(
         refreshed,
         total_failures,
         degraded,
+        projects: per_project,
     })
 }
 
@@ -122,6 +200,11 @@ struct RefreshTally {
     total_failures: usize,
     /// Projects that lost some providers but not all.
     degraded: usize,
+    /// Per project: what came back, and what did not. A provider that did not
+    /// deliver is reported rather than counted away — its section of the feed
+    /// is last-good data or nothing at all, and either reads exactly like "you
+    /// have no work here" (§FS-001-forge-interface.6).
+    projects: Vec<serde_json::Value>,
 }
 
 /// Refresh when the cache is missing or older than the TTL (unless --cached).
@@ -303,7 +386,22 @@ pub fn feed(args: &FeedArgs) -> Result<ExitCode> {
 /// the timer that runs this saw exit 0 every time.
 pub fn refresh(args: &RefreshArgs) -> Result<ExitCode> {
     let config = load_config()?;
-    let tally = refresh_projects(&config, &args.projects, args.quiet)?;
+    // Under `--json` the per-project lines would land on standard output
+    // beside the reading (§FS-011-command-line.7), so they are withheld and
+    // the whole tally is printed at the end instead.
+    let tally = refresh_projects(&config, &args.projects, args.quiet || args.json)?;
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "refreshed": tally.refreshed,
+                "degraded": tally.degraded,
+                "lost": tally.total_failures,
+                "projects": tally.projects,
+            }))
+            .unwrap_or_else(|_| "null".to_string())
+        );
+    }
     if tally.refreshed > 0 && tally.total_failures == tally.refreshed {
         return Ok(ExitCode::from(3));
     }
@@ -379,25 +477,92 @@ fn about_the_gate(
     Ok((provider, item, ctx))
 }
 
+/// The four coordinates a quick action passes, or the feed id a reader has
+/// (§FS-011-command-line.6). One resolution for both, so the two spellings
+/// cannot answer about different pull requests.
+fn named_gate(
+    config: &StatusConfig,
+    item: &Option<String>,
+    project: &Option<String>,
+    source: &Option<String>,
+    repo: &Option<String>,
+    number: &Option<String>,
+) -> Result<(
+    Box<dyn crate::feed::provider::Provider>,
+    crate::feed::model::Item,
+    crate::feed::provider::ProviderContext,
+)> {
+    if let Some(id) = item {
+        let (project, found) = config
+            .projects
+            .keys()
+            .filter_map(|project| {
+                let feed = cache::load_feed(project).ok()??;
+                let item = feed.items().find(|item| &item.id == id)?;
+                Some((project.clone(), item))
+            })
+            .next()
+            .ok_or_else(|| {
+                registry_error(format!(
+                    "'{id}' is not in any cached feed — `ephor feed --kind pr` lists what is."
+                ))
+            })?;
+        let (repo, number) = (found.repo(), found.number());
+        let (Some(repo), Some(number)) = (repo, number) else {
+            return Err(registry_error(format!(
+                "'{id}' does not name a repository and a number, so its gate cannot be asked about."
+            )));
+        };
+        return about_the_gate(config, &project, &found.source, &repo, &number);
+    }
+    let missing = || {
+        registry_error(
+            "Name the pull request: --item ID, or --project, --source, --repo and --number."
+                .to_string(),
+        )
+    };
+    about_the_gate(
+        config,
+        project.as_deref().ok_or_else(missing)?,
+        source.as_deref().ok_or_else(missing)?,
+        repo.as_deref().ok_or_else(missing)?,
+        number.as_deref().ok_or_else(missing)?,
+    )
+}
+
 pub fn failures(args: &FailuresArgs) -> Result<ExitCode> {
     let config = load_config()?;
-    let (provider, item, ctx) = about_the_gate(
+    let (provider, item, ctx) = named_gate(
         &config,
+        &args.item,
         &args.project,
         &args.source,
         &args.repo,
         &args.number,
     )?;
-    let style = Style::detect();
     let gate = crate::feed::gate::Gate::of(&item);
+    let found = provider
+        .failures(&ctx, &item)
+        .map_err(|err| EphorError::Command(err.to_string()))?;
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "item": item.id,
+                "title": item.title,
+                "url": item.url,
+                "gate": gate,
+                "failures": found,
+            }))
+            .unwrap_or_else(|_| "null".to_string())
+        );
+        return Ok(ExitCode::SUCCESS);
+    }
+    let style = Style::detect();
     println!("{}\n", style.bold(&item.title));
     if let Some(gate) = &gate {
         render::render_gate_blockers(gate, &style);
     }
-
-    let found = provider
-        .failures(&ctx, &item)
-        .map_err(|err| EphorError::Command(err.to_string()))?;
     render::render_failures(found, gate.as_ref(), &style);
     Ok(ExitCode::SUCCESS)
 }
@@ -419,31 +584,68 @@ pub fn restart(args: &crate::cli::RestartArgs) -> Result<ExitCode> {
         ))
     })?;
     let config = load_config()?;
-    let (provider, item, ctx) = about_the_gate(
+    let (provider, item, ctx) = named_gate(
         &config,
+        &args.item,
         &args.project,
         &args.source,
         &args.repo,
         &args.number,
     )?;
+    // Neutral about how much that is: on a forge with per-job reruns it is the
+    // failed jobs, and on one that starts its gate as a whole it is everything
+    // downstream of them (§FS-006-project-interface.6). The row in the
+    // interface says which; this says what was asked for.
+    let asked = match scope {
+        crate::feed::gate::Scope::Failed => "what is not green",
+        crate::feed::gate::Scope::All => "the whole gate",
+    };
     let style = Style::detect();
-    println!("{}\n", style.bold(&item.title));
-    println!(
-        "restarting {} on {}#{}",
-        // Neutral about how much that is: on a forge with per-job reruns it is
-        // the failed jobs, and on one that starts its gate as a whole it is
-        // everything downstream of them (§FS-006-project-interface.6). The row
-        // in the interface says which; this says what was asked for.
-        match scope {
-            crate::feed::gate::Scope::Failed => "what is not green",
-            crate::feed::gate::Scope::All => "the whole gate",
-        },
-        args.repo,
-        args.number
-    );
+    if !args.json {
+        println!("{}\n", style.bold(&item.title));
+        println!("restarting {asked} on {}", item.id);
+    }
     let restarted = provider
         .restart(&ctx, &item, scope)
         .map_err(|err| EphorError::Command(err.to_string()))?;
+    // What it answered, printed rather than summarised away — a gate is
+    // minutes from saying anything itself, so "asked 12 runs" and "asked
+    // nothing" are the difference between a restart that happened and one
+    // that did not.
+    if args.json {
+        let mut reading = serde_json::json!({
+            "item": item.id,
+            "title": item.title,
+            "scope": scope.name(),
+            // The fact a loop reads: whether anything at all was asked to run
+            // again. A forge that counted zero asked nothing; one that counted
+            // any asked; and one that took the whole-gate start without
+            // counting *did* ask, which is why `None` is not zero here
+            // (§FS-001-forge-interface.1). The prose phrase this used to carry
+            // said what `scope` already says and did not match the published
+            // shape, so a program validating the reading rejected every
+            // restart ephor has ever printed.
+            "asked": restarted.asked != Some(0),
+            "says": restarted.says(),
+            "skipped": restarted.skipped,
+        });
+        if let Some(reading) = reading.as_object_mut() {
+            // Absent rather than null where the forge does not count: reporting
+            // it as a number would read as a restart that found nothing to do,
+            // which is the one thing this answer may not be confused with.
+            if let Some(count) = restarted.asked {
+                reading.insert("asked_count".to_string(), serde_json::json!(count));
+            }
+            if let Some(note) = &restarted.note {
+                reading.insert("note".to_string(), serde_json::json!(note));
+            }
+        }
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&reading).unwrap_or_else(|_| "null".to_string())
+        );
+        return Ok(ExitCode::SUCCESS);
+    }
     println!("\n{}", restarted.says());
     for skipped in &restarted.skipped {
         println!("· {skipped}");
@@ -520,6 +722,17 @@ pub fn mark_read(args: &MarkReadArgs, all: bool) -> Result<ExitCode> {
     }
 
     cache::store_seen(&seen)?;
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "marked": marked,
+                "projects": selected,
+            }))
+            .unwrap_or_else(|_| "null".to_string())
+        );
+        return Ok(ExitCode::SUCCESS);
+    }
     println!("Marked {marked} items as read.");
     Ok(ExitCode::SUCCESS)
 }

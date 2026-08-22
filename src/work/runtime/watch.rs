@@ -429,6 +429,34 @@ pub enum Doing {
 }
 
 impl Doing {
+    /// What this is called, in one word a reading can carry
+    /// (§REQ-002-parity.3).
+    pub fn name(&self) -> &'static str {
+        match self {
+            Doing::Running => "running",
+            Doing::Queued => "queued",
+            Doing::Waiting => "waiting",
+            Doing::Dropped => "dropped",
+            Doing::Claimed { .. } => "claimed",
+        }
+    }
+
+    /// The whole sentence — the same one the board puts beside the ticket,
+    /// so a command and a screen never phrase one situation two ways.
+    pub fn says(&self) -> String {
+        match self {
+            Doing::Running => "running".to_string(),
+            Doing::Queued => "queued".to_string(),
+            Doing::Waiting => "waiting on you".to_string(),
+            // Not a question about the work, a run that wants starting again —
+            // never conflated with waiting (§FS-005-dispatch.15).
+            Doing::Dropped => "dropped by a run that died — a new run takes it up".to_string(),
+            Doing::Claimed { assignee, free } => {
+                format!("claimed by {assignee} — free it: {free}")
+            }
+        }
+    }
+
     /// Where a ticket sorts inside its operation: what asks something of the
     /// reader ahead of anything else its work is doing (§FS-005-dispatch.9)
     /// — a parked question first, then what a dead run dropped — then what
@@ -502,6 +530,60 @@ impl Operation {
             .first()
             .map(|ticket| ticket.plan.as_path())
             .or_else(|| self.plans.first().map(PathBuf::as_path))
+    }
+
+    /// What the row is, read off what its tickets say rather than off
+    /// liveness alone: a root is an operation while work waits on the reader,
+    /// and the run that parked it has usually exited (§FS-005-dispatch.15).
+    /// Calling that "claimed" would name a person who never claimed it — and
+    /// calling a dead run's leavings either would hide that a run wants
+    /// starting again.
+    ///
+    /// Said here rather than on a screen, so the board and `ephor operations`
+    /// call one situation by one name (§AR-009-surfaces.1).
+    pub fn state(&self) -> &'static str {
+        if self.live {
+            "running"
+        } else if self
+            .tickets
+            .iter()
+            .any(|ticket| matches!(ticket.doing, Doing::Waiting))
+        {
+            "waiting on you"
+        } else if self
+            .tickets
+            .iter()
+            .any(|ticket| matches!(ticket.doing, Doing::Dropped))
+        {
+            "a run died here"
+        } else {
+            "claimed, not scheduled"
+        }
+    }
+
+    /// Everything the row says about itself after its state: the machine it
+    /// could not read, how long it has been quiet, whether it serves a
+    /// dashboard.
+    pub fn badges(&self) -> Vec<String> {
+        let mut badges = vec![self.state().to_string()];
+        // The machine could not be read: queued and finished are withheld in
+        // the data, and the row says so rather than letting the zero read as
+        // nothing done (§FS-005-dispatch.15).
+        if let Some(unread) = &self.machine_unread {
+            badges.push(unread.clone());
+        }
+        if let Some(minutes) = self.quiet {
+            badges.push(format!("quiet {minutes}m"));
+        }
+        if self.dashboard.is_some() {
+            badges.push("dashboard".to_string());
+        }
+        badges
+    }
+
+    /// The whole row in one line, for a surface that has no second one.
+    pub fn says(&self) -> String {
+        format!("{} · {}", self.root.display(), self.badges().join(" · "))
     }
 }
 

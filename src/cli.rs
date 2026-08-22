@@ -35,12 +35,12 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 pub enum Command {
     /// List registered projects.
-    List,
+    List(ListArgs),
     /// Validate the project registry, or a project's own manifest.
     Validate(ValidateArgs),
     /// Run a project's own check verbs, from its checkout alone.
     Check(CheckArgs),
-    /// Print one of the published schemas (manifest, answer, registry, forge).
+    /// Print one of the published schemas (manifest, answer, registry, forge, views).
     Schema(SchemaArgs),
     /// Render root AGENTS.md files.
     EnsureAgents(EnsureAgentsArgs),
@@ -66,6 +66,22 @@ pub enum Command {
     Work(WorkArgs),
     /// What ephor is running beneath the screen, and what it wrote.
     Job(JobArgs),
+    /// What may be done about a matter or a branch, and run one of it.
+    #[command(visible_alias = "act")]
+    Actions(ActionsArgs),
+    /// A project's branches, and where each one stands.
+    Branches(BranchesArgs),
+    /// Every operation beneath the reading, in one place.
+    #[command(visible_alias = "ops")]
+    Operations(OperationsArgs),
+    /// A matter's recorded conversation, and the reply a run drafted.
+    Thread(ThreadArgs),
+    /// Post a reaction on one message of a matter.
+    React(ReactArgs),
+    /// Tick a task the source reported on a message.
+    Tick(TickArgs),
+    /// Send a reply: the one a run drafted, or one given in words.
+    Reply(ReplyArgs),
     /// What a project can do, rung by rung, and why a rung is missing.
     #[command(visible_alias = "caps")]
     Capabilities(CapabilitiesArgs),
@@ -113,6 +129,15 @@ pub struct JobListArgs {
 pub struct JobLogArgs {
     /// The job, as `ephor job list` names it.
     pub id: String,
+
+    /// Keep up with a job that is still writing, as the interface's pager
+    /// does. Ends when the job does.
+    #[arg(long, short = 'f')]
+    pub follow: bool,
+
+    /// Emit the job and its whole log as JSON.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Args, Debug)]
@@ -169,6 +194,8 @@ pub struct WorkArgs {
 pub enum WorkCommand {
     /// What has been dispatched, and what the runtime has made of it.
     List(WorkListArgs),
+    /// What could be handed over about one matter, and what already has been.
+    Offers(WorkOffersArgs),
     /// Open tickets for items that match a recipe and have no work yet.
     Dispatch(WorkDispatchArgs),
     /// Ask one item for something no recipe covers, in your own words.
@@ -189,7 +216,14 @@ pub enum WorkCommand {
     Forget(WorkForgetArgs),
     /// Print the state machine ephor's tickets run under, for editing or for
     /// installing into a runtime project it did not create.
-    States,
+    States(WorkStatesArgs),
+}
+
+#[derive(Args, Debug, Default)]
+pub struct WorkStatesArgs {
+    /// Print the machine and where it came from as JSON.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Args, Debug, Default)]
@@ -203,6 +237,25 @@ pub struct WorkListArgs {
     pub open: bool,
 
     /// Emit raw JSON instead of a table.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// `ephor work offers` (§FS-011-command-line.5): one matter's work screen —
+/// the recipes that match it, the workflows that could be laid beside it, the
+/// tickets that exist, and what ephor has run about it itself.
+#[derive(Args, Debug)]
+pub struct WorkOffersArgs {
+    /// The matter, by its feed id.
+    #[arg(long)]
+    pub item: String,
+
+    /// Show finished tickets too. They are folded away by default, exactly as
+    /// the work screen folds them (§FS-005-dispatch.18).
+    #[arg(long)]
+    pub all: bool,
+
+    /// Emit raw JSON instead of a listing.
     #[arg(long)]
     pub json: bool,
 }
@@ -242,6 +295,10 @@ pub struct WorkDispatchArgs {
     /// Report what would be opened without writing anything.
     #[arg(long)]
     pub dry_run: bool,
+
+    /// Emit the outcome as JSON.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Args, Debug, Default)]
@@ -284,6 +341,10 @@ pub struct WorkLayArgs {
     /// without writing the plan.
     #[arg(long)]
     pub dry_run: bool,
+
+    /// Emit the outcome as JSON.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Args, Debug)]
@@ -303,6 +364,10 @@ pub struct WorkAskArgs {
     /// Report what would be written without writing it.
     #[arg(long)]
     pub dry_run: bool,
+
+    /// Emit the outcome as JSON.
+    #[arg(long)]
+    pub json: bool,
 }
 
 /// `ephor work cancel` (§FS-005-dispatch.16): one item's tickets, taken back
@@ -328,6 +393,10 @@ pub struct WorkCancelArgs {
     /// anything.
     #[arg(long)]
     pub dry_run: bool,
+
+    /// Emit the outcome as JSON.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Args, Debug)]
@@ -339,6 +408,10 @@ pub struct WorkSyncArgs {
     /// Report what would be reopened without writing anything.
     #[arg(long)]
     pub dry_run: bool,
+
+    /// Emit the outcome as JSON.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Args, Debug)]
@@ -354,6 +427,10 @@ pub struct WorkRunArgs {
     /// Arguments passed through to the runtime, after `--`.
     #[arg(last = true)]
     pub runner_args: Vec<String>,
+
+    /// Emit the outcome as JSON.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Args, Debug)]
@@ -369,6 +446,10 @@ pub struct WorkForgetArgs {
     /// Forget every entry whose plan is gone.
     #[arg(long)]
     pub missing: bool,
+
+    /// Emit the outcome as JSON.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Args, Debug)]
@@ -388,6 +469,10 @@ pub struct EnsureAgentsArgs {
     /// Template variable for an ad hoc workspace. May be passed multiple times.
     #[arg(long = "var", value_name = "KEY=VALUE")]
     pub vars: Vec<String>,
+
+    /// Print what was written as JSON.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Args, Debug)]
@@ -399,6 +484,10 @@ pub struct UpdateArgs {
     /// Do not regenerate root AGENTS.md files.
     #[arg(long)]
     pub skip_agents: bool,
+
+    /// Print what was updated as JSON.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Args, Debug)]
@@ -464,6 +553,10 @@ pub struct ValidateArgs {
     /// committed registry can check in CI (FS-009-shipped-actions.1).
     #[arg(long)]
     pub schema_only: bool,
+
+    /// Emit what was validated as JSON.
+    #[arg(long)]
+    pub json: bool,
 }
 
 /// `ephor check`: the project's own gate, derived from the project's own
@@ -498,8 +591,9 @@ pub struct CheckArgs {
 
 #[derive(Args, Debug)]
 pub struct SchemaArgs {
-    /// Which schema: manifest, answer, registry, or forge
-    /// (FS-006-project-interface.11).
+    /// Which schema: manifest, answer, registry, forge, or views —
+    /// what every command prints under `--json` (§FS-006-project-interface.11,
+    /// §REQ-002-parity.4).
     pub name: String,
 }
 
@@ -511,6 +605,10 @@ pub struct RefreshArgs {
     /// Print nothing on success.
     #[arg(long)]
     pub quiet: bool,
+
+    /// Emit what each project fetched as JSON.
+    #[arg(long)]
+    pub json: bool,
 }
 
 /// What the failing-CI quick action passes back to ephor. The item is named
@@ -518,21 +616,31 @@ pub struct RefreshArgs {
 /// is an ordinary shell command like every other one.
 #[derive(Args, Debug)]
 pub struct FailuresArgs {
+    /// The matter, by its feed id — which is how a reader who just read the
+    /// feed names it, rather than by taking it apart into four coordinates
+    /// (§FS-011-command-line.6).
+    #[arg(long, conflicts_with_all = ["project", "source", "repo", "number"])]
+    pub item: Option<String>,
+
     /// Project the pull request belongs to.
-    #[arg(long)]
-    pub project: String,
+    #[arg(long, requires_all = ["source", "repo", "number"])]
+    pub project: Option<String>,
 
     /// Source that reported it (the provider name).
     #[arg(long)]
-    pub source: String,
+    pub source: Option<String>,
 
     /// Repository the pull request lives in.
     #[arg(long)]
-    pub repo: String,
+    pub repo: Option<String>,
 
     /// Pull request number.
     #[arg(long)]
-    pub number: String,
+    pub number: Option<String>,
+
+    /// Emit the gate and what failed as JSON.
+    #[arg(long)]
+    pub json: bool,
 }
 
 /// `ephor restart` (§FS-004-quick-actions.9): ask a pull request's gate to run
@@ -541,26 +649,36 @@ pub struct FailuresArgs {
 /// shared machine pool.
 #[derive(Args, Debug)]
 pub struct RestartArgs {
+    /// The matter, by its feed id — which is how a reader who just read the
+    /// feed names it, rather than by taking it apart into four coordinates
+    /// (§FS-011-command-line.6).
+    #[arg(long, conflicts_with_all = ["project", "source", "repo", "number"])]
+    pub item: Option<String>,
+
     /// Project the pull request belongs to.
-    #[arg(long)]
-    pub project: String,
+    #[arg(long, requires_all = ["source", "repo", "number"])]
+    pub project: Option<String>,
 
     /// Source that reported it (the provider name).
     #[arg(long)]
-    pub source: String,
+    pub source: Option<String>,
 
     /// Repository the pull request lives in.
     #[arg(long)]
-    pub repo: String,
+    pub repo: Option<String>,
 
     /// Pull request number.
     #[arg(long)]
-    pub number: String,
+    pub number: Option<String>,
 
     /// How much to run again: `failed` (the default — the failing gate and
     /// everything downstream of it) or `all`.
     #[arg(long, default_value = "failed")]
     pub scope: String,
+
+    /// Emit the outcome as JSON.
+    #[arg(long)]
+    pub json: bool,
 }
 
 /// `ephor rebase` (§FS-004-quick-actions.6): fetch, and replay every
@@ -621,6 +739,10 @@ pub struct RebaseArgs {
     /// hand on to the one that resolves it.
     #[arg(long)]
     pub report: Option<String>,
+
+    /// Emit the outcome as JSON.
+    #[arg(long)]
+    pub json: bool,
 }
 
 /// `ephor checkout` (§FS-004-quick-actions.7): make the branch workspace that
@@ -657,6 +779,10 @@ pub struct CheckoutArgs {
     /// Also write the outcome as markdown here (`REPORT`).
     #[arg(long)]
     pub report: Option<String>,
+
+    /// Emit the outcome as JSON.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Args, Debug)]
@@ -671,4 +797,208 @@ pub struct MarkReadArgs {
     /// Restrict to one item kind (pr, ci, issue, message, status).
     #[arg(long)]
     pub kind: Option<String>,
+
+    /// Emit the outcome as JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// `ephor list`: the registry's rows, filtered by the global selectors.
+#[derive(Args, Debug, Default)]
+pub struct ListArgs {
+    /// Emit the rows as JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// Which subject a command is about: a matter, or a branch that has none
+/// behind it (§FS-004-quick-actions.6). The same three flags everywhere one
+/// of the two is named, so a reader who learned them once has learned them.
+#[derive(Args, Debug, Default, Clone)]
+pub struct SubjectArgs {
+    /// The matter, by its feed id — as `ephor feed` prints it.
+    #[arg(long)]
+    pub item: Option<String>,
+
+    /// The project the branch belongs to. Needed with `--branch`.
+    #[arg(long)]
+    pub project: Option<String>,
+
+    /// The branch, where the subject is a branch rather than a matter.
+    #[arg(long, requires = "project")]
+    pub branch: Option<String>,
+}
+
+/// `ephor actions` (§FS-011-command-line.1): the menu a matter or a branch
+/// carries, and one entry of it run.
+#[derive(Args, Debug)]
+pub struct ActionsArgs {
+    #[command(subcommand)]
+    pub command: Option<ActionsCommand>,
+
+    #[command(flatten)]
+    pub subject: SubjectArgs,
+
+    /// Emit the menu as JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ActionsCommand {
+    /// What may be done here, in provenance order.
+    List(ActionsListArgs),
+    /// Run one entry, by the id the listing gives it.
+    Run(ActionsRunArgs),
+}
+
+#[derive(Args, Debug, Default)]
+pub struct ActionsListArgs {
+    #[command(flatten)]
+    pub subject: SubjectArgs,
+
+    /// Emit raw JSON instead of a listing.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct ActionsRunArgs {
+    /// The entry, by the id `ephor actions` gives it. Left out with
+    /// `--command`, which is the freehand row and names nothing
+    /// (§FS-005-dispatch.10).
+    pub entry: Option<String>,
+
+    #[command(flatten)]
+    pub subject: SubjectArgs,
+
+    /// Run this instead of a configured entry: whatever you want to run once,
+    /// in the resolved place, with the matter's context already exported
+    /// (§FS-005-dispatch.10).
+    #[arg(long, conflicts_with = "entry")]
+    pub command: Option<String>,
+
+    /// Who does it, for this dispatch alone: a hand id from the roster,
+    /// optionally at an effort (`<hand>[:<effort>]`).
+    #[arg(long)]
+    pub hand: Option<String>,
+
+    /// Answer one of a workflow entry's inputs, for this instantiation alone
+    /// (`--set <input>=<value>`). Repeatable.
+    #[arg(long = "set", value_name = "INPUT=VALUE")]
+    pub set: Vec<String>,
+
+    /// Agree to an entry that asked to be confirmed. A second keystroke has
+    /// no meaning where there is no first one, so the confirmation is this
+    /// (§FS-006-project-interface.9).
+    #[arg(long)]
+    pub yes: bool,
+
+    /// Run it beneath the terminal as a job rather than here, whatever the
+    /// entry declares (§FS-005-dispatch.17).
+    #[arg(long)]
+    pub background: bool,
+
+    /// Report what would run, and where, without running it.
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Emit the outcome as JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// `ephor branches` (§FS-011-command-line.2): what the registry knows about a
+/// project's branches, and what the disk says about them.
+#[derive(Args, Debug, Default)]
+pub struct BranchesArgs {
+    /// The project to read. With none, every configured project.
+    pub project: Option<String>,
+
+    /// Only branches whose workspace is on disk.
+    #[arg(long)]
+    pub checked_out: bool,
+
+    /// Emit raw JSON instead of a table.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// `ephor operations` (§FS-011-command-line.3): the board, without the screen.
+#[derive(Args, Debug, Default)]
+pub struct OperationsArgs {
+    /// Only what is running now.
+    #[arg(long)]
+    pub live: bool,
+
+    /// Emit raw JSON instead of a listing.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// `ephor thread` (§FS-011-command-line.4): a matter's recorded conversation.
+#[derive(Args, Debug)]
+pub struct ThreadArgs {
+    /// The matter, by its feed id.
+    pub item: String,
+
+    /// Emit raw JSON instead of the conversation.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// `ephor react` (§FS-011-command-line.4).
+#[derive(Args, Debug)]
+pub struct ReactArgs {
+    /// The matter, by its feed id.
+    pub item: String,
+
+    /// Which reaction: a palette name (`THUMBS_UP`, `HEART`, `EYES`, …).
+    pub content: String,
+
+    /// Which message, by the number `ephor thread` prints beside it. Required
+    /// rather than defaulted: a reaction posted on the wrong message is a
+    /// reaction nobody can take back through ephor.
+    #[arg(long)]
+    pub message: usize,
+
+    /// Emit the outcome as JSON (§REQ-002-parity.3).
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// `ephor tick` (§FS-004-quick-actions.5).
+#[derive(Args, Debug)]
+pub struct TickArgs {
+    /// The matter, by its feed id.
+    pub item: String,
+
+    /// Which message, by the number `ephor thread` prints beside it.
+    #[arg(long)]
+    pub message: usize,
+
+    /// Emit the outcome as JSON (§REQ-002-parity.3).
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// `ephor reply` (§FS-005-dispatch.13, §FS-007-matters.4).
+#[derive(Args, Debug)]
+pub struct ReplyArgs {
+    /// The matter, by its feed id.
+    pub item: String,
+
+    /// What to say. Left out, the reply a run drafted is sent as it stands —
+    /// and posting is what retires the draft.
+    pub words: Vec<String>,
+
+    /// Print what would be sent, and where, without sending it.
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Emit the outcome as JSON (§REQ-002-parity.3). With `--dry-run`, the
+    /// words that would go out and where — the reading a program checks
+    /// before letting the move happen.
+    #[arg(long)]
+    pub json: bool,
 }

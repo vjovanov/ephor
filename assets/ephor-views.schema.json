@@ -1,0 +1,990 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/vjovanov/ephor/schemas/views/v1",
+  "title": "ephor command-line readings",
+  "description": "What every command prints under --json (REQ-002-parity.3, AR-009-surfaces.3). One entry per view name; `ephor schema views` prints this document, and it is the stability surface REQ-002-parity.4 promises: a field is added freely, and renaming or removing one is a release note. The views are the same values the interface renders, so a screen and a command cannot describe one fact two ways.",
+  "$defs": {
+    "distance": {
+      "type": "object",
+      "description": "A distance and how fresh the comparison behind it is (FS-004-quick-actions.6). No statement of a distance omits its day: a number with no day on it is a claim about now that nothing measured.",
+      "required": ["behind"],
+      "properties": {
+        "behind": { "type": "integer", "minimum": 0 },
+        "as_of": { "type": "string", "format": "date-time", "description": "When the local copy of what it was measured against last moved here. Absent where no day was recorded — a clone that has never fetched. Nothing is invented to fill it." }
+      }
+    },
+    "offer": {
+      "type": "object",
+      "description": "One entry of a subject's menu (FS-011-command-line.1), in provenance order: what the source offers, then ephor's own, the project's, the person's, and the work that can be handed over.",
+      "required": ["id", "icon", "description", "kind", "gate", "background", "confirm"],
+      "properties": {
+        "id": { "type": "string", "description": "How a command names it: the configured id, or the description where the entry is anonymous. `@command` is the freehand row and `@workflows` the row that opens the runtime's own workflows." },
+        "icon": { "type": "string" },
+        "description": { "type": "string" },
+        "kind": {
+          "enum": ["command", "agent", "workflow", "checkout", "freehand", "workflows"]
+        },
+        "gate": {
+          "enum": ["ready", "needs-checkout", "blocked"],
+          "description": "Whether it can run. `needs-checkout` runs the project's checkout first (FS-004-quick-actions.7)."
+        },
+        "refusal": { "type": "string", "description": "Why it cannot run — the ladder's own sentence, the same one a greyed row shows (FS-006-project-interface.10)." },
+        "hand": { "type": "string", "description": "Who the work would go to, on an entry that hands work over (FS-005-dispatch.14)." },
+        "command": { "type": "string", "description": "What it would run, where it runs one." },
+        "cwd": { "type": "string", "description": "Where it runs: `workspace`, `root`, or `repo:<name>`." },
+        "background": { "type": "boolean", "description": "It runs beneath the terminal as a job rather than taking it (FS-005-dispatch.17)." },
+        "confirm": { "type": "boolean", "description": "It asks before running; on the command line that is --yes." },
+        "requires": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "The capability rungs it named (FS-006-project-interface.10)."
+        },
+        "brief": { "type": "string", "description": "What the ticket would ask for, on an entry that hands work over (FS-005-dispatch.7) — the same words the work screen shows under the row. The `command` of an entry that asks somebody rather than running something." }
+      }
+    },
+    "hand": {
+      "type": "object",
+      "description": "A hand the roster offers (FS-005-dispatch.14). An unavailable one stays on the list with its reason rather than being hidden (DA-004-roster-is-asked-not-configured).",
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string" },
+        "efforts": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "unavailable": { "type": "string" }
+      }
+    },
+    "operation_ticket": {
+      "type": "object",
+      "required": ["id", "says", "state", "doing"],
+      "properties": {
+        "id": { "type": "string", "description": "`<plan>.<ticket>`." },
+        "says": { "type": "string" },
+        "state": { "type": "string", "description": "The state the plan says it is in; `?` where the plan does not say." },
+        "doing": {
+          "enum": ["running", "queued", "waiting", "dropped", "claimed"],
+          "description": "`waiting` is a question about the work; `dropped` is a run that died holding the slot and wants starting again. The two are told apart from artifacts, never guessed (FS-005-dispatch.15)."
+        },
+        "assignee": { "type": "string" }
+      }
+    },
+    "operation": {
+      "type": "object",
+      "description": "One row of the operations board (FS-005-dispatch.15): an execution root the runtime holds, or a job of ephor's own (FS-005-dispatch.17).",
+      "required": ["kind", "id", "project", "says", "state", "live"],
+      "properties": {
+        "kind": {
+          "enum": ["job", "root"]
+        },
+        "id": { "type": "string", "description": "The job id, or the execution root's path." },
+        "project": { "type": "string" },
+        "says": { "type": "string" },
+        "state": { "type": "string", "description": "running, waiting on you, a run died here, claimed not scheduled — or, on a job, the outcome it ended with." },
+        "live": { "type": "boolean", "description": "Read from the runtime's lock, never from a process table (FS-005-dispatch.15)." },
+        "item": { "type": "string" },
+        "title": { "type": "string" },
+        "root": { "type": "string" },
+        "plan": { "type": "string" },
+        "log": { "type": "string", "description": "On a job: what it wrote, also readable with `ephor job log`." },
+        "dashboard": { "type": "string", "description": "Published only while a live run serves one." },
+        "tickets": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/operation_ticket" }
+        }
+      }
+    },
+    "message": {
+      "type": "object",
+      "description": "One message of a matter's conversation. Its position in this array is the number `--message` takes: the reading and the move walk the conversation once, below both surfaces (AR-009-surfaces.1).",
+      "required": ["thread", "author", "text", "can_react"],
+      "properties": {
+        "thread": { "type": "integer", "description": "Which conversation of the matter it belongs to (FS-007-matters.4)." },
+        "author": { "type": "string" },
+        "at": { "type": "string", "format": "date-time" },
+        "text": { "type": "string" },
+        "can_react": { "type": "boolean", "description": "The source said how to post a reaction on it." },
+        "reactions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["emoji", "users"],
+            "properties": {
+              "emoji": { "type": "string" },
+              "users": {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            }
+          }
+        },
+        "task": {
+          "type": "object",
+          "description": "The task the source reported on it (FS-004-quick-actions.5).",
+          "required": ["text", "resolved", "source"],
+          "properties": {
+            "text": { "type": "string" },
+            "resolved": { "type": "boolean" },
+            "source": { "type": "string" }
+          }
+        }
+      }
+    },
+    "ticket": {
+      "type": "object",
+      "required": ["id", "recipe", "finished", "cancelled"],
+      "properties": {
+        "id": { "type": "string" },
+        "recipe": { "type": "string" },
+        "state": { "type": "string" },
+        "finished": { "type": "boolean" },
+        "cancelled": { "type": "boolean", "description": "Taken back through the runtime's own transition (FS-005-dispatch.16) — a different kind of over from finished." },
+        "verdict": { "type": "string" }
+      }
+    },
+    "step": {
+      "type": "object",
+      "required": ["icon", "description", "command", "cwd", "ok"],
+      "properties": {
+        "icon": { "type": "string" },
+        "description": { "type": "string" },
+        "command": { "type": "string" },
+        "cwd": { "type": "string" },
+        "ok": { "type": "boolean" },
+        "refusal": { "type": "string" }
+      }
+    },
+    "failure_note": { "type": "string", "description": "One source that could not be reached, in its own words. A refresh that lost a source is degraded rather than empty, and says which one (FS-001-forge-interface.6)." },
+    "rebase_repo": {
+      "type": "object",
+      "description": "What one repository of the forest came to under a replay (AR-004-forest.1).",
+      "required": ["repo", "replay"],
+      "properties": {
+        "repo": { "type": "string" },
+        "remote": { "type": "string" },
+        "branch": { "type": "string" },
+        "onto": { "type": "string", "description": "The ref this repository replayed onto, resolved inside it (FS-004-quick-actions.8)." },
+        "replay": {
+          "enum": ["current", "rebased", "conflicted", "dirty", "unpublished", "refused"],
+          "description": "What happened here, never summed with what happened elsewhere. `current` is already on the base; `unpublished` is a branch with no published copy to replay onto (DA-003-upstream-is-the-published-copy). Spelled as the words the code returns \u2014 the prose here used to name two ephor never prints and omit two it does, which is the drift a published schema exists to make diffable (REQ-002-parity.4)."
+        },
+        "behind": { "type": "integer", "description": "Commits replayed, where it replayed any." },
+        "paths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "The files a conflict or a dirty tree stopped on."
+        },
+        "says": { "type": "string", "description": "Why it was refused, where it was." }
+      }
+    },
+    "checkout_repo": {
+      "type": "object",
+      "description": "What one repository of the forest came to under a checkout (FS-004-quick-actions.7).",
+      "required": ["repo", "created"],
+      "properties": {
+        "repo": { "type": "string" },
+        "remote": { "type": "string" },
+        "created": {
+          "enum": ["tracking", "branched", "present", "refused"],
+          "description": "How the working tree came to be there, or why it did not."
+        },
+        "from": { "type": "string", "description": "What a new branch was grown from, where one was." },
+        "says": { "type": "string", "description": "Why it was refused, where it was." }
+      }
+    },
+    "job": {
+      "type": "object",
+      "description": "One job of ephor's own (FS-005-dispatch.17): a move that needed nobody watching, written down before it started and readable after it ended.",
+      "required": ["id", "project", "description", "started", "live", "died", "says"],
+      "properties": {
+        "id": { "type": "string" },
+        "project": { "type": "string" },
+        "item": { "type": "string", "description": "The matter it was started about. Absent on a branch row, which has none (FS-004-quick-actions.6)." },
+        "description": { "type": "string" },
+        "started": { "type": "string", "format": "date-time" },
+        "live": { "type": "boolean", "description": "Its supervisor holds the lock. The only liveness signal there is (AR-002-summons.5)." },
+        "died": { "type": "boolean", "description": "Neither live nor ended: the supervisor died. Said plainly, because \"started\" would be a claim nothing supports." },
+        "outcome": { "type": "string", "description": "done, failed, or parked — the summons' own three (FS-006-project-interface.3). Absent while it runs." },
+        "says": { "type": "string", "description": "The one line worth showing: the outcome where there is one, the last thing the log said while it runs." },
+        "log": { "type": "string", "description": "The path to what it wrote. `ephor job log --json` carries the log's contents under this name instead, because that is what the command is for." }
+      }
+    },
+    "landing": {
+      "type": "object",
+      "description": "What one matter came to in a sweep. A row per matter the sweep reached, whatever it reached — including the ones it deliberately left alone, because a reading that only listed successes would leave a script unable to tell \"nothing matched\" from \"everything already had work\" (REQ-002-parity.3).",
+      "required": ["item", "outcome", "says"],
+      "properties": {
+        "item": { "type": "string" },
+        "title": { "type": "string" },
+        "recipe": { "type": "string" },
+        "outcome": {
+          "enum": ["opened", "would-open", "reopened", "would-reopen", "settled", "has-work", "refused"],
+          "description": "`settled` is a deterministic opening move that finished, so there was nothing to hand over (FS-005-dispatch.12); `has-work` is a matter left alone because it already has some."
+        },
+        "ticket": { "type": "string" },
+        "says": { "type": "string" }
+      }
+    },
+    "workflow": {
+      "type": "object",
+      "description": "One workflow the runtime offers, and what it takes (FS-005-dispatch.19).",
+      "required": ["id", "description", "source", "inputs"],
+      "properties": {
+        "id": { "type": "string" },
+        "description": { "type": "string" },
+        "version": { "type": "string" },
+        "source": { "type": "string", "description": "Where it was found: what the runtime ships, what the project keeps, or the person's own — which is also where its entry ranks in a menu." },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "type", "required"],
+            "properties": {
+              "name": { "type": "string" },
+              "description": { "type": "string" },
+              "type": { "type": "string", "description": "What the input wants: a scalar, a list, a record." },
+              "required": { "type": "boolean" },
+              "hand": { "type": "boolean", "description": "This input names who does the work (DA-006-hands-fill-a-workflows-targets)." },
+              "default": { "description": "Whatever the workflow declared, of whatever type." }
+            }
+          }
+        }
+      }
+    },
+    "note": { "type": "string", "description": "Something the reader is owed about who got the work: an effort nothing offers, a hand nobody can be asked for (FS-005-dispatch.14). On the error stream in prose, and here in the reading — the two forms know the same things (REQ-002-parity.3)." },
+    "diagnosis": {
+      "type": "object",
+      "description": "One project's ladder (FS-006-project-interface.10): the rungs it holds, and the ones it does not with the reason each is missing.",
+      "required": ["project", "health", "sources", "held", "missing"],
+      "properties": {
+        "project": { "type": "string" },
+        "health": { "type": "string", "description": "well, degraded, unreachable, broken — the same word the exit code stands for." },
+        "sources": {
+          "type": "object",
+          "required": ["configured", "asked", "answering"],
+          "properties": {
+            "configured": { "type": "integer" },
+            "asked": { "type": "integer" },
+            "answering": { "type": "integer" }
+          }
+        },
+        "held": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "The rungs this project holds, by name."
+        },
+        "missing": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["rung", "why"],
+            "properties": {
+              "rung": { "type": "string" },
+              "why": { "type": "string" }
+            }
+          }
+        },
+        "silent": {
+          "type": "array",
+          "description": "Sources that did not answer, named with the reason — a source that went quiet is stated, never left as an absence (REQ-001-boundary.1).",
+          "items": {
+            "type": "object",
+            "required": ["source", "why", "unreachable"],
+            "properties": {
+              "source": { "type": "string" },
+              "why": { "type": "string" },
+              "unreachable": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
+    "roster": {
+      "type": "object",
+      "description": "Who the runtime can be asked for (FS-005-dispatch.14). An unavailable hand stays on the list with its reason rather than being hidden (DA-004-roster-is-asked-not-configured).",
+      "required": ["hands"],
+      "properties": {
+        "runner": { "type": "string", "description": "The runtime bound here, where one is." },
+        "refusal": { "type": ["string", "null"], "description": "Why the roster could not be asked at all. Null where it was asked — the same spelling `why` uses below." },
+        "hands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "available"],
+            "properties": {
+              "id": { "type": "string" },
+              "agent": { "type": "string" },
+              "model": { "type": ["string", "null"] },
+              "provider": { "type": ["string", "null"] },
+              "efforts": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "available": { "type": "boolean" },
+              "why": {
+                "type": ["string", "null"],
+                "description": "Why it cannot be asked right now."
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "properties": {
+    "actions": {
+      "description": "`ephor actions --json` (FS-011-command-line.1).",
+      "type": "object",
+      "required": ["project", "subject", "id", "title", "root", "workspace", "workspace_state", "offers"],
+      "properties": {
+        "project": { "type": "string" },
+        "subject": {
+          "enum": ["item", "branch"]
+        },
+        "id": { "type": "string", "description": "The feed id, or the branch name." },
+        "title": { "type": "string" },
+        "root": { "type": "string" },
+        "workspace": { "type": "string", "description": "Where an entry runs: the branch workspace where there is one, the root otherwise (AR-004-forest.3)." },
+        "workspace_state": {
+          "enum": ["ready", "missing", "unmatched"]
+        },
+        "branch": { "type": "string" },
+        "offers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/offer" }
+        },
+        "roster": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/hand" },
+          "description": "Who --hand may name here. Empty where there is no work to hand over, or nobody to pick."
+        }
+      }
+    },
+    "branches": {
+      "description": "`ephor branches --json` (FS-011-command-line.2) — where every branch of every selected project stands: an array of these, in registry order. Declared as the array it is: it was published as a single object, so anything validating against it rejected every answer the command has ever given (REQ-002-parity.4).",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["project", "branch", "declared", "active", "is_release", "checked_out", "items"],
+        "properties": {
+          "project": { "type": "string" },
+          "branch": { "type": "string" },
+          "declared": { "type": "boolean", "description": "The registry row names it. A discovered branch is placed and worked like any other, but may not widen the project's identity (FS-008-attribution.1)." },
+          "active": { "type": "boolean" },
+          "is_release": { "type": "boolean" },
+          "ticket": { "type": "string" },
+          "workspace": { "type": "string", "description": "Absent for a project that keeps one checkout at its root." },
+          "checked_out": { "type": "boolean" },
+          "behind": { "$ref": "#/$defs/distance", "description": "How far it trails the project's main branch, summed over the forest." },
+          "behind_upstream": { "$ref": "#/$defs/distance", "description": "How far it trails its own published copy — a different fact, never summed with the one above (DA-003-upstream-is-the-published-copy)." },
+          "published": { "type": "string", "description": "The ref every counted repository names, where they all name one." },
+          "main_branch": { "type": "string" },
+          "items": { "type": "integer", "description": "How many of the project's matters are on it." },
+          "url": { "type": "string" }
+        }
+      }
+    },
+    "operations": {
+      "description": "`ephor operations --json` (FS-011-command-line.3).",
+      "type": "object",
+      "required": ["operations"],
+      "properties": {
+        "refusal": { "type": "string", "description": "Why there are none, where a runtime cannot run any. The workable rung's own sentence (FS-005-dispatch.15)." },
+        "operations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/operation" }
+        }
+      }
+    },
+    "thread": {
+      "description": "`ephor thread --json` (FS-011-command-line.4).",
+      "type": "object",
+      "required": ["item", "project", "source", "title", "messages"],
+      "properties": {
+        "item": { "type": "string" },
+        "project": { "type": "string" },
+        "source": { "type": "string" },
+        "title": { "type": "string" },
+        "url": { "type": "string" },
+        "messages": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/message" }
+        },
+        "draft": {
+          "type": "object",
+          "description": "The reply a run drafted, waiting unsent (FS-005-dispatch.13). It is a file until a person sends it, which is why the path is here wherever the channel cannot carry it.",
+          "required": ["text", "path", "thread", "sendable"],
+          "properties": {
+            "text": { "type": "string" },
+            "path": { "type": "string" },
+            "thread": { "type": "integer" },
+            "sendable": { "type": "boolean", "description": "The channel declared a way to send it (FS-007-matters.4)." }
+          }
+        }
+      }
+    },
+    "work": {
+      "description": "`ephor work offers --json` (FS-011-command-line.5).",
+      "type": "object",
+      "required": ["item", "project", "title", "offers"],
+      "properties": {
+        "item": { "type": "string" },
+        "project": { "type": "string" },
+        "title": { "type": "string" },
+        "url": { "type": "string" },
+        "refusal": { "type": "string", "description": "Why nothing here runs. Everything else on this reading works with no runtime bound — the plan is written, read and reopened either way." },
+        "unavailable": { "type": "string", "description": "Why there is nothing to offer at all: the menu the offers come from could not be assembled, because the project is not placed (AR-004-forest.3). A different fact from `refusal`, which is about running a plan. Absent where the menu was assembled — an empty `offers` beside no reason would read as an oversight (REQ-001-boundary.1)." },
+        "offers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/offer" }
+        },
+        "status": {
+          "type": "object",
+          "required": ["plan", "plan_id", "root", "checkout", "stale", "missing", "tickets"],
+          "properties": {
+            "plan": { "type": "string" },
+            "plan_id": { "type": "string" },
+            "root": { "type": "string" },
+            "checkout": { "type": "string" },
+            "stale": { "type": "boolean", "description": "The matter moved since its work was asked for (FS-005-dispatch.5)." },
+            "missing": { "type": "boolean", "description": "The plan the ledger points at is gone." },
+            "changes": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "tickets": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/ticket" }
+            }
+          }
+        },
+        "jobs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/operation" }
+        }
+      }
+    },
+    "outcome": {
+      "description": "What one move changed (REQ-002-parity.3): what `ephor actions run --json` prints, and what `ephor react`, `ephor tick` and `ephor reply` print — the moves that go through the API's own move path (AR-009-surfaces.1). The moves that are sweeps or replays rather than one entry running publish their own shapes below. It is also what *any* command prints under `--json` when it is refused, with `ok` false and the reason in `says`: a program reading only standard output has to learn that the thing did not happen. The exit code keeps saying what it said; this says what happened.",
+      "type": "object",
+      "required": ["ok", "says"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "says": { "type": "string", "description": "The same sentence the interface puts in its status line." },
+        "steps": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/step" }
+        },
+        "job": { "type": "string", "description": "The job it was started as, where it went beneath the terminal." },
+        "plan": { "type": "string", "description": "What it wrote, where it wrote a plan." },
+        "tickets": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "refresh": {
+      "description": "`ephor refresh --json` — what each source was asked and what came back. The exit code still says `0` well, `4` degraded, `3` nothing reachable (FS-001-forge-interface.6); this says which project it was.",
+      "type": "object",
+      "required": ["refreshed", "degraded", "lost", "projects"],
+      "properties": {
+        "refreshed": { "type": "integer", "description": "Projects asked." },
+        "degraded": { "type": "integer", "description": "Projects that lost some sources and kept others." },
+        "lost": { "type": "integer", "description": "Projects where nothing answered at all." },
+        "projects": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["project", "items", "lost", "failures"],
+            "properties": {
+              "project": { "type": "string", "description": "The project id, or `sources` for the shared sources refreshed as a unit." },
+              "items": { "type": "integer" },
+              "lost": { "type": "boolean", "description": "Nothing answered for this project, so what is cached is last-good data or nothing — which reads exactly like \"you have no work here\" and so is never silent." },
+              "failures": {
+                "type": "array",
+                "items": { "$ref": "#/$defs/failure_note" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "mark-read": {
+      "description": "`ephor mark-read --json` — how many matters were marked, and whose.",
+      "type": "object",
+      "required": ["marked", "projects"],
+      "properties": {
+        "marked": { "type": "integer" },
+        "projects": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "failures": {
+      "description": "`ephor failures --json` (FS-011-command-line.6) — the forge's own reasons for refusing the merge, beside what failed under the gate. Never ephor's opinion of either (FS-001-forge-interface.1).",
+      "type": "object",
+      "required": ["item", "title", "gate", "failures"],
+      "properties": {
+        "item": { "type": "string" },
+        "title": { "type": "string" },
+        "url": { "type": "string" },
+        "gate": { "type": "object", "description": "The gate as the source reported it: whether the merge is blocked, the blockers in the forge's own words, and the per-repository counts." },
+        "failures": {
+          "type": "array",
+          "items": { "type": "object", "description": "One failing job as the binding reported it — its name and whatever trace it carried. The binding's shape, passed through (FS-001-forge-interface.1)." }
+        }
+      }
+    },
+    "restart": {
+      "description": "`ephor restart --json` (FS-011-command-line.6) — what was asked to run again, and what was skipped. `asked` is the fact a loop reads: \"asked 12 runs\" and \"asked nothing\" are the difference between a restart that happened and one that did not (FS-006-project-interface.11).",
+      "type": "object",
+      "required": ["item", "scope", "asked", "says"],
+      "properties": {
+        "item": { "type": "string" },
+        "title": { "type": "string" },
+        "scope": {
+          "enum": ["failed", "all"],
+          "description": "`failed` is the failing gate and everything downstream of it."
+        },
+        "asked": { "type": "boolean", "description": "Anything at all was asked to run again." },
+        "asked_count": { "type": "integer", "description": "How many jobs the forge said it asked to run again. Absent where the forge took the request without counting — an ordinary asynchronous gate — because reporting that as `0` would read as a restart that found nothing to do (FS-001-forge-interface.1)." },
+        "says": { "type": "string" },
+        "note": { "type": "string", "description": "What the forge said about the request that is not a failure." },
+        "skipped": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "What was not restarted, and why — named rather than left out (REQ-001-boundary.1)."
+        }
+      }
+    },
+    "checkout": {
+      "description": "`ephor checkout --json` (FS-004-quick-actions.7) — one working tree per repository of the project, and what each one came to. Exits `0` where every repository has a working tree and `1` where any was refused.",
+      "type": "object",
+      "required": ["workspace", "ready", "summary", "repos"],
+      "properties": {
+        "workspace": { "type": "string", "description": "The directory the checkout was to create." },
+        "branch": { "type": "string" },
+        "ready": { "type": "boolean", "description": "Every repository of the forest has a working tree there." },
+        "summary": { "type": "string" },
+        "report": { "type": "string", "description": "The same account in markdown — what `--report` writes, carried here so a state machine reads one document (FS-005-dispatch.12)." },
+        "repos": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/checkout_repo" }
+        }
+      }
+    },
+    "rebase": {
+      "description": "`ephor rebase --json` (FS-004-quick-actions.6, FS-004-quick-actions.8) — every repository under the checkout replayed onto its base or onto its own published copy, and where each one ended. Exits `0` where every repository is on the base, `3` where one stopped in a conflict, `1` where it could not run at all: a state machine reads those to decide who works next (FS-005-dispatch.12).",
+      "type": "object",
+      "required": ["checkout", "onto", "summary", "rebased", "conflicted", "repos"],
+      "properties": {
+        "checkout": { "type": "string" },
+        "onto": { "type": "string", "description": "The branch replayed onto, or `upstream` where each repository resolved its own published copy (DA-003-upstream-is-the-published-copy)." },
+        "summary": { "type": "string" },
+        "rebased": { "type": "integer" },
+        "conflicted": { "type": "integer" },
+        "absent": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Repositories the forest declares that are not on disk."
+        },
+        "repos": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/rebase_repo" }
+        },
+        "report": { "type": "string", "description": "The same account in markdown — what `--report` writes, and what the brief of a handed-over conflict carries." },
+        "dispatched": {
+          "type": ["object", "null"],
+          "description": "The ticket a conflict was handed over as, under `--dispatch` (FS-005-dispatch.12). Null where nothing was handed over. A conflict is not a failure: it is where the work starts, so what it opened is part of this reading rather than a line of prose after it.",
+          "required": ["item", "says"],
+          "properties": {
+            "item": { "type": "string" },
+            "ticket": { "type": "string" },
+            "says": { "type": "string" },
+            "notes": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/note" }
+            }
+          }
+        }
+      }
+    },
+    "validate": {
+      "description": "`ephor validate --json` — what was held to a published schema and came through. Two things can be: the registry with the managed workspaces whose paths were checked, or one project's own manifest under `--manifest`, which involves no registry at all (FS-006-project-interface.11). The reading says which by which fields it carries.",
+      "type": "object",
+      "required": ["valid"],
+      "properties": {
+        "valid": { "type": "boolean", "description": "Always true where it is printed: what did not validate exits non-zero with the reason on the error stream." },
+        "registry": { "type": "string", "description": "The registry that was validated. Absent under `--manifest`." },
+        "workspaces": { "type": "integer", "description": "0 under `--schema-only`, which checks the document and nothing on disk. Absent under `--manifest`." },
+        "manifest": { "type": "string", "description": "The manifest file that was validated, under `--manifest`. Absent otherwise." }
+      }
+    },
+    "list": {
+      "description": "`ephor list --json` — the registry's own project rows, selected by the global filters. Declared by the registry schema rather than restated here: this command is a rendering of that document, and a second description of it is a second thing to keep true. `ephor schema registry` prints it.",
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "job": {
+      "description": "`ephor job list --json` (FS-005-dispatch.17) — an array of these, newest first.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/job" }
+    },
+    "job-log": {
+      "description": "`ephor job log --json` — one job with everything it wrote. With `--follow` it is printed once the job is over, so a script waits on a job by asking for this.",
+      "allOf": [
+        { "$ref": "#/$defs/job" }
+      ],
+      "type": "object",
+      "properties": {
+        "log": { "type": "string", "description": "Everything the job wrote, in order — the contents, not the path." }
+      }
+    },
+    "capabilities": {
+      "description": "`ephor capabilities --json` (FS-010-doctor.2) — the ladder of FS-006-project-interface.10 per project, and the roster behind FS-005-dispatch.14. A rung that is missing is named with its reason, never merely absent.",
+      "type": "object",
+      "required": ["projects", "roster"],
+      "properties": {
+        "projects": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/diagnosis" }
+        },
+        "roster": { "$ref": "#/$defs/roster" }
+      }
+    },
+    "doctor": {
+      "description": "`ephor doctor --json` (FS-010-doctor.3) — both passes in one document: the site as `projects` and `roster`, and ephor asked of itself against its own scratch site under `self`. One document because two would not be JSON: each pass used to print its own and every parser stopped at the second. The exit code still carries the verdict — `0` well, `4` degraded, `3` nothing reachable, `1` ephor itself is wrong — which is what a timer reads. `--self-only` and `--skip-self` each leave their half out.",
+      "type": "object",
+      "properties": {
+        "projects": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/diagnosis" },
+          "description": "The site pass, per project. Absent under `--self-only`."
+        },
+        "roster": { "$ref": "#/$defs/roster", "description": "Absent under `--self-only`." },
+        "self": {
+          "type": "object",
+          "description": "ephor asked of itself against a scratch site of its own. Absent under `--skip-self`.",
+          "required": ["passed", "checks"],
+          "properties": {
+            "passed": { "type": "boolean" },
+            "checks": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["check"],
+                "properties": {
+                  "check": { "type": "string" },
+                  "failure": {
+                    "type": ["string", "null"],
+                    "description": "Why it failed, or null where it passed."
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "work-list": {
+      "description": "`ephor work list --json` (FS-005-dispatch.4) — the ledger across everything: an array of these, one per matter work has been asked about.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["item", "project", "plan", "missing", "stale", "tickets"],
+        "properties": {
+          "item": { "type": "string" },
+          "project": { "type": "string" },
+          "title": { "type": "string" },
+          "url": { "type": "string" },
+          "plan": { "type": "string" },
+          "missing": { "type": "boolean", "description": "The plan the ledger points at is gone." },
+          "stale": { "type": "boolean", "description": "The matter moved since its work was asked for (FS-005-dispatch.5)." },
+          "changes": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "tickets": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/ticket" }
+          },
+          "workflows": {
+            "type": "array",
+            "description": "The plans workflows laid down beside this matter's own (FS-005-dispatch.19). They carry no ticket inside it, so without this the ledger's record of them would be readable nowhere.",
+            "items": {
+              "type": "object",
+              "required": ["plan", "entry"],
+              "properties": {
+                "plan": { "type": "string" },
+                "entry": { "type": "string" },
+                "at": { "type": "string", "format": "date-time" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "work-dispatch": {
+      "description": "`ephor work dispatch --json` (FS-005-dispatch.1) — the sweep, and what each matter it reached came to.",
+      "type": "object",
+      "required": ["opened", "settled", "refused", "dry_run", "items"],
+      "properties": {
+        "opened": { "type": "integer" },
+        "settled": { "type": "integer", "description": "Deterministic opening moves that finished, so nothing was handed over (FS-005-dispatch.12)." },
+        "refused": { "type": "integer" },
+        "dry_run": { "type": "boolean" },
+        "items": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/landing" }
+        },
+        "notes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/note" }
+        }
+      }
+    },
+    "work-ask": {
+      "description": "`ephor work ask --json` (FS-005-dispatch.10) — one ticket in the reader's own words, for what no recipe covers.",
+      "type": "object",
+      "required": ["item", "dry_run", "says"],
+      "properties": {
+        "item": { "type": "string" },
+        "title": { "type": "string" },
+        "dry_run": { "type": "boolean" },
+        "says": { "type": "string" },
+        "notes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/note" }
+        }
+      }
+    },
+    "work-sync": {
+      "description": "`ephor work sync --json` (FS-005-dispatch.5) — work reopened because the matter moved under it.",
+      "type": "object",
+      "required": ["reopened", "dry_run", "items"],
+      "properties": {
+        "reopened": { "type": "integer" },
+        "dry_run": { "type": "boolean" },
+        "items": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/landing" }
+        }
+      }
+    },
+    "work-cancel": {
+      "description": "`ephor work cancel --json` (FS-005-dispatch.16) — tickets taken back through the runtime's own transition, with the reader's reason as each one's result. The plan keeps them.",
+      "type": "object",
+      "required": ["item", "dry_run", "refused", "tickets"],
+      "properties": {
+        "item": { "type": "string" },
+        "dry_run": { "type": "boolean" },
+        "refused": { "type": "integer" },
+        "tickets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["ticket", "cancelled", "says"],
+            "properties": {
+              "ticket": { "type": "string" },
+              "cancelled": { "type": "boolean" },
+              "from": { "type": "string", "description": "The state it was taken out of." },
+              "plan": { "type": "string" },
+              "says": { "type": "string" },
+              "left_waiting": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Tickets that were waiting on this one and now wait on nothing."
+              }
+            }
+          }
+        }
+      }
+    },
+    "work-run": {
+      "description": "`ephor work run --json` (FS-005-dispatch.12) — the runtime let at every work root that still has an open ticket. The runtime's own output goes to the error stream under this flag, so what is here is the account and not the run (FS-011-command-line.7).",
+      "type": "object",
+      "required": ["runs", "failed"],
+      "properties": {
+        "runs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["root", "plans", "outcome"],
+            "properties": {
+              "root": { "type": "string" },
+              "checkout": { "type": "string", "description": "Where the runtime ran from: the checkout the work is about, not wherever this was typed (FS-005-dispatch.3)." },
+              "plans": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "hand": { "type": "string", "description": "Who the run was given to, where the tickets agreed on one (FS-005-dispatch.14)." },
+              "outcome": {
+                "enum": ["done", "parked", "failed"],
+                "description": "`parked` is the runtime declining for now, which is not a failed run (FS-006-project-interface.3)."
+              },
+              "says": {
+                "type": ["string", "null"]
+              }
+            }
+          }
+        },
+        "failed": { "type": "integer" }
+      }
+    },
+    "work-lay": {
+      "description": "`ephor work lay --json` (FS-005-dispatch.19) — one of the runtime's workflows laid down beside a matter, with the account of what answered every input.",
+      "type": "object",
+      "required": ["item", "workflow", "plan", "dry_run", "says", "answers"],
+      "properties": {
+        "item": { "type": "string" },
+        "workflow": { "type": "string" },
+        "plan": { "type": "string" },
+        "dry_run": { "type": "boolean" },
+        "says": { "type": "string" },
+        "report": { "type": "string" },
+        "answers": {
+          "type": "array",
+          "description": "What answered each input and where it came from — a reader is owed the account of a plan they are about to get, and so is a script.",
+          "items": {
+            "type": "object",
+            "required": ["input", "from"],
+            "properties": {
+              "input": { "type": "string" },
+              "shown": { "type": "string", "description": "The value, as it would be shown. Empty where the input takes no printable one." },
+              "from": { "type": "string", "description": "Who answered it: the entry, the reader, the workflow's own default." }
+            }
+          }
+        },
+        "notes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/note" }
+        }
+      }
+    },
+    "work-workflows": {
+      "description": "`ephor work workflows --json` (FS-005-dispatch.19) — what the runtime offers here, and what each one takes.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/workflow" }
+    },
+    "work-forget": {
+      "description": "`ephor work forget --json` — ledger entries dropped. The plans stay on disk: they are the record of what was done, and ephor deleting a reader's work would be the one irreversible thing in here.",
+      "type": "object",
+      "required": ["forgot"],
+      "properties": {
+        "forgot": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["item", "plan"],
+            "properties": {
+              "item": { "type": "string" },
+              "plan": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "feed": {
+      "description": "`ephor feed --json` — the cached matters themselves, newest first, as an array. Declared by reference rather than restated: what a source reported is the source's own document, held to the forge answer schema when it arrived (FS-001-forge-interface.1) and stored unchanged — `ephor schema forge` prints that shape. A second description of it here would be a second thing to keep true, and the two would drift the moment a binding gained a field.",
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "status": {
+      "description": "`ephor status --json` — one cached feed per project: when it was fetched, what it holds, and what it lost. The matters inside it are the source's own documents, as for `feed` above.",
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "check": {
+      "description": "`ephor check --json` (FS-006-project-interface.5, FS-009-shipped-actions.1) — the project's own check verbs, run from its checkout, and what each one came to. The verbs' own output goes to the error stream under this flag, so what is here is the account and not the build log (FS-011-command-line.7). Exits `0` where none failed and `1` where any did; `--list-features` answers a different question and prints `features` below.",
+      "type": "object",
+      "required": ["passed", "verbs"],
+      "properties": {
+        "passed": { "type": "boolean", "description": "No verb failed. A parked verb has not failed (FS-006-project-interface.3)." },
+        "verbs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["verb", "outcome"],
+            "properties": {
+              "verb": { "type": "string", "description": "check, style, or smoke." },
+              "outcome": {
+                "enum": ["done", "parked", "failed"],
+                "description": "`parked` is the project declining for now, which is not a failure (FS-006-project-interface.3)."
+              },
+              "summary": { "type": ["string", "null"], "description": "The one line the verb's own answer summarised itself with, where it wrote one." },
+              "failures": {
+                "type": "array",
+                "description": "What the verb named as having failed, in its own words (FS-001-forge-interface.1).",
+                "items": {
+                  "type": "object",
+                  "required": ["job"],
+                  "properties": {
+                    "job": { "type": "string" },
+                    "trace": { "type": ["string", "null"] }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "work-states": {
+      "description": "`ephor work states --json` (FS-005-dispatch.11) — the state machine tickets actually run under, and where it came from. The machine itself is the runtime's language rather than ephor's, so it rides in a field as text; what this reading adds is *which* machine is in force, which the document alone never said.",
+      "type": "object",
+      "required": ["source", "states"],
+      "properties": {
+        "source": {
+          "enum": ["shipped", "configured"],
+          "description": "`shipped` is the one ephor carries; `configured` is one this site named."
+        },
+        "path": { "type": ["string", "null"], "description": "Where the configured machine was read from. Null for the shipped one." },
+        "states": { "type": "string", "description": "The machine verbatim — the same bytes the prose form prints." }
+      }
+    },
+    "update": {
+      "description": "`ephor update --json` — which managed workspaces were rewritten. It changes the world and so says what it changed (REQ-002-parity.3); with no flag it stays silent, which is what a person running it over forty workspaces asked for.",
+      "type": "object",
+      "required": ["count", "updated"],
+      "properties": {
+        "count": { "type": "integer" },
+        "updated": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["workspace", "root"],
+            "properties": {
+              "workspace": { "type": "string" },
+              "root": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "ensure-agents": {
+      "description": "`ephor ensure-agents --json` — which AGENTS.md files were written, and where. Same reasoning as `update` above: a command that rewrites files on disk says which ones.",
+      "type": "object",
+      "required": ["count", "written"],
+      "properties": {
+        "count": { "type": "integer" },
+        "written": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["workspace", "path"],
+            "properties": {
+              "workspace": { "type": "string" },
+              "path": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "features": {
+      "description": "`ephor check --list-features --json` (FS-006-project-interface.5) — the features this project's smoke enumerates, as the array a workflow matrix reads. Ids and nothing else: what each one does is the project's to say, not ephor's.",
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

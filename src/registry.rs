@@ -50,6 +50,22 @@ pub fn load_registry(registry_path: &Path, schema: &Value) -> Result<Value> {
     Ok(registry)
 }
 
+/// The same, from a document already read off disk. Split out for the caller
+/// that keyed its cache on the bytes themselves and so is holding them
+/// (§AR-009-surfaces.2): reading the file a second time to parse it would
+/// leave a window in which the cache key and the parsed document came from two
+/// different registries.
+pub fn parse_registry(text: &str, registry_path: &Path, schema: &Value) -> Result<Value> {
+    let registry: Value = serde_json::from_str(text).map_err(|err| {
+        registry_error(format!(
+            "Invalid JSON in {}: {err}",
+            registry_path.display()
+        ))
+    })?;
+    validate_registry(&registry, schema)?;
+    Ok(registry)
+}
+
 pub fn validate_registry(registry: &Value, schema: &Value) -> Result<()> {
     if schema.get("type").and_then(Value::as_str) != Some("object") {
         return Err(registry_error("Schema root must be an object."));

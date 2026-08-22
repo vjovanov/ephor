@@ -14,7 +14,7 @@
 //! variables; an agent entry is handed over instead, through the one path the
 //! work screen uses (§FS-005-dispatch.4).
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use ratatui::crossterm::event::KeyCode;
 use ratatui::layout::Rect;
@@ -22,341 +22,19 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState};
 
+use crate::api::offers;
+pub(crate) use crate::api::offers::{Gate, MenuEntry, Subject};
 use crate::capabilities::CapabilitySet;
 use crate::feed::config::{ActionConfig, CheckoutConfig};
-use crate::feed::model::Item;
-use crate::forest::{Forest, Trail, Upstream};
-use crate::work::recipe::{Facts, HandPin};
+use crate::work::recipe::HandPin;
 use crate::work::runtime::roster::Hand;
 
 use super::{highlight_style, BranchInfo, WorkspaceState};
-
-/// Actions applicable to one item: global first, then the project's own,
-/// selected by the shared language (§FS-006-project-interface.9).
-pub(crate) fn applicable(
-    global: &[ActionConfig],
-    project: &[ActionConfig],
-    item: &Item,
-    facts: &Facts,
-) -> Vec<ActionConfig> {
-    global
-        .iter()
-        .chain(project)
-        .filter(|action| action.matches(item, facts))
-        .cloned()
-        .collect()
-}
-
-/// The menu, in provenance order: each list in turn, an entry whose id a later
-/// list repeats **replacing it where it already sits**
-/// (§FS-006-project-interface.9). Replacing in place rather than appending is
-/// what keeps the numbering of a menu stable when a project starts offering an
-/// entry the person had already written — the key that ran a thing goes on
-/// running that thing.
-pub(crate) fn merge(provenances: Vec<Vec<ActionConfig>>) -> Vec<ActionConfig> {
-    let mut merged: Vec<ActionConfig> = Vec::new();
-    for provenance in provenances {
-        for action in provenance {
-            match merged
-                .iter()
-                .position(|existing| !existing.id.is_empty() && existing.id == action.id)
-            {
-                Some(index) => merged[index] = action,
-                None => merged.push(action),
-            }
-        }
-    }
-    merged
-}
-
-/// The work ephor can hand over about this item, added to the menu where
-/// nothing has claimed the name and dropped where something has
-/// (§FS-005-dispatch.1).
-///
-/// Dropped rather than appended, because an entry already carrying that name
-/// is what hands this work over when it cannot finish: the key that replays a
-/// branch runs `ephor rebase --dispatch`, which hands its conflict to the
-/// recipe named `rebase` (§FS-005-dispatch.12). Two rows saying *rebase* would
-/// be asking the reader to tell two spellings of one operation apart — which
-/// is the thing this menu exists to stop.
-pub(crate) fn add_unclaimed(menu: &mut Vec<ActionConfig>, entries: Vec<ActionConfig>) {
-    for entry in entries {
-        let claimed = menu
-            .iter()
-            .any(|existing| !existing.id.is_empty() && existing.id == entry.id);
-        if !claimed {
-            menu.push(entry);
-        }
-    }
-}
-
-/// A recipe as a menu entry (§FS-005-dispatch.1): its own icon and
-/// description, and the recipe itself riding along, because what is dispatched
-/// has to be the recipe and not a copy of what the row said about it — the
-/// opening move and the hand it pins are on it.
-pub(crate) fn agent_entry(recipe: &crate::work::recipe::Recipe) -> ActionConfig {
-    ActionConfig {
-        id: recipe.id.clone(),
-        icon: recipe.icon.clone(),
-        description: recipe.description.clone(),
-        agent: Some(recipe.clone()),
-        ..ActionConfig::default()
-    }
-}
-
-/// The rebase ephor offers on a checkout with a main branch to name
-/// (§FS-004-quick-actions.6). It runs `ephor rebase`, so the key and the state
-/// machine's program state are the same operation (§FS-005-dispatch.12), and
-/// it says how far behind the branch is and as of when, because a distance
-/// with no day on it is a claim about now that nothing here measured.
-pub(crate) fn rebase_action(main_branch: &str, trail: Trail) -> ActionConfig {
-    rebase_entry(
-        "rebase",
-        &format!("rebase onto {main_branch} ({})", trail.label()),
-        "",
-    )
-}
-
-/// The second rebase: onto the branch's own published copy, offered where the
-/// checkout trails that instead (§FS-004-quick-actions.8). It names the ref,
-/// because two entries reading `rebase onto …` differ in exactly that word —
-/// and where the repositories of a forest are published under different names
-/// there is no one ref to name, so it says what it is instead.
-pub(crate) fn upstream_rebase_action(published: Option<&str>, trail: Trail) -> ActionConfig {
-    rebase_entry(
-        "rebase-upstream",
-        &format!(
-            "rebase onto {} ({})",
-            published.unwrap_or("its published copy"),
-            // The copy's own day, not the base's: a fetch dates only the refs
-            // it actually brought down (§FS-004-quick-actions.8).
-            trail.label()
-        ),
-        " --upstream",
-    )
-}
-
-/// One entry for both rebases, so the key the reader presses and the command a
-/// state machine runs stay one operation (§FS-005-dispatch.12) and the two
-/// offers cannot drift apart in how they are run.
-fn rebase_entry(id: &str, description: &str, extra: &str) -> ActionConfig {
-    let exe = std::env::current_exe()
-        .map(|path| path.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| "ephor".to_string());
-    ActionConfig {
-        id: id.to_string(),
-        icon: "⤴".to_string(),
-        description: description.to_string(),
-        // `--dispatch` is what makes a conflict work rather than a dead end:
-        // where git stops, the ticket opens on the spot.
-        command: format!(
-            "{} rebase{extra} --project \"$EPHOR_PROJECT\" --checkout \"$EPHOR_WORKSPACE\" \
-             --item \"$EPHOR_ITEM_ID\" --dispatch",
-            crate::feed::providers::shell_quote(&exe)
-        ),
-        // No kind restriction: what the offer is about is a branch on disk
-        // that trails something, never the kind of the row that mentions it
-        // (§FS-004-quick-actions.6). The gate is the checkout resolving, and
-        // it is applied where the entry is built.
-        requires_checkout: true,
-        // A replay asks nothing and decides nothing, so it costs no model
-        // (§FS-005-dispatch.12) and no screen either: it runs beneath the
-        // interface and is watched from its row (§FS-005-dispatch.17).
-        background: true,
-        ..ActionConfig::default()
-    }
-}
-
-/// What one checkout says about itself, from a single fold: both distances
-/// and what the published copy is called (§FS-004-quick-actions.8).
-///
-/// One fold rather than two, because the two offers stand next to each other in
-/// the menu and counts measured a moment apart would eventually disagree
-/// (§AR-004-forest.1).
-pub(crate) struct Trailing {
-    /// Commits the checkout trails its main branch, summed over the forest,
-    /// with the day the oldest copy of that branch last moved here — the
-    /// freshness every statement of the distance carries
-    /// (§FS-004-quick-actions.6).
-    pub behind: Option<Trail>,
-    /// Commits it trails its own published copies, dated the same way from
-    /// those copies. None where nothing is
-    /// published — which is not the same answer as level with a copy — and a
-    /// repository whose copy is its base again already contributes nothing:
-    /// the sum leaves that distance to `behind`, so the two entries cannot
-    /// carry one distance under two names (§FS-004-quick-actions.8).
-    pub behind_upstream: Option<Trail>,
-    /// The ref every counted repository names, where they all name one.
-    pub published: Option<String>,
-}
-
-impl Trailing {
-    pub fn of(forest: &Forest) -> Trailing {
-        let standing = forest.standing();
-        let mut published: Vec<String> = Vec::new();
-        for repo in &standing.repos {
-            // A copy that is the base again is not this offer's fact
-            // (§FS-004-quick-actions.8), so it does not name the entry either.
-            if repo.copies_the_base() {
-                continue;
-            }
-            let Upstream::Published { remote, branch } = &repo.upstream else {
-                continue;
-            };
-            let reference = format!("{remote}/{branch}");
-            if !published.contains(&reference) {
-                published.push(reference);
-            }
-        }
-        Trailing {
-            behind: standing.staleness().trail(),
-            behind_upstream: standing.upstream_trail(),
-            // Named only where the whole forest agrees: two different refs
-            // have no one name, and an entry naming one of them would be
-            // telling the reader about half its checkout.
-            published: (published.len() == 1).then(|| published[0].clone()),
-        }
-    }
-
-    /// The two distances in the shape a selector asks about them — bare
-    /// counts, without the day. A recipe is dispatched on whether there is
-    /// anything to do (§FS-005-dispatch.1), which is a different question from
-    /// what the entry beside it is labelled with.
-    pub fn facts(&self) -> Facts {
-        Facts {
-            behind: self.behind.map(|trail| trail.behind),
-            behind_upstream: self.behind_upstream.map(|trail| trail.behind),
-        }
-    }
-}
-
-/// The checkout ephor offers on an item whose branch workspace is not on disk
-/// (§FS-004-quick-actions.7). It runs `ephor checkout`, so the key and the
-/// state machine's program state are the same operation (§FS-005-dispatch.12),
-/// and it names the directory it is about to make because that is the thing
-/// the reader is agreeing to.
-///
-/// It says the branch as well as the matter. A branch row has no matter behind
-/// it (§FS-004-quick-actions.6), so `$EPHOR_ITEM_ID` is empty there and the
-/// item alone would leave `ephor checkout` with nothing naming a branch — an
-/// offer refused on the keystroke, on the one row it was added for
-/// (§FS-004-quick-actions.2). Both are passed and either can be the empty
-/// string: the command reads a flag or the environment and drops what is
-/// blank, so the item path is unchanged by this.
-pub(crate) fn checkout_action(target: &Path) -> ActionConfig {
-    let exe = std::env::current_exe()
-        .map(|path| path.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| "ephor".to_string());
-    ActionConfig {
-        id: "checkout".to_string(),
-        icon: "⇣".to_string(),
-        description: format!("check out {}", target.display()),
-        command: format!(
-            "{} checkout --project \"$EPHOR_PROJECT\" --item \"$EPHOR_ITEM_ID\" \
-             --branch \"$EPHOR_BRANCH\"",
-            crate::feed::providers::shell_quote(&exe)
-        ),
-        ..ActionConfig::default()
-    }
-}
-
-/// The command that makes a missing branch workspace, and the directory it has
-/// to end up creating: the project's own where it configured one, otherwise
-/// ephor's (§FS-004-quick-actions.7). None where the workspace is not missing,
-/// which is every project that keeps one checkout at its root.
-///
-/// One function so the row in the menu and the step that runs before an action
-/// cannot come from two different commands.
-pub(crate) fn checkout_step(
-    state: &WorkspaceState,
-    checkout: &Option<CheckoutConfig>,
-) -> Option<(ActionConfig, PathBuf)> {
-    let WorkspaceState::Missing(target) = state else {
-        return None;
-    };
-    let action = match checkout {
-        Some(checkout) => ActionConfig {
-            id: "checkout".to_string(),
-            icon: checkout.icon.clone(),
-            description: checkout.description.clone(),
-            command: checkout.command.clone(),
-            ..ActionConfig::default()
-        },
-        None => checkout_action(target),
-    };
-    Some((action, target.clone()))
-}
 
 pub(crate) enum MenuOutcome {
     Stay,
     Close,
     Run(MenuEntry),
-}
-
-/// What a menu is about. An item is the usual one; a branch row is the other,
-/// because the rebase is offered wherever there is a branch on disk and a
-/// branch row has no matter behind it (§FS-004-quick-actions.6). The menu is
-/// one implementation either way — the two subjects differ only in what the
-/// summons is told they are about (§AR-002-summons.1).
-#[derive(Clone)]
-pub(crate) enum Subject {
-    Item(Box<Item>),
-    Branch { project: String, branch: String },
-}
-
-impl Subject {
-    pub fn project(&self) -> &str {
-        match self {
-            Subject::Item(item) => &item.project,
-            Subject::Branch { project, .. } => project,
-        }
-    }
-
-    /// The matter this is about, where there is one. A branch row is not one,
-    /// and saying so is what keeps a stand-in item out of the dossier.
-    pub fn item(&self) -> Option<&Item> {
-        match self {
-            Subject::Item(item) => Some(item),
-            Subject::Branch { .. } => None,
-        }
-    }
-
-    /// What the menu's border says it is about.
-    pub fn title(&self) -> &str {
-        match self {
-            Subject::Item(item) => &item.title,
-            Subject::Branch { branch, .. } => branch,
-        }
-    }
-}
-
-/// Whether an entry can run right now.
-#[derive(Clone)]
-pub(crate) enum Gate {
-    Ready,
-    /// The branch workspace is missing; the checkout command runs first.
-    NeedsCheckout,
-    /// Cannot run; the reason is shown when chosen.
-    Blocked(String),
-}
-
-#[derive(Clone)]
-pub(crate) struct MenuEntry {
-    pub action: ActionConfig,
-    /// The synthetic "check out branch workspace" row.
-    pub is_checkout: bool,
-    /// The synthetic row with no command yet: the reader types one
-    /// (§FS-005-dispatch.10).
-    pub is_freehand: bool,
-    /// The synthetic row that opens the runtime's own workflows, for the ones
-    /// no entry names (§FS-005-dispatch.19).
-    pub is_workflows: bool,
-    /// What the reader picked for this dispatch alone, where the picker was
-    /// used (§FS-005-dispatch.14). It rides the one outcome that carries it
-    /// to the dispatch and dies there: nothing records it, and the next
-    /// dispatch resolves from the second step down.
-    pub picked: Option<HandPin>,
-    pub gate: Gate,
 }
 
 /// The reader's own pick, made over one entry at the moment of asking
@@ -385,7 +63,7 @@ pub(crate) struct ActionMenu {
     /// The registry branch the item was matched to, if any.
     pub branch: Option<BranchInfo>,
     /// The item's branch-workspace situation at menu-open time.
-    state: WorkspaceState,
+    pub state: WorkspaceState,
     pub checkout: Option<CheckoutConfig>,
     entries: Vec<MenuEntry>,
     selected: usize,
@@ -404,94 +82,18 @@ pub(crate) struct ActionMenu {
 }
 
 impl ActionMenu {
-    pub fn new(
+    /// The menu over a list the session already assembled and gated
+    /// (§AR-009-surfaces.1). This file draws that list and translates keys on
+    /// it; what is in it, and whether each row can run, is not decided here.
+    pub fn over(
         subject: Subject,
         root: PathBuf,
         workspace: PathBuf,
         branch: Option<BranchInfo>,
         state: WorkspaceState,
         checkout: Option<CheckoutConfig>,
-        can: &CapabilitySet,
-        actions: Vec<ActionConfig>,
+        entries: Vec<MenuEntry>,
     ) -> Self {
-        let mut entries = Vec::new();
-        // A missing workspace is directly runnable as its own entry. The
-        // project's own command where it configured one, and ephor's otherwise
-        // — the offer does not wait on anybody writing it down
-        // (§FS-004-quick-actions.7).
-        if let Some((action, _)) = checkout_step(&state, &checkout) {
-            entries.push(MenuEntry {
-                action,
-                is_checkout: true,
-                is_freehand: false,
-                is_workflows: false,
-                picked: None,
-                gate: Gate::NeedsCheckout,
-            });
-        }
-        for action in actions {
-            // What the entry said it needs, answered by the one table
-            // (§AR-005-capabilities.2) — so a project's offer and a person's
-            // action are refused in the same sentence, and a requirement
-            // nobody recognizes is named rather than treated as met.
-            let (rungs, unknown) = action.rungs();
-            let gate = if let Some(name) = unknown.first() {
-                Gate::Blocked(format!(
-                    "'{name}' is not a capability ephor knows; it has: {}",
-                    crate::capabilities::Rung::all()
-                        .map(|rung| rung.name())
-                        .join(", ")
-                ))
-            } else if let Some(reason) = can.refusal(&rungs) {
-                Gate::Blocked(reason)
-            // A hand that cannot stand is the entry refused, not the ticket
-            // written and the choice quietly dropped
-            // (§FS-006-project-interface.9): the reason is on the row and the
-            // key is not advertised on it (§FS-004-quick-actions.2).
-            } else if let Some(refusal) = action.hand.as_ref().and_then(|hand| hand.refusal.clone())
-            {
-                Gate::Blocked(refusal)
-            } else if !action.requires_checkout {
-                Gate::Ready
-            } else {
-                match &state {
-                    WorkspaceState::Ready => Gate::Ready,
-                    // There is always a checkout to run first now, configured
-                    // or ephor's own (§FS-004-quick-actions.7).
-                    WorkspaceState::Missing(_) => Gate::NeedsCheckout,
-                    // A workspace the item cannot be resolved to is the
-                    // branch-addressable rung failing on this item
-                    // (§FS-006-project-interface.10).
-                    WorkspaceState::Unmatched => Gate::Blocked(
-                        "this action needs a branch workspace, and the item's branch is unknown"
-                            .to_string(),
-                    ),
-                }
-            };
-            entries.push(MenuEntry {
-                action,
-                is_checkout: false,
-                is_freehand: false,
-                is_workflows: false,
-                picked: None,
-                gate,
-            });
-        }
-        // Last, and always there: what the reader wants to run once
-        // (§FS-005-dispatch.10). It leads nothing and blocks nothing — a menu
-        // whose first key is "type something" would be a menu that gave up.
-        entries.push(MenuEntry {
-            action: ActionConfig {
-                icon: "⌨".to_string(),
-                description: "run a command here…".to_string(),
-                ..ActionConfig::default()
-            },
-            is_checkout: false,
-            is_freehand: true,
-            is_workflows: false,
-            picked: None,
-            gate: Gate::Ready,
-        });
         ActionMenu {
             subject,
             root,
@@ -507,45 +109,38 @@ impl ActionMenu {
         }
     }
 
-    /// The row that reaches the runtime's workflows no entry names
-    /// (§FS-005-dispatch.19). Above the freehand row, because it is an offer
-    /// and that one is the escape hatch; below everything real, because most
-    /// of what it opens has nothing to do with this matter — which is the
-    /// whole reason those workflows are behind one row instead of in the menu.
-    pub fn offering_workflows(mut self) -> Self {
-        let at = self.entries.len().saturating_sub(1);
-        self.entries.insert(
-            at,
-            MenuEntry {
-                action: ActionConfig {
-                    icon: "⛬".to_string(),
-                    description: "lay down a workflow…".to_string(),
-                    ..ActionConfig::default()
-                },
-                is_checkout: false,
-                is_freehand: false,
-                is_workflows: true,
-                picked: None,
-                gate: Gate::Ready,
-            },
-        );
-        self
+    /// A menu built from a raw list, for the tests that exercise gating
+    /// through the drawing. It goes through the same assembly the session
+    /// uses (§AR-009-surfaces.1) — a fixture that gated its own entries would
+    /// be testing a second implementation.
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        subject: Subject,
+        root: PathBuf,
+        workspace: PathBuf,
+        branch: Option<BranchInfo>,
+        state: WorkspaceState,
+        checkout: Option<CheckoutConfig>,
+        can: &CapabilitySet,
+        actions: Vec<ActionConfig>,
+    ) -> Self {
+        let entries = offers::entries(&state, &checkout, can, actions, false);
+        ActionMenu::over(subject, root, workspace, branch, state, checkout, entries)
     }
 
-    /// The same menu about the same subject, holding different entries — how
-    /// the workflow row opens what it offers without a second kind of list
-    /// existing (§FS-005-dispatch.19). What each entry can do is judged again,
-    /// against the same capability table the first menu used.
+    /// The same menu over a different list — how the workflows row replaces
+    /// the menu with the runtime's own offers (§FS-005-dispatch.19). The
+    /// gating is the session's, as it is for every other list.
     pub fn rebuilt(&self, actions: Vec<ActionConfig>, can: &CapabilitySet) -> ActionMenu {
-        ActionMenu::new(
+        ActionMenu::over(
             self.subject.clone(),
             self.root.clone(),
             self.workspace.clone(),
             self.branch.clone(),
             self.state.clone(),
             self.checkout.clone(),
-            can,
-            actions,
+            offers::entries(&self.state, &self.checkout, can, actions, false),
         )
     }
 
@@ -555,12 +150,6 @@ impl ActionMenu {
     pub fn with_roster(mut self, roster: Vec<Hand>) -> Self {
         self.roster = roster;
         self
-    }
-
-    /// The checkout to run before an action that needs the workspace, and the
-    /// directory it has to create (§FS-004-quick-actions.7).
-    pub fn checkout_step(&self) -> Option<(ActionConfig, PathBuf)> {
-        checkout_step(&self.state, &self.checkout)
     }
 
     /// Built from the selected entry, not from the menu
@@ -974,7 +563,12 @@ impl ActionMenu {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::feed::model::ItemKind;
+    // The assembly these exercise now lives below the screen
+    // (§AR-009-surfaces.1); the menu they build it into is still here.
+    use crate::api::offers::{add_unclaimed, agent_entry, applicable, merge, rebase_action};
+    use crate::feed::model::{Item, ItemKind};
+    use crate::forest::Trail;
+    use crate::work::recipe::Facts;
     use chrono::Utc;
     use serde_json::json;
 
@@ -1084,15 +678,15 @@ mod tests {
         actions: Vec<ActionConfig>,
     ) -> ActionMenu {
         let pr = item(ItemKind::Pr, "github-prs:acme/widget#42", json!({}));
-        ActionMenu::new(
+        let entries = offers::entries(&state, &checkout, &can_everything(), actions, false);
+        ActionMenu::over(
             Subject::Item(Box::new(pr)),
             PathBuf::from("/tmp"),
             PathBuf::from("/tmp"),
             None,
             state,
             checkout,
-            &can_everything(),
-            actions,
+            entries,
         )
     }
 
@@ -1138,7 +732,10 @@ mod tests {
             Some(checkout_config()),
             vec![requires_checkout("open ide"), action("browser", &[])],
         );
-        assert_eq!(menu.checkout_step().map(|(_, target)| target), Some(target));
+        assert_eq!(
+            offers::checkout_step(&menu.state, &menu.checkout).map(|(_, target)| target),
+            Some(target)
+        );
 
         // Row 1 is the synthetic checkout entry.
         match menu.handle_key(KeyCode::Char('1')) {
@@ -1195,7 +792,10 @@ mod tests {
             MenuOutcome::Run(entry) => assert!(matches!(entry.gate, Gate::NeedsCheckout)),
             _ => panic!("expected Run"),
         }
-        assert_eq!(menu.checkout_step().map(|(_, path)| path), Some(target));
+        assert_eq!(
+            offers::checkout_step(&menu.state, &menu.checkout).map(|(_, path)| path),
+            Some(target)
+        );
     }
 
     /// An item matched to no branch has no workspace to make, so the refusal
@@ -1379,17 +979,22 @@ mod tests {
         // A rung the project does not hold: refused in the ladder's own words.
         let pr = item(ItemKind::Pr, "github-prs:acme/widget#42", json!({}));
         let unplaced = crate::capabilities::CapabilitySet::unknown("widget");
-        let menu = ActionMenu::new(
+        let menu = ActionMenu::over(
             Subject::Item(Box::new(pr)),
             PathBuf::from("/tmp"),
             PathBuf::from("/tmp"),
             None,
             WorkspaceState::Ready,
             None,
-            &unplaced,
-            // Spelled the old way on purpose: an older `requires` still
-            // resolves to the *tasks* rung (§FS-006-project-interface.10).
-            vec![requiring(&["ticketed"])],
+            offers::entries(
+                &WorkspaceState::Ready,
+                &None,
+                &unplaced,
+                // Spelled the old way on purpose: an older `requires` still
+                // resolves to the *tasks* rung (§FS-006-project-interface.10).
+                vec![requiring(&["ticketed"])],
+                false,
+            ),
         );
         match menu.gate(0) {
             Gate::Blocked(reason) => assert!(reason.contains("no registry row"), "{reason}"),

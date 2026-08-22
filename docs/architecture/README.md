@@ -16,5 +16,6 @@ By convention every file under this directory — each file-form spec and each s
 | [AR-006-matters](AR-006-matters.md) | the core types of the watch |
 | [AR-007-runtime](AR-007-runtime.md) | the runtime adapter, rhei as its shipped binding |
 | [AR-008-pipeline](AR-008-pipeline.md) | the engine as seven stages |
+| [AR-009-surfaces](AR-009-surfaces.md) | one API beneath both surfaces, one schema per answer |
 
 This index is navigational — citations should target the spec ID directly, never this file.

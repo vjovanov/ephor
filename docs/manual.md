@@ -2751,15 +2751,36 @@ stalled on *"required outputs are missing"* no matter how well it reasons.
 ephor list | validate | ensure-agents | update            # the registry
 ephor refresh | status | feed | mark-read | failures      # the feed
 ephor restart --scope failed|all                          # run a gate again
-ephor rebase | checkout                                   # the checkout
+ephor rebase | checkout | branches                        # the checkout
 ephor check | validate --manifest | schema                # the project interface
-ephor work list | dispatch | ask | sync | run | forget | states
+ephor actions [list] | actions run <id>                   # what may be done here
+ephor thread <id> | react | tick | reply                  # a conversation
+ephor work list | offers | dispatch | ask | sync | cancel | lay | run | forget
+ephor work workflows | states                             # what the runtime carries
+ephor operations                                          # the board — alias: ops
 ephor job list | log <id>                                 # what runs beneath the screen
 ephor tui                                                 # alias: inbox
 ```
 
+Every one of these takes `--json` and prints the same answer as JSON
+([§REQ-002-parity](../docs/requirements/REQ-002-parity.md),
+[§11.4](#114-the-machine-form)). The two exceptions are the two that are not
+readings: `schema` prints a published JSON document already, and `tui` is the
+interface itself.
+
+Most of them are also an ability the interactive interface offers. `list`,
+`validate`, `ensure-agents`, `update`, `check`, `schema` and `work states` are
+not, and are not meant to be: they set the site up or ask a repository about
+itself, which is work you do before there is anything to watch rather than
+while watching it. Parity runs the other way for those — the interface is owed
+a key for an *ability* it would otherwise be the only way to reach, not for
+every command
+([§REQ-002-parity.2](requirements/REQ-002-parity.md#2-parity-runs-both-ways)).
+
 `check`, `validate --manifest` and `schema` are the three that need no site at
-all — a checkout is enough, which is why CI can run them
+all.
+
+A checkout is enough for those three, which is why CI can run them
 ([§FS-006-project-interface.11](../requirements.md#11-the-interface-is-versioned),
 [§9.3](#93-ci-steps-ephor-ships)).
 
@@ -2789,6 +2810,70 @@ all — a checkout is enough, which is why CI can run them
 | `<forest root>/ephor.json` | the project's own manifest, if it wrote one (§4.2.1) |
 | `<checkout>/panta/` | work roots: plans, state machine, runtime artifacts |
 | `<work root>/runtime/ephor/<plan>.reply.md` | a drafted answer, until you post it (§8.12) |
+
+### 11.4 The machine form
+
+Nothing lives behind the screen alone. Every ability the inbox offers is also
+a command, and every command that prints a reading takes `--json`
+([§REQ-002-parity](requirements/REQ-002-parity.md)) — which is what makes ephor
+usable by the runtime it hands work to.
+
+| The key | The command |
+|---|---|
+| `x` — what may be done here | `ephor actions --item ID` (or `--project P --branch B`) |
+| `enter` / `1`–`9` — run one | `ephor actions run <id> --item ID` |
+| `t` — pick who gets the work | `ephor actions run <id> --item ID --hand ada:high` |
+| the freehand row | `ephor actions run --item ID --command '…'` |
+| `v` — the conversation | `ephor thread ID` |
+| `+` — react | `ephor react ID THUMBS_UP --message 0` |
+| `t` — tick a task | `ephor tick ID --message 1` |
+| `p` — send the drafted reply | `ephor reply ID` (or `ephor reply ID some words`) |
+| `w` — what is being done about it | `ephor work offers --item ID` |
+| `a` / `s` / `c` / `R` — ask, reopen, cancel, run | `ephor work ask` / `sync` / `cancel` / `run` |
+| `z` — the tickets that are over | `ephor work offers --item ID --all` |
+| `c` — the gate spelled out | `ephor failures --item ID` |
+| `;` — the operations board | `ephor operations` |
+| `L` — what a job wrote | `ephor job log <id>` (`--follow` keeps up; with `--json` it waits and then answers) |
+| `m` / `d` / space — mark read | `ephor mark-read --id ID` |
+| `u` — only what is unread | `ephor feed --unread` |
+| `r` — fetch | `ephor refresh` |
+| the branch rows | `ephor branches [PROJECT]` |
+
+Moving a cursor, folding a section, and opening your own pager, editor or
+browser on a path a reading already names are presentation, and owe no
+command. The list of both is in `src/api/parity.rs`, and `just check` fails on
+a key that is on neither.
+
+Under `--json` the reading is **alone** on standard output — notes, progress
+and provider failures go to stderr, so a program never parses them by
+accident. A command that changes something prints what it changed:
+
+```bash
+ephor actions run rebase --item "$id" --json   # {"ok":true,"says":…,"steps":[…]}
+ephor rebase --project widget --json           # per repository: rebased, conflicted, dirty…
+ephor work dispatch --item "$id" --json        # {"opened":1,"items":[{"ticket":…}]}
+ephor schema views                             # what every one of them may print
+```
+
+The shapes are published: `ephor schema views` prints the schema, and it is
+the stability surface — a field is added freely, and renaming or removing one
+is a release note. It is also checked: the end-to-end suite runs every command
+that takes `--json` and validates what it prints against its own entry, so the
+schema describes the answer rather than merely naming it. `ephor feed`,
+`ephor status` and `ephor list` print documents another schema already
+describes (`ephor schema forge`, `ephor schema registry`), and their entries
+point there rather than repeating it.
+
+A command that is **refused** answers too. Under `--json` it prints
+`{"ok": false, "says": "…"}` on standard output — the same shape a move that
+happened prints — and keeps the exit code it had. The reason is on stderr as
+well, for whoever is watching; a script that reads only standard output still
+learns that the thing did not happen and why.
+
+Two names are ephor's own and configuration may not take them: `@command` is
+the freehand row and `@workflows` is the row that opens the runtime's
+workflows. An entry or a recipe whose `id` starts with `@` is refused when the
+configuration is read, rather than quietly standing beside the row it shadows.
 
 ---
 

@@ -10,11 +10,13 @@
 //! both answer the same types and the same policy runs over both.
 
 pub mod agents;
+pub mod api;
 pub mod attribution;
 pub mod branches;
 pub mod capabilities;
 pub mod checkout;
 pub mod cli;
+pub mod commands;
 pub mod doctor;
 pub mod error;
 pub mod feed;
