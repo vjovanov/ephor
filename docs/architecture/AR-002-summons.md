@@ -111,10 +111,11 @@ is never removed.
 written down as a job (§5) — the record, the lock, the `outcome.json` — and
 the supervisor runs inside the window, so liveness is the lock exactly as
 everywhere and a window the reader closed is a job that ended, however it
-ended. The record carries the handle the opener printed; the `log` holds only
-what the supervisor itself says, because the program's own output went to a
-screen the reader was looking at and is not duplicated. What a reader opening
-the job gets is `focus <handle>`, not a pager.
+ended. The record carries the handle the opener printed, and there is **no
+`log`**: what the program wrote went to a screen the reader was watching and
+is not duplicated into a file (§DA-007-window-is-a-bound-opener.3). The
+`outcome.json` still says how it ended, and what a reader opening the job gets
+is `focus <handle>`, not a pager.
 
 **Attaching to a run is a windowed summons of the runtime's attach verb**
 (§AR-007-runtime.1, §FS-005-dispatch.20), with the terminal as its fallback.

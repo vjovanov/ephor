@@ -1890,8 +1890,9 @@ and set apart**: the running entries stand first, under a line that says so,
 indented a step further than the rest, in one colour reserved for what is
 going and used for nothing else on that screen. Each says how long it has
 been going and what it is at right now — the job's own last line, the ticket
-a run holds and the state it is in, *queued* where the root's run will reach
-it — in the words the board already uses
+a run holds and the state it is in, *waiting on you* where the ticket it
+opened is parked, with a run still on the root or without one, *queued* where
+the root's run will reach it — in the words the board already uses
 ([§15](#15-every-operation-is-visible-in-one-place),
 [§18](#18-the-work-screen-says-when-and-folds-away-what-is-over)), because
 this is the board's reading narrowed to one row, not a second reading.
@@ -1905,7 +1906,10 @@ row is running where the job that is making the workspace is. An entry that
 hands work over is running where the ticket it would open, or the plan it
 would lay, is open and its root is live or will reach it — the very facts the
 badge on the row is made of
-([§9](#9-work-that-stops-for-a-person-says-so-where-the-person-is-looking)).
+([§9](#9-work-that-stops-for-a-person-says-so-where-the-person-is-looking)) —
+and a ticket the run parked counts, live root or not, because a question
+standing on this subject is exactly what a second dispatch must not be laid
+beside.
 An entry whose program runs in a window of the reader's own is running while
 that window holds it
 ([§22](#22-a-window-of-the-readers-own-where-one-is-bound)). Nothing here is
