@@ -67,20 +67,25 @@ ships, the previous "latest" section moves verbatim to
   under a line that says so, a step further in, in one colour used for nothing
   else on that screen — with how long it has been going and what it is at right
   now: the job's own last line, the ticket a run holds and the state it is in,
-  *queued* where the root's run will reach it.
+  *waiting on you* where the ticket it opened is parked — with a run still at
+  the gate or without one — and *queued* where the root's run will reach it.
 
   Found by looking, never remembered from the keypress: a job is a held lock
   and a record naming the entry it came from (a job now records that, and the
-  branch on a branch row), a run is a held lock and the descriptor beside it. A
-  second ephor sees the same rows, and a job that died is not running whatever
-  started it.
+  branch on a branch row), a run is a held lock and the descriptor beside it,
+  and the row that would make a branch workspace is running while the job whose
+  first step is making it holds its own. A second ephor sees the same rows, and
+  a job that died is not running whatever started it — and the whole reading is
+  taken once for a menu rather than once for each of its rows.
 
   **Pressing a running entry opens it.** `Enter` (or `l`) goes to the thing
   that is running — a job's log followed as it writes, a run attached, a window
   brought forward — and the footer says *open* rather than *run*.
   `ephor actions [--json]` carries the same mark with the same facts and prints
   **the way in**, and `ephor actions open <id>` is that key as a command,
-  refusing by name where the entry has nothing going.
+  refusing by name where the entry has nothing going. A parked question opens
+  where the answer belongs: the run still standing at its gate, and the plan the
+  question is written in where none is.
 
 - **A window of the reader's own, where one is bound**
   ([§FS-005-dispatch.22](../requirements.md#22-a-window-of-the-readers-own-where-one-is-bound),
@@ -102,9 +107,13 @@ ships, the previous "latest" section moves verbatim to
   and runs there instead of taking the terminal: a job like any other, with the
   lock as its liveness and the handle in its record, so it is a row that says
   *running* and opens to the program rather than something ephor handed the
-  terminal to and forgot. Attaching to a run goes through the same opener.
-  ephor opens a window and brings one forward; it never closes one and never
-  ends what is in it.
+  terminal to and forgot. Such a job leaves **no log** — what its program wrote
+  is on a screen you were watching and is not duplicated into a file — so the
+  window is its inspection, and every surface says so rather than offering an
+  empty file. Attaching to a run goes through the same opener, from the key and
+  from `ephor actions open` / `ephor operations attach` alike. ephor opens a
+  window and brings one forward; it never closes one and never ends what is in
+  it.
 
 - **Everything the screen holds is a command, and every answer has a machine
   form** ([§REQ-002-parity](requirements/REQ-002-parity.md),

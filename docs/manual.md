@@ -2419,7 +2419,7 @@ Press `⤴ rebase onto master` and the menu closes onto the row you were on,
 with one line in the status bar:
 
 ```
-⤴ rebase onto master (1582 behind as of Nov 21, 2025): started · ; to watch
+⤴ rebase onto master (1582 behind as of Nov 21, 2025): started · press ; for the board
 ```
 
 **It is its own process, in its own process group.** Quitting ephor does not
@@ -2452,7 +2452,10 @@ ephor job log <id>      # everything one job wrote, in order
 
 A job is a directory under `~/.local/state/ephor/jobs/` — `job.json` (what it
 is), `log` (what it wrote), `lock`, and `outcome.json` when it ends — and that
-is the whole record. **Liveness is the lock**, probed and never waited on,
+is the whole record. A job whose supervisor runs in a window of your own
+(§8.16) has no `log`: what its program wrote is on a screen you were watching
+and is not duplicated into a file, so its record names the window instead and
+`ephor job log` on it says so. **Liveness is the lock**, probed and never waited on,
 exactly as it is for a run: a job that died holds no lock and wrote no
 outcome, and is reported as *died* rather than as running, because "it
 started" is a claim about the past. Jobs are found by listing that directory,
@@ -2605,9 +2608,14 @@ it made, one that brings a handle forward. Which one fills it is `window` under
 
 `{title}` and `{command}` are filled in the open template, `{handle}` in the
 focus one, each quoted as one shell word; every other brace is left alone, so a
-product's own format language survives. `open` must print the handle on
-standard output and exit **when the window exists**, not when the program in it
-ends.
+product's own format language survives. A template that has no `{title}` in it
+is fine — one of the three shipped bindings has no title option on its spawn,
+and the window it opens is named by whatever runs in it — but an `open` with no
+`{command}`, or a `focus` with no `{handle}`, is refused where it is written.
+`open` must print the handle on standard output and exit **when the window
+exists**, not when the program in it ends. A binding that opens the window and
+prints nothing is not a failure: the program is running in it, and what ephor
+cannot then do is bring it forward.
 
 **Unset, ephor recognizes where it is running.** Each of the three shipped
 bindings sets a variable for exactly this purpose (`$TMUX`, `$WEZTERM_PANE`,
@@ -2620,7 +2628,9 @@ offer whose program is something you type into — an editor, a pager, a coding
 agent's own session (§7.2). It then runs as a job whose supervisor lives inside
 that window: it holds a lock like any job (§8.14), its record keeps the
 handle, and the window is its inspection where a log would have been, because
-what it writes is on that screen and nowhere else. That is what makes an agent
+what it writes is on that screen and nowhere else. Such a job has **no log** —
+`ephor job log` on one says where the program went rather than answering with an
+empty file, and `outcome.json` still says how it ended. That is what makes an agent
 started from the menu a row that says *running* and opens to the agent, rather
 than a program ephor handed the terminal to and forgot.
 
@@ -2648,16 +2658,20 @@ running, and set apart**
 The running rows stand first, under a line that says so, a step further in, in
 one colour used for nothing else on that screen. Each says how long it has been
 going and what it is at right now — the job's own last line, the ticket a run
-holds and the state it is in, *queued* where the root's run will reach it.
+holds and the state it is in, *waiting on you* where the ticket it opened is
+parked, *queued* where the root's run will reach it.
 
 **What counts as going is found by looking.** A command entry is running where
 a job started from that entry, about this subject, still holds its lock — which
 is why a job records which entry it came from and, on a branch row, which
-branch. An entry that hands work over is running where the ticket it would open
-is open and its root is live. An entry whose program runs in a window is
-running while that window holds it. Nothing is remembered from the keypress: a
-second ephor sees the same rows, and a job that died is not running whatever
-started it.
+branch — and the row that would make a branch workspace is running while the
+job whose first step is making it is. An entry that hands work over is running
+where the ticket it would open is open and its root is live, and where the
+ticket it opened is parked, whether or not a run still holds the root: a
+question standing on this subject is open work about it. An entry whose program
+runs in a window is running while that window holds it. Nothing is remembered
+from the keypress: a second ephor sees the same rows, and a job that died is not
+running whatever started it.
 
 **Pressing a running entry opens it; it never starts it again.** `Enter` (or
 `l`) on such a row goes to the thing that is running — a job's log, followed as
@@ -2679,7 +2693,11 @@ ephor actions open edit --item "$id"      # brings its window forward
 ```
 
 It starts nothing. Where the entry has nothing going it refuses by name and
-tells you which command would start it.
+tells you which command would start it. And it opens **by the same binding the
+key uses** (§8.16): with a window bound, `ephor actions open` and
+`ephor operations attach` put the surface in a window of your own exactly as `a`
+on the board does; with none, they take the terminal you typed them in. A job's
+log is the exception — that is text this command prints.
 
 **Watching a run is attaching to it.** A run of the runtime starts detached —
 `R` on the work screen, and `ephor work run`, both print one line saying the run
@@ -2945,7 +2963,7 @@ A checkout is enough for those three, which is why CI can run them
 | `~/.local/state/ephor/feed/*.json` | one cache per project |
 | `~/.local/state/ephor/seen.json` | unread tracking |
 | `~/.local/state/ephor/work.json` | the work ledger |
-| `~/.local/state/ephor/jobs/<id>/` | one job: `job.json`, `log`, `lock`, `outcome.json` (§8.14) |
+| `~/.local/state/ephor/jobs/<id>/` | one job: `job.json`, `log` (none for a windowed job), `lock`, `outcome.json` (§8.14) |
 | `~/config/secrets/ephor/*.json` | provider secrets |
 | `<forest root>/ephor.json` | the project's own manifest, if it wrote one (§4.2.1) |
 | `<checkout>/panta/` | work roots: plans, state machine, runtime artifacts |
