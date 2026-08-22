@@ -262,7 +262,7 @@ fn a_run_starts_beneath_the_screen_and_the_board_says_how_to_reach_it() {
     assert_eq!(row["run"], "3f9a2c", "{board}");
     assert_eq!(row["control_url"], "http://127.0.0.1:54321", "{board}");
     assert_eq!(row["attach"], "acme-runtime attach '3f9a2c'", "{board}");
-    assert_eq!(row["stop"], "acme-runtime stop 3f9a2c", "{board}");
+    assert_eq!(row["stop"], "acme-runtime stop '3f9a2c'", "{board}");
 }
 
 /// What is already going is shown where it could be started again

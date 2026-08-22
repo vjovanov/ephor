@@ -388,8 +388,13 @@ pub fn attach_summons(config: &crate::work::recipe::WorkConfig, id: &str) -> Sum
 /// starts nothing and stops nothing, and a key that stopped a run would be a
 /// channel to the run ephor promised never to hold. The same standing the
 /// release command has (§FS-005-dispatch.10).
+///
+/// The id is quoted exactly as the attach's is. It comes out of a file the
+/// *run* wrote, and this line exists to be copied into a shell: an id with a
+/// space in it would produce a command that does not work, and one carrying
+/// `;` or `$( )` a line that runs something else when pasted.
 pub fn stop_command(config: &crate::work::recipe::WorkConfig, id: &str) -> String {
-    format!("{} {STOP_VERB} {id}", runner(config))
+    format!("{} {STOP_VERB} {}", runner(config), quote(id))
 }
 
 /// The verb the detach probe fills, for messages.
@@ -750,13 +755,20 @@ mod tests {
     fn attaching_and_stopping_are_the_runners_own_words() {
         let shipped = crate::work::recipe::WorkConfig::default();
         assert_eq!(attach_command(&shipped, "3f9a2c"), "rhei attach '3f9a2c'");
-        assert_eq!(stop_command(&shipped, "3f9a2c"), "rhei stop 3f9a2c");
+        assert_eq!(stop_command(&shipped, "3f9a2c"), "rhei stop '3f9a2c'");
         let bound = crate::work::recipe::WorkConfig {
             runner: Some("my-runtime".to_string()),
             ..crate::work::recipe::WorkConfig::default()
         };
         assert_eq!(attach_command(&bound, "a b"), "my-runtime attach 'a b'");
-        assert_eq!(stop_command(&bound, "3f9a2c"), "my-runtime stop 3f9a2c");
+        assert_eq!(stop_command(&bound, "3f9a2c"), "my-runtime stop '3f9a2c'");
+        // Both come out of a file the run wrote and both are lines to paste,
+        // so both are quoted: an id that carried a `;` used to make the stop
+        // line run something else.
+        assert_eq!(
+            stop_command(&bound, "3f; rm -rf /"),
+            "my-runtime stop '3f; rm -rf /'"
+        );
     }
 
     /// Whether the binding can detach is asked of the binding

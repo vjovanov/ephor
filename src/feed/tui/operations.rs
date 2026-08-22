@@ -152,8 +152,10 @@ impl OperationsScreen {
             row.op.quiet = pulse.quiet;
             // A run that ended and one that started in its place are two runs,
             // and the row says which it is looking at (§FS-005-dispatch.20).
-            // The stop command follows the id it is about.
-            row.op.stop = None;
+            // The stop command follows the id it is about, and is re-composed
+            // beside it: clearing it here left the row naming its run and no
+            // longer saying how to end it, from the first tick onwards.
+            row.op.stop = pulse.stop;
             row.op.identity = pulse.identity;
         }
         found
@@ -882,6 +884,7 @@ mod tests {
             dashboard: None,
             quiet: Some(13),
             identity: None,
+            stop: None,
         });
         assert!(found.changed);
         assert!(!found.flipped);
@@ -895,6 +898,7 @@ mod tests {
             dashboard: None,
             quiet: Some(13),
             identity: None,
+            stop: None,
         });
         assert!(!found.changed);
         assert!(!found.flipped);
@@ -906,9 +910,59 @@ mod tests {
             dashboard: None,
             quiet: None,
             identity: None,
+            stop: None,
         });
         assert!(found.changed);
         assert!(found.flipped);
+    }
+
+    /// The tick re-reads who the run is, so it re-reads how the run is stopped
+    /// (§FS-005-dispatch.20). The stop line used to be cleared on every pulse
+    /// and re-composed only by a full rebuild, so a board opened on a steadily
+    /// live run said `run 3f9a2c (a)` and stopped saying `stop it:` two seconds
+    /// later — the one line §20 puts on the row precisely because the board
+    /// starts nothing and stops nothing itself.
+    #[test]
+    fn the_stop_line_survives_a_tick_on_a_run_that_is_still_going() {
+        use crate::work::runtime::watch::{Pulse, RunIdentity};
+        let identity = || {
+            Some(RunIdentity {
+                id: Some("3f9a2c".to_string()),
+                pid: Some(48213),
+                control_url: Some("http://127.0.0.1:54321".to_string()),
+                started_at: None,
+                headless: true,
+            })
+        };
+        let mut screen = OperationsScreen::new(rows(vec![identified_row()]), None);
+        let found = screen.repulse(|_| Pulse {
+            live: true,
+            dashboard: None,
+            quiet: None,
+            identity: identity(),
+            stop: Some("the-runner stop 3f9a2c".to_string()),
+        });
+        assert!(!found.flipped);
+        let still = text(&screen, None);
+        assert!(still.contains("run 3f9a2c (a)"), "{still}");
+        assert!(still.contains("stop it: the-runner stop 3f9a2c"), "{still}");
+
+        // And a run that ended with another started in its place is two runs:
+        // the row says which it is looking at, and how to end *that* one.
+        let found = screen.repulse(|_| Pulse {
+            live: true,
+            dashboard: None,
+            quiet: None,
+            identity: Some(RunIdentity {
+                id: Some("b41d70".to_string()),
+                ..identity().expect("an identity")
+            }),
+            stop: Some("the-runner stop b41d70".to_string()),
+        });
+        assert!(found.changed);
+        let again = text(&screen, None);
+        assert!(again.contains("run b41d70 (a)"), "{again}");
+        assert!(again.contains("stop it: the-runner stop b41d70"), "{again}");
     }
 
     /// A rebuild fires from the tick and from every refresh landing

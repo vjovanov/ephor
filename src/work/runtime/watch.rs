@@ -193,13 +193,44 @@ pub fn held_by_live_run(
     if !live(config, root) {
         return false;
     }
-    let lock_born = fs::metadata(root.join(LOCK))
+    held_among(
+        &holding(config, root),
+        root,
+        lock_born(root),
+        plan_id,
+        ticket,
+        state,
+    )
+}
+
+/// When the root's lock file was born, where it exists. Read once by a caller
+/// asking about several tickets: the lock is created before the first run on a
+/// root does anything and never touched again.
+pub fn lock_born(root: &Path) -> Option<SystemTime> {
+    fs::metadata(root.join(LOCK))
         .and_then(|meta| meta.modified())
-        .ok();
-    holding(config, root).iter().any(|entry| {
+        .ok()
+}
+
+/// The same reading [`held_by_live_run`] makes, with the liveness probe and the
+/// journal read already done.
+///
+/// A menu asks this once per candidate ticket, and asking through
+/// [`held_by_live_run`] re-probed the lock and re-read the whole journal for
+/// each of them — the re-reading §FS-005-dispatch.15.1 rules out. The caller
+/// that hoisted those reads passes them in; the answer is the same one.
+pub fn held_among(
+    held: &[Held],
+    root: &Path,
+    born: Option<SystemTime>,
+    plan_id: &str,
+    ticket: &str,
+    state: &str,
+) -> bool {
+    held.iter().any(|entry| {
         (entry.task == ticket || entry.task == format!("{plan_id}.{ticket}"))
             && entry.still_at(state)
-            && !predates_lock(root, entry, lock_born)
+            && !predates_lock(root, entry, born)
     })
 }
 
@@ -354,10 +385,20 @@ pub struct Pulse {
     /// Who the live run says it is (§FS-005-dispatch.20). None on a not-live
     /// root, and on one whose runner left no descriptor.
     pub identity: Option<RunIdentity>,
+    /// The bound runner's own command for stopping *this* run — composed
+    /// beside the identity it is about, so a tick that re-reads who the run is
+    /// re-reads how it is stopped (§FS-005-dispatch.20). A row that kept the
+    /// identity and dropped this said which run it was watching and stopped
+    /// saying how to end it, two seconds after the reader opened the board.
+    pub stop: Option<String>,
 }
 
 pub fn pulse(config: &WorkConfig, root: &Path) -> Pulse {
     let live = live(config, root);
+    // Gated on the lock, like the dashboard: a descriptor outlives the run
+    // that wrote it, so reading one on a free root would name a run that is
+    // over (§FS-005-dispatch.20).
+    let identity = live.then(|| identity(config, root)).flatten();
     Pulse {
         dashboard: live.then(|| dashboard(config, root)).flatten(),
         quiet: if live {
@@ -365,10 +406,11 @@ pub fn pulse(config: &WorkConfig, root: &Path) -> Pulse {
         } else {
             None
         },
-        // Gated on the lock, like the dashboard: a descriptor outlives the run
-        // that wrote it, so reading one on a free root would name a run that
-        // is over (§FS-005-dispatch.20).
-        identity: live.then(|| identity(config, root)).flatten(),
+        stop: identity
+            .as_ref()
+            .and_then(|run| run.id.as_deref())
+            .map(|id| super::stop_command(config, id)),
+        identity,
         live,
     }
 }
