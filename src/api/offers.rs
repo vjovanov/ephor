@@ -452,9 +452,10 @@ impl Running {
             Running::Queued { .. } => "queued".to_string(),
             // The job's own line already says where it is: a windowed program
             // writes to a screen and not to a file (§FS-005-dispatch.22).
-            Running::Window { says, handle, .. } => match says.is_empty() {
-                true => format!("running in window {handle}"),
-                false => says.clone(),
+            Running::Window { says, handle, .. } => match (says.is_empty(), handle.is_empty()) {
+                (false, _) => says.clone(),
+                (true, false) => format!("running in window {handle}"),
+                (true, true) => "running in a window the opener did not name".to_string(),
             },
         }
     }
@@ -473,7 +474,9 @@ impl Running {
             Running::Waiting { attach, plan, .. } => {
                 attach.clone().or_else(|| Some(plan.display().to_string()))
             }
-            Running::Window { handle, .. } => Some(handle.clone()),
+            // A window nothing named has no way in: the program is there and
+            // reachable by nothing ephor holds (§AR-002-summons.6).
+            Running::Window { handle, .. } => (!handle.is_empty()).then(|| handle.clone()),
         }
     }
 }

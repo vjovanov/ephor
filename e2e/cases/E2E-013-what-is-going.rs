@@ -554,6 +554,71 @@ fn attaching_from_the_command_line_goes_to_the_bound_window() {
     assert!(called.contains("acme-runtime attach"), "{called}");
 }
 
+/// A window that opened and named nothing is still a window
+/// (§FS-005-dispatch.22, §AR-002-summons.6).
+///
+/// The opener's contract is *exit when the window exists*, so a binding that
+/// ran the command and printed nothing has a window open with `ephor job run`
+/// already inside it. Treating that as "the window never opened" deleted the
+/// directory of a program that was at that moment running, and left it with no
+/// record, no row and a lock nothing could probe — the program ephor handed a
+/// terminal to and forgot. The record stands instead, with no handle on it, and
+/// the row says where the program went.
+///
+/// And a windowed job leaves **no log**: what it wrote went to a screen the
+/// reader was watching and is not duplicated into a file.
+#[test]
+fn a_window_the_opener_did_not_name_keeps_the_job_it_started() {
+    let world = watching();
+    // An opener that runs the command in the background and says nothing: the
+    // window is open, and nothing named it.
+    let open = world.stub(
+        "stand-in-open",
+        "#!/usr/bin/env bash\nsh -c \"$2\" >/dev/null 2>&1 &\n",
+    );
+    world.configure(json!({
+        "defaults": {
+            "window": {
+                "open": format!("{} {{title}} {{command}}", open.to_string_lossy()),
+                "focus": "true {handle}",
+            }
+        },
+        "actions": [
+            { "id": "edit", "icon": "✎", "description": "open it in the editor",
+              "command": "true", "window": true }
+        ],
+        "projects": { PROJECT: { "providers": [
+            { "provider": "acmeforge", "user": "you", "repos": ["app"] }
+        ] } },
+        "work": { "runner": "acme-runtime" }
+    }));
+
+    let out = world
+        .ephor()
+        .args(["actions", "run", "edit", "--item", ITEM, "--json"])
+        .output()
+        .expect("ephor actions run");
+    let outcome = shaped("outcome", &out);
+    assert_eq!(outcome["ok"], true, "{outcome}");
+    assert!(
+        outcome["says"]
+            .as_str()
+            .expect("a sentence")
+            .contains("did not name"),
+        "{outcome}"
+    );
+
+    // The record stands, and says the program went to a window without saying
+    // which one — the one thing the opener did not hand back.
+    let id = outcome["job"].as_str().expect("a job id");
+    let dir = jobs_dir(&world).join(id);
+    let record = read_json(&dir.join("job.json"));
+    assert_eq!(record["windowed"], true, "{record}");
+    assert!(record["window"].is_null(), "{record}");
+    assert_eq!(record["action"], "edit", "{record}");
+    assert!(!dir.join("log").exists(), "a windowed job writes no log");
+}
+
 /// `ephor actions open` starts nothing, and refuses by name where the entry has
 /// nothing going (§FS-011-command-line.8).
 #[test]

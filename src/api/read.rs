@@ -220,17 +220,18 @@ impl Session {
                     .find(|job| job.record.action.as_deref() == Some(key.as_str())),
             };
             if let Some(job) = started_here {
-                entry.running = Some(match job.record.window.clone() {
+                entry.running = Some(match job.windowed() {
                     // A windowed program's inspection is its window: what it
-                    // wrote is on that screen and nowhere else
-                    // (§FS-005-dispatch.22).
-                    Some(handle) => offers::Running::Window {
+                    // wrote is on that screen and nowhere else, so there is no
+                    // log to offer even where the opener named no window
+                    // (§FS-005-dispatch.22, §AR-002-summons.6).
+                    true => offers::Running::Window {
                         job: job.id.clone(),
-                        handle,
+                        handle: job.record.window.clone().unwrap_or_default(),
                         since: job.took(now),
                         says: job.says(),
                     },
-                    None => offers::Running::Job {
+                    false => offers::Running::Job {
                         id: job.id.clone(),
                         since: job.took(now),
                         says: job.says(),
@@ -594,7 +595,9 @@ pub fn running_of(running: &offers::Running) -> views::Running {
         }
         offers::Running::Window { job, handle, .. } => {
             view.job = Some(job.clone());
-            view.window = Some(handle.clone());
+            // Absent where the opener named no window: a field holding the
+            // empty string would read as a handle that focuses nothing.
+            view.window = (!handle.is_empty()).then(|| handle.clone());
         }
     }
     view
@@ -649,7 +652,9 @@ pub fn job_row(job: crate::seams::jobs::Job) -> views::Operation {
         title: Some(job.record.description.clone()),
         root: Some(job.record.root.clone()),
         plan: None,
-        log: Some(job.log_path()),
+        // None for a windowed job: what it wrote is on a screen the reader was
+        // watching, so there is no file to name (§AR-002-summons.6).
+        log: job.log(),
         dashboard: None,
         run: None,
         control_url: None,

@@ -62,6 +62,12 @@ pub struct Opener {
 /// `{title}` and `{command}` in the open template and `{handle}` in the focus
 /// template are substituted shell-quoted; every other brace is the product's
 /// own format language and is left alone.
+///
+/// **One of them takes no title.** A product whose spawn has no title option
+/// gets a template without `{title}` in it, and the window it opens is named by
+/// whatever runs in it. Said here rather than left to be discovered from a
+/// window with the wrong name (§REQ-001-boundary.1): the absence is stated, and
+/// the module's own test counts it.
 const SHIPPED: &[(&str, &str, &str, &str)] = &[
     (
         "tmux",
@@ -109,9 +115,15 @@ pub fn bound(configured: Option<&Binding>) -> Option<Opener> {
     }
 }
 
-/// Why a configured name is not a binding, or None where it is. Returned rather
+/// Why a configured binding is not one, or None where it is. Returned rather
 /// than printed, so the same sentence reaches a configuration error and an
 /// outcome line (§AR-005-capabilities.2).
+///
+/// A pair is checked as well as a name. The contract is two commands with a
+/// place for what they are given: an `open` with no `{command}` in it opens an
+/// empty window and prints whatever it prints as the handle, and a `focus` with
+/// no `{handle}` brings the same wrong window forward forever. Both are absences
+/// that have to be stated rather than degraded into silently (§REQ-001-boundary.1).
 pub fn refusal(configured: Option<&Binding>) -> Option<String> {
     match configured {
         Some(Binding::Named(name)) if shipped_named(name).is_none() => Some(format!(
@@ -119,9 +131,23 @@ pub fn refusal(configured: Option<&Binding>) -> Option<String> {
              Write your own as {{ \"open\": …, \"focus\": … }}.",
             shipped().join(", ")
         )),
+        Some(Binding::Pair { open, .. }) if !open.contains(COMMAND) => Some(format!(
+            "the configured window's 'open' has no {COMMAND} in it, so it would open a window \
+             with nothing running in it"
+        )),
+        Some(Binding::Pair { focus, .. }) if !focus.contains(HANDLE) => Some(format!(
+            "the configured window's 'focus' has no {HANDLE} in it, so it could never bring the \
+             window ephor opened forward"
+        )),
         _ => None,
     }
 }
+
+/// The tokens a binding is written over. Named, because the refusal that says
+/// one is missing has to spell the same thing [`fill`] substitutes.
+const TITLE: &str = "{title}";
+const COMMAND: &str = "{command}";
+const HANDLE: &str = "{handle}";
 
 fn shipped_named(name: &str) -> Option<Opener> {
     SHIPPED
@@ -164,55 +190,66 @@ const OPEN_TIMEOUT: Duration = Duration::from_secs(20);
 impl Opener {
     /// The open command as it will run, for a message or a test.
     pub fn open_command(&self, title: &str, command: &str) -> String {
-        fill(&self.open, &[("{title}", title), ("{command}", command)])
+        fill(&self.open, &[(TITLE, title), (COMMAND, command)])
     }
 
     /// The focus command as it will run.
     pub fn focus_command(&self, handle: &str) -> String {
-        fill(&self.focus, &[("{handle}", handle)])
+        fill(&self.focus, &[(HANDLE, handle)])
     }
 
     /// Open a window running `command`, and hand back the handle the opener
     /// printed (§AR-002-summons.6). Captured, because the handle is the whole
     /// of what comes back across this seam.
     ///
-    /// `Err` is the opener's own words: a multiplexer with no server, a
-    /// terminal whose remote control is off. Reported as the command's output
-    /// rather than as ephor's, because it is (§DA-007-window-is-a-bound-opener).
-    pub fn open(&self, title: &str, command: &str, site: &Site) -> Result<String> {
-        let binding = format!("{} 2>&1", self.open_command(title, command));
+    /// Three answers, and they are three different facts:
+    ///
+    /// - `Err` — the opener refused and nothing was spawned: a multiplexer with
+    ///   no server, a terminal whose remote control is off. The opener's own
+    ///   words, reported as the command's output rather than as ephor's,
+    ///   because they are (§DA-007-window-is-a-bound-opener).
+    /// - `Ok(None)` — it ran the command and named no window. The window
+    ///   **exists** and the program in it is running; what is unknown is only
+    ///   which window, so nothing can bring it forward. Never confused with the
+    ///   refusal: treating it as one used to delete the directory of a job that
+    ///   was at that moment running (§FS-005-dispatch.22).
+    /// - `Ok(Some(handle))` — the window, and the way back to it.
+    ///
+    /// The handle is read from standard output **alone**. The opener's
+    /// diagnostics travel beside it, so a product that warns after printing its
+    /// id — or warns at all on a stream merged into the answer — cannot have the
+    /// warning recorded as the window's name (§AR-002-summons.3).
+    pub fn open(&self, title: &str, command: &str, site: &Site) -> Result<Option<String>> {
         let answer = summons::run(
-            &Summons::new(OPEN_VERB, binding),
+            &Summons::new(OPEN_VERB, self.open_command(title, command)),
             site,
             Mode::Captured(OPEN_TIMEOUT),
         )?;
-        let printed = answer.output.as_deref().unwrap_or("").trim().to_string();
         if !answer.is_done() {
-            return Err(EphorError::Command(match printed.is_empty() {
+            let said = first_line(answer.errors.as_deref().unwrap_or_default());
+            let said = match said.is_empty() {
+                true => first_line(answer.output.as_deref().unwrap_or_default()),
+                false => said,
+            };
+            return Err(EphorError::Command(match said.is_empty() {
                 true => format!("{} could not open a window", self.name),
-                false => format!(
-                    "{} could not open a window: {}",
-                    self.name,
-                    first_line(&printed)
-                ),
+                false => format!("{} could not open a window: {said}", self.name),
             }));
         }
-        // The handle is the last thing the opener said: a product that warns
-        // first still prints the id it made on its own line.
-        let handle = printed
+        // The handle is the last thing the opener said on its own stream: a
+        // product that prints a note first still prints the id it made on a
+        // line of its own.
+        let handle = answer
+            .output
+            .as_deref()
+            .unwrap_or_default()
             .lines()
             .map(str::trim)
             .filter(|line| !line.is_empty())
             .next_back()
             .unwrap_or_default()
             .to_string();
-        match handle.is_empty() {
-            true => Err(EphorError::Command(format!(
-                "{} opened a window but printed no handle, so nothing could bring it forward",
-                self.name
-            ))),
-            false => Ok(handle),
-        }
+        Ok((!handle.is_empty()).then_some(handle))
     }
 
     /// Bring a window forward. The handle is whatever the opener printed and
@@ -222,16 +259,19 @@ impl Opener {
     /// makes this miss — and what comes back is the opener's own error, which is
     /// the honest report (§DA-007-window-is-a-bound-opener.3).
     pub fn focus(&self, handle: &str, site: &Site) -> Result<()> {
-        let binding = format!("{} 2>&1", self.focus_command(handle));
         let answer = summons::run(
-            &Summons::new(FOCUS_VERB, binding),
+            &Summons::new(FOCUS_VERB, self.focus_command(handle)),
             site,
             Mode::Captured(OPEN_TIMEOUT),
         )?;
         if answer.is_done() {
             return Ok(());
         }
-        let said = first_line(answer.output.as_deref().unwrap_or(""));
+        let said = first_line(answer.errors.as_deref().unwrap_or_default());
+        let said = match said.is_empty() {
+            true => first_line(answer.output.as_deref().unwrap_or_default()),
+            false => said,
+        };
         Err(EphorError::Command(match said.is_empty() {
             true => format!("{} could not bring window {handle} forward", self.name),
             false => format!(
@@ -320,20 +360,93 @@ mod tests {
 
     /// Each shipped binding prints a handle and takes one back, and each names
     /// the variable its product sets for exactly this purpose.
+    ///
+    /// The title is the one thing a product may not take. One of the three has
+    /// no title option on its spawn, so its template carries no `{title}` and
+    /// the window it opens is named by what runs in it — counted here rather
+    /// than left as a silent drop (§REQ-001-boundary.1), so that a fourth
+    /// binding losing its title is a failing test and not a surprise.
     #[test]
     fn every_shipped_binding_has_two_verbs_and_a_variable() {
         assert_eq!(shipped().len(), 3);
         for (name, variable, open, focus) in SHIPPED {
             assert!(!variable.is_empty(), "{name} recognizes nothing");
-            assert!(open.contains("{command}"), "{name} runs nothing");
-            assert!(focus.contains("{handle}"), "{name} focuses nothing");
+            assert!(open.contains(COMMAND), "{name} runs nothing");
+            assert!(focus.contains(HANDLE), "{name} focuses nothing");
         }
+        let titled = SHIPPED
+            .iter()
+            .filter(|(_, _, open, _)| open.contains(TITLE))
+            .count();
+        assert_eq!(titled, 2, "exactly one shipped spawn takes no title");
     }
 
-    /// A binding that could not open a window says so in the opener's own
-    /// words, and one that opened a window and printed nothing is refused
-    /// rather than recorded with an empty handle — a job nothing could bring
-    /// forward is worse than one that never opened.
+    /// The environment ephor was *started in* picks the binding where nothing
+    /// is configured, read and never spawned (§FS-005-dispatch.22,
+    /// §AR-002-summons.4). The order of [`SHIPPED`] is the precedence: a reader
+    /// inside a multiplexer inside a terminal is inside the multiplexer, which
+    /// is what their `open` would have to go through anyway. A variable set to
+    /// whitespace is not being inside the product, and none of them set means
+    /// the terminal, which is the floor.
+    ///
+    /// Held under [`ENVIRONMENT`] while it runs: the variables it sets belong to
+    /// the whole process, and the test harness runs its cases on threads.
+    #[test]
+    fn the_environment_picks_the_binding_and_nothing_is_spawned_to_find_out() {
+        let _guard = ENVIRONMENT.lock().unwrap_or_else(|held| held.into_inner());
+        let clear = || {
+            for (_, variable, ..) in SHIPPED {
+                std::env::remove_var(variable);
+            }
+        };
+
+        clear();
+        assert!(bound(None).is_none(), "nothing set is the terminal");
+
+        for (name, variable, ..) in SHIPPED {
+            clear();
+            std::env::set_var(variable, "something");
+            assert_eq!(bound(None).expect("it recognizes one").name, *name);
+        }
+
+        // Two at once: the first shipped binding wins, and the order is the
+        // table's rather than the environment's.
+        clear();
+        for (_, variable, ..) in SHIPPED {
+            std::env::set_var(variable, "something");
+        }
+        assert_eq!(bound(None).expect("one of them").name, SHIPPED[0].0);
+
+        // Set to whitespace is not being inside it.
+        clear();
+        std::env::set_var(SHIPPED[0].1, "   ");
+        assert!(bound(None).is_none(), "a blank variable is nothing");
+
+        // And configuration beats the environment, because a person who wrote
+        // one down meant it.
+        clear();
+        std::env::set_var(SHIPPED[0].1, "something");
+        let named = Binding::Named(SHIPPED[2].0.to_string());
+        assert_eq!(bound(Some(&named)).expect("configured").name, SHIPPED[2].0);
+        clear();
+    }
+
+    /// The lock any test that sets these process-wide variables takes, so that
+    /// two of them can never be inside the environment at once.
+    static ENVIRONMENT: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Three answers, and they are three different facts (§AR-002-summons.6):
+    /// the opener refused and nothing ran, it ran and named no window, or it
+    /// ran and handed back the handle.
+    ///
+    /// The middle one is not a refusal. The opener's contract is *exit when the
+    /// window exists*, so a binding that ran the command and said nothing has a
+    /// window open with the program in it — treating that as "the window never
+    /// opened" is how a live program loses its record.
+    ///
+    /// And the handle is read from standard output alone: a product that warns
+    /// on standard error still made the window it named, and the warning is not
+    /// its name.
     #[test]
     fn what_the_opener_said_is_what_comes_back() {
         let tmp = tempfile::tempdir().unwrap();
@@ -352,17 +465,75 @@ mod tests {
             open: "true".to_string(),
             focus: "true".to_string(),
         };
-        let err = silent
-            .open("t", "true", &site(tmp.path()))
-            .expect_err("no handle is no window ephor can reach");
-        assert!(err.to_string().contains("printed no handle"), "{err}");
+        assert_eq!(
+            silent.open("t", "true", &site(tmp.path())).unwrap(),
+            None,
+            "a window with no name is still a window"
+        );
 
         let works = Opener {
             name: "stand-in".to_string(),
             open: "printf '@7\\n'".to_string(),
             focus: "true".to_string(),
         };
-        assert_eq!(works.open("t", "true", &site(tmp.path())).unwrap(), "@7");
+        assert_eq!(
+            works.open("t", "true", &site(tmp.path())).unwrap(),
+            Some("@7".to_string())
+        );
         works.focus("@7", &site(tmp.path())).expect("it focused");
+
+        // A note on the error stream is a note, not a handle. Merged into one
+        // stream it used to become the window's name, and `focus` then missed
+        // forever while the row said `running in window <warning text>`.
+        let chatty = Opener {
+            name: "stand-in".to_string(),
+            open: "sh -c \"printf '@7\\n'; printf 'warning: old config\\n' >&2\"".to_string(),
+            focus: "true".to_string(),
+        };
+        assert_eq!(
+            chatty.open("t", "true", &site(tmp.path())).unwrap(),
+            Some("@7".to_string())
+        );
+
+        // And a refusal still says what the opener said, wherever it said it.
+        let quiet_refusal = Opener {
+            name: "stand-in".to_string(),
+            open: "sh -c \"printf 'no session\\n'; exit 1\"".to_string(),
+            focus: "true".to_string(),
+        };
+        let err = quiet_refusal
+            .open("t", "true", &site(tmp.path()))
+            .expect_err("it refused");
+        assert!(err.to_string().contains("no session"), "{err}");
+    }
+
+    /// A pair is checked as well as a name (§REQ-001-boundary.1): a template
+    /// with nowhere to put what it is given is an absence, and an absence is
+    /// stated rather than degraded into. An `open` with no `{command}` opened
+    /// an empty window and recorded whatever it printed; a `focus` with no
+    /// `{handle}` brought the same wrong window forward forever.
+    #[test]
+    fn a_pair_with_nowhere_to_put_what_it_is_given_is_refused() {
+        let no_command = Binding::Pair {
+            open: "my-open {title}".to_string(),
+            focus: "my-focus {handle}".to_string(),
+        };
+        let why = refusal(Some(&no_command)).expect("it is refused");
+        assert!(why.contains("{command}"), "{why}");
+
+        let no_handle = Binding::Pair {
+            open: "my-open {title} {command}".to_string(),
+            focus: "my-focus".to_string(),
+        };
+        let why = refusal(Some(&no_handle)).expect("it is refused");
+        assert!(why.contains("{handle}"), "{why}");
+
+        // A pair with both is a binding, title or no title: a window named by
+        // what runs in it is a window.
+        let titleless = Binding::Pair {
+            open: "my-open -- {command}".to_string(),
+            focus: "my-focus {handle}".to_string(),
+        };
+        assert!(refusal(Some(&titleless)).is_none());
     }
 }

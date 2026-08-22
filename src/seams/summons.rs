@@ -221,6 +221,11 @@ pub struct Answer {
     /// is never parsed out of it — a contract that read stdout would make every
     /// honest build log a protocol violation.
     pub output: Option<String>,
+    /// Captured standard error, present only for [`Mode::Captured`]. Kept
+    /// *beside* the output rather than merged into it: a seam whose contract is
+    /// "print one thing on standard output" cannot have a warning become that
+    /// thing (§AR-002-summons.3). Shown in a message, never parsed.
+    pub errors: Option<String>,
     /// Where the command ran, for messages about what it did.
     pub place: PathBuf,
 }
@@ -278,12 +283,12 @@ pub fn run(summons: &Summons, site: &Site, mode: Mode) -> Result<Answer> {
         // reads the file back through its own path, which names the same file.
         .env(ANSWER_VAR, crate::paths::for_shell(&answer_file.path));
 
-    let (status, output) = match mode {
-        Mode::Interactive => (interactive(command, &summons.verb, false)?, None),
-        Mode::Aside => (interactive(command, &summons.verb, true)?, None),
+    let (status, output, errors) = match mode {
+        Mode::Interactive => (interactive(command, &summons.verb, false)?, None, None),
+        Mode::Aside => (interactive(command, &summons.verb, true)?, None, None),
         Mode::Captured(timeout) => {
-            let (status, stdout) = captured(command, &summons.verb, timeout)?;
-            (status, Some(stdout))
+            let (status, stdout, stderr) = captured(command, &summons.verb, timeout)?;
+            (status, Some(stdout), Some(stderr))
         }
     };
 
@@ -303,6 +308,7 @@ pub fn run(summons: &Summons, site: &Site, mode: Mode) -> Result<Answer> {
         exit_code,
         answer,
         output,
+        errors,
         place,
     })
 }
@@ -359,7 +365,7 @@ fn captured(
     mut command: Command,
     verb: &str,
     timeout: Duration,
-) -> Result<(std::process::ExitStatus, String)> {
+) -> Result<(std::process::ExitStatus, String, String)> {
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -404,10 +410,12 @@ fn captured(
         )));
     };
     let captured = stdout.join().unwrap_or_default();
-    // The command's own standard error stays the command's; nothing here parses
-    // it, and an unwatched summons has it in the log where it was streamed.
-    let _ = stderr.join();
-    Ok((status, captured))
+    // The command's own standard error stays the command's: nothing here parses
+    // it, and an unwatched summons has it in the log where it was streamed. It
+    // is handed back beside the output rather than merged into it, so a seam
+    // reading one line off standard output cannot read a warning instead.
+    let complaint = stderr.join().unwrap_or_default();
+    Ok((status, captured, complaint))
 }
 
 /// The file a command may write its answer to. It is named, never created: an

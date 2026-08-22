@@ -31,8 +31,16 @@ const LOCK: &str = "lock";
 /// What the job is, written before it starts and never rewritten.
 const RECORD: &str = "job.json";
 
-/// Everything the reader would have watched, in order.
+/// Everything the reader would have watched, in order. A windowed job has
+/// none: what its program wrote went to a screen the reader was watching and is
+/// not duplicated into a file (§AR-002-summons.6,
+/// §DA-007-window-is-a-bound-opener.3).
 const LOG: &str = "log";
+
+/// The supervisor's own verb, spelled once. [`start`] passes these as process
+/// arguments and [`supervisor_command`] writes them into a shell line, and the
+/// two have to start the same supervisor (§AR-002-summons.5).
+const SUPERVISOR: [&str; 2] = ["job", "run"];
 
 /// How it ended, written by the supervisor on its way out.
 const OUTCOME: &str = "outcome.json";
@@ -68,7 +76,7 @@ pub struct Step {
 /// What this seam writes today. A record from an older ephor still reads: every
 /// field added since is defaulted, so a job started before the version moved is
 /// a row like any other rather than a directory nothing can open.
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 3;
 
 /// What a job is, written once before it starts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -106,6 +114,14 @@ pub struct Record {
     /// (§AR-002-summons.6).
     #[serde(default)]
     pub window: Option<String>,
+    /// Whether this job's supervisor runs inside a window of the reader's own
+    /// (§FS-005-dispatch.22). Separate from [`Record::window`], because an
+    /// opener can open a window and print no handle: the program is running in
+    /// a window, holds the lock as any job does, and has no log — and the only
+    /// thing that is unknown is which window (§AR-002-summons.6). A record from
+    /// before this field still reads: a handle is one too.
+    #[serde(default)]
+    pub windowed: bool,
     /// The matter as `EPHOR_*` pairs, resolved where the entry was pressed —
     /// one vocabulary, identical to what a watched action receives
     /// (§FS-005-dispatch.8). Carried rather than recomputed: the supervisor
@@ -154,6 +170,13 @@ impl Job {
         !self.live && self.ended.is_none()
     }
 
+    /// Whether this job's supervisor runs inside a window of the reader's own,
+    /// and so has no log (§FS-005-dispatch.22, §AR-002-summons.6). A handle is
+    /// a window; so is a window the opener never named.
+    pub fn windowed(&self) -> bool {
+        self.record.windowed || self.record.window.is_some()
+    }
+
     /// The one line a row shows: the outcome where there is one, the last
     /// thing the log said while it runs — "still going" and "stuck" are the
     /// same words on a row, and this is the difference (§FS-005-dispatch.17).
@@ -161,15 +184,16 @@ impl Job {
         match &self.ended {
             Some(ended) => ended.says.clone(),
             None if self.died() => format!("{}: the job died", self.record.description),
-            None => tail(&self.log_path(), 1).pop().unwrap_or_else(|| {
-                match &self.record.window {
-                    // A windowed program writes to a screen the reader is
-                    // looking at, not to a file, so the row says where it is
-                    // rather than nothing (§FS-005-dispatch.22).
-                    Some(handle) => format!("running in window {handle}"),
-                    None => "started".to_string(),
-                }
-            }),
+            // A windowed program writes to a screen the reader is looking at,
+            // not to a file, so the row says where it is rather than nothing
+            // (§FS-005-dispatch.22).
+            None if self.windowed() => match &self.record.window {
+                Some(handle) => format!("running in window {handle}"),
+                None => "running in a window the opener did not name".to_string(),
+            },
+            None => tail(&self.log_path(), 1)
+                .pop()
+                .unwrap_or_else(|| "started".to_string()),
         }
     }
 
@@ -203,6 +227,16 @@ impl Job {
 
     pub fn log_path(&self) -> PathBuf {
         self.dir.join(LOG)
+    }
+
+    /// What this job wrote, where it wrote anywhere. None for a windowed job:
+    /// its program's output went to a screen the reader was watching and is not
+    /// duplicated (§AR-002-summons.6), so its inspection is `focus <handle>`
+    /// and there is no file to offer. Asked rather than assumed, because a
+    /// caller handed a path to a file that is not there reports an empty log
+    /// where the honest answer is a sentence.
+    pub fn log(&self) -> Option<PathBuf> {
+        (!self.windowed()).then(|| self.log_path())
     }
 }
 
@@ -310,7 +344,8 @@ pub fn tail(path: &Path, lines: usize) -> Vec<String> {
 /// the returned [`Job`] is what was just written, and the lock the supervisor
 /// takes is what will answer for it from here on.
 pub fn start(record: Record) -> Result<Job> {
-    let (dir, log) = write_down(&record)?;
+    let dir = write_down(&record)?;
+    let log = open_log(&dir)?;
     let errors = log
         .try_clone()
         .map_err(|err| EphorError::Command(format!("Cannot open the job log: {err}")))?;
@@ -319,8 +354,7 @@ pub fn start(record: Record) -> Result<Job> {
         .map_err(|err| EphorError::Command(format!("Cannot find ephor itself: {err}")))?;
     let mut command = Command::new(exe);
     command
-        .arg("job")
-        .arg("run")
+        .args(SUPERVISOR)
         .arg(&dir)
         // Its streams are the log: that is the whole of what "detached" means
         // here, and why the steps below need no summons mode of their own
@@ -342,20 +376,26 @@ pub fn start(record: Record) -> Result<Job> {
     started(&dir)
 }
 
-/// Write a job down without starting it: the directory, the record, and the log
-/// its supervisor will write into.
-///
-/// The log is created here rather than by the supervisor: a job whose directory
-/// exists and whose log does not would read as a job that wrote nothing, when
-/// what happened is that the supervisor never got as far as starting.
-fn write_down(record: &Record) -> Result<(PathBuf, fs::File)> {
+/// Write a job down without starting it: the directory and the record.
+fn write_down(record: &Record) -> Result<PathBuf> {
     let dir = jobs_dir().join(name(record));
     fs::create_dir_all(&dir)
         .map_err(|err| EphorError::Command(format!("Cannot create {}: {err}", dir.display())))?;
     save(&dir, record)?;
-    let log = fs::File::create(dir.join(LOG))
-        .map_err(|err| EphorError::Command(format!("Cannot open the job log: {err}")))?;
-    Ok((dir, log))
+    Ok(dir)
+}
+
+/// The file a supervisor of ephor's own writes into.
+///
+/// Created here rather than by the supervisor: a job whose directory exists and
+/// whose log does not would read as a job that wrote nothing, when what
+/// happened is that the supervisor never got as far as starting. A **windowed**
+/// job never gets one at all — its program wrote to a screen the reader was
+/// watching, and an empty file standing in for that is a recording of nothing
+/// (§AR-002-summons.6, §DA-007-window-is-a-bound-opener.3).
+fn open_log(dir: &Path) -> Result<fs::File> {
+    fs::File::create(dir.join(LOG))
+        .map_err(|err| EphorError::Command(format!("Cannot open the job log: {err}")))
 }
 
 /// The record, written whole. Through a neighbouring file and a rename, because
@@ -372,15 +412,18 @@ fn save(dir: &Path, record: &Record) -> Result<()> {
         .map_err(|err| EphorError::Command(format!("Cannot write {}: {err}", dir.display())))
 }
 
-/// The command that runs a job's supervisor. One spelling of it, so the
-/// interface and the window opener start the same supervisor
+/// The command that runs a job's supervisor, as one shell line — what the
+/// window opener is handed. [`start`] passes the same [`SUPERVISOR`] words
+/// straight to the process it spawns, so the interface and the opener start the
+/// same supervisor and nothing has to be kept in step by hand
 /// (§AR-002-summons.5).
-pub fn supervisor_command(dir: &Path) -> Result<String> {
+fn supervisor_command(dir: &Path) -> Result<String> {
     let exe = std::env::current_exe()
         .map_err(|err| EphorError::Command(format!("Cannot find ephor itself: {err}")))?;
     Ok(format!(
-        "{} job run {}",
+        "{} {} {}",
         summons::quote(&exe.to_string_lossy()),
+        SUPERVISOR.join(" "),
         summons::quote(&dir.to_string_lossy())
     ))
 }
@@ -393,22 +436,32 @@ pub fn supervisor_command(dir: &Path) -> Result<String> {
 ///
 /// It is a job in every other way. The record, the lock and the `outcome.json`
 /// are the same, so liveness is the lock exactly as everywhere and a window the
-/// reader closed is a job that ended, however it ended.
+/// reader closed is a job that ended, however it ended. There is no `log`:
+/// nothing here writes one, because what the program wrote is on that screen
+/// and duplicating it into a file is a recording the reader did not ask for
+/// (§AR-002-summons.6, §DA-007-window-is-a-bound-opener.3).
 ///
-/// `open` is handed the supervisor's own command and hands back the handle. The
-/// binding is the caller's, so nothing here names a product
-/// (§REQ-001-boundary.5).
+/// `open` is handed the supervisor's own command and hands back the handle, or
+/// `None` where it opened a window and named none. The binding is the caller's,
+/// so nothing here names a product (§REQ-001-boundary.5).
+///
+/// **The directory is removed only where the opener refused.** `Err` is nothing
+/// spawned and no supervisor that will ever start, so the directory would
+/// otherwise stand as a job that died without having run. `Ok(None)` is the
+/// opposite fact: the window is open, `ephor job run <dir>` is already running
+/// inside it, and deleting the directory under it left a program with no
+/// record, no row and a lock nothing could probe — exactly the program ephor
+/// handed a terminal to and forgot that §FS-005-dispatch.22 rules out.
 pub fn start_windowed(
     mut record: Record,
-    open: impl FnOnce(&str) -> Result<String>,
+    open: impl FnOnce(&str) -> Result<Option<String>>,
 ) -> Result<Job> {
-    let (dir, _log) = write_down(&record)?;
+    record.windowed = true;
+    let dir = write_down(&record)?;
     let handle = open(&supervisor_command(&dir)?).inspect_err(|_| {
-        // The window never opened, so no supervisor ever will: the directory
-        // would otherwise stand as a job that died without ever having run.
         let _ = fs::remove_dir_all(&dir);
     })?;
-    record.window = Some(handle);
+    record.window = handle;
     save(&dir, &record)?;
     started(&dir)
 }
@@ -642,31 +695,56 @@ pub fn job(args: &crate::cli::JobArgs) -> Result<std::process::ExitCode> {
             if log.json {
                 // The log is the reading's own field rather than raw text on
                 // standard output, so a script gets the job's state with it
-                // (§FS-011-command-line.7).
+                // (§FS-011-command-line.7). A windowed job carries no such
+                // field at all: it has no log, and an empty string would read
+                // as a job that wrote nothing (§AR-002-summons.6).
+                let mut reading = reading_of(&job);
+                if let Some(path) = job.log() {
+                    reading["log"] = serde_json::Value::String(log_text(&path));
+                }
                 println!(
                     "{}",
-                    serde_json::to_string_pretty(&serde_json::json!({
-                        "id": job.id,
-                        "project": job.record.project,
-                        "item": job.record.item,
-                        "description": job.record.description,
-                        "started": job.record.started,
-                        "live": job.live,
-                        "died": job.died(),
-                        "outcome": job.ended.as_ref().map(|ended| ended.outcome.clone()),
-                        "says": job.says(),
-                        "log": log_text(&job.log_path()),
-                    }))
-                    .unwrap_or_default()
+                    serde_json::to_string_pretty(&reading).unwrap_or_default()
                 );
             } else if !log.follow {
-                print!("{}", log_text(&job.log_path()));
+                match job.log() {
+                    Some(path) => print!("{}", log_text(&path)),
+                    // Said, rather than answered with an empty file: the
+                    // program's own output went to a screen the reader was
+                    // looking at and is not duplicated (§AR-002-summons.6,
+                    // §REQ-001-boundary.1).
+                    None => println!("{}", job.says()),
+                }
             }
             Ok(std::process::ExitCode::SUCCESS)
         }
         Some(JobCommand::List(list)) => print_jobs(list),
         None => print_jobs(&crate::cli::JobListArgs::default()),
     }
+}
+
+/// One job as a reading names it (§FS-011-command-line.7). One shape for
+/// `ephor job list` and `ephor job log`, which differ only in what they put
+/// under `log` — the path in the listing, the contents in the reading of one.
+fn reading_of(job: &Job) -> serde_json::Value {
+    let mut reading = serde_json::json!({
+        "id": job.id,
+        "project": job.record.project,
+        "item": job.record.item,
+        "description": job.record.description,
+        "started": job.record.started,
+        "live": job.live,
+        "died": job.died(),
+        "outcome": job.ended.as_ref().map(|ended| ended.outcome.clone()),
+        "says": job.says(),
+    });
+    // Where the program went, where it went to a window of the reader's own
+    // (§FS-005-dispatch.22). Such a job has no `log` field: what it wrote is on
+    // that screen and nowhere else (§AR-002-summons.6).
+    if let Some(handle) = &job.record.window {
+        reading["window"] = serde_json::Value::String(handle.clone());
+    }
+    reading
 }
 
 /// A job's log as text, whatever the job actually wrote.
@@ -768,18 +846,11 @@ fn print_jobs(args: &crate::cli::JobListArgs) -> Result<std::process::ExitCode> 
         let rows: Vec<serde_json::Value> = jobs
             .iter()
             .map(|job| {
-                serde_json::json!({
-                    "id": job.id,
-                    "project": job.record.project,
-                    "item": job.record.item,
-                    "description": job.record.description,
-                    "started": job.record.started,
-                    "live": job.live,
-                    "died": job.died(),
-                    "outcome": job.ended.as_ref().map(|ended| ended.outcome.clone()),
-                    "says": job.says(),
-                    "log": job.log_path(),
-                })
+                let mut row = reading_of(job);
+                if let Some(path) = job.log() {
+                    row["log"] = serde_json::Value::String(path.display().to_string());
+                }
+                row
             })
             .collect();
         println!(
@@ -806,7 +877,12 @@ fn print_jobs(args: &crate::cli::JobListArgs) -> Result<std::process::ExitCode> 
             state, job.record.icon, job.record.description, job.record.project
         );
         println!("           {}", job.says());
-        println!("           ephor job log {}", job.id);
+        // What reads it: the log for a job of ephor's own, and for a windowed
+        // one the window itself — there is no log to name (§AR-002-summons.6).
+        match &job.record.window {
+            Some(handle) => println!("           its window is {handle}"),
+            None => println!("           ephor job log {}", job.id),
+        }
     }
     Ok(std::process::ExitCode::SUCCESS)
 }
@@ -815,7 +891,6 @@ fn print_jobs(args: &crate::cli::JobListArgs) -> Result<std::process::ExitCode> 
 mod tests {
     use super::*;
 
-    /// The directory name leads with the instant, so the plain sort of a
     /// A record written by an older ephor is still a job: the fields added
     /// since default, so a job started before the version moved keeps its row
     /// rather than becoming a directory nothing can open
@@ -837,22 +912,26 @@ mod tests {
         assert_eq!(record.action, None);
         assert_eq!(record.branch, None);
         assert_eq!(record.window, None);
+        assert!(!record.windowed);
 
         let now = Record {
             version: VERSION,
             action: Some("rebase".to_string()),
             branch: Some("you/ABC-42".to_string()),
             window: Some("@7".to_string()),
+            windowed: true,
             ..record
         };
         let text = serde_json::to_string(&now).expect("it serializes");
         let back: Record = serde_json::from_str(&text).expect("and reads back");
-        assert_eq!(back.version, 2);
+        assert_eq!(back.version, VERSION);
         assert_eq!(back.action.as_deref(), Some("rebase"));
         assert_eq!(back.branch.as_deref(), Some("you/ABC-42"));
         assert_eq!(back.window.as_deref(), Some("@7"));
+        assert!(back.windowed);
     }
 
+    /// The directory name leads with the instant, so the plain sort of a
     /// listing is time's order and nothing has to read a record to sort rows.
     #[test]
     fn a_job_is_named_for_when_it_started_and_what_it_is() {
@@ -867,6 +946,7 @@ mod tests {
             action: None,
             branch: None,
             window: None,
+            windowed: false,
             steps: Vec::new(),
             dossier: Vec::new(),
             started: String::new(),
@@ -897,6 +977,7 @@ mod tests {
                 action: None,
                 branch: None,
                 window: None,
+                windowed: false,
                 steps: Vec::new(),
                 dossier: Vec::new(),
                 started: String::new(),

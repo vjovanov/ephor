@@ -243,9 +243,15 @@ impl WorkScreen {
             // is asking about; the rest are listed above with what they came
             // to, and `ephor job log` reads any of them by name.
             KeyCode::Char('L') => match self.jobs.first() {
-                Some(job) => Action::ReadLog {
-                    path: job.log_path(),
-                    following: job.live,
+                // A windowed job has no log: what its program wrote is on a
+                // screen the reader was looking at (§AR-002-summons.6), so the
+                // key says where it went rather than opening nothing.
+                Some(job) => match job.log() {
+                    Some(path) => Action::ReadLog {
+                        path,
+                        following: job.live,
+                    },
+                    None => Action::SetMessage(job.says()),
                 },
                 None => Action::SetMessage("ephor has run nothing here itself".to_string()),
             },
@@ -1172,6 +1178,7 @@ mod tests {
                 action: None,
                 branch: None,
                 window: None,
+                windowed: false,
                 steps: Vec::new(),
                 dossier: Vec::new(),
                 started: "2026-08-18T09:00:00Z".to_string(),
@@ -1234,6 +1241,7 @@ mod tests {
                 action: None,
                 branch: None,
                 window: None,
+                windowed: false,
                 steps: Vec::new(),
                 dossier: Vec::new(),
                 started: at(started),

@@ -457,8 +457,16 @@ impl Session {
                 let command = crate::work::runtime::attach_command(&self.work_config, id);
                 let at = crate::seams::window::site(root);
                 return match opener.open(&format!("ephor · run {id}"), &command, &at) {
-                    Ok(handle) => views::Outcome::ok(format!(
+                    Ok(Some(handle)) => views::Outcome::ok(format!(
                         "▶ watching run {id} in window {handle} — leaving it detaches"
+                    )),
+                    // The window is open and the surface is in it; what the
+                    // opener did not say is which window (§AR-002-summons.6).
+                    // A surface on a run is not recorded anywhere, so there is
+                    // nothing else the handle would have been for.
+                    Ok(None) => views::Outcome::ok(format!(
+                        "▶ watching run {id} in a window the opener did not name — leaving it \
+                         detaches"
                     )),
                     Err(err) => views::Outcome::refused(err.to_string()),
                 };
@@ -563,6 +571,16 @@ impl Session {
             // never a second copy of it (§FS-005-dispatch.22). ephor opens a
             // window and focuses one; it never closes one and never ends what
             // is in it.
+            // A window the opener never named is a window all the same: it
+            // holds its lock and its row says where the program went, and what
+            // is missing is only the handle that would bring it forward
+            // (§AR-002-summons.6). Said, not silently done nothing about
+            // (§REQ-001-boundary.1).
+            Running::Window { handle, .. } if handle.is_empty() => views::Outcome::refused(
+                "It is running in a window the opener did not name, so there is nothing to bring \
+                 forward"
+                    .to_string(),
+            ),
             Running::Window { handle, .. } => match self.opener() {
                 Some(opener) => {
                     let at = crate::seams::window::site(&crate::paths::state_dir());
@@ -642,9 +660,11 @@ impl Session {
                 About::Branch { branch, .. } => Some(branch.clone()),
                 About::Item(_) => None,
             },
-            // Filled in by the caller that opened one (§FS-005-dispatch.22);
-            // a job that took no window has none.
+            // Both filled in by [`jobs::start_windowed`] where a window was
+            // asked for (§FS-005-dispatch.22); a job that took no window has
+            // neither.
             window: None,
+            windowed: false,
             icon: action.icon.clone(),
             description: action.description.clone(),
             root: run.root.clone(),
@@ -676,15 +696,23 @@ impl Session {
         match started {
             Ok(job) => views::Outcome {
                 job: Some(job.id.clone()),
-                ..views::Outcome::ok(match &job.record.window {
+                ..views::Outcome::ok(match (&job.record.window, job.windowed()) {
                     // The window is its inspection where a log would have been,
                     // so the line that says it started says which window
-                    // (§FS-005-dispatch.22).
-                    Some(handle) => format!(
+                    // (§FS-005-dispatch.22) — and says so even where the opener
+                    // named none, because the program is in a window either way
+                    // and *where it went* is what this line is for.
+                    (Some(handle), _) => format!(
                         "{} {}: started in window {handle}",
                         job.record.icon, job.record.description
                     ),
-                    None => format!("{} {}: started", job.record.icon, job.record.description),
+                    (None, true) => format!(
+                        "{} {}: started in a window the opener did not name",
+                        job.record.icon, job.record.description
+                    ),
+                    (None, false) => {
+                        format!("{} {}: started", job.record.icon, job.record.description)
+                    }
                 })
             },
             Err(err) => views::Outcome::refused(err.to_string()),

@@ -52,6 +52,24 @@ impl Row {
     }
 }
 
+/// What opening a job row gets the reader: everything it wrote, followed as it
+/// writes (§FS-005-dispatch.17).
+///
+/// A windowed job has no log — what its program wrote is on a screen the reader
+/// was looking at and is not duplicated (§AR-002-summons.6) — so the row says
+/// where the program went rather than opening a file that is not there. The
+/// board brings no window forward: it watches, and every ability it holds is a
+/// command (§FS-005-dispatch.15, §REQ-002-parity.2).
+fn way_into(job: &crate::seams::jobs::Job) -> Action {
+    match job.log() {
+        Some(path) => Action::ReadLog {
+            path,
+            following: job.live,
+        },
+        None => Action::SetMessage(job.says()),
+    }
+}
+
 /// One operation with the matter behind it, where the feed still carries
 /// one — resolved by the shell when the board is built, never while drawing.
 pub(crate) struct OpRow {
@@ -280,10 +298,7 @@ impl OperationsScreen {
             // log — what the reader would have watched, kept
             // (§FS-005-dispatch.17).
             KeyCode::Enter | KeyCode::Char('l') => match self.selected_job() {
-                Some(job) => Action::ReadLog {
-                    path: job.log_path(),
-                    following: job.live,
-                },
+                Some(job) => way_into(job),
                 None => match self.selected_row() {
                     Some(row) => match &row.item {
                         Some(item) => Action::OpenThread {
@@ -299,10 +314,7 @@ impl OperationsScreen {
                 },
             },
             KeyCode::Char('e') => match self.selected_job() {
-                Some(job) => Action::ReadLog {
-                    path: job.log_path(),
-                    following: job.live,
-                },
+                Some(job) => way_into(job),
                 None => match self.selected_plan() {
                     Some(plan) => Action::ReadPlan(plan),
                     None => Action::SetMessage("No plan behind this row".to_string()),
@@ -607,6 +619,7 @@ mod tests {
                 action: None,
                 branch: None,
                 window: None,
+                windowed: false,
                 steps: Vec::new(),
                 dossier: Vec::new(),
                 started: "2026-08-18T09:00:00Z".to_string(),

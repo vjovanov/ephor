@@ -233,7 +233,8 @@
         "died": { "type": "boolean", "description": "Neither live nor ended: the supervisor died. Said plainly, because \"started\" would be a claim nothing supports." },
         "outcome": { "type": "string", "description": "done, failed, or parked — the summons' own three (FS-006-project-interface.3). Absent while it runs." },
         "says": { "type": "string", "description": "The one line worth showing: the outcome where there is one, the last thing the log said while it runs." },
-        "log": { "type": "string", "description": "The path to what it wrote. `ephor job log --json` carries the log's contents under this name instead, because that is what the command is for." }
+        "log": { "type": "string", "description": "The path to what it wrote. `ephor job log --json` carries the log's contents under this name instead, because that is what the command is for. Absent on a job whose supervisor runs in a window: it has none (AR-002-summons.6)." },
+        "window": { "type": "string", "description": "The window its program runs in, where the reader's own window opener opened one (FS-005-dispatch.22). Such a job has no log — what it wrote is on that screen and nowhere else — and `focus <handle>` is its inspection." }
       }
     },
     "landing": {
