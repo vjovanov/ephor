@@ -1373,3 +1373,224 @@ fn project_hands(tmp: &Path, hands: Value, permitted: &[&str]) {
     });
     fs::write(&path, serde_json::to_string_pretty(&config).unwrap()).unwrap();
 }
+
+/// A fake runner that detaches: its own help names the flag, and the launcher
+/// prints the descriptor of the run it started. Every invocation is appended
+/// to `log`, so a test can say what was asked of it and how often.
+fn detaching_runner(tmp: &Path, log: &Path) {
+    fs::create_dir_all(tmp.join("fakebin")).unwrap();
+    make_executable(
+        &tmp.join("fakebin/rhei"),
+        &format!(
+            "#!/usr/bin/env bash\n\
+             case \"$*\" in\n\
+             *--help*) printf 'Options:\\n      --headless  detach it\\n'; exit 0 ;;\n\
+             *--headless*) printf '%s\\n' \"$*\" >> {log}; printf '{{\"id\":\"3f9a2c\",\"pid\":9,\"status\":\"running\",\"exit_code\":null}}\\n'; exit 0 ;;\n\
+             *) printf 'other %s\\n' \"$*\" >> {log}; exit 0 ;;\n\
+             esac\n",
+            log = log.to_string_lossy(),
+        ),
+    );
+}
+
+/// How many runs the fake launcher was asked to start.
+fn starts(log: &Path) -> usize {
+    fs::read_to_string(log)
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| line.contains("--headless"))
+        .count()
+}
+
+/// Work nobody has to start starts itself (§FS-005-dispatch.24).
+///
+/// A recipe that says `autorun` gets its run in the same breath as its ticket
+/// — nobody presses anything — and the sweep behind that is idempotent: asked
+/// again while the run holds the root it starts nothing, because a second run
+/// there would only wait for the first. A recipe that says nothing is still
+/// the reader's to start.
+#[test]
+fn a_recipe_that_asks_to_run_itself_gets_its_run_without_anyone_pressing_a_key() {
+    let tmp = tempdir();
+    fixture(
+        tmp.path(),
+        json!({
+            "recipes": [{
+                "id": "fix-gate",
+                "icon": "🔧",
+                "description": "fix the red gate",
+                "brief": "fix {title}",
+                "autorun": true,
+                "when": { "kinds": ["pr"], "gate": "red" }
+            }]
+        }),
+    );
+    let log = tmp.path().join("runner.log");
+    detaching_runner(tmp.path(), &log);
+    ephor(tmp.path())
+        .args(["refresh", "demo"])
+        .assert()
+        .success();
+
+    // Dispatch alone starts it: the ticket and its run in one breath.
+    ephor(tmp.path())
+        .args(["work", "dispatch"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("run 3f9a2c started"));
+    assert_eq!(starts(&log), 1, "{}", fs::read_to_string(&log).unwrap());
+
+    // And the sweep is idempotent. Nothing here holds the lock — the fake
+    // launcher exits — so this would start a second run if the root were not
+    // read as it is: the ticket is still open, so it starts one, and that is
+    // the honest answer for a root with no run on it.
+    ephor(tmp.path())
+        .args(["work", "run", "--due", "--json"])
+        .assert()
+        .success();
+    assert_eq!(starts(&log), 2);
+}
+
+/// Silence means the key (§FS-005-dispatch.24): a recipe that never asked to
+/// run itself is dispatched and left, and the sweep says there is nothing due.
+#[test]
+fn a_recipe_that_did_not_ask_is_never_started_by_the_sweep() {
+    let tmp = tempdir();
+    fixture(
+        tmp.path(),
+        json!({
+            "recipes": [{
+                "id": "fix-gate",
+                "icon": "🔧",
+                "description": "fix the red gate",
+                "brief": "fix {title}",
+                "when": { "kinds": ["pr"], "gate": "red" }
+            }]
+        }),
+    );
+    let log = tmp.path().join("runner.log");
+    detaching_runner(tmp.path(), &log);
+    ephor(tmp.path())
+        .args(["refresh", "demo"])
+        .assert()
+        .success();
+    ephor(tmp.path())
+        .args(["work", "dispatch"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("run ").not());
+    ephor(tmp.path())
+        .args(["work", "run", "--due"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Nothing is due"));
+    assert_eq!(starts(&log), 0);
+
+    // The reader's own key is unchanged and starts it.
+    ephor(tmp.path()).args(["work", "run"]).assert().success();
+    assert_eq!(starts(&log), 1);
+}
+
+/// A root a run already holds gets nothing from the sweep
+/// (§FS-005-dispatch.24): the runtime schedules one run per root, and the live
+/// run reaches a ticket written beneath it.
+#[test]
+fn the_sweep_starts_nothing_on_a_root_a_run_already_holds() {
+    let tmp = tempdir();
+    fixture(
+        tmp.path(),
+        json!({
+            "recipes": [{
+                "id": "fix-gate",
+                "icon": "🔧",
+                "description": "fix the red gate",
+                "brief": "fix {title}",
+                "autorun": true,
+                "when": { "kinds": ["pr"], "gate": "red" }
+            }]
+        }),
+    );
+    let log = tmp.path().join("runner.log");
+    detaching_runner(tmp.path(), &log);
+    ephor(tmp.path())
+        .args(["refresh", "demo"])
+        .assert()
+        .success();
+    ephor(tmp.path())
+        .args(["work", "dispatch"])
+        .assert()
+        .success();
+    let before = starts(&log);
+
+    // A run takes the root's lock, exactly as the runtime does.
+    let root = tmp.path().join("demo/panta");
+    fs::create_dir_all(root.join(".rhei")).unwrap();
+    fs::write(root.join(".rhei/run.lock"), "").unwrap();
+    let holder = fs::File::open(root.join(".rhei/run.lock")).unwrap();
+    holder.lock().unwrap();
+
+    ephor(tmp.path())
+        .args(["work", "run", "--due"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Nothing is due"));
+    assert_eq!(starts(&log), before, "a second run would only wait");
+    drop(holder);
+}
+
+/// A start that fails is remembered, and that root rests before it is tried
+/// again (§FS-005-dispatch.24) — otherwise every sweep for as long as the
+/// ticket stays open is another spawn. The failure is said, never swallowed.
+#[test]
+fn a_start_that_fails_is_said_and_rests_before_it_is_tried_again() {
+    let tmp = tempdir();
+    fixture(
+        tmp.path(),
+        json!({
+            "recipes": [{
+                "id": "fix-gate",
+                "icon": "🔧",
+                "description": "fix the red gate",
+                "brief": "fix {title}",
+                "autorun": true,
+                "when": { "kinds": ["pr"], "gate": "red" }
+            }]
+        }),
+    );
+    let log = tmp.path().join("runner.log");
+    // A runner that names the flag and then refuses to launch.
+    fs::create_dir_all(tmp.path().join("fakebin")).unwrap();
+    make_executable(
+        &tmp.path().join("fakebin/rhei"),
+        &format!(
+            "#!/usr/bin/env bash\n\
+             case \"$*\" in\n\
+             *--help*) printf 'Options:\\n      --headless  detach it\\n'; exit 0 ;;\n\
+             *--headless*) printf '%s\\n' \"$*\" >> {log}; printf 'no\\n' >&2; exit 3 ;;\n\
+             *) exit 0 ;;\n\
+             esac\n",
+            log = log.to_string_lossy(),
+        ),
+    );
+    ephor(tmp.path())
+        .args(["refresh", "demo"])
+        .assert()
+        .success();
+    // The dispatch still lands — the ticket is written whatever the run does
+    // — and the reader is told the run did not begin.
+    ephor(tmp.path())
+        .args(["work", "dispatch"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("no run started"));
+    let tried = starts(&log);
+    assert_eq!(tried, 1);
+
+    // Asked again at once, the root is resting and nothing is spawned.
+    ephor(tmp.path())
+        .args(["work", "run", "--due"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Nothing is due"));
+    assert_eq!(starts(&log), tried, "the root rests after a failed start");
+}

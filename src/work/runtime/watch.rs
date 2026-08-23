@@ -7,10 +7,16 @@
 //! would park ephor behind the very run it is asking about — and the
 //! operating system releases the lock when a run dies, however it dies,
 //! which is why the lock and not the last write is the liveness signal.
-//! Everything else read here — the transition journal, the agent logs, the
-//! dashboard address, the runner's own plan listing — is the binding's own
-//! artifact grammar, spelled in this module and nowhere else
-//! (§REQ-001-boundary.5).
+//! Everything else read here — the run's own stream, the transition journal,
+//! the agent logs, the dashboard address, the runner's own plan listing — is
+//! the binding's own artifact grammar, spelled in this module and nowhere
+//! else (§REQ-001-boundary.5).
+//!
+//! Which tickets a run has in hand is asked of the run itself where the
+//! binding writes a stream about one run ([`super::events`]), and of the
+//! journal where it does not (§FS-005-dispatch.15.2). [`Witness`] is that
+//! choice, made once per root: everything downstream asks it the same
+//! question and never which of the two answered.
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
@@ -177,12 +183,65 @@ pub fn holding(_config: &WorkConfig, root: &Path) -> Vec<Held> {
         .collect()
 }
 
+/// Which tickets a run on this root has in hand, and what said so
+/// (§FS-005-dispatch.15.2).
+///
+/// The run's own stream is preferred wherever the binding writes one: it
+/// covers exactly one run, so an assignment still open in it belongs to that
+/// run and to no other, and none of the journal's inferences apply. The
+/// journal is the floor beneath it and is read unchanged where no stream is
+/// there — an older runner, a run from before the binding wrote them — so
+/// nothing here becomes a requirement on the binding (§AR-007-runtime.3).
+pub enum Witness {
+    /// What the run said about itself.
+    Stream(super::events::Progress),
+    /// What every run on this root ever left behind, argued down to what is
+    /// still plausibly held (§FS-005-dispatch.15).
+    Journal(Vec<Held>),
+}
+
+impl Witness {
+    /// Whether a run on this root holds this ticket, in the state the plan
+    /// still has it in.
+    pub fn holds(
+        &self,
+        root: &Path,
+        born: Option<SystemTime>,
+        plan_id: &str,
+        ticket: &str,
+        state: Option<&str>,
+    ) -> bool {
+        match self {
+            // No lock-birth check and no staleness argument: the stream was
+            // truncated when this run began, so nothing in it is an earlier
+            // run's leavings.
+            Witness::Stream(progress) => progress.holds(plan_id, ticket, state),
+            Witness::Journal(held) => held.iter().any(|entry| {
+                (entry.task == ticket || entry.task == format!("{plan_id}.{ticket}"))
+                    && state.map(|state| entry.still_at(state)).unwrap_or(false)
+                    && !predates_lock(root, entry, born)
+            }),
+        }
+    }
+}
+
+/// Who answers for this root: the run's own stream where there is one, the
+/// journal otherwise. Read once per root by a caller asking about several
+/// tickets — the re-reading §FS-005-dispatch.15.1 rules out.
+pub fn witness(config: &WorkConfig, root: &Path) -> Witness {
+    match super::events::progress(root) {
+        Some(progress) => Witness::Stream(progress),
+        None => Witness::Journal(holding(config, root)),
+    }
+}
+
 /// Whether a live run holds this ticket right now: the root's lock is held,
-/// and the journal names the ticket in the state the plan still has it in,
-/// by a log that does not predate the lock. The same reading the board makes
-/// for a running row (§FS-005-dispatch.15), asked here before a cancel: a
-/// ticket a live run holds is the run's to finish, not the reader's to move
-/// (§FS-005-dispatch.16).
+/// and what the run wrote about itself still names the ticket in the state
+/// the plan has it in — or, where the runner wrote no such stream, the
+/// journal does, by a log that does not predate the lock. The same reading
+/// the board makes for a running row (§FS-005-dispatch.15), asked here
+/// before a cancel: a ticket a live run holds is the run's to finish, not
+/// the reader's to move (§FS-005-dispatch.16).
 pub fn held_by_live_run(
     config: &WorkConfig,
     root: &Path,
@@ -193,14 +252,7 @@ pub fn held_by_live_run(
     if !live(config, root) {
         return false;
     }
-    held_among(
-        &holding(config, root),
-        root,
-        lock_born(root),
-        plan_id,
-        ticket,
-        state,
-    )
+    witness(config, root).holds(root, lock_born(root), plan_id, ticket, Some(state))
 }
 
 /// When the root's lock file was born, where it exists. Read once by a caller
@@ -210,28 +262,6 @@ pub fn lock_born(root: &Path) -> Option<SystemTime> {
     fs::metadata(root.join(LOCK))
         .and_then(|meta| meta.modified())
         .ok()
-}
-
-/// The same reading [`held_by_live_run`] makes, with the liveness probe and the
-/// journal read already done.
-///
-/// A menu asks this once per candidate ticket, and asking through
-/// [`held_by_live_run`] re-probed the lock and re-read the whole journal for
-/// each of them — the re-reading §FS-005-dispatch.15.1 rules out. The caller
-/// that hoisted those reads passes them in; the answer is the same one.
-pub fn held_among(
-    held: &[Held],
-    root: &Path,
-    born: Option<SystemTime>,
-    plan_id: &str,
-    ticket: &str,
-    state: &str,
-) -> bool {
-    held.iter().any(|entry| {
-        (entry.task == ticket || entry.task == format!("{plan_id}.{ticket}"))
-            && entry.still_at(state)
-            && !predates_lock(root, entry, born)
-    })
 }
 
 /// Whether a held entry's log was last written before the root's lock file
@@ -325,15 +355,16 @@ pub fn identity(_config: &WorkConfig, root: &Path) -> Option<RunIdentity> {
 }
 
 /// When a run on this root last moved anything the change gate watches: the
-/// newest of the journal — the runtime writes it a line per slot move — and
-/// the lock file, which is born when the first run ever locks the root.
+/// newest of the run's own stream and the journal — the runtime writes both
+/// a record per slot move — and the lock file, which is born when the first
+/// run ever locks the root.
 ///
-/// Deliberately not the agent logs (§FS-005-dispatch.15.1): logs accumulate
-/// for the life of a project and are appended between slot moves, so statting
-/// every one of them on every tick is an unbounded sweep for an answer the
-/// journal already gives. How long a live run has been silent is the quiet
-/// badge's business — the clock behind [`pulse`] — measured only for a live
-/// row.
+/// Three names, which is still the fixed handful §FS-005-dispatch.15.1 asks
+/// for, and deliberately not the agent logs: logs accumulate for the life of
+/// a project and are appended between slot moves, so statting every one of
+/// them on every tick is an unbounded sweep for an answer the stream already
+/// gives. How long a live run has been silent is the quiet badge's business —
+/// the clock behind [`pulse`] — measured only for a live row.
 pub fn wrote_at(_config: &WorkConfig, root: &Path) -> Option<SystemTime> {
     [JOURNAL, LOCK]
         .iter()
@@ -342,6 +373,7 @@ pub fn wrote_at(_config: &WorkConfig, root: &Path) -> Option<SystemTime> {
                 .and_then(|meta| meta.modified())
                 .ok()
         })
+        .chain(super::events::wrote_at(root))
         .max()
 }
 
@@ -755,7 +787,8 @@ pub fn board(config: &WorkConfig, roots: &[RootPlans]) -> Board {
     let mut operations = Vec::new();
     for group in roots {
         let is_live = live(config, &group.root);
-        let held = holding(config, &group.root);
+        // Who answers for this root's slots, chosen once (§FS-005-dispatch.15.2).
+        let witness = witness(config, &group.root);
         let lock_born = fs::metadata(group.root.join(LOCK))
             .and_then(|meta| meta.modified())
             .ok();
@@ -816,16 +849,12 @@ pub fn board(config: &WorkConfig, roots: &[RootPlans]) -> Board {
                 .map(|(state, machine)| machine.is_gating(state))
                 .unwrap_or(false)
         };
-        // A held entry is believed only while the ticket's own state still
-        // says so, and only where its log does not predate the lock: the
-        // journal survives across runs, and a run that crashed mid-slot left
-        // its last assignment unreleased forever (§FS-005-dispatch.15).
+        // What the witness says, asked the same way whichever of the two it
+        // is: the run's own stream where the binding writes one, the journal
+        // argued down from staleness where it does not
+        // (§FS-005-dispatch.15.2).
         let held_now = |plan_id: &str, ticket: &str, state: Option<&str>| {
-            held.iter().any(|entry| {
-                (entry.task == ticket || entry.task == format!("{plan_id}.{ticket}"))
-                    && state.map(|state| entry.still_at(state)).unwrap_or(false)
-                    && !predates_lock(&group.root, entry, lock_born)
-            })
+            witness.holds(&group.root, lock_born, plan_id, ticket, state)
         };
         let mut tickets = Vec::new();
         let mut done = 0;
@@ -985,6 +1014,8 @@ pub fn board(config: &WorkConfig, roots: &[RootPlans]) -> Board {
 
 #[cfg(test)]
 mod tests {
+    /// The run's own stream, by the name the binding gives it.
+    use super::super::events::STREAM as EVENTS;
     use super::*;
 
     /// A runner every machine has, so the workable rung holds and only the
@@ -1458,6 +1489,139 @@ mod tests {
         assert!(
             board.operations.is_empty(),
             "a moved ticket clears the journal's claim"
+        );
+    }
+
+    /// The stream is a witness to one run and the journal is a witness to
+    /// all of them, so where both exist the stream answers
+    /// (§FS-005-dispatch.15.2). Here the journal still carries an earlier
+    /// run's unreleased assignment on a ticket the live run has already
+    /// finished with — the exact shape that used to need arguing down from
+    /// log ages — and the stream simply does not hold it.
+    #[test]
+    fn the_runs_own_stream_answers_over_a_journal_that_outlived_a_run() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let group = root_with_plan(root, false);
+        write(&root.join(LOCK), "");
+        // An earlier run took fix-gate-1 up and died without releasing it.
+        write(
+            &root.join(JOURNAL),
+            "2026-08-14T10:00:00Z  fix-gate-1  start@fix  runtime/logs/task-fix-gate-1-fix.log\n",
+        );
+        write(
+            &root.join(LOGS).join("task-fix-gate-1-fix.log"),
+            "was working",
+        );
+        // This run took it up and let it go again, and is now working
+        // answer-1. Its own record says so.
+        write(
+            &root.join(EVENTS),
+            concat!(
+                r#"{"seq":1,"ts":"2026-08-23T09:00:00Z","event":"run_started","schema":1,"run_id":"3f9a2c"}"#,
+                "\n",
+                r#"{"seq":2,"ts":"2026-08-23T09:01:00Z","event":"slot_assigned","slot":0,"task":"fix-gate-1","from":"fix","to":"fix","agent":"claude","log_path":"runtime/logs/task-fix-gate-1-fix.log"}"#,
+                "\n",
+                r#"{"seq":3,"ts":"2026-08-23T09:02:00Z","event":"slot_released","slot":0,"task":"fix-gate-1","from":"fix","to":"fix","log_path":"runtime/logs/task-fix-gate-1-fix.log","outcome":"completed","exit_code":0,"duration_ms":60000}"#,
+                "\n",
+                r#"{"seq":4,"ts":"2026-08-23T09:03:00Z","event":"slot_assigned","slot":0,"task":"answer-1","from":"fix","to":"fix","agent":"claude","log_path":"runtime/logs/task-answer-1-fix.log"}"#,
+                "\n",
+            ),
+        );
+        let holder = fs::File::open(root.join(LOCK)).unwrap();
+        holder.lock().unwrap();
+
+        let board = board(&config(), std::slice::from_ref(&group));
+        let op = &board.operations[0];
+        assert!(op.live);
+        let doing = |id: &str| {
+            op.tickets
+                .iter()
+                .find(|ticket| ticket.ticket == id)
+                .map(|ticket| ticket.doing.clone())
+        };
+        // The journal would have said fix-gate-1 was running; the run's own
+        // record says it released it, and the row follows the run.
+        assert_eq!(doing("fix-gate-1"), Some(Doing::Queued));
+        assert_eq!(doing("answer-1"), Some(Doing::Running));
+        drop(holder);
+    }
+
+    /// A run that died mid-slot, read from its own stream: the file is
+    /// truncated per run, so an assignment still open in it belongs to the
+    /// run that wrote it — and no `run_finished` says that run never reached
+    /// its own end. Dropped, with no inference about log ages
+    /// (§FS-005-dispatch.15.2).
+    #[test]
+    fn a_stream_left_open_by_a_dead_run_reads_dropped() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let group = root_with_plan(root, false);
+        write(&root.join(LOCK), "");
+        write(
+            &root.join(EVENTS),
+            concat!(
+                r#"{"seq":1,"ts":"2026-08-23T09:00:00Z","event":"run_started","schema":1,"run_id":"3f9a2c"}"#,
+                "\n",
+                r#"{"seq":2,"ts":"2026-08-23T09:01:00Z","event":"slot_assigned","slot":0,"task":"fix-gate-1","from":"fix","to":"fix","agent":"claude","log_path":"runtime/logs/task-fix-gate-1-fix.log"}"#,
+                "\n",
+            ),
+        );
+
+        let board = board(&config(), std::slice::from_ref(&group));
+        let op = &board.operations[0];
+        assert!(!op.live);
+        assert_eq!(op.tickets.len(), 1);
+        assert_eq!(op.tickets[0].ticket, "fix-gate-1");
+        assert_eq!(op.tickets[0].doing, Doing::Dropped);
+    }
+
+    /// A run that ended cleanly leaves a stream with nothing open in it, so
+    /// its root stops being an operation the moment the lock goes — the
+    /// journal's forever-open assignment problem does not arise at all.
+    #[test]
+    fn a_stream_from_a_run_that_finished_holds_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let group = root_with_plan(root, false);
+        write(&root.join(LOCK), "");
+        write(
+            &root.join(EVENTS),
+            concat!(
+                r#"{"seq":1,"ts":"2026-08-23T09:00:00Z","event":"run_started","schema":1,"run_id":"3f9a2c"}"#,
+                "\n",
+                r#"{"seq":2,"ts":"2026-08-23T09:01:00Z","event":"slot_assigned","slot":0,"task":"fix-gate-1","from":"fix","to":"fix","agent":"claude","log_path":"runtime/logs/a.log"}"#,
+                "\n",
+                r#"{"seq":3,"ts":"2026-08-23T09:02:00Z","event":"slot_released","slot":0,"task":"fix-gate-1","from":"fix","to":"fix","log_path":"runtime/logs/a.log","outcome":"completed","exit_code":0,"duration_ms":6000}"#,
+                "\n",
+                r#"{"seq":4,"ts":"2026-08-23T09:02:01Z","event":"run_finished","summary":{"completed":1}}"#,
+                "\n",
+            ),
+        );
+
+        let board = board(&config(), std::slice::from_ref(&group));
+        assert!(
+            board.operations.is_empty(),
+            "a run that finished leaves no operation behind"
+        );
+    }
+
+    /// The change gate sees the stream: a run that wrote only there — no
+    /// journal line yet — still moves the timestamp the tick reads
+    /// (§FS-005-dispatch.15.1).
+    #[test]
+    fn the_change_gate_reads_the_runs_stream_too() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        write(&root.join(LOCK), "");
+        write(&root.join(JOURNAL), "journal\n");
+        write(&root.join(EVENTS), "{}\n");
+        stamp(&root.join(LOCK), 1_000);
+        stamp(&root.join(JOURNAL), 2_000);
+        stamp(&root.join(EVENTS), 3_000);
+        assert_eq!(
+            wrote_at(&config(), root),
+            Some(SystemTime::UNIX_EPOCH + Duration::from_secs(3_000))
         );
     }
 

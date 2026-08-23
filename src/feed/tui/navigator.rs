@@ -1067,6 +1067,12 @@ const WORK_INDENT: usize = 8 + 2 + 5 + 2 - 2;
 /// nothing where it does not (§FS-005-dispatch.18).
 fn work_line(line: &WorkLine, now: chrono::DateTime<Utc>) -> Line<'static> {
     let style = match line.tone {
+        // A run has it in hand right now, and the row says so at a glance:
+        // green against the yellow of work that is merely open, so the two
+        // are not one colour with one marker (§FS-005-dispatch.23).
+        Tone::Running => Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD),
         Tone::Going => Style::default().fg(Color::Yellow),
         Tone::Waiting => Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         Tone::Over => Style::default().fg(Color::DarkGray),

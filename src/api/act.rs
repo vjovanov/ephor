@@ -951,7 +951,31 @@ impl Session {
                     }
                     match dispatcher.save() {
                         Ok(()) => {
-                            let says = format!("{} {} — {ticket}", recipe.icon, recipe.description);
+                            let mut says =
+                                format!("{} {} — {ticket}", recipe.icon, recipe.description);
+                            // Work that needs nobody to start it gets its run
+                            // in the same breath as the ticket
+                            // (§FS-005-dispatch.24). The sweep is what starts
+                            // it, so this is the same act the timer makes and
+                            // is safe on a root that already has a run: it
+                            // starts nothing there.
+                            if recipe.autorun {
+                                let project = item.project.clone();
+                                for run in dispatcher.start_due(
+                                    chrono::Utc::now(),
+                                    std::slice::from_ref(&project),
+                                    &[],
+                                ) {
+                                    says = format!("{says} · {}", run.says());
+                                }
+                                // The record of what starting came to is
+                                // ephor's own and is kept; a failure that
+                                // went unwritten would be retried at once
+                                // (§FS-005-dispatch.24).
+                                if let Err(err) = dispatcher.save() {
+                                    says = format!("{says} · {err}");
+                                }
+                            }
                             self.reload_work();
                             views::Outcome {
                                 tickets: vec![ticket],

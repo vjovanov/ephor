@@ -33,6 +33,7 @@
         "description": "fix the red gate",
         "state": "fix",
         "needs_checkout": true,
+        "autorun": true,
         "when": { "kinds": ["pr"], "roles": ["author"], "gate": "failing" },
         "brief": "The gate on {title} is red. The failing jobs are named above; find what actually broke and fix the cause. Run `just check` in {workspace} before you call it done."
       }

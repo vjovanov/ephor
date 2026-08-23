@@ -384,6 +384,10 @@ pub struct WorkStatus {
     pub missing: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub changes: Vec<String>,
+    /// Minutes of silence on the live run holding this work, where that is
+    /// long enough to note (§FS-005-dispatch.23). A badge, never a verdict.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quiet: Option<u64>,
     pub tickets: Vec<Ticket>,
 }
 
@@ -397,6 +401,14 @@ pub struct Ticket {
     pub state: Option<String>,
     pub finished: bool,
     pub cancelled: bool,
+    /// A live run has this ticket in hand right now, read from the run's own
+    /// record of itself (§FS-005-dispatch.15.2). Open and being worked on are
+    /// different facts and a reading says which, exactly as a row does
+    /// (§FS-005-dispatch.23).
+    pub running: bool,
+    /// A run is live on this ticket's root and has not reached it yet: it
+    /// gets its turn without anyone doing anything (§FS-005-dispatch.15).
+    pub queued: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verdict: Option<String>,
 }

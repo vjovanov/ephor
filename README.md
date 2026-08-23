@@ -383,8 +383,16 @@ ephor work                                        # what it made of it
 
 and then, whenever the world moves — a new comment, a gate that turned red —
 `ephor refresh && ephor work sync` writes the next round of tickets and
-`ephor work run` works them. A timer can run the first half; running agents is
-left deliberate.
+`ephor work run` works them.
+
+A recipe that says `"autorun": true` does not wait for that last command: the
+ticket gets its run in the same breath it is written, and a timer running
+`ephor work run --due` starts anything born elsewhere. The sweep behind it
+reads the world rather than a memory — a root is due when it holds an open,
+unclaimed, unparked ticket from such a recipe and no run is live on it — so it
+is safe to invoke as often as anything cares to, and starts nothing on a root
+that already has a run. Everything that says nothing about this is still
+nobody's to start but yours.
 
 In the TUI, `w` on any item opens its **work screen**: the tickets already
 opened and what they reached, whether the item has moved under them, and the
@@ -394,7 +402,10 @@ ticket back (through the runtime's own move into `cancelled`, with your reason
 as its result — the plan keeps it), `R` hands this item's plan to the runtime
 (which takes over the terminal, so you watch it work), `e` reads the plan.
 Rows carry a badge — `⚙ fix-gate · review`, `✓ answer · done — …`,
-`⊘ fix-gate · cancelled`, `⟳ 2 new messages`.
+`⊘ fix-gate · cancelled`, `⟳ 2 new messages`. A ticket a run has in hand right
+now is `▶` in green instead, one the live run has not reached yet says
+`· queued`, and a run that has gone quiet says `· quiet 12m`: open and being
+worked on are different facts, and the row says which without your leaving it.
 
 ### By hand
 
