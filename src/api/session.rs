@@ -41,6 +41,42 @@ pub struct WorkBadge {
     pub stale: bool,
 }
 
+/// What a finished job's one line is filed under, so it lands on the row the
+/// job ran on rather than at the top of the screen (§FS-005-dispatch.17). A
+/// record names a matter or a branch and never both (§FS-004-quick-actions.6),
+/// and one that names neither is still about its project.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum JobSubject {
+    /// The matter it was started about: its project, and its item id.
+    Matter(String, String),
+    /// The branch it ran on: its project, and the branch.
+    Branch(String, String),
+    /// The project, where the record names neither.
+    Project(String),
+}
+
+impl JobSubject {
+    /// What a job was about, read from the record it wrote before it started.
+    pub fn of(record: &crate::seams::jobs::Record) -> JobSubject {
+        match (&record.item, &record.branch) {
+            (Some(item), _) => JobSubject::Matter(record.project.clone(), item.clone()),
+            (None, Some(branch)) => JobSubject::Branch(record.project.clone(), branch.clone()),
+            (None, None) => JobSubject::Project(record.project.clone()),
+        }
+    }
+
+    /// Whose part of the tree this row sits in. Every subject carries it, so
+    /// that a line whose own row is nowhere on the screen still has a project
+    /// row to land on rather than being lost.
+    pub fn project(&self) -> &str {
+        match self {
+            JobSubject::Matter(project, _)
+            | JobSubject::Branch(project, _)
+            | JobSubject::Project(project) => project,
+        }
+    }
+}
+
 /// Shared data both screens read. Mutations go through the shell so screens
 /// stay pure key-to-[`Action`] translators.
 #[derive(Default)]
@@ -99,6 +135,11 @@ pub struct Session {
     pub unread_only: bool,
     /// Per item id, what has been handed to the runtime about it.
     pub work: BTreeMap<String, WorkBadge>,
+    /// The one line each finished job left, filed under the subject it ran on
+    /// (§FS-005-dispatch.17). Written when a job is seen to end and read off
+    /// again when the reader opens that row: news, not a state, which is why
+    /// it is remembered here rather than recomputed from the records.
+    pub job_news: BTreeMap<JobSubject, String>,
     /// The half of ephor that hands work over (§FS-005-dispatch). None when
     /// the registry could not be read for it — the watch still works.
     pub dispatcher: Option<crate::work::Dispatcher>,
@@ -824,6 +865,7 @@ impl Session {
             recent_days: config.defaults.recent_days,
             unread_only: true,
             work: BTreeMap::new(),
+            job_news: BTreeMap::new(),
             dispatcher: crate::work::Dispatcher::load(config).ok(),
             work_config: config.work.clone(),
             config: config.clone(),
@@ -1021,6 +1063,70 @@ impl Session {
             let pinned = recipe.hand.clone();
             let choice = dispatcher.hand(&item.project, &recipe.id, None, pinned.as_ref(), &root);
             entry.hand = Some(who_gets_it(&choice, unbound.as_deref()));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::seams::jobs::Record;
+
+    fn record() -> Record {
+        Record {
+            version: crate::seams::jobs::VERSION,
+            project: "widget".to_string(),
+            item: None,
+            icon: "⤴".to_string(),
+            description: "rebase onto master".to_string(),
+            root: std::path::PathBuf::from("/w"),
+            workspace: None,
+            action: Some("rebase".to_string()),
+            branch: None,
+            window: None,
+            windowed: false,
+            steps: Vec::new(),
+            dossier: Vec::new(),
+            started: String::new(),
+        }
+    }
+
+    /// A job's line is filed under what the job was about, so it lands on that
+    /// row rather than at the top of the screen (§FS-005-dispatch.17). The
+    /// record names a matter or a branch and never both
+    /// (§FS-004-quick-actions.6), and every subject carries its project so
+    /// that a line whose own row is nowhere still has one to land on.
+    #[test]
+    fn a_line_is_filed_under_what_the_job_was_about() {
+        let branch = Record {
+            branch: Some("you/ABC-42".to_string()),
+            ..record()
+        };
+        assert_eq!(
+            JobSubject::of(&branch),
+            JobSubject::Branch("widget".to_string(), "you/ABC-42".to_string())
+        );
+
+        let matter = Record {
+            item: Some("forge-prs:acme/widget#42".to_string()),
+            ..record()
+        };
+        assert_eq!(
+            JobSubject::of(&matter),
+            JobSubject::Matter("widget".to_string(), "forge-prs:acme/widget#42".to_string())
+        );
+
+        // Neither: the project is still what it was about.
+        assert_eq!(
+            JobSubject::of(&record()),
+            JobSubject::Project("widget".to_string())
+        );
+        for subject in [
+            JobSubject::of(&branch),
+            JobSubject::of(&matter),
+            JobSubject::of(&record()),
+        ] {
+            assert_eq!(subject.project(), "widget");
         }
     }
 }

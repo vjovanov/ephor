@@ -1616,6 +1616,24 @@ ships, the previous "latest" section moves verbatim to
 
 ### Changed
 
+- **A finished job says so under the branch it ran on, not at the top of the
+  screen**
+  ([§FS-005-dispatch.17](../requirements.md#17-a-move-that-needs-nobody-runs-beneath-the-screen)).
+  A replay started beneath the screen used to announce itself in the
+  header — `⤴ rebase onto main (level as of Aug 23): ok` above `ephor stream`
+  — which names no project and no branch, so a reader with three of them going
+  had to guess which row had just moved, and the line was gone at the next
+  keypress. The line now lands **under the subject the job ran on**: the branch
+  row it replayed, or the matter it was started about, beside the distance it
+  just changed. Where that row is not on the screen at all — a branch with no
+  item filed under it, the projects summary — the project's own row carries it,
+  because news with nowhere to land is news that is lost. It stays there until
+  the row is opened (`enter`, `o`, `x`, `w`, `c`) or a later job about the same
+  subject replaces it. Only what has **ended** lands there: a job still going
+  is already marked running where it could be started again
+  ([§FS-005-dispatch.21](../requirements.md#21-what-is-already-going-is-shown-where-it-could-be-started-again))
+  and holds a row among the operations
+  ([§FS-005-dispatch.15](../requirements.md#15-every-operation-is-visible-in-one-place)).
 - **The rebase is offered on every branch that is here, and every distance says
   how fresh it is**
   ([§FS-004-quick-actions.6](../requirements.md#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase),

@@ -12,6 +12,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, ListItem, ListState};
 
+use crate::api::JobSubject;
 use crate::feed::cache::{self, Seen};
 use crate::feed::gate::Gate;
 use crate::feed::model::{Item, ItemKind, ItemRole};
@@ -80,14 +81,21 @@ struct Row {
     /// Why it is back in front of the reader, where the store remembers what
     /// it looked like when it was read (§FS-007-matters.5).
     resurfacing: Option<String>,
+    /// The one line a job that ran about this matter left when it ended
+    /// (§FS-005-dispatch.17).
+    news: Option<String>,
 }
 
 /// One line in a tree view.
 enum Entry {
     /// Organization header, not selectable.
     Org(String),
-    /// Project row; Enter opens the detail view.
-    Project(String),
+    /// Project row; Enter opens the detail view. Carries the finished-job
+    /// lines filed under this project whose own row is nowhere on this
+    /// screen, because news with nowhere to land is news that is lost
+    /// (§FS-005-dispatch.17) — each with the subject it was filed under, so
+    /// that opening the row reads exactly those lines off.
+    Project(String, Vec<(JobSubject, String)>),
     /// Type-level section header, not selectable.
     Header(&'static str),
     /// Branch row: group header inside a type section, or the branch
@@ -96,11 +104,12 @@ enum Entry {
     /// it trails its own published copy (each summed over the workspace's
     /// repos, and each carrying the day it was measured as of —
     /// §FS-004-quick-actions.6) — two distances, two facts
-    /// (§DA-003-upstream-is-the-published-copy) — and how many items are
-    /// filed under it. Every fact on the row is settled here, at rebuild:
-    /// the last of them was being looked up inside `draw`, which allocated
-    /// two keys per branch row per frame to answer something that cannot
-    /// change between two keystrokes.
+    /// (§DA-003-upstream-is-the-published-copy) — how many items are
+    /// filed under it, and the one line a job that ran on it left when it
+    /// ended (§FS-005-dispatch.17). Every fact on the row is settled here, at
+    /// rebuild: the last of them was being looked up inside `draw`, which
+    /// allocated two keys per branch row per frame to answer something that
+    /// cannot change between two keystrokes.
     Branch(
         String,
         BranchInfo,
@@ -108,6 +117,7 @@ enum Entry {
         Option<Trail>,
         Option<Trail>,
         usize,
+        Option<String>,
     ),
     /// Group header for items linked to none of the project's branches —
     /// neither one the row names nor one with a workspace on disk.
@@ -135,6 +145,10 @@ pub(crate) struct NavigatorState {
     detail_project: usize,
     detail_entries: Vec<Entry>,
     detail_state: ListState,
+    /// The subjects whose finished-job line the reader has just opened, taken
+    /// by the shell after each key (§FS-005-dispatch.17). The line is news,
+    /// and news that has been opened has been read.
+    read_news: Vec<JobSubject>,
 }
 
 impl NavigatorState {
@@ -148,7 +162,41 @@ impl NavigatorState {
             detail_project: 0,
             detail_entries: Vec::new(),
             detail_state: ListState::default(),
+            read_news: Vec::new(),
         }
+    }
+
+    /// What the reader has opened since this was last asked, and so has read.
+    pub fn take_read_news(&mut self) -> Vec<JobSubject> {
+        std::mem::take(&mut self.read_news)
+    }
+
+    /// The subjects filed under the row the cursor is on, and only where that
+    /// row is carrying a line: an ordinary keypress on an ordinary row must
+    /// not churn the tree.
+    fn news_under_cursor(&mut self) -> Vec<JobSubject> {
+        let (entries, state) = self.tree();
+        match state.selected().and_then(|index| entries.get(index)) {
+            Some(Entry::Item(row)) if row.news.is_some() => vec![JobSubject::Matter(
+                row.item.project.clone(),
+                row.item.id.clone(),
+            )],
+            Some(Entry::Branch(project, branch, _, _, _, _, news)) if news.is_some() => {
+                vec![JobSubject::Branch(project.clone(), branch.branch.clone())]
+            }
+            // The project row carries what had no row of its own, so opening
+            // it reads exactly those off and nothing else.
+            Some(Entry::Project(_, news)) => {
+                news.iter().map(|(subject, _)| subject.clone()).collect()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Mark the row under the cursor read, where it is carrying news.
+    fn read_selection(&mut self) {
+        let read = self.news_under_cursor();
+        self.read_news.extend(read);
     }
 
     pub fn has_stream_entries(&self) -> bool {
@@ -214,6 +262,10 @@ impl NavigatorState {
                     checked_out: ctx.item_checked_out(&item),
                     work: ctx.work.get(&item.id).cloned(),
                     resurfacing: ctx.resurfacing.get(&item.id).cloned(),
+                    news: ctx
+                        .job_news
+                        .get(&JobSubject::Matter(project.to_string(), item.id.clone()))
+                        .cloned(),
                     item,
                 })
                 .collect();
@@ -251,6 +303,12 @@ impl NavigatorState {
                     ctx.branch_standing(project, &branch.branch)
                         .and_then(Standing::upstream_trail),
                     ctx.branch_linked(project, branch),
+                    ctx.job_news
+                        .get(&JobSubject::Branch(
+                            project.to_string(),
+                            branch.branch.clone(),
+                        ))
+                        .cloned(),
                 ));
                 for index in matching {
                     entries.push(Entry::Item(rows[index].clone()));
@@ -276,10 +334,14 @@ impl NavigatorState {
             let mut org_entries = Vec::new();
             for project in ctx.org_projects(&org.id) {
                 let sections = self.type_section_entries(ctx, &project);
-                if sections.is_empty() {
+                let unplaced = unplaced_news(ctx, &project, &sections);
+                // A project with nothing to show still gets its row where a
+                // job that ran on it has something to say: news with nowhere
+                // to land is news that is lost (§FS-005-dispatch.17).
+                if sections.is_empty() && unplaced.is_empty() {
                     continue;
                 }
-                org_entries.push(Entry::Project(project));
+                org_entries.push(Entry::Project(project, unplaced));
                 org_entries.extend(sections);
             }
             if org_entries.is_empty() {
@@ -303,6 +365,10 @@ impl NavigatorState {
                 checked_out: None,
                 work: None,
                 resurfacing: ctx.resurfacing.get(&item.id).cloned(),
+                news: ctx
+                    .job_news
+                    .get(&JobSubject::Matter(item.project.clone(), item.id.clone()))
+                    .cloned(),
                 item: item.clone(),
             })
             .collect();
@@ -331,8 +397,14 @@ impl NavigatorState {
                 continue;
             }
             self.project_entries.push(Entry::Org(ctx.org_label(org)));
+            // The summary has no item or branch rows, so everything filed
+            // under the project lands on the project's own row
+            // (§FS-005-dispatch.17).
             self.project_entries
-                .extend(projects.into_iter().map(Entry::Project));
+                .extend(projects.into_iter().map(|project| {
+                    let unplaced = unplaced_news(ctx, &project, &[]);
+                    Entry::Project(project, unplaced)
+                }));
         }
         fix_selection(&self.project_entries, &mut self.project_state, was);
     }
@@ -355,6 +427,9 @@ impl NavigatorState {
                     ctx.branch_standing(&project, &branch.branch)
                         .and_then(Standing::upstream_trail),
                     ctx.branch_linked(&project, branch),
+                    ctx.job_news
+                        .get(&JobSubject::Branch(project.clone(), branch.branch.clone()))
+                        .cloned(),
                 ));
             }
         }
@@ -392,8 +467,16 @@ impl NavigatorState {
                 self.tree_select_edge(false);
                 Action::None
             }
-            KeyCode::Enter | KeyCode::Char('l') => self.activate(ctx, true),
-            KeyCode::Char('o') => self.activate(ctx, false),
+            // Every key that opens the row the cursor is on reads its
+            // finished-job line off with it (§FS-005-dispatch.17).
+            KeyCode::Enter | KeyCode::Char('l') => {
+                self.read_selection();
+                self.activate(ctx, true)
+            }
+            KeyCode::Char('o') => {
+                self.read_selection();
+                self.activate(ctx, false)
+            }
             KeyCode::Char('v') => match self.selected_item() {
                 Some(item) => Action::OpenThread {
                     item,
@@ -404,25 +487,34 @@ impl NavigatorState {
             // Where the fact is shown is where the move is offered: a branch
             // row carries ephor's own offers about the branch, with no matter
             // behind it (§FS-004-quick-actions.6).
-            KeyCode::Char('x') => match self.selected_row() {
-                Some(Selected::Item(item)) => Action::OpenActionMenu(item),
-                Some(Selected::Branch(project, branch)) => {
-                    Action::OpenBranchActions { project, branch }
+            KeyCode::Char('x') => {
+                self.read_selection();
+                match self.selected_row() {
+                    Some(Selected::Item(item)) => Action::OpenActionMenu(item),
+                    Some(Selected::Branch(project, branch)) => {
+                        Action::OpenBranchActions { project, branch }
+                    }
+                    _ => Action::None,
                 }
-                _ => Action::None,
-            },
+            }
             // What is being done about this, and what could be
             // (§FS-005-dispatch).
-            KeyCode::Char('w') => match self.selected_item() {
-                Some(item) => Action::OpenWork(item),
-                None => Action::None,
-            },
+            KeyCode::Char('w') => {
+                self.read_selection();
+                match self.selected_item() {
+                    Some(item) => Action::OpenWork(item),
+                    None => Action::None,
+                }
+            }
             // The counts on the row are a summary of a verdict; `c` is where
             // the verdict itself is (§FS-001-forge-interface.1).
-            KeyCode::Char('c') => match self.selected_item() {
-                Some(item) => Action::OpenGate(item),
-                None => Action::None,
-            },
+            KeyCode::Char('c') => {
+                self.read_selection();
+                match self.selected_item() {
+                    Some(item) => Action::OpenGate(item),
+                    None => Action::None,
+                }
+            }
             KeyCode::Char('m') | KeyCode::Char('d') | KeyCode::Char(' ') => {
                 match self.selected_item() {
                     Some(item) => Action::MarkDone {
@@ -507,7 +599,7 @@ impl NavigatorState {
             Some(Entry::Branch(project, branch, ..)) => {
                 Some(Selected::Branch(project.clone(), branch.clone()))
             }
-            Some(Entry::Project(project)) => Some(Selected::Project(project.clone())),
+            Some(Entry::Project(project, _)) => Some(Selected::Project(project.clone())),
             _ => None,
         }
     }
@@ -572,7 +664,7 @@ impl NavigatorState {
                         .fg(Color::Green)
                         .add_modifier(Modifier::BOLD),
                 ))),
-                Entry::Project(project) => {
+                Entry::Project(project, news) => {
                     if summary_projects {
                         let (total, unread, respond) = ctx.unread_stats(project);
                         let branches = ctx
@@ -588,7 +680,7 @@ impl NavigatorState {
                         } else {
                             Span::styled("nothing pending", Style::default().fg(Color::DarkGray))
                         };
-                        ListItem::new(Line::from(vec![
+                        let mut spans = vec![
                             Span::styled(
                                 format!("  {project:<30}"),
                                 Style::default().fg(Color::Cyan),
@@ -597,7 +689,11 @@ impl NavigatorState {
                                 "{branches:>2} branches  {total:>3} items  {unread:>3} unread  "
                             )),
                             respond_span,
-                        ]))
+                        ];
+                        if !news.is_empty() {
+                            spans.push(news_span(&joined(news)));
+                        }
+                        ListItem::new(Line::from(spans))
                     } else {
                         let (_, unread, respond) = ctx.unread_stats(project);
                         let mut spans = vec![Span::styled(
@@ -617,6 +713,9 @@ impl NavigatorState {
                                 Style::default().fg(Color::DarkGray),
                             ));
                         }
+                        if !news.is_empty() {
+                            spans.push(news_span(&joined(news)));
+                        }
                         ListItem::new(Line::from(spans))
                     }
                 }
@@ -632,13 +731,14 @@ impl NavigatorState {
                         .fg(Color::DarkGray)
                         .add_modifier(Modifier::ITALIC),
                 ))),
-                Entry::Branch(_, branch, checked_out, behind, behind_upstream, linked) => {
+                Entry::Branch(_, branch, checked_out, behind, behind_upstream, linked, news) => {
                     ListItem::new(branch_line(
                         branch,
                         *checked_out,
                         *behind,
                         *behind_upstream,
                         *linked,
+                        news.as_deref(),
                     ))
                 }
                 Entry::Item(row) => {
@@ -661,6 +761,51 @@ impl NavigatorState {
     }
 }
 
+/// The lines this project's own row has to carry: every finished job filed
+/// under it whose own row is not among `shown` (§FS-005-dispatch.17). News
+/// with nowhere to land is news that is lost, and a project with no row for
+/// the branch a replay ran on is exactly that case.
+fn unplaced_news(ctx: &Ctx, project: &str, shown: &[Entry]) -> Vec<(JobSubject, String)> {
+    let placed: Vec<JobSubject> = shown
+        .iter()
+        .filter_map(|entry| match entry {
+            Entry::Item(row) => Some(JobSubject::Matter(
+                row.item.project.clone(),
+                row.item.id.clone(),
+            )),
+            Entry::Branch(project, branch, ..) => {
+                Some(JobSubject::Branch(project.clone(), branch.branch.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    ctx.job_news
+        .iter()
+        .filter(|(subject, _)| subject.project() == project)
+        .filter(|(subject, _)| !placed.contains(subject))
+        .map(|(subject, line)| (subject.clone(), line.clone()))
+        .collect()
+}
+
+/// Several lines on one project row, in the order they are filed.
+fn joined(news: &[(JobSubject, String)]) -> String {
+    news.iter()
+        .map(|(_, line)| line.as_str())
+        .collect::<Vec<_>>()
+        .join("  ·  ")
+}
+
+/// How a finished job's line is set apart wherever it lands: one colour, on
+/// every row that carries one (§FS-005-dispatch.17).
+fn news_span(line: &str) -> Span<'static> {
+    Span::styled(
+        format!("   {line}"),
+        Style::default()
+            .fg(Color::Magenta)
+            .add_modifier(Modifier::BOLD),
+    )
+}
+
 /// One branch row. Both distances a checkout can trail by are on it, kept
 /// distinguishable — `N behind` is against the project's main branch, `↓N`
 /// against the branch's own published copy
@@ -673,6 +818,7 @@ fn branch_line(
     behind: Option<Trail>,
     behind_upstream: Option<Trail>,
     linked: usize,
+    news: Option<&str>,
 ) -> Line<'static> {
     let marker = if branch.active {
         Span::styled("      ● ", Style::default().fg(Color::Green))
@@ -745,6 +891,11 @@ fn branch_line(
             Style::default().fg(Color::Magenta),
         ));
     }
+    // What the last job to run on this branch said as it ended, beside the
+    // distance it just moved (§FS-005-dispatch.17).
+    if let Some(news) = news {
+        spans.push(news_span(news));
+    }
     Line::from(spans)
 }
 
@@ -755,6 +906,7 @@ fn item_line(row: &Row, seen: &Seen, now: chrono::DateTime<Utc>) -> Line<'static
         checked_out,
         work,
         resurfacing: _,
+        news: _,
     } = row;
     let (stale, checked_out) = (*stale, *checked_out);
     let marker = if item.needs_response {
@@ -817,6 +969,11 @@ fn item_line(row: &Row, seen: &Seen, now: chrono::DateTime<Utc>) -> Line<'static
             Style::default().fg(Color::DarkGray)
         };
         spans.push(Span::styled(format!("  {}", work.text), style));
+    }
+    // What a job ephor ran about this matter said as it ended, on the row it
+    // was about rather than at the top of the screen (§FS-005-dispatch.17).
+    if let Some(news) = &row.news {
+        spans.push(news_span(news));
     }
     Line::from(spans)
 }
@@ -883,7 +1040,7 @@ fn count_spans(passed: u64, failed: u64, running: u64) -> Vec<Span<'static>> {
 fn identity(entry: &Entry) -> Option<String> {
     match entry {
         Entry::Item(row) => Some(format!("item:{}", row.item.id)),
-        Entry::Project(project) => Some(format!("project:{project}")),
+        Entry::Project(project, _) => Some(format!("project:{project}")),
         Entry::Branch(project, branch, ..) => Some(format!("branch:{project}:{}", branch.branch)),
         Entry::Org(_) | Entry::Header(_) | Entry::Unassigned => None,
     }
@@ -943,6 +1100,7 @@ mod tests {
             checked_out: None,
             work: None,
             resurfacing: None,
+            news: None,
         })
     }
 
@@ -1086,6 +1244,7 @@ mod tests {
             Some(trail(13)),
             Some(trail(2)),
             0,
+            None,
         );
         let text = text_of(&line);
         assert!(text.contains(" · 13 behind"), "{text:?}");
@@ -1111,6 +1270,7 @@ mod tests {
             Some(trail(0)),
             Some(trail(0)),
             0,
+            None,
         );
         assert!(
             text_of(&level).contains(" · level"),
@@ -1119,7 +1279,14 @@ mod tests {
         );
         assert!(!text_of(&level).contains('↓'));
 
-        let unpushed = branch_line(&branch_info("you/ABC-42"), true, Some(trail(3)), None, 0);
+        let unpushed = branch_line(
+            &branch_info("you/ABC-42"),
+            true,
+            Some(trail(3)),
+            None,
+            0,
+            None,
+        );
         assert!(text_of(&unpushed).contains(" · 3 behind"));
         assert!(!text_of(&unpushed).contains('↓'));
     }
@@ -1135,14 +1302,28 @@ mod tests {
             behind,
             seen: Some(chrono::Utc::now()),
         };
-        let trailing = branch_line(&branch_info("you/ABC-42"), true, Some(dated(13)), None, 0);
+        let trailing = branch_line(
+            &branch_info("you/ABC-42"),
+            true,
+            Some(dated(13)),
+            None,
+            0,
+            None,
+        );
         assert!(
             text_of(&trailing).contains(" · 13 behind as of "),
             "{:?}",
             text_of(&trailing)
         );
 
-        let level = branch_line(&branch_info("you/ABC-42"), true, Some(dated(0)), None, 0);
+        let level = branch_line(
+            &branch_info("you/ABC-42"),
+            true,
+            Some(dated(0)),
+            None,
+            0,
+            None,
+        );
         assert!(
             text_of(&level).contains(" · level as of "),
             "{:?}",
@@ -1153,7 +1334,14 @@ mod tests {
         }
 
         // Never fetched here: the qualifier is left off, not filled in.
-        let undated = branch_line(&branch_info("you/ABC-42"), true, Some(trail(0)), None, 0);
+        let undated = branch_line(
+            &branch_info("you/ABC-42"),
+            true,
+            Some(trail(0)),
+            None,
+            0,
+            None,
+        );
         assert!(
             !text_of(&undated).contains("as of"),
             "{:?}",
@@ -1165,13 +1353,131 @@ mod tests {
     /// measured, and nothing is measured at all on a branch not on disk.
     #[test]
     fn each_distance_stands_without_the_other() {
-        let copy_only = branch_line(&branch_info("you/ABC-42"), true, None, Some(trail(4)), 0);
+        let copy_only = branch_line(
+            &branch_info("you/ABC-42"),
+            true,
+            None,
+            Some(trail(4)),
+            0,
+            None,
+        );
         assert!(!text_of(&copy_only).contains("behind"));
         assert!(text_of(&copy_only).contains(" · ↓4"));
 
-        let absent = branch_line(&branch_info("you/ABC-42"), false, None, None, 0);
+        let absent = branch_line(&branch_info("you/ABC-42"), false, None, None, 0, None);
         assert!(text_of(&absent).contains("∅ not checked out"));
         assert!(!text_of(&absent).contains('↓'));
+    }
+
+    /// A job that ended says so under the branch it ran on, not at the top of
+    /// the screen: a header line naming no branch is news about nothing in
+    /// particular, and the reader with three replays going has to guess which
+    /// row moved (§FS-005-dispatch.17).
+    #[test]
+    fn a_finished_job_says_so_under_the_branch_it_ran_on() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut ctx = super::super::tests::ctx_with_branch(tmp.path(), None);
+        ctx.job_news.insert(
+            JobSubject::Branch("widget".to_string(), "you/ABC-42-retry-window".to_string()),
+            "⤴ rebase onto master (level as of Aug 23): ok".to_string(),
+        );
+        let mut navigator = NavigatorState::new();
+        navigator.mode = Mode::Detail;
+        navigator.rebuild_detail(&ctx);
+
+        let branch = navigator
+            .detail_entries
+            .iter()
+            .find_map(|entry| match entry {
+                Entry::Branch(_, branch, checked_out, behind, upstream, linked, news) => {
+                    Some(branch_line(
+                        branch,
+                        *checked_out,
+                        *behind,
+                        *upstream,
+                        *linked,
+                        news.as_deref(),
+                    ))
+                }
+                _ => None,
+            })
+            .expect("the branch row");
+        assert!(
+            text_of(&branch).contains("rebase onto master (level as of Aug 23): ok"),
+            "{:?}",
+            text_of(&branch)
+        );
+        // And it is set apart from the facts that were already on the row.
+        let news = branch
+            .spans
+            .iter()
+            .find(|span| span.content.contains(": ok"))
+            .expect("the line is a span of its own");
+        assert!(news.style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    /// News with nowhere to land is news that is lost, so a line whose own row
+    /// is not on this screen is carried by the project's row
+    /// (§FS-005-dispatch.17).
+    #[test]
+    fn a_line_with_no_row_of_its_own_is_carried_by_the_project() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut ctx = super::super::tests::ctx_with_branch(tmp.path(), None);
+        let subject =
+            JobSubject::Branch("widget".to_string(), "you/ABC-42-retry-window".to_string());
+        ctx.job_news
+            .insert(subject.clone(), "⤴ rebase onto master: ok".to_string());
+        // Nothing of this project is on the screen: the project row takes it.
+        let alone = unplaced_news(&ctx, "widget", &[]);
+        assert_eq!(alone.len(), 1, "{alone:?}");
+        assert_eq!(alone[0].0, subject);
+
+        // The branch's own row is on the screen: the project row takes
+        // nothing, because the line is already where it belongs.
+        let shown = [Entry::Branch(
+            "widget".to_string(),
+            branch_info("you/ABC-42-retry-window"),
+            true,
+            None,
+            None,
+            0,
+            Some("⤴ rebase onto master: ok".to_string()),
+        )];
+        assert!(unplaced_news(&ctx, "widget", &shown).is_empty());
+
+        // Another project's row is not a place for it either.
+        assert!(unplaced_news(&ctx, "gadget", &[]).is_empty());
+    }
+
+    /// The line stays under its subject until the reader opens that row, and
+    /// opening it is what reads it off (§FS-005-dispatch.17). An ordinary key
+    /// on an ordinary row reads nothing.
+    #[test]
+    fn opening_the_row_reads_its_line_off_and_moving_the_cursor_does_not() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut ctx = super::super::tests::ctx_with_branch(tmp.path(), None);
+        let subject =
+            JobSubject::Branch("widget".to_string(), "you/ABC-42-retry-window".to_string());
+        ctx.job_news
+            .insert(subject.clone(), "⤴ rebase onto master: ok".to_string());
+        let mut navigator = NavigatorState::new();
+        navigator.mode = Mode::Detail;
+        navigator.rebuild_detail(&ctx);
+
+        // Moving onto the row is not opening it: the line is still there to
+        // be read.
+        navigator.handle_key(&ctx, KeyCode::Char('j'));
+        assert!(navigator.take_read_news().is_empty());
+
+        navigator.handle_key(&ctx, KeyCode::Char('x'));
+        assert_eq!(navigator.take_read_news(), vec![subject.clone()]);
+
+        // And only once: the shell drops what was read and rebuilds, and the
+        // row has nothing left to read off.
+        ctx.job_news.remove(&subject);
+        navigator.rebuild_detail(&ctx);
+        navigator.handle_key(&ctx, KeyCode::Char('x'));
+        assert!(navigator.take_read_news().is_empty());
     }
 
     /// `x` on a branch row opens the menu about the branch. The action menu
@@ -1192,6 +1498,7 @@ mod tests {
                 Some(trail(13)),
                 Some(trail(2)),
                 0,
+                None,
             ),
             row("pr:1"),
         ];
@@ -1219,15 +1526,15 @@ mod tests {
     fn a_project_row_keeps_its_place() {
         let before = vec![
             Entry::Org("Acme".to_string()),
-            Entry::Project("widget".to_string()),
+            Entry::Project("widget".to_string(), Vec::new()),
         ];
         let mut state = on(&before, 1);
         let was = selected_identity(&before, &state);
 
         let after = vec![
             Entry::Org("Acme".to_string()),
-            Entry::Project("gadget".to_string()),
-            Entry::Project("widget".to_string()),
+            Entry::Project("gadget".to_string(), Vec::new()),
+            Entry::Project("widget".to_string(), Vec::new()),
         ];
         fix_selection(&after, &mut state, was);
 

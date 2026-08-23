@@ -433,6 +433,16 @@ impl App {
                 Screen::Work(work) => work.handle_key(key.code),
                 Screen::Operations(board) => board.handle_key(key.code),
             };
+            // A finished job's line stays under its subject until the reader
+            // opens that row, and opening it is what reads it off
+            // (§FS-005-dispatch.17).
+            let read = self.navigator.take_read_news();
+            if !read.is_empty() {
+                for subject in read {
+                    self.ctx.job_news.remove(&subject);
+                }
+                self.rebuild_view();
+            }
             if self.apply(action, terminal, config)? {
                 return Ok(ExitCode::SUCCESS);
             }
@@ -1887,7 +1897,7 @@ impl App {
     /// rather than being reported as dead a millisecond after it was asked
     /// for.
     fn pulse_jobs(&mut self) -> bool {
-        let mut news: Vec<String> = Vec::new();
+        let mut ended = false;
         let mut changed = false;
         for job in &mut self.jobs {
             if job.ended.is_some() {
@@ -1907,13 +1917,17 @@ impl App {
             } else {
                 job.live = false;
             }
-            news.push(job.says());
+            // The line goes under the subject the job ran on, not at the top
+            // of the screen: a header saying a replay went through names no
+            // branch, and the reader with three going has to guess which row
+            // moved (§FS-005-dispatch.17). A later job about the same subject
+            // replaces it, because the row says what happened last.
+            self.ctx
+                .job_news
+                .insert(crate::api::JobSubject::of(&job.record), job.says());
+            ended = true;
         }
-        if let Some(last) = news.pop() {
-            self.message = match news.len() {
-                0 => last,
-                more => format!("{last}  (+{more} more finished)"),
-            };
+        if ended {
             // What the move changed is what the rows say: a replay moves a
             // branch's distance from its base, a checkout buys the rungs that
             // were waiting on it (§AR-005-capabilities.1), and a conflict

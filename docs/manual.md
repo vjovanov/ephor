@@ -2448,11 +2448,17 @@ word. `e` or `Enter` on the row opens the log in `$PAGER` — with `less` that
 is `less +F`, following the job as it writes; `q` stops following, `F`
 resumes.
 
-**When it ends, it says so where you are.** Whatever screen you are reading,
-the outcome lands in the status bar, and the row leaves the board — an inbox
-of every finished thing is the pile the board exists to avoid. What the move
-changed is picked up with it: the branch's distance from its base is
-re-measured, and a conflict handed over is a ticket that was not there before.
+**When it ends, it says so under the row it ran on.** The outcome lands on the
+branch row it replayed, or on the row of the matter it was started about —
+beside the distance it just changed — rather than in the status bar, which
+names no branch and is gone at your next keypress. Where that row is not on
+the screen at all — a branch with no item filed under it, or the projects
+summary — the project's own row carries it. The line stays until you open that
+row (`enter`, `o`, `x`, `w`, `c`) or a later job on the same subject replaces
+it, and the job's row leaves the board — an inbox of every finished thing is
+the pile the board exists to avoid. What the move changed is picked up with
+it: the branch's distance from its base is re-measured, and a conflict handed
+over is a ticket that was not there before.
 
 **Afterwards it stays with the item.** The work screen (`w`) lists what ephor
 ran there, with what each came to, and `L` reads the newest one's log.

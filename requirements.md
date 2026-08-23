@@ -1642,9 +1642,23 @@ than trusted (§FS-006-project-interface.8), and a checkout that did not make
 it ends the job there with what it said. A job is a sequence because the move
 was a sequence; it is not a way to run two unrelated things.
 
-**The outcome comes back to where the reader is looking.** A job ending is
-news exactly as a ticket parking is (§FS-005-dispatch.9): its one line lands
-on the screen being read, whatever screen that is. A job that has ended is no
+**The outcome comes back to the row it was about.** A job ending is news
+exactly as a ticket parking is (§FS-005-dispatch.9), and news read at the top
+of the screen is news about nothing in particular: a header line saying a
+replay went through names no branch, so a reader with three of them going has
+to guess which row just moved. So the line lands **under the subject the job
+ran on** — the branch it replayed (§FS-004-quick-actions.6), or the matter it
+was started about — beside the facts it changed, and it stays there until the
+reader opens that row or a later job about the same subject replaces it. Where
+that row is not on the screen at all, the project's own row carries it: news
+with nowhere to land is news that is lost.
+
+**Only what has ended lands there.** A job still going is already marked
+running where it could be started again
+([§21](#21-what-is-already-going-is-shown-where-it-could-be-started-again))
+and holds a row among the operations
+([§15](#15-every-operation-is-visible-in-one-place)), and a third live mark
+on the tree would be one fact said three times. A job that has ended is no
 longer an operation and leaves the board — an inbox that accumulated every
 finished thing would be the pile this section exists to avoid — while its
 record stays with the item it was about, log and all, until it is old enough
