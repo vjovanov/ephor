@@ -278,6 +278,132 @@ impl WorkStatus {
         }
         badge
     }
+
+    /// The rows this work stands on beneath the matter it is about
+    /// (§FS-005-dispatch.23): one per open ticket, the parked one first
+    /// (§FS-005-dispatch.9), and — where nothing is open — one for what the
+    /// last ticket decided. `verdict` is how much of a verdict's own sentence
+    /// fits on a row.
+    pub fn lines(&self, verdict_width: usize) -> Vec<WorkLine> {
+        if self.missing {
+            return vec![WorkLine::said(Tone::Waiting, "⚠", "plan missing")];
+        }
+        // Work that is entirely workflows has no ticket of its own; what it
+        // has is said on the rows beneath (§FS-005-dispatch.19).
+        if self.tickets.is_empty() && self.workflows > 0 {
+            let said = match self.workflows {
+                1 => "1 workflow".to_string(),
+                many => format!("{many} workflows"),
+            };
+            return vec![WorkLine::said(Tone::Going, "⛬", said)];
+        }
+        let mut lines: Vec<WorkLine> = Vec::new();
+        let open = self.tickets.iter().filter(|ticket| !ticket.finished);
+        for ticket in open.clone().filter(|ticket| ticket.waiting) {
+            // A ticket the machine opened for itself has no recipe — its
+            // "recipe" falls back to its own id, and saying that twice is
+            // noise where the point is the question.
+            let said = match ticket.recipe == ticket.id {
+                true => format!("waiting on you · {}", ticket.id),
+                false => format!("{} · waiting on you · {}", ticket.recipe, ticket.id),
+            };
+            lines.push(WorkLine::of(Tone::Waiting, "⚠", said, ticket));
+        }
+        for ticket in open.filter(|ticket| !ticket.waiting) {
+            let said = format!(
+                "{} · {}",
+                ticket.recipe,
+                ticket.state.as_deref().unwrap_or("?")
+            );
+            lines.push(WorkLine::of(Tone::Going, "⚙", said, ticket));
+        }
+        // Nothing open: what the last one decided, on one line. The rest of
+        // the record is the work screen's (§FS-005-dispatch.18).
+        if lines.is_empty() {
+            lines.push(match self.tickets.last() {
+                // Taken back is a different kind of over from finished, and
+                // the row says which (§FS-005-dispatch.16).
+                Some(last) if last.cancelled => WorkLine::of(
+                    Tone::Over,
+                    "⊘",
+                    format!("{} · cancelled", last.recipe),
+                    last,
+                ),
+                Some(last) => {
+                    // The verdict's own sentence, cut where a row ends: the
+                    // rest of it is in the artifact, one keystroke away.
+                    let said = match &last.verdict {
+                        Some(verdict) => {
+                            format!("{} · {}", last.recipe, clamp(verdict, verdict_width))
+                        }
+                        None => last.recipe.clone(),
+                    };
+                    WorkLine::of(Tone::Over, "✓", said, last)
+                }
+                None => WorkLine::said(Tone::Over, "·", "no tickets"),
+            });
+        }
+        if self.stale() {
+            lines.push(WorkLine::said(
+                Tone::Stale,
+                "⟳",
+                format!("since that was asked: {}", self.changes.join("; ")),
+            ));
+        }
+        lines
+    }
+}
+
+/// How a work line reads at a glance (§FS-005-dispatch.23). The tones the work
+/// screen already spells its tickets in, so the tree and the screen behind `w`
+/// cannot say the same ticket two different ways.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tone {
+    /// The runtime is on it.
+    Going,
+    /// It has stopped and a person has to answer it (§FS-005-dispatch.9).
+    Waiting,
+    /// Finished, or taken back (§FS-005-dispatch.16).
+    Over,
+    /// The item has moved under the work (§FS-005-dispatch.5).
+    Stale,
+}
+
+/// One row of a matter's work, beneath the row the matter is on
+/// (§FS-005-dispatch.23).
+#[derive(Debug, Clone)]
+pub struct WorkLine {
+    pub tone: Tone,
+    pub marker: &'static str,
+    pub said: String,
+    /// The ticket this row *is*, where it is one — what cancelling here takes
+    /// back (§FS-005-dispatch.16). None on a row that is a summary rather than
+    /// a ticket, and on one whose ticket is already over.
+    pub ticket: Option<String>,
+    /// When ephor asked for it, where the ledger knows (§FS-005-dispatch.18).
+    pub asked: Option<DateTime<Utc>>,
+}
+
+impl WorkLine {
+    fn of(tone: Tone, marker: &'static str, said: String, ticket: &TicketStatus) -> WorkLine {
+        WorkLine {
+            tone,
+            marker,
+            said,
+            ticket: (!ticket.finished).then(|| ticket.id.clone()),
+            asked: ticket.asked,
+        }
+    }
+
+    fn said(tone: Tone, marker: &'static str, said: impl Into<String>) -> WorkLine {
+        WorkLine {
+            tone,
+            marker,
+            said: said.into(),
+            ticket: None,
+            asked: None,
+        }
+    }
 }
 
 /// What the work behind one menu entry is doing, for the row that could start
@@ -2701,5 +2827,105 @@ echo "Task $stem.$task transitioned: '$from' → '$to'"
         );
         assert_eq!(groups.len(), 1, "{:?}", roots_of(&groups));
         assert_eq!(groups[0].plans.len(), 1);
+    }
+
+    fn ticket(id: &str, state: &str) -> TicketStatus {
+        TicketStatus {
+            id: id.to_string(),
+            recipe: "fix-gate".to_string(),
+            title: "fix the red gate".to_string(),
+            state: Some(state.to_string()),
+            finished: false,
+            cancelled: false,
+            waiting: false,
+            assignee: None,
+            pinned: None,
+            verdict: None,
+            asked: None,
+        }
+    }
+
+    fn work_status(tickets: Vec<TicketStatus>) -> WorkStatus {
+        WorkStatus {
+            project: "widget".to_string(),
+            root: PathBuf::from("/w/widget/panta"),
+            plan_id: "forge-widget-42".to_string(),
+            checkout: PathBuf::from("/w/widget"),
+            plan: PathBuf::from("/w/widget/panta/forge-widget-42.rhei.md"),
+            missing: false,
+            tickets,
+            workflows: 0,
+            changes: Vec::new(),
+            advance: None,
+        }
+    }
+
+    /// The work stands on a row per open ticket, and the one the runtime
+    /// parked stands first: it is the one part nobody else will move
+    /// (§FS-005-dispatch.9, §FS-005-dispatch.23). Each row names the ticket it
+    /// is, so cancelling on it takes back that one and not the plan's newest
+    /// (§FS-005-dispatch.16).
+    #[test]
+    fn every_open_ticket_gets_a_row_and_the_parked_one_leads() {
+        let parked = TicketStatus {
+            waiting: true,
+            ..ticket("fix-gate-2", "ask")
+        };
+        let status = work_status(vec![ticket("fix-gate-1", "collect"), parked]);
+        let lines = status.lines(60);
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert_eq!(lines[0].tone, Tone::Waiting);
+        assert!(lines[0].said.contains("waiting on you"), "{lines:?}");
+        assert_eq!(lines[0].ticket.as_deref(), Some("fix-gate-2"));
+        assert_eq!(lines[1].tone, Tone::Going);
+        assert_eq!(lines[1].said, "fix-gate · collect");
+        assert_eq!(lines[1].ticket.as_deref(), Some("fix-gate-1"));
+    }
+
+    /// What is over is one row and not many: the whole record is the work
+    /// screen's, and a tree that grew a row per finished ticket would bury the
+    /// matters between them (§FS-005-dispatch.18, §FS-005-dispatch.23). It
+    /// carries no ticket, because there is nothing there to take back.
+    #[test]
+    fn a_plan_with_nothing_open_stands_on_one_row_for_what_it_decided() {
+        let finished = |id: &str, verdict: &str| TicketStatus {
+            finished: true,
+            verdict: Some(verdict.to_string()),
+            state: Some("done".to_string()),
+            ..ticket(id, "done")
+        };
+        let status = work_status(vec![
+            finished("fix-gate-1", "an older one"),
+            finished("fix-gate-2", "the gate is green"),
+        ]);
+        let lines = status.lines(60);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert_eq!(lines[0].tone, Tone::Over);
+        assert_eq!(lines[0].said, "fix-gate · the gate is green");
+        assert_eq!(lines[0].ticket, None);
+
+        // Taken back is a different kind of over, and the row says which.
+        let taken_back = TicketStatus {
+            finished: true,
+            cancelled: true,
+            ..ticket("fix-gate-1", "cancelled")
+        };
+        let cancelled = work_status(vec![taken_back]).lines(60);
+        assert_eq!(cancelled[0].said, "fix-gate · cancelled");
+        assert_eq!(cancelled[0].marker, "⊘");
+    }
+
+    /// An item that moved under its work says so on a row of its own: it is a
+    /// fact about the work and not about the matter (§FS-005-dispatch.5,
+    /// §FS-005-dispatch.23).
+    #[test]
+    fn an_item_that_moved_under_its_work_says_so_on_a_row_of_its_own() {
+        let mut status = work_status(vec![ticket("fix-gate-1", "collect")]);
+        status.changes = vec!["1 new message".to_string()];
+        let lines = status.lines(60);
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert_eq!(lines[1].tone, Tone::Stale);
+        assert!(lines[1].said.contains("1 new message"), "{lines:?}");
+        assert_eq!(lines[1].ticket, None);
     }
 }

@@ -19,7 +19,9 @@ use crate::feed::model::{Item, ItemKind, ItemRole};
 use crate::feed::render::age;
 use crate::forest::{Staleness, Standing, Trail};
 
-use super::{highlight_style, Action, BranchInfo, Ctx, WorkBadge};
+use crate::work::{Tone, WorkLine};
+
+use super::{highlight_style, Action, BranchInfo, Ctx};
 
 /// One category's filter (§FS-003-feed-categories.1).
 type SectionFilter = fn(&Item) -> bool;
@@ -76,8 +78,9 @@ struct Row {
     /// unknowable — no branch recorded, or no branch workspaces).
     checked_out: Option<bool>,
     /// What has been handed to the runtime about this item, if anything
-    /// (§FS-005-dispatch.4).
-    work: Option<WorkBadge>,
+    /// (§FS-005-dispatch.4) — a row of its own beneath this one for each
+    /// (§FS-005-dispatch.23).
+    work: Vec<WorkLine>,
     /// Why it is back in front of the reader, where the store remembers what
     /// it looked like when it was read (§FS-007-matters.5).
     resurfacing: Option<String>,
@@ -123,17 +126,25 @@ enum Entry {
     /// neither one the row names nor one with a workspace on disk.
     Unassigned,
     Item(Row),
+    /// One line of what is being done about the item above it
+    /// (§FS-005-dispatch.23). It carries the item because that is what its
+    /// keys act on — the ticket to take back, the plan to read, the run to
+    /// attach to are all read off the matter's work when the key is pressed.
+    Work(Item, WorkLine),
 }
 
 fn selectable(entry: &Entry) -> bool {
     !matches!(entry, Entry::Org(_) | Entry::Header(_) | Entry::Unassigned)
 }
 
-/// What the cursor is on: one of the three selectable rows.
+/// What the cursor is on: one of the four selectable rows.
 enum Selected {
     Item(Item),
     Branch(String, BranchInfo),
     Project(String),
+    /// A row the work stands on; the matter it is about is what the keys that
+    /// leave this screen act on (§FS-005-dispatch.23).
+    Work(Item),
 }
 
 pub(crate) struct NavigatorState {
@@ -224,11 +235,39 @@ impl NavigatorState {
         }
     }
 
-    pub fn footer(&self) -> &'static str {
+    /// The keys this screen can act on, measured against the row the cursor is
+    /// on rather than against the screen (§FS-004-quick-actions.2): a work row
+    /// answers to the work's keys, and they displace the ones they share a
+    /// letter with (§FS-005-dispatch.23).
+    pub fn footer(&self) -> String {
+        if let Some(line) = self.work_under_cursor() {
+            let take = match line.ticket.is_some() {
+                true => "c cancel it  ",
+                false => "",
+            };
+            return format!(
+                " j/k move  enter thread  {take}a watch the run  e read the plan  w work  \
+                 x actions  o browser  m done  ; ops  r refresh  q quit"
+            );
+        }
         match self.mode {
-            Mode::Stream => " j/k move  enter thread  c gate  w work  o browser  x actions  m done  a all done  u unread  ; ops  tab projects  r refresh  q quit",
-            Mode::Projects => " j/k move  enter view project  ; ops  tab stream  r refresh  q quit",
-            Mode::Detail => " j/k move  enter thread  c gate  w work  o browser  x actions  m done  [/] project  esc back  u unread  ; ops  r refresh  q quit",
+            Mode::Stream => " j/k move  enter thread  c gate  w work  o browser  x actions  m done  a all done  u unread  ; ops  tab projects  r refresh  q quit".to_string(),
+            Mode::Projects => " j/k move  enter view project  ; ops  tab stream  r refresh  q quit".to_string(),
+            Mode::Detail => " j/k move  enter thread  c gate  w work  o browser  x actions  m done  [/] project  esc back  u unread  ; ops  r refresh  q quit".to_string(),
+        }
+    }
+
+    /// The work line under the cursor, without moving anything — what the
+    /// footer is built from.
+    fn work_under_cursor(&self) -> Option<&WorkLine> {
+        let (entries, state) = match self.mode {
+            Mode::Stream => (&self.stream_entries, &self.stream_state),
+            Mode::Projects => (&self.project_entries, &self.project_state),
+            Mode::Detail => (&self.detail_entries, &self.detail_state),
+        };
+        match entries.get(state.selected()?) {
+            Some(Entry::Work(_, line)) => Some(line),
+            _ => None,
         }
     }
 
@@ -260,7 +299,7 @@ impl NavigatorState {
                 .map(|item| Row {
                     stale: feed.is_stale(&item.source),
                     checked_out: ctx.item_checked_out(&item),
-                    work: ctx.work.get(&item.id).cloned(),
+                    work: ctx.work.get(&item.id).cloned().unwrap_or_default(),
                     resurfacing: ctx.resurfacing.get(&item.id).cloned(),
                     news: ctx
                         .job_news
@@ -311,7 +350,7 @@ impl NavigatorState {
                         .cloned(),
                 ));
                 for index in matching {
-                    entries.push(Entry::Item(rows[index].clone()));
+                    push_row(&mut entries, rows[index].clone());
                 }
             }
             let unassigned: Vec<usize> = (0..rows.len())
@@ -320,7 +359,7 @@ impl NavigatorState {
             if !unassigned.is_empty() {
                 entries.push(Entry::Unassigned);
                 for index in unassigned {
-                    entries.push(Entry::Item(rows[index].clone()));
+                    push_row(&mut entries, rows[index].clone());
                 }
             }
         }
@@ -363,7 +402,7 @@ impl NavigatorState {
             .map(|item| Row {
                 stale: false,
                 checked_out: None,
-                work: None,
+                work: Vec::new(),
                 resurfacing: ctx.resurfacing.get(&item.id).cloned(),
                 news: ctx
                     .job_news
@@ -382,8 +421,9 @@ impl NavigatorState {
             self.stream_entries.push(Entry::Org(
                 "Unattributed — no project claimed these".to_string(),
             ));
-            self.stream_entries
-                .extend(orphans.into_iter().map(Entry::Item));
+            for orphan in orphans {
+                push_row(&mut self.stream_entries, orphan);
+            }
         }
         fix_selection(&self.stream_entries, &mut self.stream_state, was);
     }
@@ -490,7 +530,9 @@ impl NavigatorState {
             KeyCode::Char('x') => {
                 self.read_selection();
                 match self.selected_row() {
-                    Some(Selected::Item(item)) => Action::OpenActionMenu(item),
+                    Some(Selected::Item(item)) | Some(Selected::Work(item)) => {
+                        Action::OpenActionMenu(item)
+                    }
                     Some(Selected::Branch(project, branch)) => {
                         Action::OpenBranchActions { project, branch }
                     }
@@ -506,15 +548,31 @@ impl NavigatorState {
                     None => Action::None,
                 }
             }
-            // The counts on the row are a summary of a verdict; `c` is where
-            // the verdict itself is (§FS-001-forge-interface.1).
+            // On a work row the key takes that ticket back, named
+            // (§FS-005-dispatch.23); everywhere else the counts on the row are
+            // a summary of a verdict and `c` is where the verdict itself is
+            // (§FS-001-forge-interface.1).
             KeyCode::Char('c') => {
                 self.read_selection();
-                match self.selected_item() {
-                    Some(item) => Action::OpenGate(item),
-                    None => Action::None,
+                match self.selected_work() {
+                    Some((item, line)) => match line.ticket {
+                        Some(ticket) => Action::CancelWork { item, ticket },
+                        None => Action::SetMessage(
+                            "That work is over — there is nothing here to take back".to_string(),
+                        ),
+                    },
+                    None => match self.selected_item() {
+                        Some(item) => Action::OpenGate(item),
+                        None => Action::None,
+                    },
                 }
             }
+            // The plan the row is a line of, opened for reading
+            // (§FS-005-dispatch.23).
+            KeyCode::Char('e') => match self.selected_work() {
+                Some((item, _)) => Action::OpenWorkPlan(item),
+                None => Action::None,
+            },
             KeyCode::Char('m') | KeyCode::Char('d') | KeyCode::Char(' ') => {
                 match self.selected_item() {
                     Some(item) => Action::MarkDone {
@@ -524,6 +582,11 @@ impl NavigatorState {
                     None => Action::None,
                 }
             }
+            // On a work row, watch the run holding it (§FS-005-dispatch.20).
+            KeyCode::Char('a') if self.selected_work().is_some() => match self.selected_work() {
+                Some((item, _)) => Action::AttachWork(item),
+                None => Action::None,
+            },
             KeyCode::Char('a') => {
                 let (entries, _) = self.tree();
                 let marks: Vec<_> = entries
@@ -563,8 +626,12 @@ impl NavigatorState {
     /// Enter/l (`thread_first`) or o (browser) on the selected row.
     fn activate(&mut self, ctx: &Ctx, thread_first: bool) -> Action {
         match self.selected_row() {
-            Some(Selected::Item(item)) if thread_first => Action::OpenThread { item, or_url: true },
-            Some(Selected::Item(item)) => Action::OpenUrl(item.url),
+            // A work row is about the matter above it, and Enter still goes
+            // there (§FS-005-dispatch.23).
+            Some(Selected::Item(item)) | Some(Selected::Work(item)) if thread_first => {
+                Action::OpenThread { item, or_url: true }
+            }
+            Some(Selected::Item(item)) | Some(Selected::Work(item)) => Action::OpenUrl(item.url),
             Some(Selected::Branch(project, branch)) => {
                 Action::OpenUrl(ctx.branch_url(&project, &branch))
             }
@@ -585,6 +652,9 @@ impl NavigatorState {
         let (entries, state) = self.tree();
         state.selected().and_then(|index| match entries.get(index) {
             Some(Entry::Item(row)) => Some(row.item.clone()),
+            // A work row is about the matter above it, so the keys that go to
+            // the matter go there from here too (§FS-005-dispatch.23).
+            Some(Entry::Work(item, _)) => Some(item.clone()),
             _ => None,
         })
     }
@@ -596,10 +666,21 @@ impl NavigatorState {
         let (entries, state) = self.tree();
         match state.selected().and_then(|index| entries.get(index)) {
             Some(Entry::Item(row)) => Some(Selected::Item(row.item.clone())),
+            Some(Entry::Work(item, _)) => Some(Selected::Work(item.clone())),
             Some(Entry::Branch(project, branch, ..)) => {
                 Some(Selected::Branch(project.clone(), branch.clone()))
             }
             Some(Entry::Project(project, _)) => Some(Selected::Project(project.clone())),
+            _ => None,
+        }
+    }
+
+    /// The line the cursor is on, where it is on one (§FS-005-dispatch.23).
+    /// What the work's own keys are measured against when they are pressed.
+    fn selected_work(&mut self) -> Option<(Item, WorkLine)> {
+        let (entries, state) = self.tree();
+        match state.selected().and_then(|index| entries.get(index)) {
+            Some(Entry::Work(item, line)) => Some((item.clone(), line.clone())),
             _ => None,
         }
     }
@@ -746,6 +827,7 @@ impl NavigatorState {
                     line.spans.insert(0, Span::raw("        "));
                     ListItem::new(line)
                 }
+                Entry::Work(_, line) => ListItem::new(work_line(line, now)),
             })
             .collect();
 
@@ -759,6 +841,16 @@ impl NavigatorState {
         };
         frame.render_stateful_widget(list, area, state);
     }
+}
+
+/// An item's row, and beneath it the rows its work stands on
+/// (§FS-005-dispatch.23) — never inside `draw`, so that the cursor can reach
+/// them and a key can act on the one it is on.
+fn push_row(entries: &mut Vec<Entry>, row: Row) {
+    let work = row.work.clone();
+    let item = row.item.clone();
+    entries.push(Entry::Item(row));
+    entries.extend(work.into_iter().map(|line| Entry::Work(item.clone(), line)));
 }
 
 /// The lines this project's own row has to carry: every finished job filed
@@ -899,12 +991,44 @@ fn branch_line(
     Line::from(spans)
 }
 
+/// Where a work row's marker sits, so that what it says begins under the
+/// title of the matter it is about: the indent `draw` gives an item row, plus
+/// the unread marker, the age and the checkout column that row spends before
+/// its title.
+const WORK_INDENT: usize = 8 + 2 + 5 + 2 - 2;
+
+/// One row the work stands on, beneath the matter it is about
+/// (§FS-005-dispatch.23), in the tones the work screen already spells its
+/// tickets in. It says when it was asked for where the ledger knows, and
+/// nothing where it does not (§FS-005-dispatch.18).
+fn work_line(line: &WorkLine, now: chrono::DateTime<Utc>) -> Line<'static> {
+    let style = match line.tone {
+        Tone::Going => Style::default().fg(Color::Yellow),
+        Tone::Waiting => Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        Tone::Over => Style::default().fg(Color::DarkGray),
+        Tone::Stale => Style::default().fg(Color::Yellow),
+    };
+    let mut spans = vec![
+        Span::raw(" ".repeat(WORK_INDENT)),
+        Span::styled(format!("{} ", line.marker), style),
+        Span::styled(line.said.clone(), style),
+    ];
+    if let Some(asked) = line.asked {
+        spans.push(Span::styled(
+            format!("   asked {}", age(now, asked)),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+    Line::from(spans)
+}
+
 fn item_line(row: &Row, seen: &Seen, now: chrono::DateTime<Utc>) -> Line<'static> {
     let Row {
         item,
         stale,
         checked_out,
-        work,
+        // Off the item's line and onto rows of its own (§FS-005-dispatch.23).
+        work: _,
         resurfacing: _,
         news: _,
     } = row;
@@ -957,18 +1081,6 @@ fn item_line(row: &Row, seen: &Seen, now: chrono::DateTime<Utc>) -> Line<'static
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::ITALIC),
         ));
-    }
-    // What is being done about it, after what it is: the row's subject is the
-    // item, and the work is the answer to it (§FS-005-dispatch.4).
-    if let Some(work) = work {
-        let style = if work.stale {
-            Style::default().fg(Color::Yellow)
-        } else if work.open {
-            Style::default().fg(Color::Blue)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        };
-        spans.push(Span::styled(format!("  {}", work.text), style));
     }
     // What a job ephor ran about this matter said as it ended, on the row it
     // was about rather than at the top of the screen (§FS-005-dispatch.17).
@@ -1040,6 +1152,14 @@ fn count_spans(passed: u64, failed: u64, running: u64) -> Vec<Span<'static>> {
 fn identity(entry: &Entry) -> Option<String> {
     match entry {
         Entry::Item(row) => Some(format!("item:{}", row.item.id)),
+        // The ticket, not what the row says about it: a ticket that moved
+        // state between two rebuilds is the same row to a reader watching it
+        // move, and the cursor has to stay on it. A summary line has no
+        // ticket, so its marker is what it is.
+        Entry::Work(item, line) => Some(match &line.ticket {
+            Some(ticket) => format!("work:{}:{ticket}", item.id),
+            None => format!("work:{}:{}", item.id, line.marker),
+        }),
         Entry::Project(project, _) => Some(format!("project:{project}")),
         Entry::Branch(project, branch, ..) => Some(format!("branch:{project}:{}", branch.branch)),
         Entry::Org(_) | Entry::Header(_) | Entry::Unassigned => None,
@@ -1098,7 +1218,7 @@ mod tests {
             },
             stale: false,
             checked_out: None,
-            work: None,
+            work: Vec::new(),
             resurfacing: None,
             news: None,
         })
@@ -1539,5 +1659,156 @@ mod tests {
         fix_selection(&after, &mut state, was);
 
         assert_eq!(state.selected(), Some(2));
+    }
+
+    fn going(id: &str, said: &str) -> WorkLine {
+        WorkLine {
+            tone: Tone::Going,
+            marker: "⚙",
+            said: said.to_string(),
+            ticket: Some(id.to_string()),
+            asked: Some(Utc::now() - chrono::Duration::minutes(4)),
+        }
+    }
+
+    /// A row with work under it, as the tree lays it down.
+    fn worked(id: &str, work: Vec<WorkLine>) -> Vec<Entry> {
+        let mut entries = Vec::new();
+        let Entry::Item(mut item) = row(id) else {
+            unreachable!("the fixture is a row")
+        };
+        item.work = work;
+        push_row(&mut entries, item);
+        entries
+    }
+
+    /// The work comes off the matter's line and stands on rows of its own
+    /// beneath it (§FS-005-dispatch.23): the matter's line is about the
+    /// matter, and what is being done about it is somewhere the cursor can
+    /// reach.
+    #[test]
+    fn the_work_stands_on_rows_of_its_own_beneath_the_matter() {
+        let entries = worked("pr:1", vec![going("fix-gate-1", "fix-gate · fix")]);
+        assert_eq!(entries.len(), 2, "one row for the matter, one for its work");
+
+        let Entry::Item(matter) = &entries[0] else {
+            panic!("the matter leads")
+        };
+        let line = text_of(&item_line(matter, &Seen::new(), Utc::now()));
+        assert!(!line.contains("fix-gate"), "{line:?}");
+
+        let Entry::Work(_, work) = &entries[1] else {
+            panic!("its work stands beneath it")
+        };
+        let beneath = text_of(&work_line(work, Utc::now()));
+        assert!(beneath.contains("⚙ fix-gate · fix"), "{beneath:?}");
+        // When it was asked for, where the ledger knows (§FS-005-dispatch.18).
+        assert!(beneath.contains("asked 4m"), "{beneath:?}");
+    }
+
+    /// On a work row the keys are the work's: cancel takes back *that* ticket
+    /// with no second screen to choose it on, attach watches the run holding
+    /// it, and `e` opens the plan the row is a line of. The keys they displace
+    /// — the gate, marking everything done — are the matter's, and are not
+    /// what a reader pressing them here meant (§FS-005-dispatch.23).
+    #[test]
+    fn the_keys_on_a_work_row_are_the_works() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = super::super::tests::ctx_with_branch(tmp.path(), None);
+        let mut navigator = NavigatorState::new();
+        navigator.mode = Mode::Detail;
+        navigator.detail_entries = worked("pr:1", vec![going("fix-gate-1", "fix-gate · fix")]);
+        navigator.detail_state = on(&navigator.detail_entries, 1);
+
+        match navigator.handle_key(&ctx, KeyCode::Char('c')) {
+            Action::CancelWork { item, ticket } => {
+                assert_eq!(item.id, "pr:1");
+                assert_eq!(ticket, "fix-gate-1");
+            }
+            _ => panic!("c takes that ticket back"),
+        }
+        assert!(matches!(
+            navigator.handle_key(&ctx, KeyCode::Char('a')),
+            Action::AttachWork(_)
+        ));
+        assert!(matches!(
+            navigator.handle_key(&ctx, KeyCode::Char('e')),
+            Action::OpenWorkPlan(_)
+        ));
+        // What the row is about is still the matter, so the keys that leave
+        // for it go there from here.
+        assert!(matches!(
+            navigator.handle_key(&ctx, KeyCode::Enter),
+            Action::OpenThread { .. }
+        ));
+        assert!(matches!(
+            navigator.handle_key(&ctx, KeyCode::Char('w')),
+            Action::OpenWork(_)
+        ));
+
+        // And the matter's own row keeps every key it had.
+        navigator.detail_state = on(&navigator.detail_entries, 0);
+        assert!(matches!(
+            navigator.handle_key(&ctx, KeyCode::Char('c')),
+            Action::OpenGate(_)
+        ));
+        assert!(matches!(
+            navigator.handle_key(&ctx, KeyCode::Char('a')),
+            Action::MarkDone { .. }
+        ));
+    }
+
+    /// A key is offered only where the move behind it would work
+    /// (§FS-004-quick-actions.2): a row for work that is over has no ticket to
+    /// take back, so the footer does not teach `c` there and pressing it says
+    /// so instead of appearing to act.
+    #[test]
+    fn a_row_for_work_that_is_over_has_nothing_to_take_back() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = super::super::tests::ctx_with_branch(tmp.path(), None);
+        let over = WorkLine {
+            tone: Tone::Over,
+            marker: "✓",
+            said: "fix-gate · the gate is green".to_string(),
+            ticket: None,
+            asked: None,
+        };
+        let mut navigator = NavigatorState::new();
+        navigator.mode = Mode::Detail;
+        navigator.detail_entries = worked("pr:1", vec![over]);
+        navigator.detail_state = on(&navigator.detail_entries, 1);
+
+        assert!(
+            !navigator.footer().contains("c cancel"),
+            "{}",
+            navigator.footer()
+        );
+        assert!(matches!(
+            navigator.handle_key(&ctx, KeyCode::Char('c')),
+            Action::SetMessage(_)
+        ));
+
+        // Where there is one, the footer says so.
+        navigator.detail_entries = worked("pr:1", vec![going("fix-gate-1", "fix-gate · fix")]);
+        navigator.detail_state = on(&navigator.detail_entries, 1);
+        assert!(
+            navigator.footer().contains("c cancel it"),
+            "{}",
+            navigator.footer()
+        );
+    }
+
+    /// The cursor follows the ticket, not what the row says about it: a
+    /// ticket that moves from one state to the next between two rebuilds is
+    /// the same row to a reader watching it move (§FS-005-dispatch.23).
+    #[test]
+    fn a_work_row_keeps_its_place_when_its_ticket_moves_on() {
+        let before = worked("pr:1", vec![going("fix-gate-1", "fix-gate · collect")]);
+        let mut state = on(&before, 1);
+        let was = selected_identity(&before, &state);
+
+        let after = worked("pr:1", vec![going("fix-gate-1", "fix-gate · review")]);
+        fix_selection(&after, &mut state, was);
+        assert_eq!(state.selected(), Some(1));
     }
 }

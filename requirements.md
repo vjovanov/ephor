@@ -1360,8 +1360,10 @@ resolves, and tickets are still written and read on disk
 
 ### 15. Every operation is visible in one place
 
-The watch can say what is being done about any one item — the badge on its
-row, the work screen behind `w` — but "what is ephor doing right now" should
+The watch can say what is being done about any one item — the lines its work
+stands on beneath its row
+([§23](#23-work-stands-on-rows-of-its-own-beneath-the-row-it-is-about)), the
+work screen behind `w` — but "what is ephor doing right now" should
 not require visiting every row that might hold a piece of the answer. So
 there is an **operations board**: one screen, reachable from anywhere in the
 interface, holding every operation beneath the reading — each live run, each
@@ -1990,8 +1992,9 @@ which branch, or nothing could ever match it back
 row is running where the job that is making the workspace is. An entry that
 hands work over is running where the ticket it would open, or the plan it
 would lay, is open and its root is live or will reach it — the very facts the
-badge on the row is made of
-([§9](#9-work-that-stops-for-a-person-says-so-where-the-person-is-looking)) —
+work's own lines beneath the row are made of
+([§9](#9-work-that-stops-for-a-person-says-so-where-the-person-is-looking),
+[§23](#23-work-stands-on-rows-of-its-own-beneath-the-row-it-is-about)) —
 and a ticket the run parked counts, live root or not, because a question
 standing on this subject is exactly what a second dispatch must not be laid
 beside.
@@ -2065,6 +2068,68 @@ says so.
 opens in a window when there is one to open, and in the terminal otherwise;
 either way leaving it detaches and the run goes on
 ([§20](#20-a-run-of-the-runtime-starts-beneath-the-screen-and-is-watched-by-attaching)).
+
+### 23. Work stands on rows of its own, beneath the row it is about
+
+A matter's work used to ride on the end of the matter's own line — one
+phrase, after the title, the state and the gate: *⚙ fix-gate · fix*. It said
+the true thing and left the reader nowhere to go with it. The line is not a
+row, so the cursor cannot reach it; the keys on the row it rides belong to
+the matter, so none of them are the work's; and the phrase is cut to what is
+left of the width after everything else on the line has taken its share. A
+reader who reads *⚙ fix-gate · fix* and wants to take it back has to open a
+second screen to find the thing they were already looking at, which is the
+sweep this project exists to retire (§GOAL-003-nothing-lost).
+
+So **the work comes off the matter's line and stands on lines of its own,
+beneath it** — indented a step, selectable like any other row, one per ticket
+the plan holds open. The matter's line goes back to being about the matter,
+and the work is where a key can reach it.
+
+**What each line says** is what the board and the work screen already say, in
+their words, because this is that reading narrowed to one matter and not a
+third one of its own
+([§15](#15-every-operation-is-visible-in-one-place),
+[§18](#18-the-work-screen-says-when-and-folds-away-what-is-over)): the ticket's
+recipe and the state it is in, and how long since it was asked for, where the
+ledger knows — a ticket nobody dispatched carries no age rather than a guessed
+one. A ticket the runtime parked says *waiting on you* and stands first among
+them, since it is the one part nobody else will move
+([§9](#9-work-that-stops-for-a-person-says-so-where-the-person-is-looking)).
+
+**What is over is one line, not many.** Tickets accumulate and are all kept
+([§16](#16-work-that-should-not-go-on-is-cancelled-and-the-plan-says-so)), and
+a tree that grew a line per finished ticket would bury the matters between
+them. So where a plan holds nothing open, its work is one line for what the
+last ticket decided — the verdict, or *cancelled* — and where it holds
+something open, what is over is not on the tree at all: the work screen is
+where the whole record is read
+([§18](#18-the-work-screen-says-when-and-folds-away-what-is-over)). An item
+that has moved under its work says so on a line of its own, in the words §5
+gives it, because that is a fact about the work and not about the matter
+([§5](#5-an-item-that-moved-reopens-its-work)).
+
+**The keys are the work's, on the row the work is on.** On such a line,
+cancel takes *that* ticket back — named, with no second screen to choose it on
+([§16](#16-work-that-should-not-go-on-is-cancelled-and-the-plan-says-so)) —
+attach watches the run holding it
+([§20](#20-a-run-of-the-runtime-starts-beneath-the-screen-and-is-watched-by-attaching)),
+and the plan opens for reading. What the line is *about* is still the matter,
+so the keys that go to the matter — its thread, its gate is not among them,
+its work screen, its menu — go there from here too. A key means one thing at
+a time and the footer says which, measured against the row the cursor is on
+rather than the screen it is in (§FS-004-quick-actions.2): where the cursor
+stands on work, the footer offers the work's keys and not the ones they
+displaced.
+
+**A line is offered only where the move behind it would work.** Cancelling is
+the runtime's move and is refused in the runtime rung's words with nothing
+bound ([§16](#16-work-that-should-not-go-on-is-cancelled-and-the-plan-says-so));
+attaching needs a run actually holding the root, read at the keypress from the
+lock and never remembered
+([§15](#15-every-operation-is-visible-in-one-place)); a line for work that is
+over has no ticket to take back. Each says so in one sentence rather than
+appearing to act.
 
 ## FS-006-project-interface: a project and ephor meet over one interface, in three homes
 

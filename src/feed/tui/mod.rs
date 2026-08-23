@@ -42,7 +42,7 @@ use crate::seams::summons::{self, Place, Site};
 pub(crate) use crate::api::session::display_root;
 #[allow(unused_imports)]
 pub(crate) use crate::api::OrgInfo;
-pub(crate) use crate::api::{Session as Ctx, WorkBadge};
+pub(crate) use crate::api::Session as Ctx;
 pub(crate) use crate::branches::BranchInfo;
 pub(crate) use crate::branches::WorkspaceState;
 use actions::{ActionMenu, MenuOutcome};
@@ -149,6 +149,14 @@ pub(crate) enum Action {
     },
     /// Ask this item for something no recipe covers (§FS-005-dispatch.10).
     AskWork(Item),
+    /// Read the plan behind a work row (§FS-005-dispatch.23). The path is the
+    /// matter's own, resolved when the key is pressed rather than carried on
+    /// the row, because the plan is the runtime's and moves with it.
+    OpenWorkPlan(Item),
+    /// Watch whatever run is holding this matter's work
+    /// (§FS-005-dispatch.20, §FS-005-dispatch.23). Liveness is read from the
+    /// lock at the keypress and never remembered (§FS-005-dispatch.15).
+    AttachWork(Item),
     /// Take one of this item's tickets back (§FS-005-dispatch.16): the shell
     /// asks why, then asks the runtime for the move.
     CancelWork {
@@ -799,6 +807,39 @@ impl App {
                 // The reader may have edited what the screens read.
                 self.reload_work();
                 self.reload_operations();
+            }
+            Action::OpenWorkPlan(item) => match self.work_status(&item) {
+                Some(status) => {
+                    self.edit_file(terminal, &status.plan)?;
+                    self.reload_work();
+                    self.reload_operations();
+                }
+                None => self.message = "There is no plan here yet".to_string(),
+            },
+            // Read from the lock now, never remembered: a run that died is not
+            // running, and a row saying so a tick ago does not make it so
+            // (§FS-005-dispatch.15).
+            Action::AttachWork(item) => {
+                match self.work_status(&item) {
+                    Some(status) if crate::work::runtime::watch::live(&self.work, &status.root) => {
+                        let id = crate::work::runtime::watch::identity(&self.work, &status.root)
+                            .and_then(|identity| identity.id);
+                        self.attach(
+                            terminal,
+                            &crate::api::offers::Running::Run {
+                                root: status.root.clone(),
+                                id,
+                                control_url: None,
+                                attach: None,
+                                since: None,
+                                doing: String::new(),
+                            },
+                        )?
+                    }
+                    _ => self.message =
+                        "Nothing is running on this work's root — R on the work screen starts it"
+                            .to_string(),
+                }
             }
             Action::ReadLog { path, following } => self.read_log(terminal, &path, following)?,
             // A window of the reader's own where one is bound, and the terminal
@@ -1798,6 +1839,15 @@ impl App {
         (rows, refusal)
     }
 
+    /// This matter's work as it stands, read from the plan rather than
+    /// remembered (§FS-005-dispatch.4).
+    fn work_status(&self, item: &Item) -> Option<crate::work::WorkStatus> {
+        self.ctx
+            .dispatcher
+            .as_ref()
+            .and_then(|dispatcher| dispatcher.status(item))
+    }
+
     /// Rebuild the open board's rows; a closed board costs nothing.
     fn reload_operations(&mut self) {
         if !matches!(self.screen, Screen::Operations(_)) {
@@ -2057,7 +2107,7 @@ impl App {
             menu.footer()
         } else {
             match &self.screen {
-                Screen::Navigator => self.navigator.footer().to_string(),
+                Screen::Navigator => self.navigator.footer(),
                 // Built from what is selected, not fixed per screen
                 // (§FS-004-quick-actions.2).
                 Screen::Thread(thread) => thread.footer(),

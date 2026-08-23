@@ -31,15 +31,11 @@ pub struct OrgInfo {
     pub root: Option<String>,
 }
 
-/// What an item's work is doing, condensed to what fits on its row
-/// (§FS-005-dispatch.4). Recomputed from the plans whenever anything could
-/// have changed them — never remembered across a change.
-#[derive(Clone)]
-pub struct WorkBadge {
-    pub text: String,
-    pub open: bool,
-    pub stale: bool,
-}
+/// What an item's work is doing, a row per open ticket
+/// (§FS-005-dispatch.4, §FS-005-dispatch.23). Recomputed from the plans
+/// whenever anything could have changed them — never remembered across a
+/// change.
+pub type WorkLines = Vec<crate::work::WorkLine>;
 
 /// What a finished job's one line is filed under, so it lands on the row the
 /// job ran on rather than at the top of the screen (§FS-005-dispatch.17). A
@@ -134,7 +130,7 @@ pub struct Session {
     pub recent_days: u64,
     pub unread_only: bool,
     /// Per item id, what has been handed to the runtime about it.
-    pub work: BTreeMap<String, WorkBadge>,
+    pub work: BTreeMap<String, WorkLines>,
     /// The one line each finished job left, filed under the subject it ran on
     /// (§FS-005-dispatch.17). Written when a job is seen to end and read off
     /// again when the reader opens that row: news, not a state, which is why
@@ -910,16 +906,10 @@ impl Session {
         for feed in &self.feeds {
             for item in feed.items() {
                 if let Some(status) = dispatcher.status(&item) {
-                    work.insert(
-                        item.id.clone(),
-                        WorkBadge {
-                            // A row has already spent its width on the item;
-                            // what is left is a phrase, not a paragraph.
-                            text: status.badge(40),
-                            open: status.open_tickets() > 0,
-                            stale: status.stale(),
-                        },
-                    );
+                    // A row of its own is still a row: the verdict is cut
+                    // where one ends, and the rest is in the artifact
+                    // (§FS-005-dispatch.23).
+                    work.insert(item.id.clone(), status.lines(60));
                 }
             }
         }

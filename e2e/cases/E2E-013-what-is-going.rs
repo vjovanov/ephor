@@ -270,8 +270,9 @@ fn a_run_starts_beneath_the_screen_and_the_board_says_how_to_reach_it() {
 /// with the same facts (§FS-011-command-line.8).
 ///
 /// The entry that hands this work over is running because the ticket it opened
-/// is open on a root a run holds — the very facts the badge on the row is made
-/// of — and the way in is the run's id and the runner's own attach command.
+/// is open on a root a run holds — the very facts the work's own rows beneath
+/// the matter are made of (§FS-005-dispatch.23) — and the way in is the run's
+/// id and the runner's own attach command.
 #[test]
 fn a_live_run_marks_the_entry_that_hands_that_work_over() {
     let world = watching();

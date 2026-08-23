@@ -967,16 +967,27 @@ past the window. Finished work never awaits a response: it is news, not a task.
 ### 6.2 Reading a row
 
 ```
-! 5h  ✓ #24898 Fix lambda preservation  [open]  ✓253 ✗3 ⊘ blocked  (app ✓75 · plugins ✓178 ✗3)  ⚙ fix-gate · review
-│ │   │                                  │       │              │    │                            │
-│ │   │                                  │       │              │    └ per-repository breakdown    └ work (§8)
+! 5h  ✓ #24898 Fix lambda preservation  [open]  ✓253 ✗3 ⊘ blocked  (app ✓75 · plugins ✓178 ✗3)
+│ │   │                                  │       │              │    │
+│ │   │                                  │       │              │    └ per-repository breakdown
 │ │   │                                  │       │              └ the forge refuses the merge
 │ │   │                                  │       └ passed / failed / running across the whole gate
 │ │   │                                  └ state, as its forge spells it
 │ │   └ the branch workspace is on disk (∅ = it is not; blank = not knowable)
 │ └ age of the last activity
 └ needs a response ( * = merely unread, blank = read )
+    ⚙ fix-gate · review   asked 4m
+    └ what is being done about it — a row of its own, one per open ticket (§8)
 ```
+
+**The work stands on rows of its own beneath the matter**
+([§FS-005-dispatch.23](../requirements.md#23-work-stands-on-rows-of-its-own-beneath-the-row-it-is-about)):
+one per ticket the plan holds open, the one the runtime parked (`⚠ … waiting on
+you`) first, each saying when it was asked for where the ledger knows. Where
+nothing is open there is one row for what the last ticket decided — `✓ fix-gate
+· the gate is green`, or `⊘ fix-gate · cancelled` — and an item that has moved
+under its work adds a `⟳` row saying what changed. The cursor reaches them, and
+the keys there are the work's ([§6.3](#63-keys)).
 
 Branch rows say whether they are checked out, how far they trail the main
 branch — summed across every repository in the workspace — and **as of when**:
@@ -1037,6 +1048,17 @@ does not report one simply never shows it.
 | `Esc` `h` | back |
 | `r` | refresh underneath the screen (in Detail, only that project) |
 | `q`, `^C` | quit |
+
+**On a work row the keys are the work's**, and they displace the ones they
+share a letter with — the footer says which, measured against the row the
+cursor is on rather than against the screen:
+
+| Key | Does |
+|---|---|
+| `c` | take *that* ticket back (§8.7) — not offered on a row whose work is over |
+| `a` | attach to the run holding it (§8.16); says so where nothing is running |
+| `e` | read the plan the row is a line of |
+| `Enter` `o` `w` `x` `m` | the matter above it, as on its own row |
 
 `r` does not take the terminal. The fetch runs on a thread of its own, so
 every other key still answers while it is in flight — read, act, mark done,
@@ -2028,6 +2050,11 @@ the open tickets are numbered, `j`/`k` or a digit picks one, and a one-line
 prompt asks why — the reason becomes the ticket's result, `Enter` on an empty
 line records that no reason was given, `Esc` keeps the ticket.
 
+`c` on a ticket's own row in the inbox does the same thing with no picking at
+all: the row *is* the ticket, so the prompt asks straight away
+([§6.2](#62-reading-a-row),
+[§FS-005-dispatch.23](../requirements.md#23-work-stands-on-rows-of-its-own-beneath-the-row-it-is-about)).
+
 ```
   what has been asked for   — which one to take back?
   ▸ 1 ⚙ fix-gate-1    fix the red gate  [collect]
@@ -2040,8 +2067,8 @@ line records that no reason was given, `Esc` keeps the ticket.
 ```
 
 Afterwards the ticket reads `⊘ fix-gate-2 … [cancelled]` with the reason
-beneath it, and the row's badge says `⊘ fix-gate · cancelled` where that is
-the last word on the item. **Nothing is deleted** — the plan is the record,
+beneath it, and the matter's work row says `⊘ fix-gate · cancelled` where that
+is the last word on the item. **Nothing is deleted** — the plan is the record,
 and taking an ask back is a decision it keeps.
 
 Cancelling is **the runtime's move, in its own words**: ephor asks the bound
@@ -2397,7 +2424,7 @@ With no runtime bound the board is the refresh row, ephor's own jobs, and the
 workable rung's sentence, which is the shape most installations see — correct,
 not broken. A job needs no runtime: it is ephor running a command.
 
-The board, and every work badge in the feed, keeps itself current: between
+The board, and every work row in the feed, keeps itself current: between
 key reads ephor glances at the plans and run artifacts it already knows by
 name (a clock gates the stats, a changed timestamp gates the re-read), so a
 ticket the runtime parks for you resurfaces when it parks

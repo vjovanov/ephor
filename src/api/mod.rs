@@ -16,4 +16,4 @@ pub mod schema;
 pub mod session;
 pub mod views;
 
-pub use session::{JobSubject, OrgInfo, Session, WorkBadge};
+pub use session::{JobSubject, OrgInfo, Session, WorkLines};
