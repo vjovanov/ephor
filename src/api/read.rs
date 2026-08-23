@@ -787,6 +787,7 @@ impl Session {
                 stale: status.stale(),
                 missing: status.missing,
                 changes: status.changes.clone(),
+                quiet: status.quiet,
                 tickets: status
                     .tickets
                     .iter()
@@ -796,6 +797,8 @@ impl Session {
                         state: ticket.state.clone(),
                         finished: ticket.finished,
                         cancelled: ticket.cancelled,
+                        running: ticket.running,
+                        queued: ticket.queued,
                         verdict: ticket.verdict.clone(),
                     })
                     .collect(),

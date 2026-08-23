@@ -2217,6 +2217,27 @@ one. A ticket the runtime parked says *waiting on you* and stands first among
 them, since it is the one part nobody else will move
 ([§9](#9-work-that-stops-for-a-person-says-so-where-the-person-is-looking)).
 
+**A ticket a run has in hand says so, and says it at a glance.** *Open* and
+*being worked on right now* are different facts, and a row that spelled them
+the same way left the reader to guess which of the two they were looking at:
+the ticket an agent is inside of and the ticket nothing has picked up wore one
+marker and one colour, and the only way to tell them apart was to leave for
+another screen — which is the sweep this project exists to retire
+(§GOAL-003-nothing-lost). So a ticket a live run holds is marked apart from one
+merely open, read from the run's own record of itself
+([§15.2](#152-what-a-run-is-doing-is-read-from-the-runs-own-stream)) and
+phrased as the board phrases it, because this is that reading narrowed to one
+matter and not a third one of its own
+([§15](#15-every-operation-is-visible-in-one-place)). A ticket on a root whose
+run is live but busy elsewhere is *queued*, for the same reason the board says
+so: it will get its turn without anyone doing anything. And a live run that has
+gone quiet carries the badge it carries there — a long tool call is legitimately
+quiet, so it is a badge and never a verdict.
+
+Nothing here is a new question asked of the world: it is the liveness the watch
+already probes and the record the run already writes, said on the row the
+reader is already looking at.
+
 **What is over is one line, not many.** Tickets accumulate and are all kept
 ([§16](#16-work-that-should-not-go-on-is-cancelled-and-the-plan-says-so)), and
 a tree that grew a line per finished ticket would bury the matters between

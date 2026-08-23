@@ -402,7 +402,10 @@ ticket back (through the runtime's own move into `cancelled`, with your reason
 as its result — the plan keeps it), `R` hands this item's plan to the runtime
 (which takes over the terminal, so you watch it work), `e` reads the plan.
 Rows carry a badge — `⚙ fix-gate · review`, `✓ answer · done — …`,
-`⊘ fix-gate · cancelled`, `⟳ 2 new messages`.
+`⊘ fix-gate · cancelled`, `⟳ 2 new messages`. A ticket a run has in hand right
+now is `▶` in green instead, one the live run has not reached yet says
+`· queued`, and a run that has gone quiet says `· quiet 12m`: open and being
+worked on are different facts, and the row says which without your leaving it.
 
 ### By hand
 

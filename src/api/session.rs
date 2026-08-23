@@ -903,9 +903,14 @@ impl Session {
             return;
         };
         let mut work = BTreeMap::new();
+        // One probe per work root across every matter on the feed, not one
+        // per matter: two matters often share a checkout, and the lock and
+        // the run's own record answer the same way for both
+        // (§FS-005-dispatch.15.1).
+        let mut look = crate::work::RootLook::default();
         for feed in &self.feeds {
             for item in feed.items() {
-                if let Some(status) = dispatcher.status(&item) {
+                if let Some(status) = dispatcher.status_seen(&item, &mut look) {
                     // A row of its own is still a row: the verdict is cut
                     // where one ends, and the rest is in the artifact
                     // (§FS-005-dispatch.23).

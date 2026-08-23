@@ -144,6 +144,13 @@ pub struct TicketStatus {
     /// written into the plan by hand, or by the machine for itself: nothing
     /// knows when that was asked for, so nothing claims to.
     pub asked: Option<DateTime<Utc>>,
+    /// A live run has this ticket in hand right now, read from the run's own
+    /// record of itself (§FS-005-dispatch.15.2, §FS-005-dispatch.23). Open and
+    /// being worked on are different facts and the row says which.
+    pub running: bool,
+    /// A run is live on this ticket's root and busy elsewhere: it will get its
+    /// turn without anyone doing anything (§FS-005-dispatch.15).
+    pub queued: bool,
 }
 
 /// What one cancel did (§FS-005-dispatch.16).
@@ -208,6 +215,11 @@ pub struct WorkStatus {
     /// by the runtime module, since the words are the runner's
     /// (§REQ-001-boundary.5).
     pub advance: Option<String>,
+    /// Minutes of silence worth noting on the live run holding this work — the
+    /// badge the board carries, on the row the reader is already looking at
+    /// (§FS-005-dispatch.23). None where no run is live here, and on one
+    /// writing normally.
+    pub quiet: Option<u64>,
 }
 
 impl WorkStatus {
@@ -310,12 +322,32 @@ impl WorkStatus {
             lines.push(WorkLine::of(Tone::Waiting, "⚠", said, ticket));
         }
         for ticket in open.filter(|ticket| !ticket.waiting) {
-            let said = format!(
+            let mut said = format!(
                 "{} · {}",
                 ticket.recipe,
                 ticket.state.as_deref().unwrap_or("?")
             );
-            lines.push(WorkLine::of(Tone::Going, "⚙", said, ticket));
+            // Open and being worked on right now are different facts, and the
+            // row says which (§FS-005-dispatch.23) — in the board's own words,
+            // because this is that reading narrowed to one matter
+            // (§FS-005-dispatch.15).
+            let (tone, marker) = match (ticket.running, ticket.queued) {
+                (true, _) => {
+                    // A live run that has gone silent wears the badge it wears
+                    // on the board: a long tool call is legitimately quiet, so
+                    // it is a badge and never a verdict (§FS-005-dispatch.15).
+                    if let Some(minutes) = self.quiet {
+                        said = format!("{said} · quiet {minutes}m");
+                    }
+                    (Tone::Running, "▶")
+                }
+                (false, true) => {
+                    said = format!("{said} · queued");
+                    (Tone::Going, "⚙")
+                }
+                (false, false) => (Tone::Going, "⚙"),
+            };
+            lines.push(WorkLine::of(tone, marker, said, ticket));
         }
         // Nothing open: what the last one decided, on one line. The rest of
         // the record is the work screen's (§FS-005-dispatch.18).
@@ -359,7 +391,9 @@ impl WorkStatus {
 /// cannot say the same ticket two different ways.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tone {
-    /// The runtime is on it.
+    /// A live run has it in hand right now (§FS-005-dispatch.23).
+    Running,
+    /// Open, and nothing is working it this moment.
     Going,
     /// It has stopped and a person has to answer it (§FS-005-dispatch.9).
     Waiting,
@@ -1834,6 +1868,15 @@ impl Dispatcher {
         Some(self.status_of(entry, Some(item)))
     }
 
+    /// The same reading, with the per-root probes shared across a run of
+    /// items (§FS-005-dispatch.15.1): a caller building every matter's rows
+    /// keeps one [`RootLook`] across them, so a root two matters share is
+    /// probed once rather than twice.
+    pub fn status_seen(&self, item: &Item, look: &mut RootLook) -> Option<WorkStatus> {
+        let entry = self.ledger.entries.get(&item.id)?;
+        Some(status_of_entry_seen(&self.global, entry, Some(item), look))
+    }
+
     pub fn status_of(&self, entry: &Entry, item: Option<&Item>) -> WorkStatus {
         status_of_entry(&self.global, entry, item)
     }
@@ -2227,6 +2270,54 @@ fn recipe_of_ticket(id: &str) -> Option<&str> {
 /// An entry's work as it stands, read from the plan (§FS-005-dispatch.4). A
 /// free function so a test can read a plan back the way every surface does.
 pub fn status_of_entry(global: &WorkConfig, entry: &Entry, item: Option<&Item>) -> WorkStatus {
+    status_of_entry_seen(global, entry, item, &mut RootLook::default())
+}
+
+/// The reads one work root answers the same way for every ticket in it —
+/// whether a run is live on it, what that run has in hand, and how long it has
+/// been silent — taken once and reused (§FS-005-dispatch.15.1).
+///
+/// A caller reading one matter can let this be built and dropped around the
+/// call; a caller reading every matter on the feed keeps one across them, so a
+/// root shared by two matters is probed once rather than twice.
+#[derive(Default)]
+pub struct RootLook {
+    seen: BTreeMap<PathBuf, RootRun>,
+}
+
+/// One root's run, as the probe found it.
+struct RootRun {
+    live: bool,
+    /// What the run says it has in hand. None where nothing is live: a slot
+    /// nobody released under a free lock is a dead run's leavings, which is
+    /// the board's business and not a running mark (§FS-005-dispatch.15).
+    witness: Option<runtime::watch::Witness>,
+    quiet: Option<u64>,
+}
+
+impl RootLook {
+    fn of(&mut self, global: &WorkConfig, root: &std::path::Path) -> &RootRun {
+        self.seen.entry(root.to_path_buf()).or_insert_with(|| {
+            // Liveness and the quiet clock in one probe, the same one the
+            // board makes (§FS-005-dispatch.15).
+            let pulse = runtime::watch::pulse(global, root);
+            RootRun {
+                witness: pulse.live.then(|| runtime::watch::witness(global, root)),
+                quiet: pulse.quiet,
+                live: pulse.live,
+            }
+        })
+    }
+}
+
+/// An entry's work as it stands, with the per-root reads hoisted out
+/// (§FS-005-dispatch.15.1).
+pub fn status_of_entry_seen(
+    global: &WorkConfig,
+    entry: &Entry,
+    item: Option<&Item>,
+    look: &mut RootLook,
+) -> WorkStatus {
     let recipes: BTreeMap<&str, &str> = entry
         .dispatches
         .iter()
@@ -2243,12 +2334,35 @@ pub fn status_of_entry(global: &WorkConfig, entry: &Entry, item: Option<&Item>) 
         .collect();
     let root = WorkRoot::open(&entry.root).ok().flatten();
     let plan = Plan::read(&entry.plan).ok().flatten();
+    // What a run on this root is doing, read once for every ticket asked
+    // about (§FS-005-dispatch.15.1).
+    let run = look.of(global, &entry.root);
+    let (live, quiet) = (run.live, run.quiet);
+    let lock_born = live
+        .then(|| runtime::watch::lock_born(&entry.root))
+        .flatten();
+    let holds = |ticket: &plan::PlanTicket| {
+        run.witness.as_ref().is_some_and(|witness| {
+            witness.holds(
+                &entry.root,
+                lock_born,
+                &entry.plan_id,
+                &ticket.id,
+                ticket.state.as_deref(),
+            )
+        })
+    };
     let tickets: Vec<TicketStatus> = plan
         .as_ref()
         .map(|plan| {
             plan.tickets()
                 .into_iter()
                 .map(|ticket| TicketStatus {
+                    // A live run holds it, or a live run on this root will
+                    // reach it: open and being worked on are different facts
+                    // (§FS-005-dispatch.23).
+                    running: holds(&ticket),
+                    queued: live && !holds(&ticket),
                     asked: asked.get(ticket.id.as_str()).copied(),
                     recipe: recipes
                         .get(ticket.id.as_str())
@@ -2335,6 +2449,7 @@ pub fn status_of_entry(global: &WorkConfig, entry: &Entry, item: Option<&Item>) 
         changes: item
             .map(|item| entry.changes_since(item))
             .unwrap_or_default(),
+        quiet,
     }
 }
 
@@ -3302,6 +3417,8 @@ echo "Task $stem.$task transitioned: '$from' → '$to'"
 
     fn ticket(id: &str, state: &str) -> TicketStatus {
         TicketStatus {
+            running: false,
+            queued: false,
             id: id.to_string(),
             recipe: "fix-gate".to_string(),
             title: "fix the red gate".to_string(),
@@ -3318,6 +3435,7 @@ echo "Task $stem.$task transitioned: '$from' → '$to'"
 
     fn work_status(tickets: Vec<TicketStatus>) -> WorkStatus {
         WorkStatus {
+            quiet: None,
             project: "widget".to_string(),
             root: PathBuf::from("/w/widget/panta"),
             plan_id: "forge-widget-42".to_string(),
@@ -3826,5 +3944,62 @@ echo "Task $stem.$task transitioned: '$from' → '$to'"
         assert_eq!(rest(3), chrono::Duration::minutes(20));
         // However long it has been failing, it is always tried again.
         assert_eq!(rest(99), chrono::Duration::hours(2));
+    }
+    /// Open and being worked on right now are different facts, and the row
+    /// says which (§FS-005-dispatch.23): a ticket a live run holds is marked
+    /// and toned apart from one merely open, and one on a live root the run
+    /// has not reached says it will get its turn.
+    #[test]
+    fn a_ticket_a_run_has_in_hand_is_marked_apart_from_one_merely_open() {
+        let idle = work_status(vec![ticket("fix-gate-1", "fix")]).lines(60);
+        assert_eq!(idle[0].tone, Tone::Going);
+        assert_eq!(idle[0].marker, "⚙");
+        assert_eq!(idle[0].said, "fix-gate · fix");
+
+        let mut held = ticket("fix-gate-1", "fix");
+        held.running = true;
+        let live = work_status(vec![held]).lines(60);
+        assert_eq!(live[0].tone, Tone::Running);
+        assert_eq!(live[0].marker, "▶");
+        assert_eq!(live[0].said, "fix-gate · fix");
+
+        let mut waiting_its_turn = ticket("fix-gate-2", "fix");
+        waiting_its_turn.queued = true;
+        let queued = work_status(vec![waiting_its_turn]).lines(60);
+        assert_eq!(queued[0].tone, Tone::Going);
+        assert_eq!(queued[0].said, "fix-gate · fix · queued");
+    }
+
+    /// A live run that has gone silent wears the badge the board gives it, on
+    /// the row the reader is already looking at — and only while something is
+    /// actually running there (§FS-005-dispatch.23, §FS-005-dispatch.15).
+    #[test]
+    fn a_quiet_run_says_so_on_the_row_it_is_running() {
+        let mut held = ticket("fix-gate-1", "fix");
+        held.running = true;
+        let mut status = work_status(vec![held]);
+        status.quiet = Some(12);
+        assert_eq!(status.lines(60)[0].said, "fix-gate · fix · quiet 12m");
+
+        // Nothing running: the badge is not a thing an idle row wears.
+        let mut idle = work_status(vec![ticket("fix-gate-1", "fix")]);
+        idle.quiet = Some(12);
+        assert_eq!(idle.lines(60)[0].said, "fix-gate · fix");
+    }
+
+    /// A parked ticket is still the reader's business first, whatever a run
+    /// on the root is doing (§FS-005-dispatch.9): it leads, and it is never
+    /// dressed as running.
+    #[test]
+    fn a_parked_ticket_leads_even_while_a_run_is_live_on_its_root() {
+        let mut parked = ticket("answer-1", "needs-human");
+        parked.waiting = true;
+        parked.queued = true;
+        let mut held = ticket("fix-gate-1", "fix");
+        held.running = true;
+        let lines = work_status(vec![held, parked]).lines(60);
+        assert_eq!(lines[0].tone, Tone::Waiting);
+        assert!(lines[0].said.contains("waiting on you"), "{lines:?}");
+        assert_eq!(lines[1].tone, Tone::Running);
     }
 }

@@ -184,6 +184,10 @@ fn list_work(config: &StatusConfig, args: &crate::cli::WorkListArgs) -> Result<E
                         "state": ticket.state,
                         "finished": ticket.finished,
                         "cancelled": ticket.cancelled,
+                        // Open and being worked on right now are different
+                        // facts, here as on the row (§FS-005-dispatch.23).
+                        "running": ticket.running,
+                        "queued": ticket.queued,
                         "verdict": ticket.verdict,
                     }))).collect::<Vec<_>>(),
                     // The plans workflows laid down beside this matter's own

@@ -687,6 +687,7 @@ mod tests {
 
     fn status(stale: bool) -> WorkStatus {
         WorkStatus {
+            quiet: None,
             project: "demo".to_string(),
             root: PathBuf::from("/w/demo/panta"),
             plan_id: "forge-demo-17".to_string(),
@@ -695,6 +696,8 @@ mod tests {
             missing: false,
             workflows: 0,
             tickets: vec![TicketStatus {
+                running: false,
+                queued: false,
                 id: "fix-gate-1".to_string(),
                 recipe: "fix-gate".to_string(),
                 title: "fix the red gate".to_string(),
@@ -956,6 +959,8 @@ mod tests {
     fn status_with_open_tickets() -> WorkStatus {
         let mut status = status(false);
         let open = |id: &str, state: &str| TicketStatus {
+            running: false,
+            queued: false,
             id: id.to_string(),
             recipe: "fix-gate".to_string(),
             title: "fix the red gate".to_string(),
