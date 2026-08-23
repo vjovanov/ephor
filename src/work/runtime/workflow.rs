@@ -97,11 +97,32 @@ pub struct Input {
     /// binding applies it itself, so ephor never writes it back out.
     pub default: Option<serde_json::Value>,
     /// The workflow declares this input an execution target: a hand, in
-    /// ephor's words (§DA-006-hands-fill-a-workflows-targets).
+    /// ephor's words (§DA-006-hands-fill-a-workflows-targets). True of a list
+    /// whose elements are execution targets too — such an input is answered
+    /// with hands, several at a time, which is what that record settles.
     pub hand: bool,
     /// The workflow names this its principal input — the one thing a person
     /// must say. Used to decide what a single line may answer.
     pub principal: bool,
+    /// The values this input may take, where the binding's own check on it
+    /// spells them out plainly. Empty where it does not: what is not a known
+    /// set is typed, and this reading is a convenience rather than a second
+    /// authority on what the binding accepts (§FS-005-dispatch.19).
+    pub choices: Vec<String>,
+    /// What one element of a list is, where the binding publishes it. None on
+    /// everything else, and on a list it describes no further.
+    pub of: Option<Element>,
+}
+
+/// One value inside another: an element of a list, described the way an input
+/// is. Enough to answer it in its own shape and no deeper — a list of records
+/// is a record's worth of nesting past what a row can carry, and goes to the
+/// editor whole (§FS-005-dispatch.19).
+#[derive(Debug, Clone)]
+pub struct Element {
+    pub kind: Kind,
+    pub hand: bool,
+    pub choices: Vec<String>,
 }
 
 /// Where a workflow came from, which is also where an entry naming it ranks
@@ -246,13 +267,13 @@ fn workflow_of(row: &serde_json::Value) -> Option<Workflow> {
                 .filter_map(|input| {
                     let name = input.get("name")?.as_str()?.to_string();
                     let mark = marks.iter().find(|mark| mark.name == name);
+                    let own = element_of(input);
+                    let of = input
+                        .get("items")
+                        .filter(|items| !items.is_null())
+                        .map(element_of);
                     Some(Input {
-                        kind: Kind::of(
-                            input
-                                .get("type")
-                                .and_then(serde_json::Value::as_str)
-                                .unwrap_or("string"),
-                        ),
+                        kind: own.kind,
                         description: input
                             .get("description")
                             .and_then(serde_json::Value::as_str)
@@ -266,8 +287,18 @@ fn workflow_of(row: &serde_json::Value) -> Option<Workflow> {
                             .get("default")
                             .filter(|value| !value.is_null())
                             .cloned(),
-                        hand: mark.map(|mark| mark.hand).unwrap_or(false),
-                        principal: mark.map(|mark| mark.principal).unwrap_or(false),
+                        // What the listing says, and what the manifest beside
+                        // the workflow says where the listing is an older
+                        // binding's and says nothing. A list of execution
+                        // targets is an input answered with hands too
+                        // (§DA-006-hands-fill-a-workflows-targets).
+                        hand: own.hand
+                            || of.as_ref().is_some_and(|element| element.hand)
+                            || mark.is_some_and(|mark| mark.hand),
+                        principal: input.get("positional").is_some_and(|slot| !slot.is_null())
+                            || mark.is_some_and(|mark| mark.principal),
+                        choices: own.choices,
+                        of,
                         name,
                     })
                 })
@@ -282,6 +313,55 @@ fn workflow_of(row: &serde_json::Value) -> Option<Workflow> {
         inputs,
         id,
     })
+}
+
+/// One value schema as the binding publishes it: what it is, whether it names
+/// who does the work, and the set it is chosen from where its own check spells
+/// one out. Read the same way at either depth, so an array of execution
+/// targets is recognized by the same lines that recognize one
+/// (§FS-005-dispatch.19).
+fn element_of(schema: &serde_json::Value) -> Element {
+    let word = |key: &str| schema.get(key).and_then(serde_json::Value::as_str);
+    Element {
+        kind: Kind::of(word("type").unwrap_or("string")),
+        hand: word("format") == Some(TARGET_FORMAT),
+        choices: word("validate").map(choices_in).unwrap_or_default(),
+    }
+}
+
+/// The values a check permits, where it is plainly a list of them — an
+/// anchored alternation of literal words and nothing else, which is how a
+/// workflow spells a small set of choices in a grammar that has no other way
+/// to say it. Anything with real pattern in it is no set at all and answers
+/// with none, because half-reading somebody else's regular expression and
+/// offering the reader four of the six values it permits is worse than
+/// offering nothing (§FS-005-dispatch.19).
+fn choices_in(pattern: &str) -> Vec<String> {
+    let body = pattern
+        .strip_prefix('^')
+        .or_else(|| pattern.strip_prefix("\\A"))
+        .unwrap_or(pattern);
+    let body = body
+        .strip_suffix('$')
+        .or_else(|| body.strip_suffix("\\z"))
+        .unwrap_or(body);
+    // One pair of brackets around the whole of it is grouping, not pattern.
+    let body = body
+        .strip_prefix("(?:")
+        .or_else(|| body.strip_prefix('('))
+        .and_then(|inner| inner.strip_suffix(')'))
+        .unwrap_or(body);
+    let plain = |word: &str| {
+        !word.is_empty()
+            && word
+                .chars()
+                .all(|ch| ch.is_alphanumeric() || matches!(ch, '-' | '_' | '.' | ' ' | '/'))
+    };
+    let words: Vec<String> = body.split('|').map(str::to_string).collect();
+    match words.len() > 1 && words.iter().all(|word| plain(word)) {
+        true => words,
+        false => Vec::new(),
+    }
 }
 
 /// What the listing leaves out about one input.
@@ -309,23 +389,40 @@ fn marks_in(dir: &Path) -> Vec<Mark> {
     };
     let mut marks: Vec<Mark> = Vec::new();
     let mut key_indent = 0usize;
+    // The one place the scan goes deeper: what a list's elements are is a
+    // block of its own, and an input whose elements are execution targets is
+    // answered with hands like one that is (§DA-006-hands-fill-a-workflows-targets).
+    let mut in_elements = false;
     for line in text.lines() {
         let indent = line.len() - line.trim_start().len();
         let trimmed = line.trim();
         if let Some(rest) = trimmed.strip_prefix("- name:") {
             key_indent = indent + 2;
+            in_elements = false;
             marks.push(Mark {
                 name: scalar(rest),
                 ..Mark::default()
             });
             continue;
         }
-        if indent != key_indent {
-            continue;
+        if indent < key_indent {
+            in_elements = false;
         }
         let Some(mark) = marks.last_mut() else {
             continue;
         };
+        if indent > key_indent {
+            if in_elements {
+                if let Some(rest) = trimmed.strip_prefix("format:") {
+                    mark.hand |= scalar(rest) == TARGET_FORMAT;
+                }
+            }
+            continue;
+        }
+        if indent != key_indent {
+            continue;
+        }
+        in_elements = trimmed == "items:";
         if let Some(rest) = trimmed.strip_prefix("format:") {
             mark.hand = scalar(rest) == TARGET_FORMAT;
         }
@@ -480,6 +577,98 @@ mod tests {
             Kind::List
         );
         assert_eq!(workflow.required().count(), 1);
+    }
+
+    /// Every key the binding publishes about an input is read, so a form can
+    /// be built from the listing alone — which is the only route open for a
+    /// workflow the binding keeps inside itself and has no directory for
+    /// (§DA-006-hands-fill-a-workflows-targets).
+    #[test]
+    fn the_listing_says_which_inputs_are_hands_and_what_a_set_holds() {
+        const PUBLISHED: &str = r#"[
+          {"name": "changeset-review", "version": "1.1.0", "source": "built-in",
+           "path": "changeset-review", "description": "Review a code change.",
+           "inputs": [
+             {"name": "change_ref", "type": "string", "required": true,
+              "positional": 1, "default": null, "validate": null,
+              "format": null, "items": null, "properties": null},
+             {"name": "review_targets", "type": "array", "required": false,
+              "default": ["a", "b"], "validate": null, "format": null,
+              "properties": null,
+              "items": {"type": "string", "format": "execution-target",
+                        "validate": null, "items": null, "properties": null}},
+             {"name": "smart_target", "type": "string", "required": false,
+              "default": "x", "format": "execution-target", "validate": null,
+              "items": null, "properties": null},
+             {"name": "fix_prepare", "type": "string", "required": false,
+              "default": "none", "format": null, "items": null,
+              "properties": null,
+              "validate": "^(none|branch|worktree|fork)$"},
+             {"name": "paper_id", "type": "string", "required": false,
+              "default": "submission", "format": null, "items": null,
+              "properties": null, "validate": "^[a-z]+-[0-9]{2,}$"}
+           ]}
+        ]"#;
+        let workflows = parse(PUBLISHED).expect("parses");
+        let workflow = &workflows[0];
+        // A scalar execution target is a hand, and so is a list of them: such
+        // an input is answered with hands, several at a time.
+        assert!(workflow.input("smart_target").expect("input").hand);
+        let several = workflow.input("review_targets").expect("input");
+        assert!(several.hand);
+        assert_eq!(several.kind, Kind::List);
+        assert!(several.of.as_ref().expect("elements").hand);
+        // The principal input, which the binding names by giving it a slot.
+        assert!(workflow.input("change_ref").expect("input").principal);
+        assert!(!workflow.input("smart_target").expect("input").principal);
+        // A check that is plainly a set of words is one; a check with real
+        // pattern in it is not a set at all.
+        assert_eq!(
+            workflow.input("fix_prepare").expect("input").choices,
+            vec!["none", "branch", "worktree", "fork"]
+        );
+        assert!(workflow
+            .input("paper_id")
+            .expect("input")
+            .choices
+            .is_empty());
+    }
+
+    /// An older binding that publishes none of it still answers, and what the
+    /// manifest beside the workflow says fills in what the listing left out.
+    #[test]
+    fn a_listing_that_says_none_of_it_falls_back_to_the_manifest() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join(MANIFEST),
+            "name: house-style\ninputs:\n  - name: reviewers\n    type: array\n    items:\n      \
+             type: string\n      format: execution-target\n  - name: note\n    type: string\n",
+        )
+        .expect("write");
+        let listing = format!(
+            r#"[{{"name": "house-style", "source": "project", "path": {},
+                 "description": "d",
+                 "inputs": [{{"name": "reviewers", "type": "array", "required": false}},
+                            {{"name": "note", "type": "string", "required": false}}]}}]"#,
+            serde_json::Value::String(dir.path().to_string_lossy().into_owned())
+        );
+        let workflows = parse(&listing).expect("parses");
+        let workflow = &workflows[0];
+        assert!(workflow.input("reviewers").expect("input").hand);
+        assert!(!workflow.input("note").expect("input").hand);
+    }
+
+    /// What a check permits is read only where it plainly says so: a pattern
+    /// half-read is four of six values offered as if they were all of them.
+    #[test]
+    fn a_set_is_read_out_of_a_check_only_where_it_is_plainly_one() {
+        assert_eq!(choices_in("^(a|b)$"), vec!["a", "b"]);
+        assert_eq!(choices_in("a|b"), vec!["a", "b"]);
+        assert_eq!(choices_in("^(?:pr|push)$"), vec!["pr", "push"]);
+        assert!(choices_in("^[a-z]+$").is_empty());
+        assert!(choices_in("^(a|b+)$").is_empty());
+        assert!(choices_in("^none$").is_empty());
+        assert!(choices_in("").is_empty());
     }
 
     #[test]

@@ -1347,7 +1347,15 @@ impl Dispatcher {
         }
         for (input, word) in typed {
             if is_hand(input) {
-                names.push(word.clone());
+                // Read as the input's own type, exactly as the answering will
+                // read it: a line naming several hands is several names here
+                // too, or the list would be looked up as one hand called
+                // `["a","b"]` (§DA-006-hands-fill-a-workflows-targets).
+                let kind = workflow
+                    .input(input)
+                    .map(|input| input.kind)
+                    .unwrap_or(runtime::workflow::Kind::Text);
+                collect_names(&crate::work::workflow::coerce(word, kind), &mut names);
             }
         }
         names.sort();

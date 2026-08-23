@@ -1781,17 +1781,42 @@ input wants the text itself. It is written before the workflow is, so an input
 that insists its file exists is answered truthfully, and it is written where a
 work root's own reading will not mistake it for a plan.
 
-**What is still unanswered is asked for, or refused by name.** One missing
-answer is one line, typed where the reader is standing, which is the whole of
-[§10](#10-what-ephor-offers-is-not-a-limit-on-what-can-be-asked)'s machinery
-already. More than one, or an input wanting a list or a record, is not a line:
-ephor writes down everything it did resolve, leaves each unanswered input with
-its name, its type and what it is for, and opens that in the reader's editor —
-the same handover an offer already takes, and a form the one-line prompt could
-never carry. Where nobody is there to ask — a dispatch of every matching item
-at once — the entry refuses and names the inputs it could not answer, because a
-workflow written with a hole in it is a piece of work that looks scheduled and
-never happens ([§6](#6-dispatch-is-offered-where-it-would-work-and-refuses-where-it-would-not)).
+**Every input is answered on one screen, with its answer already standing in
+it.** Answering a workflow is not filling in the blanks. The answers that were
+resolved are as likely to be the wrong ones as the missing ones — the
+workflow's own defaults most of all, which are a stranger's habits about which
+model reviews and how many passes it takes — so what the reader is given is
+every input the workflow declares, each carrying the answer the five steps
+reached and the name of the step it came from, and each one changeable there.
+A screen that showed only the holes would be asking the reader to accept
+everything else unseen, which is the opposite of what showing an account is
+for.
+
+**What has a known set is chosen from it; the rest is typed.** An input is
+edited in the shape it actually has. Where the values it can take are known,
+one is picked from them rather than spelled: a flag has two, an input that
+names who does the work has the roster, already narrowed and already saying
+who is unavailable and why
+([§14](#14-who-does-the-work-is-chosen-and-defaulted-per-project),
+§DA-006-hands-fill-a-workflows-targets),
+and an input whose own check is a plain set of words has those words. An input
+wanting several of them is answered several at a time, from the same set.
+Everything else is one line typed on its own row, which is
+[§10](#10-what-ephor-offers-is-not-a-limit-on-what-can-be-asked)'s ask with
+the input's name already on it. What ephor reads out of a check is a
+convenience and never a second authority: a value the offered set does not
+hold can still be typed, and the binding remains the one thing that validates
+its own inputs. What no row can carry — a record, or a list of them — is the
+reader's editor, on that input alone or over the whole set at once, which is
+the same handover an offer already takes.
+
+**What is still unanswered blocks the laying and says so, or refuses by name.**
+A required input nobody has answered leaves the screen open, naming what is
+missing, rather than laying a workflow down with a hole in it. Where nobody is
+there to ask — a dispatch of every matching item at once — the entry refuses
+and names the inputs it could not answer, because a workflow written with a
+hole in it is a piece of work that looks scheduled and never happens
+([§6](#6-dispatch-is-offered-where-it-would-work-and-refuses-where-it-would-not)).
 
 **Who does the work is ephor's answer, not the workflow's.** A workflow's
 inputs are mostly its agents: which one reviews, which one adjudicates, which

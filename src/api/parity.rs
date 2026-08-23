@@ -93,6 +93,11 @@ pub const ABILITIES: &[Ability] = &[
         command: "work run",
     },
     Ability {
+        what: "what laying a workflow down would write, before it writes it",
+        keys: &["p"],
+        command: "work lay --dry-run",
+    },
+    Ability {
         what: "the tickets that are over, shown or folded away",
         keys: &["z"],
         command: "work offers --all",

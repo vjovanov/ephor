@@ -2582,11 +2582,38 @@ from the board or with `ephor work run`. A second laying of the same entry is
 `<matter>-<entry>-2`: two runs of one workflow about one item are two records,
 not a correction of the first.
 
-In the interface, a workflow entry is an ordinary row in the action menu. One
-missing scalar input is one line typed where you are standing; anything more —
-or anything wanting a list or a record — opens a file in `$EDITOR` with
-everything ephor already resolved in it and each unanswered input named with
-what it wants. Leave that file alone and nothing is laid down.
+**Answering the inputs on screen.** In the interface, a workflow entry is an
+ordinary row in the action menu, and choosing it opens **one screen with every
+input on it** — not only the ones nobody answered. Each row carries the answer
+the five steps reached and where it came from (`← the entry`, `← the hand`,
+`← the workflow`, `← you`), so what you are about to get is in front of you
+before anything is written:
+
+| Key | Does |
+|---|---|
+| `j` / `k` | move between the inputs; the last row lays it down |
+| `G` | to that row |
+| `Enter` | answer the row: a set to pick from, or a line to type |
+| `Space` | on an input wanting several, take one — the order you take them in is the order they are written |
+| `→` | into the efforts column of the hand under the cursor |
+| `e` | everything resolved, in a file, in `$EDITOR` |
+| `p` | what the runtime says it would write, before it writes it |
+| `Esc` | close what is open; on the screen itself, leave without laying anything down |
+
+Where the values an input can take are known, the row is **chosen** from them
+rather than typed: a `true/false` input has two, an input naming who does the
+work has your roster — already narrowed, already saying who is unavailable and
+why — and an input whose own check is a plain set of words (`^(none|branch|
+worktree|fork)$`) has those words. An input wanting several hands is answered
+with several. Everything else is one line typed on its row, starting from
+whatever is already in it. What no row can carry — a record, or a list of them
+— is `e`, which is the same file `$EDITOR` opened before: everything ephor
+resolved, each unanswered input named with what it wants. Leave that file
+alone and nothing changes.
+
+A required input nobody has answered is marked `!`, and the last row says it
+cannot go until something answers it. Nothing is written until you press Enter
+on that row.
 
 ### 8.16 A window of your own
 

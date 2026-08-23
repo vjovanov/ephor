@@ -24,18 +24,6 @@ pub(crate) enum Asking {
         item: crate::feed::model::Item,
         ticket: String,
     },
-    /// The one input of a workflow nobody has answered
-    /// (§FS-005-dispatch.19). One missing answer is one line; anything more,
-    /// or anything wanting a list or a record, goes to a file instead.
-    Input {
-        item: Box<crate::feed::model::Item>,
-        entry: Box<crate::feed::config::ActionConfig>,
-        /// What the reader has answered so far, for this laying alone.
-        typed: std::collections::BTreeMap<String, String>,
-        /// The input this line answers.
-        input: String,
-        picked: Option<crate::work::recipe::HandPin>,
-    },
 }
 
 pub(crate) struct Prompt {
