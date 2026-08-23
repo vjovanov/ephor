@@ -169,6 +169,7 @@ ever recorded one.
 | `o` | open in browser |
 | `v` | thread screen, strictly (status message when empty) |
 | `x` | summon the configured actions for the item (see below) |
+| `C` | check out the branch the row is about, where it says `∅ not checked out` |
 | `m`/`d`/Space | mark done (resurfaces if the item changes again) |
 | `a` | mark everything visible done |
 | `[` / `]` | previous / next project (detail view) |

@@ -2213,20 +2213,39 @@ pub fn states_yaml(global: &WorkConfig, project: Option<&ProjectWorkConfig>) -> 
     }
 }
 
+/// A work root ephor made or found, and what it could not do on the way
+/// (§FS-006-project-interface.7).
+pub struct Store {
+    pub dir: PathBuf,
+    /// Whether this call is what put it there. False where it was already on
+    /// disk, which is what lets a checkout asked for twice say what it did
+    /// rather than say the same thing twice (§FS-004-quick-actions.7.1).
+    pub made: bool,
+    /// What the runtime said when it could not make its own project there.
+    /// None where it did — and never an error, because the workspace around
+    /// this one directory is whole either way (§FS-004-quick-actions.7).
+    pub note: Option<String>,
+}
+
 /// Make the work root for a workspace, so the first dispatch into that branch
 /// has somewhere to land and what is under way is visible from the moment the
 /// tree exists (§FS-006-project-interface.7).
 ///
-/// The store ignores itself, which is what keeps this from being an artifact
-/// required of the project (§REQ-001-boundary.3): what it holds is ephor's own
-/// planning state that happens to live in a checkout.
+/// The runtime makes its own project and ephor says where: the directory is
+/// the work root resolved here, and what a project in it consists of is the
+/// runner's answer rather than a copy of that answer kept in ephor. Ephor's
+/// own state machine goes in beside what the runner wrote, and the store's
+/// self-ignore is added whatever the runner's project says about version
+/// control — that is what keeps this from being an artifact required of the
+/// project (§REQ-001-boundary.3): what it holds is ephor's own planning state
+/// that happens to live in a checkout.
 pub fn ensure_store(
     global: &WorkConfig,
     project: Option<&ProjectWorkConfig>,
     project_id: &str,
     workspace: &std::path::Path,
     root: &std::path::Path,
-) -> Result<PathBuf> {
+) -> Result<Store> {
     let values = BTreeMap::from([
         ("workspace", workspace.to_string_lossy().into_owned()),
         ("root", root.to_string_lossy().into_owned()),
@@ -2235,8 +2254,17 @@ pub fn ensure_store(
     let dir =
         crate::paths::resolve_path(&dossier::render(&root_template(global, project), &values));
     let states = states_yaml(global, project)?;
+    let made = !dir.is_dir();
+    // The directory first: the runner is asked to make a place that is there,
+    // and what ephor installs afterwards reads what the runner left rather than
+    // racing it.
+    plan::create_dir(&dir)?;
+    let note = match runtime::init(global, &dir) {
+        runtime::Initialized::Project => None,
+        runtime::Initialized::Refused(why) => Some(why),
+    };
     WorkRoot::ensure(&dir, &states)?;
-    Ok(dir)
+    Ok(Store { dir, made, note })
 }
 
 /// The state a hand-written ask starts in when the reader names none: the

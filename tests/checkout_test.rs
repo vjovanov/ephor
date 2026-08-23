@@ -110,12 +110,56 @@ fn fixture(tmp: &Path) -> PathBuf {
         tmp.join("status.json"),
         serde_json::to_string_pretty(&json!({
             "defaults": { "ttl_seconds": 600, "provider_timeout_seconds": 10 },
+            "work": { "runner": RUNNER },
             "projects": { "demo": { "providers": [] } }
         }))
         .unwrap(),
     )
     .unwrap();
+    fs::create_dir_all(tmp.join("fakebin")).unwrap();
     project_root
+}
+
+/// The runtime these tests bind. A name of the fixture's own, on a PATH the
+/// fixture owns, so whether the runner answers is something a test decides by
+/// writing [`stub_runner`] — never something the machine running the suite
+/// decides by having the real one installed.
+const RUNNER: &str = "checkout-test-runtime";
+
+/// A runner that records what it was asked and makes the manifest the real one
+/// would, so the directory it was pointed at comes back a project
+/// (§FS-006-project-interface.7). Its `.gitignore` is deliberately not ephor's:
+/// what a runner's project says about version control is the runner's, and the
+/// self-ignore ephor adds on top is what this proves.
+const RUNTIME: &str = r#"#!/usr/bin/env bash
+set -euo pipefail
+verb="$1"; shift
+if [ "$verb" = init ]; then
+  here=""; note=1; title=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --here) here=1; shift ;;
+      --no-agents) note=""; shift ;;
+      --title) title="$2"; shift 2 ;;
+      *) dir="$1"; shift ;;
+    esac
+  done
+  [ -n "$here" ] || { echo "expected --here" >&2; exit 1; }
+  mkdir -p "$dir"
+  printf '%s\n' "$dir" > "$dir/asked"
+  printf '%s\n' "$title" > "$dir/titled"
+  printf '# Panta: %s\n' "$title" > "$dir/index.panta.md"
+  printf 'runtime/\n' > "$dir/.gitignore"
+  # The note the real one leaves in the host directory, where it was not
+  # told to skip it — the checkout, which ephor promised not to change.
+  [ -z "$note" ] || printf 'rhei lives here\n' >> "$(dirname "$dir")/AGENTS.md"
+  exit 0
+fi
+exit 1
+"#;
+
+fn stub_runner(tmp: &Path) {
+    make_executable(&tmp.join("fakebin").join(RUNNER), RUNTIME);
 }
 
 fn ephor(tmp: &Path) -> assert_cmd::Command {
@@ -123,6 +167,13 @@ fn ephor(tmp: &Path) -> assert_cmd::Command {
     cmd.env("XDG_STATE_HOME", tmp.join("state"));
     cmd.env("EPHOR_STATUS_CONFIG", tmp.join("status.json"));
     cmd.env("EPHOR_REGISTRY", tmp.join("workspaces.json"));
+    // The fixture's own bin first, so a runner answers exactly when a test put
+    // one there; git and the rest of the world stay reachable behind it.
+    let path = std::env::join_paths(std::iter::once(tmp.join("fakebin")).chain(
+        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()),
+    ))
+    .unwrap();
+    cmd.env("PATH", path);
     cmd
 }
 
@@ -204,6 +255,119 @@ fn a_workspace_that_is_already_there_says_so_and_succeeds() {
             .unwrap(),
         stamp
     );
+}
+
+/// The runtime makes its own project and ephor says where
+/// (§FS-006-project-interface.7): the runner is asked for the work root ephor
+/// resolved, ephor's own state machine goes in beside what it wrote, and the
+/// self-ignore is ephor's whatever the runner's project says about version
+/// control.
+#[test]
+fn the_runtime_makes_its_own_project_where_ephor_says() {
+    let tmp = tempdir();
+    let root = fixture(tmp.path());
+    stub_runner(tmp.path());
+    let _ce = repo(tmp.path(), "ce");
+    let _ee = repo(tmp.path(), "ee");
+
+    ephor(tmp.path())
+        .args(["checkout", "--project", "demo", "--branch", "feature"])
+        .assert()
+        .success();
+
+    let store = root.join("feature/panta");
+    // What the runner was asked, in its own words: the work root, named
+    // outright, and told to be the project rather than to make one under a
+    // name of its own.
+    let asked = fs::read_to_string(store.join("asked")).expect("the runner was asked");
+    assert_eq!(asked.trim(), store.to_string_lossy(), "{asked}");
+    // Named for the workspace it stands in, not for the directory it is.
+    let titled = fs::read_to_string(store.join("titled")).unwrap();
+    assert_eq!(titled.trim(), "feature", "{titled}");
+    // What it wrote is still there, ephor's machine is beside it, and the
+    // directory ignores itself all the same.
+    assert!(store.join("index.panta.md").is_file());
+    assert!(store.join("states.yaml").is_file());
+    let ignore = fs::read_to_string(store.join(".gitignore")).unwrap();
+    assert!(ignore.contains("runtime/"), "{ignore}");
+    assert!(ignore.lines().any(|line| line.trim() == "*"), "{ignore}");
+    // And nothing of the runner's landed in the checkout: ephor promised the
+    // branch would be byte-for-byte what it was (§REQ-001-boundary.3), and the
+    // runner's own discovery note would have been a change to it.
+    assert!(
+        !root.join("feature/AGENTS.md").exists(),
+        "the runner left a note in the checkout"
+    );
+}
+
+/// A runner that is not on the machine does not fail the checkout: the
+/// workspace is made either way, ephor writes the store it can, and the note
+/// says what it could not do (§FS-004-quick-actions.7).
+#[test]
+fn a_runner_that_is_not_there_leaves_the_checkout_whole() {
+    let tmp = tempdir();
+    let root = fixture(tmp.path());
+    let _ce = repo(tmp.path(), "ce");
+    let _ee = repo(tmp.path(), "ee");
+
+    ephor(tmp.path())
+        .args(["checkout", "--project", "demo", "--branch", "feature"])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains(RUNNER));
+
+    let store = root.join("feature/panta");
+    assert!(store.join("index.panta.md").is_file());
+    assert!(store.join("states.yaml").is_file());
+}
+
+/// *Already checked out* answers the question about repositories, not the one
+/// about work (§FS-004-quick-actions.7.1). A workspace that holds every
+/// repository and no store is repaired by asking for the checkout again —
+/// which is the shape of a workspace made before ephor made stores at all, or
+/// made by a project's own checkout command.
+#[test]
+fn a_workspace_that_is_there_is_still_given_its_store() {
+    let tmp = tempdir();
+    let root = fixture(tmp.path());
+    let _ce = repo(tmp.path(), "ce");
+    let _ee = repo(tmp.path(), "ee");
+
+    ephor(tmp.path())
+        .args(["checkout", "--project", "demo", "--branch", "feature"])
+        .assert()
+        .success();
+    // The workspace as somebody else's checkout command would have left it:
+    // every repository, and nowhere for a plan to land.
+    let store = root.join("feature/panta");
+    fs::remove_dir_all(&store).unwrap();
+
+    ephor(tmp.path())
+        .args(["checkout", "--project", "demo", "--branch", "feature"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("already checked out"))
+        .stdout(predicates::str::contains("task store at"));
+    assert!(store.join("states.yaml").is_file());
+
+    // And the answer a runtime reads says the same thing (§REQ-002-parity.3).
+    let output = ephor(tmp.path())
+        .args([
+            "checkout",
+            "--project",
+            "demo",
+            "--branch",
+            "feature",
+            "--json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let view: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(view["store"]["made"], json!(false));
+    assert_eq!(view["store"]["dir"], json!(store.to_string_lossy()));
 }
 
 /// A directory is not a workspace. This is the one command whose exit code

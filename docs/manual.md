@@ -1040,6 +1040,7 @@ does not report one simply never shows it.
 | `c` | the gate screen |
 | `w` | the work screen (§8) |
 | `x` | the action menu (§7) — commands and work alike, on an item and on a branch row |
+| `C` | check out the branch this row is about (§7.1) — offered where the row says `∅ not checked out` |
 | `m` `d` `Space` | mark done |
 | `a` | mark everything visible done |
 | `u` | unread-only ↔ everything |
@@ -1217,10 +1218,35 @@ repository has it, and a new branch of the same name off the main branch where
 it does not, which is what a change touching one repository of a tree looks
 like on disk. A repository whose branch another working tree is already holding
 is reported and left alone — git refuses that, and it is right to. Run it on a
-workspace that is already there and it says so and changes nothing; run it on
+workspace that is already there and it leaves every repository alone; run it on
 one holding only some of the project's repositories and it makes the rest,
 because a directory is not a workspace and this is the command that answers
 whether one is whole.
+
+**`C` on the row runs it too.** The row already says `∅ not checked out`, so
+the move is a key there rather than only an entry in the menu opened over it
+([§FS-004-quick-actions.7.2](../requirements.md#72-the-offer-is-a-key-on-the-row-that-says-the-workspace-is-missing)):
+on the matter's row, on the work rows beneath it, and on the branch's own row,
+including the rows under *(not linked to a branch)*, which is where a matter
+whose branch nobody has checked out usually sits. It is the same entry the menu
+holds — including your own `checkout` command where the project configures one
+— so the two cannot come apart. The footer teaches `C` only on a row whose
+workspace is missing.
+
+**And the workspace gets a work store.** A branch workspace ephor makes is a
+place work can be handed to, not only a pile of repositories: the runtime is
+asked for a project of its own in the work root ephor resolves — `panta/` under
+the workspace, unless `work.root` says otherwise — and ephor's state machine
+goes in beside what it wrote
+([§FS-006-project-interface.7](../requirements.md#7-the-projects-own-tasks-are-read-where-they-live)).
+The directory ignores itself, so `git status` in the checkout is unchanged by
+it. A workspace that was already there is owed this too — made before ephor did
+this, or made by your own `checkout` command — so asking for the checkout again
+on a whole workspace is how a missing store is repaired
+([§FS-004-quick-actions.7.1](../requirements.md#71-a-workspace-that-is-there-is-still-owed-its-store)):
+it says `already checked out` and then `task store at <dir>` if it made one.
+Where the runner is not on `PATH`, ephor writes the store it can and says on
+standard error what it could not do; the checkout itself still succeeds.
 
 It is also the step that runs *before* any other action on a missing workspace.
 Pick `⧉ open the diff` on a branch you have never checked out and ephor checks
@@ -3058,6 +3084,7 @@ usable by the runtime it hands work to.
 | `enter` / `l` on a row that says *running* — open it | `ephor actions open <id> --item ID` |
 | `t` — pick who gets the work | `ephor actions run <id> --item ID --hand ada:high` |
 | the freehand row | `ephor actions run --item ID --command '…'` |
+| `C` — make the workspace a row says is missing | `ephor checkout --item ID` (or `--project P --branch B`) |
 | `v` — the conversation | `ephor thread ID` |
 | `+` — react | `ephor react ID THUMBS_UP --message 0` |
 | `t` — tick a task | `ephor tick ID --message 1` |

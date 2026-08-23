@@ -153,6 +153,14 @@ impl ActionMenu {
         )
     }
 
+    /// The entry about a workspace that is not there, where this subject has
+    /// one (§FS-004-quick-actions.7.2). What the key on the row runs, so that
+    /// the key and the row in this menu are the same move rather than two
+    /// spellings of it (§AR-009-surfaces.1).
+    pub fn checkout_entry(&self) -> Option<&MenuEntry> {
+        self.entries.iter().find(|entry| entry.is_checkout)
+    }
+
     /// The hands `t` may offer here (§FS-005-dispatch.14). Separate from the
     /// constructor because most menus — a branch row's, a project with no
     /// recipes — carry no agent entry to pick for and need no roster read.

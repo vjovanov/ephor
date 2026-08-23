@@ -735,6 +735,41 @@ the key the reader presses and the command a state machine runs are the same
 operation, since two of them would eventually disagree about what a checked-out
 workspace is.
 
+#### 7.1 A workspace that is there is still owed its store
+
+A directory that is there stops the offer: ephor reports the workspace as
+already checked out and does nothing more. But *already checked out* answers
+the question about repositories, not the one about work. A workspace made
+before ephor made stores at all, or made by a project's own checkout command
+([§3](#3-quick-actions-come-first-and-configuration-adds-to-them)), holds every
+repository it should and still has nowhere for a plan to land — and the reader
+who asks for the checkout again is asking exactly the question that would fix
+it.
+
+So the checkout makes whatever is missing and stops only where nothing is: the
+repositories where those are absent, and the store
+([§FS-006-project-interface.7](#7-the-projects-own-tasks-are-read-where-they-live))
+in either case, since a store is part of what makes a directory a workspace
+rather than a pile of repositories. Asking twice is how a half-made workspace
+is repaired, not a no-op the reader has to work around.
+
+#### 7.2 The offer is a key on the row that says the workspace is missing
+
+The row already says *not checked out* — the matter's own row, the branch's
+row, and the row of a matter nothing could place, which is where a matter whose
+branch has no workspace usually is, since a branch nothing checked out is a
+branch the reader has no row for. Where a fact is shown is where the move
+about it belongs
+([§6](#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase)), so the
+checkout is a key on that row and not only an entry in a menu opened over it.
+One key, on every row that carries a branch, running the one operation above.
+
+The menu keeps its entry — the key is a second way to the same move, not a
+replacement for the first. But a menu is where a reader goes to choose among
+things, and there is nothing to choose among here: a workspace that is not
+there has exactly one thing that can be done about it, and the row already
+says so.
+
 ### 8. A branch that trails its own published copy is offered the rebase onto it
 
 Main moving under a branch is one thing that happens to it. The branch moving
@@ -2342,6 +2377,25 @@ the project and does not bend §REQ-001-boundary.3: the store ignores itself,
 so what it holds is ephor's own planning state that happens to live in a
 checkout, never content the project carries. A project cloned without ephor
 is byte-for-byte what it was.
+
+**The runtime makes its own project; ephor says where.** What a runtime
+project consists of is the runtime's answer, so ephor asks the runner for one
+rather than writing the runner's files out of a copy of that answer compiled
+into ephor — two answers to one question drift the first time the runner
+changes its mind, and the reader who then runs the runner by hand is the one
+who finds out. What ephor supplies is the directory: the work root it already
+resolves for this workspace, so a person who moved the work root gets the
+project there rather than wherever the runner would have put it left to
+itself. Ephor's own state machine (§FS-005-dispatch.6) is installed beside
+what the runner wrote, and the self-ignore above stays ephor's whatever the
+runner's project would say about version control — the paragraph above is a
+promise about the checkout, and the runner has made none. For the same reason
+the runner is asked not to leave its own discovery note beside the project: a
+note in the checkout's `AGENTS.md` is a change to the branch, tracked or
+untracked, and ephor said there would be none. Where the runner is not on the
+machine, ephor writes the store it can and says what it could not do: a
+checkout that failed because a convenience did is a checkout that did not need
+to fail.
 
 ### 8. The checkout contract
 

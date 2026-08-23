@@ -64,6 +64,37 @@ pub const VERB: &str = "work.run";
 /// The verb a cancel fills, for messages (§FS-005-dispatch.16).
 pub const CANCEL_VERB: &str = "work.cancel";
 
+/// The verb making the runtime's own project fills, for messages
+/// (§FS-006-project-interface.7).
+pub const INIT_VERB: &str = "work.init";
+
+/// How long the runner gets to make a project before ephor stops waiting.
+/// It writes a handful of small files in a directory ephor already made;
+/// seconds are generous, and a checkout is waiting on it.
+const INIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// How the runner is told to make the directory it was given the project,
+/// rather than a subdirectory of that directory under a name of its own. Ephor
+/// resolves the work root itself and a project anywhere else is a project
+/// nothing here would read again (§FS-006-project-interface.7). Part of the
+/// same coupling as the plan flag (§AR-007-runtime.1).
+const HERE_FLAG: &str = "--here";
+
+/// How the runner is told not to leave a discovery note beside the project it
+/// makes. Its note goes in the *host* directory's `AGENTS.md`, which for a
+/// work root is the checkout — a file the project tracks, or one that was not
+/// there at all, either way a change to the branch
+/// (§FS-006-project-interface.7). Ephor promised the checkout would be
+/// byte-for-byte what it was (§REQ-001-boundary.3) and the runner promised
+/// nothing, so the note is declined here. Part of the same coupling as the
+/// plan flag (§AR-007-runtime.1).
+const NO_NOTE_FLAG: &str = "--no-agents";
+
+/// How the runner is told what to call the project it makes. Left to itself it
+/// names it after the directory, which under [`HERE_FLAG`] is the work root's
+/// own name and the same word for every project on the machine.
+const TITLE_FLAG: &str = "--title";
+
 /// How long the runner gets to move one ticket before ephor stops waiting.
 /// A transition is a file rewrite and, at most, a callback the machine
 /// hangs on it — seconds are generous, and a reader is holding the screen.
@@ -125,6 +156,84 @@ pub fn cancel(
         ),
         false => format!("{} refused: {said}", label_of(config, "transition")),
     }))
+}
+
+/// `<runner> init --here --no-agents --title <name> <dir>`, quoted for `sh`,
+/// with the runner's own standard error folded into what is captured — its
+/// refusal is written there, and it is the one thing worth reading back when
+/// the project does not appear. The directory is ephor's own work root, named
+/// outright, because ephor resolves where work lives and a project anywhere
+/// else is one nothing here reads again (§FS-006-project-interface.7).
+pub fn init_command(config: &crate::work::recipe::WorkConfig, dir: &Path) -> String {
+    format!(
+        "{} init {HERE_FLAG} {NO_NOTE_FLAG} {TITLE_FLAG} {} {} 2>&1",
+        runner(config),
+        quote(&project_title(dir)),
+        quote(&dir.to_string_lossy()),
+    )
+}
+
+/// What to call the project in the work root at `dir`: the workspace it stands
+/// in, which is the branch's own directory where a project keeps one checkout
+/// per branch. The same name [`plan::WorkRoot::ensure`] writes into a manifest
+/// it makes itself, so the two do not disagree about one project.
+fn project_title(dir: &Path) -> String {
+    dir.parent()
+        .and_then(Path::file_name)
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "work".to_string())
+}
+
+/// What asking the runner for its own project came to
+/// (§FS-006-project-interface.7).
+pub enum Initialized {
+    /// The runner made one, or there already was one — either way the
+    /// directory is a runtime project now.
+    Project,
+    /// It could not be asked, or it refused. Carries the sentence to show;
+    /// never fatal, because the checkout around this succeeded
+    /// (§FS-004-quick-actions.7).
+    Refused(String),
+}
+
+/// Ask the runner to make a project of its own in `dir`
+/// (§FS-006-project-interface.7).
+///
+/// A directory that already holds one is left alone rather than offered to the
+/// runner for it to refuse: whether there is a project here is a question about
+/// a file, and asking a process it in order to read its prose back would be
+/// ephor parsing a refusal for a fact it can see.
+pub fn init(config: &crate::work::recipe::WorkConfig, dir: &Path) -> Initialized {
+    if plan::is_project(dir) {
+        return Initialized::Project;
+    }
+    if let Some(refusal) = refusal(config) {
+        return Initialized::Refused(refusal);
+    }
+    // From the directory being made, which the caller has already created: the
+    // runner is told the place twice over, and a summons resolved against a
+    // path that is not there fails as a missing place rather than as the
+    // runner's own refusal (§AR-002-summons.2).
+    let answer = summons::run(
+        &Summons::new(INIT_VERB, init_command(config, dir)),
+        &Site::root(dir),
+        Mode::Captured(INIT_TIMEOUT),
+    );
+    match answer {
+        Ok(answer) if answer.is_done() => Initialized::Project,
+        Ok(answer) => {
+            let said = said(answer.output.as_deref().unwrap_or(""));
+            Initialized::Refused(match said.is_empty() {
+                true => format!(
+                    "{} refused: {}",
+                    label_of(config, "init"),
+                    answer.refusal(INIT_VERB)
+                ),
+                false => format!("{} refused: {said}", label_of(config, "init")),
+            })
+        }
+        Err(err) => Initialized::Refused(err.to_string()),
+    }
 }
 
 /// The runner's own words out of what it printed: the first two lines that

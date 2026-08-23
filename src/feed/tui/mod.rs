@@ -109,6 +109,8 @@ pub(crate) enum Action {
         project: String,
         branch: BranchInfo,
     },
+    /// Make the workspace the row says is not there (§FS-004-quick-actions.7.2).
+    Checkout(CheckoutOf),
     /// Show what is being done about an item, and what could be
     /// (§FS-005-dispatch).
     OpenWork(Item),
@@ -166,6 +168,18 @@ pub(crate) enum Action {
     ToggleUnread,
     Refresh,
     SetMessage(String),
+}
+
+/// Whose workspace a checkout is about (§FS-004-quick-actions.7.2). A matter
+/// carries its own branch, and a branch row is the branch itself; either way
+/// the move is the one entry that row's menu holds about a missing workspace.
+#[derive(Clone)]
+pub(crate) enum CheckoutOf {
+    Item(Box<Item>),
+    Branch {
+        project: String,
+        branch: Box<BranchInfo>,
+    },
 }
 
 enum Screen {
@@ -572,42 +586,10 @@ impl App {
             // the list `ephor actions` prints, gated by the same table
             // (§AR-005-capabilities.2). The menu opens where the project is
             // placed; where it is not, the ladder's own sentence says why.
-            Action::OpenActionMenu(item) => {
-                let subject = crate::api::read::Subject::Item(&item);
-                match (self.ctx.place(&subject), self.ctx.menu(&subject)) {
-                    (Ok(placed), Ok(entries)) => {
-                        // The hands `t` may offer, read once at menu open
-                        // against the work root the dispatch will use
-                        // (§FS-005-dispatch.14) — empty where there is no
-                        // agent entry to pick for or nobody to pick, which is
-                        // what withholds the picker entirely.
-                        let roster = match entries.iter().any(|entry| entry.action.agent.is_some())
-                        {
-                            true => match (self.ctx.work_root(&item), &mut self.ctx.dispatcher) {
-                                (Some(root), Some(dispatcher)) => {
-                                    dispatcher.pickable(&item.project, &root)
-                                }
-                                _ => Vec::new(),
-                            },
-                            false => Vec::new(),
-                        };
-                        let checkout = self.ctx.checkouts.get(&item.project).cloned();
-                        self.menu = Some(
-                            ActionMenu::over(
-                                actions::Subject::Item(Box::new(item)),
-                                placed.root,
-                                placed.workspace,
-                                placed.branch,
-                                placed.state,
-                                checkout,
-                                entries,
-                            )
-                            .with_roster(roster),
-                        );
-                    }
-                    (Err(refusal), _) | (_, Err(refusal)) => self.message = refusal,
-                }
-            }
+            Action::OpenActionMenu(item) => match self.item_menu(item) {
+                Ok(menu) => self.menu = Some(menu),
+                Err(refusal) => self.message = refusal,
+            },
             // The same menu, opened from the row the fact is shown on
             // (§FS-004-quick-actions.6). It carries ephor's own offers only:
             // there is no item here for a source's, a project's or a person's
@@ -615,27 +597,35 @@ impl App {
             // work is asked for about a matter, and there is none here
             // (§FS-005-dispatch.2).
             Action::OpenBranchActions { project, branch } => {
-                let subject = crate::api::read::Subject::Branch {
-                    project: &project,
-                    branch: &branch.branch,
+                match self.branch_menu(&project, branch) {
+                    Ok(menu) => self.menu = Some(menu),
+                    Err(refusal) => self.message = refusal,
+                }
+            }
+            // The key on the row that says the workspace is missing
+            // (§FS-004-quick-actions.7.2). It assembles the row's own menu and
+            // runs the one entry in it about the missing workspace, so the key
+            // and that entry cannot come to be two different operations
+            // (§AR-009-surfaces.1) — including the project's own checkout
+            // command where it configured one (§FS-006-project-interface.8).
+            Action::Checkout(about) => {
+                let menu = match about {
+                    CheckoutOf::Item(item) => self.item_menu(*item),
+                    CheckoutOf::Branch { project, branch } => self.branch_menu(&project, *branch),
                 };
-                match (self.ctx.place(&subject), self.ctx.menu(&subject)) {
-                    (Ok(placed), Ok(entries)) => {
-                        let checkout = self.ctx.checkouts.get(&project).cloned();
-                        self.menu = Some(ActionMenu::over(
-                            actions::Subject::Branch {
-                                project: project.clone(),
-                                branch: branch.branch.clone(),
-                            },
-                            placed.root,
-                            placed.workspace,
-                            Some(branch),
-                            placed.state,
-                            checkout,
-                            entries,
-                        ));
-                    }
-                    (Err(refusal), _) | (_, Err(refusal)) => self.message = refusal,
+                match menu {
+                    Ok(menu) => match menu.checkout_entry().cloned() {
+                        Some(entry) => self.run_menu_entry(terminal, &menu, &entry)?,
+                        // Said rather than swallowed: the reader pressed a key
+                        // on a row, and a key that does nothing without saying
+                        // why reads as a key that is broken
+                        // (§FS-004-quick-actions.2).
+                        None => {
+                            self.message =
+                                format!("{} is checked out already", menu.subject.title())
+                        }
+                    },
+                    Err(refusal) => self.message = refusal,
                 }
             }
             Action::OpenWork(item) => self.open_work(item),
@@ -1490,6 +1480,69 @@ impl App {
         }
         self.rebuild_view();
         Ok(())
+    }
+
+    /// One matter's menu, assembled below the screen (§AR-009-surfaces.1):
+    /// this is the list `ephor actions` prints, gated by the same table
+    /// (§AR-005-capabilities.2). Built here rather than in the arm that opens
+    /// it, because a key that runs one of its entries without opening it has
+    /// to be looking at the same list (§FS-004-quick-actions.7.2). Err is the
+    /// ladder's own sentence for a project that is not placed.
+    fn item_menu(&mut self, item: Item) -> std::result::Result<ActionMenu, String> {
+        let subject = crate::api::read::Subject::Item(&item);
+        let placed = self.ctx.place(&subject)?;
+        let entries = self.ctx.menu(&subject)?;
+        // The hands `t` may offer, read once at menu open against the work
+        // root the dispatch will use (§FS-005-dispatch.14) — empty where there
+        // is no agent entry to pick for or nobody to pick, which is what
+        // withholds the picker entirely.
+        let roster = match entries.iter().any(|entry| entry.action.agent.is_some()) {
+            true => match (self.ctx.work_root(&item), &mut self.ctx.dispatcher) {
+                (Some(root), Some(dispatcher)) => dispatcher.pickable(&item.project, &root),
+                _ => Vec::new(),
+            },
+            false => Vec::new(),
+        };
+        let checkout = self.ctx.checkouts.get(&item.project).cloned();
+        Ok(ActionMenu::over(
+            actions::Subject::Item(Box::new(item)),
+            placed.root,
+            placed.workspace,
+            placed.branch,
+            placed.state,
+            checkout,
+            entries,
+        )
+        .with_roster(roster))
+    }
+
+    /// One branch's menu, the same way (§FS-004-quick-actions.6). The row's own
+    /// `BranchInfo` rides it rather than the registry's: a branch nothing
+    /// declared still has a row, and it is the row the reader is on.
+    fn branch_menu(
+        &mut self,
+        project: &str,
+        branch: BranchInfo,
+    ) -> std::result::Result<ActionMenu, String> {
+        let subject = crate::api::read::Subject::Branch {
+            project,
+            branch: &branch.branch,
+        };
+        let placed = self.ctx.place(&subject)?;
+        let entries = self.ctx.menu(&subject)?;
+        let checkout = self.ctx.checkouts.get(project).cloned();
+        Ok(ActionMenu::over(
+            actions::Subject::Branch {
+                project: project.to_string(),
+                branch: branch.branch.clone(),
+            },
+            placed.root,
+            placed.workspace,
+            Some(branch),
+            placed.state,
+            checkout,
+            entries,
+        ))
     }
 
     /// The entry, ready to run, in the shape the move takes

@@ -48,6 +48,11 @@ pub const ABILITIES: &[Ability] = &[
         command: "actions run --hand",
     },
     Ability {
+        what: "make the branch workspace a row says is not there",
+        keys: &["C"],
+        command: "checkout",
+    },
+    Ability {
         what: "a matter's recorded conversation",
         keys: &["v"],
         command: "thread",

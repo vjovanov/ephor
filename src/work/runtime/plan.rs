@@ -43,8 +43,26 @@ const TASKS_HEADING: &str = "## Tasks";
 /// module (§REQ-001-boundary.5).
 pub const PROJECT_DIR: &str = "panta";
 
+/// The file whose presence makes a directory a runtime project — the runner's
+/// own manifest, and so the one thing that answers "is there already a project
+/// here" without asking the runner and reading its prose. Part of the
+/// coupling, and so part of this module (§REQ-001-boundary.5).
+const MANIFEST: &str = "index.panta.md";
+
 /// What a plan file is called: `<plan id>` and this.
 pub(super) const PLAN_SUFFIX: &str = ".rhei.md";
+
+/// The rule that makes a work root invisible to the repository it sits in
+/// (§FS-006-project-interface.7). Ephor's promise, kept whatever else is in
+/// that file.
+const SELF_IGNORE: &str = "# ephor work — planning state, not repository content\n*\n";
+
+/// Whether `dir` already holds a runtime project (§FS-006-project-interface.7).
+/// Asked before the runner's own `init` is, so that a directory that has one is
+/// left alone rather than being offered to the runner for it to refuse.
+pub fn is_project(dir: &Path) -> bool {
+    dir.join(MANIFEST).is_file()
+}
 
 /// A directory holding an item's plans: a rhei project, with the state machine
 /// its tickets run under.
@@ -84,7 +102,7 @@ impl WorkRoot {
     /// nothing to disturb, and ephor moves in beside it.
     pub fn ensure(dir: &Path, states_yaml: &str) -> Result<WorkRoot> {
         create_dir(dir)?;
-        let manifest = dir.join("index.panta.md");
+        let manifest = dir.join(MANIFEST);
         let states = dir.join("states.yaml");
         let ours = !manifest.exists();
         if ours {
@@ -97,13 +115,19 @@ impl WorkRoot {
         }
         // A directory that ignores itself needs no entry in the repository's
         // own .gitignore: work about a branch would otherwise show up as a
-        // change to that branch.
+        // change to that branch. The runner's own `init` writes rules of its
+        // own here (§FS-006-project-interface.7) and none of them is this one —
+        // it never promised the checkout would stay clean and ephor did — so
+        // the line is added to what is there rather than only written where
+        // nothing is.
         let ignore = dir.join(".gitignore");
-        if !ignore.exists() {
-            write(
-                &ignore,
-                "# ephor work — planning state, not repository content\n*\n",
-            )?;
+        let held = fs::read_to_string(&ignore).unwrap_or_default();
+        if !held.lines().any(|line| line.trim() == "*") {
+            let lead = match held.is_empty() || held.ends_with('\n') {
+                true => held,
+                false => format!("{held}\n"),
+            };
+            write(&ignore, &format!("{lead}{SELF_IGNORE}"))?;
         }
         if !states.exists() {
             if !ours && holds_plans(dir) {
@@ -833,7 +857,7 @@ fn one_line(text: &str) -> String {
     joined.chars().take(117).collect::<String>() + "…"
 }
 
-fn create_dir(dir: &Path) -> Result<()> {
+pub(crate) fn create_dir(dir: &Path) -> Result<()> {
     fs::create_dir_all(dir)
         .map_err(|err| EphorError::Command(format!("Cannot create {}: {err}", dir.display())))
 }

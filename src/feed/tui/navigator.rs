@@ -21,7 +21,7 @@ use crate::forest::{Staleness, Standing, Trail};
 
 use crate::work::{Tone, WorkLine};
 
-use super::{highlight_style, Action, BranchInfo, Ctx};
+use super::{highlight_style, Action, BranchInfo, CheckoutOf, Ctx};
 
 /// One category's filter (§FS-003-feed-categories.1).
 type SectionFilter = fn(&Item) -> bool;
@@ -240,6 +240,12 @@ impl NavigatorState {
     /// answers to the work's keys, and they displace the ones they share a
     /// letter with (§FS-005-dispatch.23).
     pub fn footer(&self) -> String {
+        // Taught only where it would work: a row whose branch is already on
+        // disk has nothing for this key to make (§FS-004-quick-actions.2).
+        let make = match self.workspace_missing_under_cursor() {
+            true => "C checkout  ",
+            false => "",
+        };
         if let Some(line) = self.work_under_cursor() {
             let take = match line.ticket.is_some() {
                 true => "c cancel it  ",
@@ -247,27 +253,61 @@ impl NavigatorState {
             };
             return format!(
                 " j/k move  enter thread  {take}a watch the run  e read the plan  w work  \
-                 x actions  o browser  m done  ; ops  r refresh  q quit"
+                 {make}x actions  o browser  m done  ; ops  r refresh  q quit"
             );
         }
         match self.mode {
-            Mode::Stream => " j/k move  enter thread  c gate  w work  o browser  x actions  m done  a all done  u unread  ; ops  tab projects  r refresh  q quit".to_string(),
+            Mode::Stream => format!(" j/k move  enter thread  c gate  w work  {make}o browser  x actions  m done  a all done  u unread  ; ops  tab projects  r refresh  q quit"),
             Mode::Projects => " j/k move  enter view project  ; ops  tab stream  r refresh  q quit".to_string(),
-            Mode::Detail => " j/k move  enter thread  c gate  w work  o browser  x actions  m done  [/] project  esc back  u unread  ; ops  r refresh  q quit".to_string(),
+            Mode::Detail => format!(" j/k move  enter thread  c gate  w work  {make}o browser  x actions  m done  [/] project  esc back  u unread  ; ops  r refresh  q quit"),
         }
     }
 
-    /// The work line under the cursor, without moving anything — what the
+    /// The rows as the cursor sees them, without moving anything — what the
     /// footer is built from.
-    fn work_under_cursor(&self) -> Option<&WorkLine> {
+    fn under_cursor(&self) -> Option<(&Vec<Entry>, usize)> {
         let (entries, state) = match self.mode {
             Mode::Stream => (&self.stream_entries, &self.stream_state),
             Mode::Projects => (&self.project_entries, &self.project_state),
             Mode::Detail => (&self.detail_entries, &self.detail_state),
         };
-        match entries.get(state.selected()?) {
+        Some((entries, state.selected()?))
+    }
+
+    /// The work line under the cursor, where the cursor is on one.
+    fn work_under_cursor(&self) -> Option<&WorkLine> {
+        let (entries, index) = self.under_cursor()?;
+        match entries.get(index) {
             Some(Entry::Work(_, line)) => Some(line),
             _ => None,
+        }
+    }
+
+    /// Whether the row the cursor is on is about a branch whose workspace is
+    /// not there (§FS-004-quick-actions.7.2) — the one fact the checkout key
+    /// is offered on. Read off the row rather than measured again: `∅` on the
+    /// row and the key in the footer answer to the same reading, so a footer
+    /// that teaches the key and a row that does not say why cannot happen.
+    fn workspace_missing_under_cursor(&self) -> bool {
+        let Some((entries, index)) = self.under_cursor() else {
+            return false;
+        };
+        match entries.get(index) {
+            Some(Entry::Item(row)) => row.checked_out == Some(false),
+            Some(Entry::Branch(_, _, checked_out, ..)) => !checked_out,
+            // A work row is about the matter above it (§FS-005-dispatch.23),
+            // and that matter's row is the one carrying the reading.
+            Some(Entry::Work(item, _)) => entries[..index]
+                .iter()
+                .rev()
+                .find_map(|entry| match entry {
+                    Entry::Item(row) if row.item.id == item.id => {
+                        Some(row.checked_out == Some(false))
+                    }
+                    _ => None,
+                })
+                .unwrap_or(false),
+            _ => false,
         }
     }
 
@@ -538,6 +578,27 @@ impl NavigatorState {
                     }
                     Some(Selected::Branch(project, branch)) => {
                         Action::OpenBranchActions { project, branch }
+                    }
+                    _ => Action::None,
+                }
+            }
+            // The row already says the workspace is not there, so the move
+            // that makes it is here rather than only inside the menu opened
+            // over the row (§FS-004-quick-actions.7.2). Every row that carries
+            // a branch answers it: the matter's, the work rows beneath it —
+            // which are about that matter (§FS-005-dispatch.23) — and the
+            // branch's own.
+            KeyCode::Char('C') => {
+                self.read_selection();
+                match self.selected_row() {
+                    Some(Selected::Item(item)) | Some(Selected::Work(item)) => {
+                        Action::Checkout(CheckoutOf::Item(Box::new(item)))
+                    }
+                    Some(Selected::Branch(project, branch)) => {
+                        Action::Checkout(CheckoutOf::Branch {
+                            project,
+                            branch: Box::new(branch),
+                        })
                     }
                     _ => Action::None,
                 }
@@ -1707,6 +1768,95 @@ mod tests {
         assert!(beneath.contains("⚙ fix-gate · fix"), "{beneath:?}");
         // When it was asked for, where the ledger knows (§FS-005-dispatch.18).
         assert!(beneath.contains("asked 4m"), "{beneath:?}");
+    }
+
+    /// The row says the workspace is not there, so the key that makes it is on
+    /// the row (§FS-004-quick-actions.7.2). Every row that carries a branch
+    /// answers it — the matter's, the work rows beneath it, and the branch's
+    /// own — and each hands over the subject whose menu holds the move.
+    #[test]
+    fn the_checkout_key_is_on_every_row_that_carries_a_branch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = super::super::tests::ctx_with_branch(tmp.path(), None);
+        let mut navigator = NavigatorState::new();
+        navigator.mode = Mode::Detail;
+        navigator.detail_entries = vec![
+            Entry::Branch(
+                "widget".to_string(),
+                branch_info("you/ABC-42"),
+                false,
+                None,
+                None,
+                0,
+                None,
+            ),
+            row("pr:1"),
+        ];
+        navigator
+            .detail_entries
+            .extend(worked("pr:2", vec![going("fix-gate-1", "fix-gate · fix")]));
+
+        navigator.detail_state = on(&navigator.detail_entries, 0);
+        match navigator.handle_key(&ctx, KeyCode::Char('C')) {
+            Action::Checkout(CheckoutOf::Branch { project, branch }) => {
+                assert_eq!(project, "widget");
+                assert_eq!(branch.branch, "you/ABC-42");
+            }
+            _ => panic!("a branch row checks out its own branch"),
+        }
+
+        navigator.detail_state = on(&navigator.detail_entries, 1);
+        match navigator.handle_key(&ctx, KeyCode::Char('C')) {
+            Action::Checkout(CheckoutOf::Item(item)) => assert_eq!(item.id, "pr:1"),
+            _ => panic!("a matter's row checks out the matter's branch"),
+        }
+
+        // A work row is about the matter above it (§FS-005-dispatch.23), so it
+        // answers with that matter rather than with nothing.
+        navigator.detail_state = on(&navigator.detail_entries, 3);
+        match navigator.handle_key(&ctx, KeyCode::Char('C')) {
+            Action::Checkout(CheckoutOf::Item(item)) => assert_eq!(item.id, "pr:2"),
+            _ => panic!("a work row checks out the matter's branch"),
+        }
+    }
+
+    /// A key is taught only where the move behind it would work
+    /// (§FS-004-quick-actions.2): the footer offers the checkout on a row whose
+    /// workspace is not there, and on no other — the same reading `∅` on the
+    /// row is drawn from (§FS-004-quick-actions.7.2).
+    #[test]
+    fn the_footer_offers_the_checkout_only_where_the_workspace_is_missing() {
+        let absent = match row("pr:1") {
+            Entry::Item(mut row) => {
+                row.checked_out = Some(false);
+                Entry::Item(row)
+            }
+            _ => unreachable!("the fixture is a row"),
+        };
+        let here = match row("pr:2") {
+            Entry::Item(mut row) => {
+                row.checked_out = Some(true);
+                Entry::Item(row)
+            }
+            _ => unreachable!("the fixture is a row"),
+        };
+        let mut navigator = NavigatorState::new();
+        navigator.mode = Mode::Detail;
+        navigator.detail_entries = vec![absent, here];
+
+        navigator.detail_state = on(&navigator.detail_entries, 0);
+        assert!(
+            navigator.footer().contains("C checkout"),
+            "{}",
+            navigator.footer()
+        );
+
+        navigator.detail_state = on(&navigator.detail_entries, 1);
+        assert!(
+            !navigator.footer().contains("C checkout"),
+            "{}",
+            navigator.footer()
+        );
     }
 
     /// On a work row the keys are the work's: cancel takes back *that* ticket

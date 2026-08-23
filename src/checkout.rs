@@ -74,6 +74,13 @@ pub fn checkout(args: &CheckoutArgs) -> Result<ExitCode> {
     if target.is_dir() {
         let missing = placement.forest(&target).absent;
         if missing.is_empty() {
+            // Every repository is here, so there is no tree left to make. The
+            // store still may be: a workspace made before ephor made stores at
+            // all, or made by the project's own checkout command, holds every
+            // repository it should and has nowhere for a plan to land
+            // (§FS-004-quick-actions.7.1). Asking again is what repairs it.
+            let store = init_store(&project, &target, &placement.root);
+            let summary = format!("{} is already checked out", target.display());
             if args.json {
                 println!(
                     "{}",
@@ -81,13 +88,15 @@ pub fn checkout(args: &CheckoutArgs) -> Result<ExitCode> {
                         "workspace": target,
                         "branch": branch,
                         "ready": true,
-                        "summary": format!("{} is already checked out", target.display()),
+                        "summary": summary,
                         "repos": [],
+                        "store": store.view(),
                     }))
                     .unwrap_or_else(|_| "null".to_string())
                 );
             } else {
-                println!("{} is already checked out.", target.display());
+                println!("{summary}.");
+                store.say();
             }
             return Ok(ExitCode::SUCCESS);
         }
@@ -135,6 +144,11 @@ pub fn checkout(args: &CheckoutArgs) -> Result<ExitCode> {
     };
 
     let outcome = git::create(&source, &target, &forest, &branch, &base);
+    // The store goes in only where the tree it belongs to is whole: a half-made
+    // workspace is refused below, and a work root inside one would be a place
+    // for plans that cannot be worked (§FS-006-project-interface.7).
+    let store = (outcome.refused().is_empty() && !outcome.repos.is_empty())
+        .then(|| init_store(&project, &target, &placement.root));
     if args.json {
         let mut view = outcome.view();
         if let Some(object) = view.as_object_mut() {
@@ -142,6 +156,9 @@ pub fn checkout(args: &CheckoutArgs) -> Result<ExitCode> {
                 "report".to_string(),
                 serde_json::Value::String(outcome.report()),
             );
+            if let Some(store) = &store {
+                object.insert("store".to_string(), store.view());
+            }
         }
         println!(
             "{}",
@@ -167,21 +184,26 @@ pub fn checkout(args: &CheckoutArgs) -> Result<ExitCode> {
     }
     if !args.json {
         println!("{}", outcome.summary());
+        if let Some(store) = &store {
+            store.say();
+        }
     }
-    init_store(&project, &target, &placement.root, args.json);
     Ok(ExitCode::SUCCESS)
 }
 
 /// A workspace ephor makes gets a task store, so the first dispatch into
 /// this branch has somewhere to land and what is under way is visible from
-/// the moment the tree exists (§FS-006-project-interface.7).
+/// the moment the tree exists (§FS-006-project-interface.7). A workspace that
+/// was already there is owed it just the same: *already checked out* answers
+/// the question about repositories, not the one about work
+/// (§FS-004-quick-actions.7.1).
 ///
 /// Reported and never fatal: the workspace is made either way, and a checkout
 /// that failed because a convenience did is a checkout that did not need to
 /// fail. Where no site configuration can be read, the shipped default answers
 /// — this is `ephor checkout` working on a machine that has a registry and
 /// nothing else.
-fn init_store(project: &str, workspace: &std::path::Path, root: &std::path::Path, quiet: bool) {
+fn init_store(project: &str, workspace: &std::path::Path, root: &std::path::Path) -> Store {
     let config = load_config().ok();
     let global = config
         .as_ref()
@@ -192,9 +214,48 @@ fn init_store(project: &str, workspace: &std::path::Path, root: &std::path::Path
         .and_then(|config| config.projects.get(project))
         .map(|project| &project.work);
     match crate::work::ensure_store(&global, per_project, project, workspace, root) {
-        Ok(dir) if !quiet => println!("  task store at {}", dir.display()),
-        Ok(_) => {}
-        Err(err) => eprintln!("note: no task store was made — {err}"),
+        Ok(store) => Store {
+            dir: Some(store.dir),
+            made: store.made,
+            note: store.note,
+        },
+        Err(err) => Store {
+            dir: None,
+            made: false,
+            note: Some(format!("no task store was made — {err}")),
+        },
+    }
+}
+
+/// What the store came to, in the shape both answers need: the reading prints
+/// it and `--json` carries it, so a runtime is told what a reader is told
+/// (§REQ-002-parity.3).
+struct Store {
+    /// None where none could be made; the note says why.
+    dir: Option<PathBuf>,
+    made: bool,
+    note: Option<String>,
+}
+
+impl Store {
+    /// The line worth printing, where there is one: what was made now, and
+    /// whatever could not be. A store that was already there says nothing —
+    /// the reader asked for a checkout and it changed nothing.
+    fn say(&self) {
+        if let (true, Some(dir)) = (self.made, &self.dir) {
+            println!("  task store at {}", dir.display());
+        }
+        if let Some(note) = &self.note {
+            eprintln!("note: {note}");
+        }
+    }
+
+    fn view(&self) -> serde_json::Value {
+        serde_json::json!({
+            "dir": self.dir,
+            "made": self.made,
+            "note": self.note,
+        })
     }
 }
 
