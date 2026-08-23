@@ -506,6 +506,11 @@ fn dispatch_work(config: &StatusConfig, args: &crate::cli::WorkDispatchArgs) -> 
 
     if !args.dry_run {
         dispatcher.save()?;
+        // Work that needs nobody to start it gets its run in the same breath
+        // as the ticket (§FS-005-dispatch.24). The sweep decides what that
+        // is, so this starts nothing where nothing asked for it and nothing
+        // on a root a run already holds.
+        started(&mut dispatcher, &args.project, args.json)?;
     }
     // What the reader should know about who got the work: a hand nobody could
     // be named to, a pair ephor cannot check, an agent with no model of its
@@ -1056,6 +1061,10 @@ fn sync_work(config: &StatusConfig, args: &crate::cli::WorkSyncArgs) -> Result<E
     }
     if !args.dry_run {
         dispatcher.save()?;
+        // The same continuation dispatch makes: work reopened because its
+        // item moved is work again, and where it needs nobody to start it,
+        // nobody has to (§FS-005-dispatch.24, §FS-005-dispatch.5).
+        started(&mut dispatcher, &args.project, args.json)?;
     }
     if args.json {
         println!(
@@ -1115,6 +1124,15 @@ fn run_work(config: &StatusConfig, args: &crate::cli::WorkRunArgs) -> Result<Exi
         Option<runtime::roster::HandFlags>,
         Vec<String>,
     );
+    // The sweep behind autorun (§FS-005-dispatch.24): which roots are due is
+    // read from the world — the plans on disk, the machine's own words about
+    // their states, and the runtime's lock — rather than from the ledger's
+    // memory of what was dispatched. The starting itself is the engine's, so
+    // this command, the timer, and a dispatch that just wrote a ticket cannot
+    // drift into three ways of doing one thing (§AR-009-surfaces.1).
+    if args.due {
+        return swept(config, &mut dispatcher, args);
+    }
     let mut roots: Vec<Group> = Vec::new();
     for entry in &entries {
         let status = dispatcher.status_of(entry, None);
@@ -1305,6 +1323,100 @@ fn run_work(config: &StatusConfig, args: &crate::cli::WorkRunArgs) -> Result<Exi
             }))
             .unwrap_or_else(|_| "null".to_string())
         );
+    }
+    if failed > 0 {
+        return Ok(ExitCode::from(1));
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Start whatever the sweep says is due, after a command that just wrote
+/// tickets (§FS-005-dispatch.24).
+///
+/// The continuation, and it is the same act `--due` and the timer make: one
+/// sweep, idempotent, safe on a root that already has a run. Said in one line
+/// per run so the reader who asked for a ticket learns that it also began —
+/// and, where it could not begin, why.
+fn started(dispatcher: &mut Dispatcher, projects: &[String], json: bool) -> Result<()> {
+    let launched = dispatcher.start_due(Utc::now(), projects, &[]);
+    if launched.is_empty() {
+        return Ok(());
+    }
+    // The record of what starting came to is ephor's own, and is kept whether
+    // it worked or not (§FS-005-dispatch.4, §FS-005-dispatch.24).
+    dispatcher.save()?;
+    for run in &launched {
+        match (json, run.failed.is_some()) {
+            // Under `--json` the reading is alone on standard output
+            // (§FS-011-command-line.7); a line about a run still reaches
+            // whoever is watching.
+            (true, _) | (false, true) => eprintln!("note: {}", run.says()),
+            (false, false) => println!("{}", run.says()),
+        }
+    }
+    Ok(())
+}
+
+/// `ephor work run --due` — start a run on every root that wants one and has
+/// none (§FS-005-dispatch.24).
+///
+/// The starting is the engine's; this says what came of it. A sweep that
+/// starts nothing is the ordinary case and is reported as success, because
+/// "every root that wanted a run has one" is the answer, not a failure — a
+/// timer that went red on a quiet machine would be a watch reporting on
+/// itself.
+fn swept(
+    config: &StatusConfig,
+    dispatcher: &mut Dispatcher,
+    args: &crate::cli::WorkRunArgs,
+) -> Result<ExitCode> {
+    let style = Style::detect();
+    let launched = dispatcher.start_due(Utc::now(), &args.project, &args.runner_args);
+    // What the sweep learned about its own attempts, kept for the next one.
+    // Only ephor's record of ephor's own act is written; no work state is
+    // touched, and none ever is (§FS-005-dispatch.4).
+    dispatcher.save()?;
+    let failed = launched.iter().filter(|run| run.failed.is_some()).count();
+    if args.json {
+        let rows: Vec<serde_json::Value> = launched
+            .iter()
+            .map(|run| {
+                stated(serde_json::json!({
+                    "root": run.root,
+                    "project": run.project,
+                    "item": run.item,
+                    "tickets": run.tickets,
+                    "outcome": run.outcome(),
+                    "says": run.says(),
+                    "id": run.id,
+                }))
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "runs": rows,
+                "failed": failed,
+            }))
+            .unwrap_or_else(|_| "null".to_string())
+        );
+    } else if launched.is_empty() {
+        println!("Nothing is due: no work root is waiting for a run.");
+    } else {
+        for run in &launched {
+            println!(
+                "\n▶ {} {}",
+                runtime::label(&config.work),
+                run.root.display()
+            );
+            // What made the root due, so a run nobody asked for still says
+            // what it is about (§FS-005-dispatch.24).
+            println!("  {}", style.dim(&run.tickets.join(", ")));
+            match &run.failed {
+                Some(_) => eprintln!("error: {}", run.says()),
+                None => println!("{}", run.says()),
+            }
+        }
     }
     if failed > 0 {
         return Ok(ExitCode::from(1));

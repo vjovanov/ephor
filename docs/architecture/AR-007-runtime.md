@@ -34,9 +34,12 @@ whether a run is live on an execution root, read from the binding's own
 artifacts and never from a process table (§FS-005-dispatch.15) — the
 per-root run lock, probed with a non-blocking try-lock because the runner
 takes it with a blocking acquire and a waiting probe would queue ephor
-behind the very run it asks about; the transition journal and the newest
-matching agent log for which tickets a live run holds, one task having many
-logs across states and visits; the dashboard address a live run publishes,
+behind the very run it asks about; the live run's own event stream for what
+that run has taken up and let go, read from its own beginning and resumed by
+the sequence a reader has already seen, with the transition journal and the
+newest matching agent log as the floor beneath it where a runner writes no
+such stream (§FS-005-dispatch.15.2) — one task having many logs across
+states and visits; the dashboard address a live run publishes,
 per run rather than per ticket; and the advance and release commands in the
 runner's own words (§FS-005-dispatch.10). Cancelling: the transition of
 one ticket into the abandonment state, composed in the runner's own

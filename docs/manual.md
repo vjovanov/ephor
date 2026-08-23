@@ -1565,6 +1565,7 @@ Add your own, or replace a shipped one by reusing its id:
         "description": "fix the red gate",
         "state": "fix",                 // the state a fresh ticket starts in
         "needs_checkout": true,
+        "autorun": true,                // and do not wait for me to start it
         "when": { "kinds": ["pr"], "roles": ["author"], "gate": "failing" },
         "brief": "The gate on {title} is red. Run `just check` in {workspace} …",
         // The runtime's own words, unchecked — or "model": "…". Mutually
@@ -1578,6 +1579,19 @@ Add your own, or replace a shipped one by reusing its id:
 
 Per project, `projects.<id>.work` takes the same three keys and its recipes are
 appended to the global ones.
+
+**`autorun`** is the one field that changes *when* work happens rather than
+what it says. With it, a ticket written from this recipe gets its run without
+anyone pressing anything: dispatch starts it in the same breath, and
+`ephor work run --due` — which the work-sync timer runs — starts anything born
+elsewhere
+([§FS-005-dispatch.24](../requirements.md#24-work-nobody-has-to-start-starts-itself)).
+The deliberate act moves one step earlier and is made once, when you adopt the
+recipe. Leaving it out is the default and means what it always did: the run is
+yours to start. It is per recipe and nowhere else — trusting the gate-fixer to
+start itself says nothing about the rest of the menu — and every refusal
+dispatch makes still applies, including refusing to run in a working tree
+standing on another branch.
 
 **The selector.** Every field that is set must hold; an empty one asks nothing.
 Finished work never matches.
@@ -2169,7 +2183,7 @@ ephor work dispatch [--project P] [--item ID] [--recipe R] [--kind K]
 ephor work ask --item ID [WORDS…] [--state S] [--dry-run]
 ephor work sync [--project P] [--dry-run]
 ephor work cancel --item ID TICKET… [--why WORDS] [--dry-run]
-ephor work run [--project P] [--item ID] [--watch] [-- RHEI_ARGS…]
+ephor work run [--project P] [--item ID] [--due] [--watch] [-- RHEI_ARGS…]
 ephor work workflows [--project P] [WORKFLOW] [--json]
 ephor work lay ENTRY --item ID [--set INPUT=VALUE]… [--hand H] [--dry-run]
 ephor work forget [--item ID | --done | --missing]
@@ -2193,6 +2207,20 @@ ephor work states
   ([§FS-005-dispatch.20](../requirements.md#20-a-run-of-the-runtime-starts-beneath-the-screen-and-is-watched-by-attaching));
   `--watch` keeps your terminal and watches the run here, which is also what a
   runner with no detached shape does unasked, saying so.
+  `--due` is the other question entirely: not "run this item's work" but
+  "start whatever should be running and is not"
+  ([§FS-005-dispatch.24](../requirements.md#24-work-nobody-has-to-start-starts-itself)).
+  It reads the world rather than the ledger — every work root, the plans in
+  it, the machine's own words about their states, and the runtime's lock — and
+  starts a detached run on each root holding an open, unclaimed, unparked
+  ticket from a recipe that said `"autorun": true`. A root a run already holds
+  gets nothing, so the sweep is safe to run as often as you like and starts one
+  run however many times you invoke it. A root whose start failed rests before
+  it is tried again, longer each consecutive time, so a runner that refuses
+  cannot become a spawn loop. Where the runner has no detached shape the sweep
+  starts nothing and says so: a run nobody asked for must not take a terminal.
+  Nothing is due unless a recipe asked for it — silence still means you press
+  the key.
 - **`workflows`** and **`lay`** are the runtime's own workflows, offered as
   actions (§8.15). `lay` writes a plan of its own beside the matter's and runs
   nothing; `--dry-run` shows what would answer every input first.

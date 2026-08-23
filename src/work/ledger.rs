@@ -28,6 +28,15 @@ pub struct Ledger {
     /// is the same item to both halves of ephor.
     #[serde(default)]
     pub entries: BTreeMap<String, Entry>,
+    /// What starting a run on a work root last came to, keyed by the root
+    /// (§FS-005-dispatch.24). Ephor's own record of ephor's own act — never
+    /// work state, which stays the plan's (§FS-005-dispatch.4) — and read for
+    /// one purpose: a root whose start failed is left alone for a while, so
+    /// a runner that refuses cannot turn every sweep into a spawn. An
+    /// addition, so a ledger written before this field existed reads
+    /// unchanged (§FS-006-project-interface.11).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub starts: BTreeMap<String, Start>,
 }
 
 fn version() -> u32 {
@@ -50,6 +59,14 @@ pub struct Entry {
     /// recorded; the work root's parent stands in.
     #[serde(default)]
     pub checkout: PathBuf,
+    /// The branch the work is about, as it was resolved when the ticket was
+    /// written. Kept so that a run started without a reader present can check
+    /// what dispatch checked — that the working tree is still standing on the
+    /// branch the plan is about (§FS-005-dispatch.24, §FS-005-dispatch.3).
+    /// Absent on entries written before this was recorded, and on work that
+    /// matched no branch at all; a fact nobody recorded refuses nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
     /// The plan this item's work lives in — its id inside the root, which is
     /// also its file stem. Named for the plan, not for the runtime that runs
     /// it; a ledger written before that is migrated on the way in by the
@@ -58,6 +75,55 @@ pub struct Entry {
     pub plan_id: String,
     pub plan: PathBuf,
     pub dispatches: Vec<Dispatch>,
+}
+
+/// How long a root waits after one failed start, and how long it may ever
+/// wait: doubling from the first, capped so that a root left alone is always
+/// tried again eventually (§FS-005-dispatch.24).
+const BACK_OFF: chrono::TimeDelta = chrono::TimeDelta::minutes(5);
+const BACK_OFF_CAP: chrono::TimeDelta = chrono::TimeDelta::hours(2);
+
+/// What the last attempt to start a run on one work root came to.
+///
+/// Only failure is worth remembering. A start that worked leaves a run, and
+/// the run leaves a lock — which is what every later sweep reads, and it is
+/// the world rather than a memory (§FS-005-dispatch.15).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Start {
+    /// When the failed attempt was made.
+    pub at: DateTime<Utc>,
+    /// How many times in a row starting here has failed. The interval grows
+    /// with it, so a root that is broken rather than busy costs less each
+    /// time it is passed over.
+    #[serde(default = "one")]
+    pub failures: u32,
+    /// What went wrong, in the runner's or the launcher's own words — kept
+    /// so a reader who never pressed anything can still be told why the
+    /// thing they did not press did not happen.
+    #[serde(default)]
+    pub says: String,
+}
+
+fn one() -> u32 {
+    1
+}
+
+impl Start {
+    /// When this root may be tried again: the interval doubles with each
+    /// consecutive failure and stops growing at [`BACK_OFF_CAP`].
+    pub fn ready_at(&self) -> DateTime<Utc> {
+        let doublings = self.failures.saturating_sub(1).min(16);
+        let wait = BACK_OFF
+            .checked_mul(1i32 << doublings)
+            .unwrap_or(BACK_OFF_CAP)
+            .min(BACK_OFF_CAP);
+        self.at + wait
+    }
+
+    /// Whether a sweep should pass this root over for now.
+    pub fn resting(&self, now: DateTime<Utc>) -> bool {
+        now < self.ready_at()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -236,6 +302,7 @@ pub fn load() -> Result<Ledger> {
         return Ok(Ledger {
             version: version(),
             entries: BTreeMap::new(),
+            starts: BTreeMap::new(),
         });
     }
     let text = fs::read_to_string(&path)

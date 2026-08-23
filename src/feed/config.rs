@@ -162,6 +162,11 @@ struct AgentAsk {
     state: Option<String>,
     #[serde(default)]
     hand: Option<crate::work::recipe::HandPin>,
+    /// This work needs nobody to start it (§FS-005-dispatch.24). An entry
+    /// that asks for work is a recipe under another name, so it says this
+    /// the way a recipe does.
+    #[serde(default)]
+    autorun: bool,
 }
 
 /// What an entry says when it lays down a workflow the runtime offers
@@ -302,6 +307,7 @@ impl TryFrom<RawAction> for ActionConfig {
             state: ask.state.unwrap_or_else(crate::work::recipe::default_state),
             when: raw.when.clone(),
             needs_checkout: raw.requires_checkout,
+            autorun: ask.autorun,
             brief: ask.brief,
             // Ephor's own deterministic moves belong to the recipes that ship
             // with them (§FS-005-dispatch.12); an entry a person wrote asks

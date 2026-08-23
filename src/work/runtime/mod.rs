@@ -13,6 +13,7 @@
 //! terminal handover — so the key in the inbox and `ephor work run` cannot
 //! drift into two different invocations (§FS-005-dispatch.12).
 
+pub mod events;
 pub mod plan;
 pub mod results;
 pub mod roster;

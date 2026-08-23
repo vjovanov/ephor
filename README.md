@@ -383,8 +383,16 @@ ephor work                                        # what it made of it
 
 and then, whenever the world moves — a new comment, a gate that turned red —
 `ephor refresh && ephor work sync` writes the next round of tickets and
-`ephor work run` works them. A timer can run the first half; running agents is
-left deliberate.
+`ephor work run` works them.
+
+A recipe that says `"autorun": true` does not wait for that last command: the
+ticket gets its run in the same breath it is written, and a timer running
+`ephor work run --due` starts anything born elsewhere. The sweep behind it
+reads the world rather than a memory — a root is due when it holds an open,
+unclaimed, unparked ticket from such a recipe and no run is live on it — so it
+is safe to invoke as often as anything cares to, and starts nothing on a root
+that already has a run. Everything that says nothing about this is still
+nobody's to start but yours.
 
 In the TUI, `w` on any item opens its **work screen**: the tickets already
 opened and what they reached, whether the item has moved under them, and the

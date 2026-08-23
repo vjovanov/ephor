@@ -1479,8 +1479,10 @@ as long as a run is live there, and the operating system lets go of that
 lock when a run dies, however it dies. The board probes the lock without
 ever waiting on it — the runtime acquires it blockingly, so a probe that
 queued would park the watch behind the very run it is asking about. Which
-tickets a live run holds is read from the journal and the logs the run
-writes as it works.
+tickets a live run holds is read from what that run itself writes as it
+works ([§15.2](#152-what-a-run-is-doing-is-read-from-the-runs-own-stream)),
+and where a runner writes no such stream, from the journal and the logs it
+leaves behind.
 
 **A row is an execution root, not a ticket.** The runtime schedules one run
 per root, and ephor's work root is per branch workspace — so two items whose
@@ -1567,8 +1569,11 @@ watches files ephor already knows by name and asks nothing of any forge
 nothing has changed, a timestamp answers that, and the timestamps asked
 are a fixed handful per root: each plan file the last enumeration found,
 the root's own directory — a plan appearing or vanishing is a directory
-event — and the artifact the runtime moves on every slot it takes or
-releases, never a sweep of everything it ever wrote; the bound runner is
+event — and the artifacts the runtime moves as it works: the one it writes
+on every slot it takes or releases, and the live run's own stream
+([§15.2](#152-what-a-run-is-doing-is-read-from-the-runs-own-stream)), which
+is one more name in the same fixed handful and never a sweep of everything
+the runtime ever wrote; the bound runner is
 asked to list its plans only about a root that holds an operation, and
 nothing is ever read while a frame is being put on screen — and it holds
 everywhere work is shown, not only on the board: a ticket the runtime
@@ -1584,6 +1589,48 @@ what the disk holds: it visits the project checkouts and the branch
 workspaces ephor already resolves, to the fixed depth a branch name can
 nest, and costs one directory listing per candidate work root — it never
 descends into a repository, and it never reads a plan to find it.
+
+#### 15.2 What a run is doing is read from the run's own stream
+
+The lock says a run is live and the plan says what state a ticket is in.
+Between those two facts sits everything the reader actually wants from a
+live row — which ticket the run has in hand right now, what it just
+finished, whether it is still moving — and it was reconstructed from a
+journal that outlives every run. That journal is the wrong witness for a
+question about *this* run: it is append-only across all of them, so a run
+that died mid-slot leaves an assignment nobody ever released, and every
+later reading has to argue that entry down from evidence elsewhere — the
+ticket's own state, the age of a log against the birth of the lock. The
+answer is right and the reasoning is a chain of inferences about a file
+that was never about one run.
+
+So where the runtime keeps a **record of the run itself** — what that run
+took up and let go, in order, from its own beginning — that record is what
+a live row is read from. Its properties are the ones the inference chain
+was standing in for: it belongs to one run, so nothing in it can be another
+run's leavings; it is ordered and numbered, so a reader can say exactly how
+much of it it has seen; it says how each slot ended rather than leaving the
+end to be deduced; and it says when the run ended, so a reader knows the
+difference between a run that finished and a run that stopped existing.
+
+**The journal stays the floor.** A runner that writes no such record is
+read exactly as before, with the same inferences and the same caution
+(§FS-005-dispatch.15): this sharpens the reading where the artifact is
+there and is never a thing a runtime has to provide to be bound at all
+(§REQ-001-boundary.1). Where both exist the run's own record answers,
+because a witness to one run beats a witness to all of them.
+
+**Liveness is still the lock.** A record that ends saying the run finished
+agrees with a lock that is free; a record that simply stops does not mean a
+run is gone, only that it has written nothing lately, which is the quiet
+badge's business and not a verdict (§FS-005-dispatch.15). Nothing here is
+consulted to decide *whether* a run is live — only what the live one is
+doing, and what the last one did.
+
+**And it is read where work is shown, not only on the board.** The reader
+looking at a matter's rows sees the same word the board would show, because
+this is one reading narrowed to one matter rather than a second one of its
+own ([§23](#23-work-stands-on-rows-of-its-own-beneath-the-row-it-is-about)).
 
 ### 16. Work that should not go on is cancelled, and the plan says so
 
@@ -2203,6 +2250,86 @@ lock and never remembered
 ([§15](#15-every-operation-is-visible-in-one-place)); a line for work that is
 over has no ticket to take back. Each says so in one sentence rather than
 appearing to act.
+
+### 24. Work nobody has to start starts itself
+
+A ticket that needs a person to press a key before anything happens to it is
+a ticket waiting on a person, whatever its state says. For the work a reader
+has already decided about — *the gate is red, collect what failed and fix
+it* — that key is a formality standing between the dispatch and the run, and
+the interval it costs is not the reader's attention being spent well: it is
+work sitting in a plan on disk while the person who asked for it does
+something else, and the row saying *⚙ fix-gate · collect* the whole time,
+which is true and reads as *going* when nothing is going at all.
+
+So **a recipe may say that the work it asks for needs nobody to start it**,
+and a ticket written from such a recipe gets its run without anyone pressing
+anything. The reader's deliberate act moves one step earlier and is made
+once: adopting the recipe, rather than starting each of its tickets
+([§7](#7-handing-over-work-is-the-readers-move-and-stays-inside-the-machine)).
+Everything a recipe already decides — which items deserve work, what to ask
+for, whose hand does it — is the same decision, and *and do not wait for me*
+belongs beside it.
+
+**Nothing autoruns unasked.** Silence means the key, exactly as before: a
+recipe that says nothing about this is started by the reader, and so is
+every menu entry, every workflow, and every plan somebody wrote by hand. The
+setting is per recipe and nowhere else, because the reader who trusts one
+kind of work to start itself has said nothing about the rest.
+
+**Starting is a sweep, and the sweep reads the world.** What starts a run is
+not a memory of having dispatched something — that would be the ledger
+deciding what exists, which is the one thing it never does
+([§4](#4-the-ledger-is-ephors-record-and-never-the-truth-about-the-work)) —
+but the same looking every other reading here does
+([§15](#15-every-operation-is-visible-in-one-place)): a root is **due** when
+a plan in it holds a ticket that is open, unclaimed, not parked on a
+question, and from a recipe that asked to run itself — and no run is live on
+that root. A ticket a hand wrote into such a plan is due exactly as a
+dispatched one is; the recipe is a fact about the ticket, not about who
+appended it.
+
+**One run per root, because that is what the runtime schedules.** A root a
+run already holds is left alone: the live run reaches a ticket written
+beneath it, and a second run there would only wait for the first
+([§15](#15-every-operation-is-visible-in-one-place)). This is why the sweep
+can be run as often as anything cares to run it and asks nothing about what
+it did last time — a due root gets a run, a live root gets nothing, and
+running the sweep twice in a second is the same as running it once.
+
+**The sweep is safe where the key was.** Everything dispatch refuses before
+writing a ticket, starting refuses before running one
+([§6](#6-dispatch-is-offered-where-it-would-work-and-refuses-where-it-would-not)):
+a branch that is not in the working tree the plan is about is not run in,
+whatever the directory holds
+([§3](#3-one-rhei-per-item-one-ticket-per-dispatch)). And what it starts is
+the run [§20](#20-a-run-of-the-runtime-starts-beneath-the-screen-and-is-watched-by-attaching)
+already describes — detached, identified by the binding, watched by
+attaching. Nothing about how a run is seen, stopped, or answered changes
+because nobody pressed the key that began it.
+
+**A start that fails is not tried again immediately.** A root that cannot
+start a run — a runner that refuses, a workspace that has gone wrong — would
+otherwise be retried by every sweep for as long as the ticket stays open,
+which is a loop nobody asked for and the most expensive kind of quiet. So a
+failed start is remembered as ephor's own record of what ephor did (never as
+work state — that is still the plan's
+([§4](#4-the-ledger-is-ephors-record-and-never-the-truth-about-the-work))),
+and that root is left alone for a while, longer each time it fails. The
+failure itself is not swallowed: it lands under the row it was about, the
+way a job's outcome does
+([§17](#17-a-move-that-needs-nobody-runs-beneath-the-screen)), so a reader
+who never pressed anything still learns that the thing they did not press
+did not happen.
+
+**The reader keeps the key.** Starting a run by hand is unchanged and is
+never refused on the grounds that a sweep would have got there — a reader
+who wants it now says so, and a recipe that autoruns is still work whose run
+can be watched, attached to, and stopped in the runner's own words. The
+sweep only removes the requirement that somebody be present, and the board
+stays what it is: it starts nothing itself, and what it shows is the run,
+whoever asked for it
+([§15](#15-every-operation-is-visible-in-one-place)).
 
 ## FS-006-project-interface: a project and ephor meet over one interface, in three homes
 

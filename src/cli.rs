@@ -424,6 +424,13 @@ pub struct WorkRunArgs {
     #[arg(long)]
     pub item: Option<String>,
 
+    /// Start a run on every work root that holds work asking to run itself
+    /// and has none (§FS-005-dispatch.24). The sweep behind autorun: it reads
+    /// the world rather than the ledger, starts nothing on a root a run
+    /// already holds, and is safe to invoke as often as anything cares to.
+    #[arg(long)]
+    pub due: bool,
+
     /// Keep the terminal and watch the run, as this command always did
     /// (§FS-011-command-line.8). Without it the run starts detached and this
     /// prints the id it was given — which is also what a runner that cannot

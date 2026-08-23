@@ -1,11 +1,20 @@
 [Unit]
-Description=Refresh ephor feeds and reopen work whose item has moved
+Description=Refresh ephor feeds, reopen work whose item has moved, and start what is due
 
 [Service]
 Type=oneshot
 # Refresh first: sync compares the item against the snapshot taken when its
 # work was dispatched, so it needs the item as it is now (§FS-005-dispatch.5).
-# Tickets are written; nothing is run — `ephor work run` spawns agents and
-# stays deliberate.
+# Then the sweep, which starts a run only where a recipe asked to run itself
+# and no run is live on the root (§FS-005-dispatch.24). Work that said nothing
+# about this is still nobody's to start but the reader's: `ephor work run`
+# without `--due` remains deliberate, and this line never reaches it.
+#
+# `work sync` runs the same sweep itself for what it just reopened, so this is
+# the backstop rather than the trigger: it catches work born anywhere else — a
+# ticket a hand appended, another ephor, a root whose run died. The sweep reads
+# the world and starts nothing on a root that already has a run, so running it
+# here and there both costs one lock probe per root.
 ExecStart=%h/.cargo/bin/ephor refresh --quiet
 ExecStart=%h/.cargo/bin/ephor work sync
+ExecStart=%h/.cargo/bin/ephor work run --due

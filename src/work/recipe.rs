@@ -240,6 +240,14 @@ pub struct Recipe {
     /// says `false` and runs in the project's own checkout.
     #[serde(default = "yes")]
     pub needs_checkout: bool,
+    /// This work needs nobody to start it: a ticket written from this recipe
+    /// gets its run without anyone pressing a key (§FS-005-dispatch.24). The
+    /// reader's deliberate act is adopting the recipe, made once, rather than
+    /// starting each of its tickets. Silence means the key, as it always did —
+    /// per recipe and nowhere else, because trusting one kind of work to start
+    /// itself says nothing about the rest.
+    #[serde(default)]
+    pub autorun: bool,
     /// What the ticket asks for, in the reader's words. `{...}` placeholders
     /// are filled from the item (see [`super::dossier::Subject::placeholders`]),
     /// plus `{reply}` — where a proposed answer for this matter belongs, which
@@ -446,6 +454,9 @@ pub fn shipped() -> Vec<Recipe> {
         state: default_state(),
         when,
         needs_checkout,
+        // Silence means the key: what ships is started by the reader, and
+        // saying otherwise is a thing configuration does (§FS-005-dispatch.24).
+        autorun: false,
         brief: brief.to_string(),
         opens_with: None,
         // The shipped recipes name nobody: who does them is the reader's

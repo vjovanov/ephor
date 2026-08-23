@@ -14,7 +14,7 @@ pub mod recipe;
 pub mod runtime;
 pub mod workflow;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
@@ -471,10 +471,12 @@ pub struct WorkAt<'a> {
     machine: Option<WorkRoot>,
     /// The matter's own plan.
     plan: Option<Plan>,
-    /// The journal's unreleased slots, and when the root's lock was born —
-    /// evidence a held reading is made from, read once for every ticket asked
+    /// What answers for which tickets the run has in hand — the run's own
+    /// stream where the binding writes one, the journal otherwise
+    /// (§FS-005-dispatch.15.2) — and when the root's lock was born, which
+    /// only the journal's reading needs. Read once for every ticket asked
     /// about (§FS-005-dispatch.15).
-    held: Vec<runtime::watch::Held>,
+    witness: Option<runtime::watch::Witness>,
     lock_born: Option<std::time::SystemTime>,
     /// What the live run calls itself, from the descriptor beside its lock
     /// (§FS-005-dispatch.20).
@@ -599,14 +601,15 @@ impl WorkAt<'_> {
             return;
         }
         let state = ticket.state.as_deref().unwrap_or("?");
-        if runtime::watch::held_among(
-            &self.held,
-            &self.entry.root,
-            self.lock_born,
-            plan_id,
-            &ticket.id,
-            state,
-        ) {
+        if self.witness.as_ref().is_some_and(|witness| {
+            witness.holds(
+                &self.entry.root,
+                self.lock_born,
+                plan_id,
+                &ticket.id,
+                Some(state),
+            )
+        }) {
             if running.is_none() {
                 // The board's own phrasing for a held ticket, narrowed to one
                 // row (§FS-005-dispatch.15).
@@ -1346,6 +1349,7 @@ impl Dispatcher {
             url: item.url.clone(),
             root: root.dir.clone(),
             checkout: site.checkout.workspace.clone(),
+            branch: site.checkout.branch.clone(),
             plan_id: plan_id.clone(),
             plan: path.clone(),
             dispatches: Vec::new(),
@@ -1354,6 +1358,7 @@ impl Dispatcher {
         entry.url = item.url.clone();
         entry.root = root.dir.clone();
         entry.checkout = site.checkout.workspace.clone();
+        entry.branch = site.checkout.branch.clone();
         entry.plan = path;
         entry.dispatches.push(Dispatch {
             ticket: ticket_id,
@@ -1639,6 +1644,7 @@ impl Dispatcher {
             url: item.url.clone(),
             root: root.dir.clone(),
             checkout: laying.site.checkout.workspace.clone(),
+            branch: laying.site.checkout.branch.clone(),
             // The item's own plan, whether or not it has one yet: a workflow
             // lays down a plan beside it and never replaces it
             // (§FS-005-dispatch.3).
@@ -1694,6 +1700,9 @@ impl Dispatcher {
             // that is not here is a fact for the dossier to state, not a
             // reason to refuse the reader.
             needs_checkout: false,
+            // Typed on the spot by somebody who is right there: the reader
+            // starts it, as they always did (§FS-005-dispatch.24).
+            autorun: false,
             brief: words.to_string(),
             // What was asked for is what is written down: ephor does not make
             // a move of its own in front of somebody's own words.
@@ -1800,15 +1809,11 @@ impl Dispatcher {
         Some(WorkAt {
             machine: WorkRoot::open(&entry.root).ok().flatten(),
             plan: Plan::read(&entry.plan).ok().flatten(),
-            // The journal and the lock's birth are the held reading's two
-            // artifacts, and neither is worth reading on a root nothing holds:
-            // a slot nobody released under a free lock is a dead run's
-            // leavings, which is the board's business and not a running mark
-            // (§FS-005-dispatch.15).
-            held: match live {
-                true => runtime::watch::holding(&self.global, &entry.root),
-                false => Vec::new(),
-            },
+            // Neither the witness nor the lock's birth is worth reading on a
+            // root nothing holds: a slot nobody released under a free lock is
+            // a dead run's leavings, which is the board's business and not a
+            // running mark (§FS-005-dispatch.15).
+            witness: live.then(|| runtime::watch::witness(&self.global, &entry.root)),
             lock_born: live
                 .then(|| runtime::watch::lock_born(&entry.root))
                 .flatten(),
@@ -1833,9 +1838,390 @@ impl Dispatcher {
         status_of_entry(&self.global, entry, item)
     }
 
+    /// Every work root that should have a run and has none
+    /// (§FS-005-dispatch.24).
+    ///
+    /// The whole of the sweep, and it reads the world rather than a memory of
+    /// what was dispatched: the roots are the ones every other reading walks
+    /// (§FS-005-dispatch.15), a ticket counts by what it is rather than by
+    /// who appended it, and whether a run is already there is the runtime's
+    /// own lock. So this is idempotent — running it twice in a second starts
+    /// one run — and asks nothing about what it did last time, apart from the
+    /// one thing it must remember: a root whose start failed rests before it
+    /// is tried again.
+    pub fn due(&mut self, now: DateTime<Utc>) -> Vec<Due> {
+        let roots = self.work_roots();
+        // Which recipes asked to run themselves, per project. Resolved once
+        // per project: the tables behind it are the same for every root of
+        // one of them.
+        let autoruns: BTreeMap<String, BTreeSet<String>> = roots
+            .iter()
+            .flat_map(|group| group.plans.iter().map(|plan| plan.project.clone()))
+            .collect::<BTreeSet<String>>()
+            .into_iter()
+            .map(|project| {
+                let asked = self
+                    .recipes(&project)
+                    .into_iter()
+                    .filter(|recipe| recipe.autorun)
+                    .map(|recipe| recipe.id)
+                    .collect();
+                (project, asked)
+            })
+            .collect();
+        due_among(&self.global, &roots, &autoruns, &self.ledger, now)
+    }
+}
+
+/// The sweep's own reading, with the roots and the recipes already gathered
+/// (§FS-005-dispatch.24). A free function so a test can ask the question the
+/// way every surface does, without a registry behind it — the shape
+/// [`status_of_entry`] and [`enumerate_roots`] already take.
+pub fn due_among(
+    global: &WorkConfig,
+    roots: &[runtime::watch::RootPlans],
+    autoruns: &BTreeMap<String, BTreeSet<String>>,
+    ledger: &Ledger,
+    now: DateTime<Utc>,
+) -> Vec<Due> {
+    // What ephor dispatched, so a ticket it wrote is judged by the recipe it
+    // was written from rather than by the shape of its id.
+    let dispatched: BTreeMap<(PathBuf, String), String> = ledger
+        .entries
+        .values()
+        .flat_map(|entry| {
+            entry.dispatches.iter().map(move |dispatch| {
+                (
+                    (entry.root.clone(), dispatch.ticket.clone()),
+                    dispatch.recipe.clone(),
+                )
+            })
+        })
+        .collect();
+    let mut due = Vec::new();
+    for group in roots {
+        // A root a run already holds is left alone: the live run reaches
+        // a ticket written beneath it, and a second run there would only
+        // wait for the first (§FS-005-dispatch.24).
+        if runtime::watch::live(global, &group.root) {
+            continue;
+        }
+        // A root that could not be started is passed over for a while,
+        // longer each time — a runner that refuses must not turn every
+        // sweep into a spawn.
+        if ledger
+            .starts
+            .get(&root_key(&group.root))
+            .is_some_and(|start| start.resting(now))
+        {
+            continue;
+        }
+        // Finality and gating are the machine's words. With none to say
+        // them, nothing here can be judged runnable, and the honest move
+        // is to start nothing rather than to guess (§FS-005-dispatch.15).
+        let Some(machine) = WorkRoot::open(&group.root).ok().flatten() else {
+            continue;
+        };
+        let mut plans: Vec<String> = Vec::new();
+        let mut tickets: Vec<String> = Vec::new();
+        for plan_ref in &group.plans {
+            let Some(asked) = autoruns.get(&plan_ref.project) else {
+                continue;
+            };
+            if asked.is_empty() {
+                continue;
+            }
+            let Ok(Some(plan)) = Plan::read(&plan_ref.path) else {
+                continue;
+            };
+            for ticket in plan.tickets() {
+                let state = ticket.state.as_deref();
+                // Over, waiting on a person, or somebody's to move: none
+                // of them is work a run would advance
+                // (§FS-005-dispatch.24, §FS-005-dispatch.15).
+                if state.map(|state| machine.is_final(state)).unwrap_or(true)
+                    || state.map(|state| machine.is_gating(state)).unwrap_or(false)
+                    || ticket.assignee.is_some()
+                {
+                    continue;
+                }
+                // The ledger says which recipe ephor wrote a ticket from;
+                // for one a hand appended, the id says it, because ids
+                // are `<recipe>-<n>` by construction. Either way the
+                // recipe is a fact about the ticket
+                // (§FS-005-dispatch.24).
+                let recipe = dispatched
+                    .get(&(group.root.clone(), ticket.id.clone()))
+                    .map(String::as_str)
+                    .or_else(|| recipe_of_ticket(&ticket.id));
+                if !recipe.is_some_and(|recipe| asked.contains(recipe)) {
+                    continue;
+                }
+                if !plans.contains(&plan_ref.plan_id) {
+                    plans.push(plan_ref.plan_id.clone());
+                }
+                tickets.push(format!("{}.{}", plan_ref.plan_id, ticket.id));
+            }
+        }
+        if tickets.is_empty() {
+            continue;
+        }
+        // Where the run is made from, and whether it may be made there at
+        // all: work about a branch belongs in that branch's working tree,
+        // and a tree standing on another branch holds different code
+        // (§FS-005-dispatch.3). Dispatch refuses on this and so does a
+        // start, because with nobody watching there is no one to notice
+        // (§FS-005-dispatch.24).
+        let known = ledger
+            .entries
+            .values()
+            .find(|entry| entry.root == group.root);
+        let checkout = known
+            .map(Entry::checkout)
+            .unwrap_or_else(|| root_checkout(&group.root));
+        if let Some(wanted) = known.and_then(|entry| entry.branch.as_deref()) {
+            // Only a branch that can be read and disagrees refuses: an
+            // unreadable or detached HEAD is a fact nobody can establish,
+            // and refusing on one is worse than the run — the same
+            // latitude dispatch takes (§FS-005-dispatch.3).
+            if crate::git::head_branch(&checkout).is_some_and(|head| head != wanted) {
+                continue;
+            }
+        }
+        due.push(Due {
+            project: group
+                .plans
+                .first()
+                .map(|plan| plan.project.clone())
+                .unwrap_or_default(),
+            root: group.root.clone(),
+            checkout,
+            plans,
+            tickets,
+            item: known.and_then(|entry| {
+                ledger
+                    .entries
+                    .iter()
+                    .find(|(_, candidate)| candidate.root == entry.root)
+                    .map(|(id, _)| id.clone())
+            }),
+        });
+    }
+    due
+}
+
+impl Dispatcher {
+    /// Start a run on every root the sweep says is due, and say what each
+    /// came to (§FS-005-dispatch.24).
+    ///
+    /// The one implementation of autorun's *act*, so the timer, the command,
+    /// and the dispatch that just wrote a ticket all start runs the same way
+    /// and cannot drift into three of them (§AR-009-surfaces.1). Runs go
+    /// beneath the screen and only beneath it: a sweep has nobody at a
+    /// terminal by definition, so where the binding has no detached shape
+    /// this starts nothing and says so rather than seizing the terminal of
+    /// whatever invoked it (§FS-005-dispatch.24, §FS-005-dispatch.20).
+    pub fn start_due(
+        &mut self,
+        now: DateTime<Utc>,
+        projects: &[String],
+        runner_args: &[String],
+    ) -> Vec<Launched> {
+        // The runtime is a rung like any other capacity, and with nothing
+        // bound there is no run to start (§AR-005-capabilities.2).
+        if runtime::refusal(&self.global).is_some() {
+            return Vec::new();
+        }
+        let detaches = runtime::can_detach(&self.global);
+        self.due(now)
+            .into_iter()
+            .filter(|root| projects.is_empty() || projects.contains(&root.project))
+            .map(|root| {
+                if !detaches {
+                    return Launched::refused(
+                        &root,
+                        format!(
+                            "{} cannot start a run detached here, and a run nobody asked for \
+                             must not take a terminal",
+                            runtime::runner(&self.global)
+                        ),
+                    );
+                }
+                let hand = self
+                    .ledger
+                    .entries
+                    .values()
+                    .find(|entry| entry.root == root.root)
+                    .cloned()
+                    .and_then(|entry| {
+                        let status = self.status_of(&entry, None);
+                        self.run_hand(&entry, &status)
+                    });
+                match runtime::start_detached(
+                    &self.global,
+                    &root.root,
+                    &root.checkout,
+                    &root.plans,
+                    hand.as_ref(),
+                    runner_args,
+                ) {
+                    Ok(started) => {
+                        self.start_worked(&root.root);
+                        Launched {
+                            id: started.id,
+                            finished: started.finished,
+                            failed: None,
+                            ..Launched::of(&root)
+                        }
+                    }
+                    Err(err) => {
+                        self.start_failed(&root.root, &err.to_string(), now);
+                        Launched::refused(&root, err.to_string())
+                    }
+                }
+            })
+            .collect()
+    }
+
+    /// Remember that starting a run on this root did not work, so the next
+    /// sweep passes it over for a while (§FS-005-dispatch.24). Ephor's record
+    /// of ephor's own act; the work's state is untouched and stays the plan's
+    /// (§FS-005-dispatch.4).
+    pub fn start_failed(&mut self, root: &std::path::Path, says: &str, now: DateTime<Utc>) {
+        let key = root_key(root);
+        let failures = self
+            .ledger
+            .starts
+            .get(&key)
+            .map(|start| start.failures.saturating_add(1))
+            .unwrap_or(1);
+        self.ledger.starts.insert(
+            key,
+            ledger::Start {
+                at: now,
+                failures,
+                says: says.to_string(),
+            },
+        );
+    }
+
+    /// Forget a root's failed starts: a run began there, so whatever was
+    /// wrong is not wrong now. Nothing is remembered about a start that
+    /// worked — the run leaves a lock, and the lock is what every later sweep
+    /// reads (§FS-005-dispatch.15).
+    pub fn start_worked(&mut self, root: &std::path::Path) {
+        self.ledger.starts.remove(&root_key(root));
+    }
+
     pub fn save(&self) -> Result<()> {
         ledger::store(&self.ledger)
     }
+}
+
+/// One work root a sweep should start a run on (§FS-005-dispatch.24).
+#[derive(Debug, Clone)]
+pub struct Due {
+    pub project: String,
+    pub root: PathBuf,
+    /// The checkout the run is made from.
+    pub checkout: PathBuf,
+    /// The plans holding what made this root due — what the run is narrowed
+    /// to, so a runtime project the reader keeps in the same root for their
+    /// own work is not swept up by ephor's.
+    pub plans: Vec<String>,
+    /// The tickets themselves, plan-qualified: what the line saying a run
+    /// started names as the reason.
+    pub tickets: Vec<String>,
+    /// The matter this root's work is about, where the ledger knows one —
+    /// where a failure's news lands (§FS-005-dispatch.24).
+    pub item: Option<String>,
+}
+
+/// What starting one due root came to (§FS-005-dispatch.24).
+#[derive(Debug, Clone)]
+pub struct Launched {
+    pub project: String,
+    pub root: PathBuf,
+    /// The matter the work is about, where the ledger knows one — where the
+    /// news of a failure lands (§FS-005-dispatch.24).
+    pub item: Option<String>,
+    /// The tickets that made this root due, plan-qualified.
+    pub tickets: Vec<String>,
+    /// What the run calls itself, where it named itself.
+    pub id: Option<String>,
+    /// The run was over before the launcher returned — nothing was left to
+    /// do. Reported as over rather than as started, so nobody is sent to a
+    /// board with nothing on it (§FS-005-dispatch.20).
+    pub finished: bool,
+    /// Why no run was started, where none was.
+    pub failed: Option<String>,
+}
+
+impl Launched {
+    fn of(due: &Due) -> Launched {
+        Launched {
+            project: due.project.clone(),
+            root: due.root.clone(),
+            item: due.item.clone(),
+            tickets: due.tickets.clone(),
+            id: None,
+            finished: false,
+            failed: None,
+        }
+    }
+
+    fn refused(due: &Due, why: String) -> Launched {
+        Launched {
+            failed: Some(why),
+            ..Launched::of(due)
+        }
+    }
+
+    /// The one line this is worth: what started, or what stopped it. The
+    /// same sentence wherever it is said, so a command and a screen never
+    /// phrase one situation two ways (§AR-009-surfaces.1).
+    pub fn says(&self) -> String {
+        match (&self.failed, &self.id, self.finished) {
+            (Some(why), ..) => format!("⚠ no run started on {}: {why}", self.root.display()),
+            (None, Some(id), false) => format!("▶ run {id} started"),
+            (None, Some(id), true) => format!("✓ run {id} finished already"),
+            (None, None, false) => "▶ run started".to_string(),
+            (None, None, true) => "✓ the run finished already".to_string(),
+        }
+    }
+
+    /// What a reading calls this (§REQ-002-parity.3).
+    pub fn outcome(&self) -> &'static str {
+        match (&self.failed, self.finished) {
+            (Some(_), _) => "failed",
+            (None, true) => "done",
+            (None, false) => "started",
+        }
+    }
+}
+
+/// How a work root is named in the ledger's record of starts. The path as
+/// written, so the key travels with the same spelling the entry carries.
+fn root_key(root: &std::path::Path) -> String {
+    root.to_string_lossy().into_owned()
+}
+
+/// The checkout a work root belongs to, where nothing in the ledger says: the
+/// directory holding it, which is what a work root's own template renders
+/// under.
+fn root_checkout(root: &std::path::Path) -> PathBuf {
+    root.parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| root.to_path_buf())
+}
+
+/// The recipe a ticket id was written from. Ids are `<recipe>-<n>`
+/// ([`plan::Plan::next_ticket_id`]), so the recipe is readable off a ticket
+/// nobody recorded a dispatch for (§FS-005-dispatch.24).
+fn recipe_of_ticket(id: &str) -> Option<&str> {
+    let (recipe, number) = id.rsplit_once('-')?;
+    (!recipe.is_empty() && !number.is_empty() && number.chars().all(|c| c.is_ascii_digit()))
+        .then_some(recipe)
 }
 
 /// An entry's work as it stands, read from the plan (§FS-005-dispatch.4). A
@@ -2458,6 +2844,7 @@ mod tests {
         let mut ledger = Ledger {
             version: 1,
             entries: BTreeMap::new(),
+            starts: BTreeMap::new(),
         };
         ledger.entries.insert(
             "forge:widget/7".to_string(),
@@ -2467,6 +2854,7 @@ mod tests {
                 url: None,
                 root: workspace.join("panta"),
                 checkout: workspace.clone(),
+                branch: None,
                 plan_id: "forge-widget-7".to_string(),
                 plan: workspace.join("panta/forge-widget-7.rhei.md"),
                 dispatches: Vec::new(),
@@ -2590,6 +2978,7 @@ echo "Task $stem.$task transitioned: '$from' → '$to'"
             url: None,
             root: root.to_path_buf(),
             checkout: root.parent().unwrap().to_path_buf(),
+            branch: None,
             plan_id: "forge-demo-17".to_string(),
             plan: plan_path.to_path_buf(),
             dispatches: Vec::new(),
@@ -2851,6 +3240,7 @@ echo "Task $stem.$task transitioned: '$from' → '$to'"
         let ledger = Ledger {
             version: 1,
             entries: BTreeMap::new(),
+            starts: BTreeMap::new(),
         };
         let groups = enumerate_roots(
             &WorkConfig::default(),
@@ -2898,6 +3288,7 @@ echo "Task $stem.$task transitioned: '$from' → '$to'"
         let ledger = Ledger {
             version: 1,
             entries: BTreeMap::new(),
+            starts: BTreeMap::new(),
         };
         let groups = enumerate_roots(
             &WorkConfig::default(),
@@ -3007,5 +3398,433 @@ echo "Task $stem.$task transitioned: '$from' → '$to'"
         assert_eq!(lines[1].tone, Tone::Stale);
         assert!(lines[1].said.contains("1 new message"), "{lines:?}");
         assert_eq!(lines[1].ticket, None);
+    }
+    // ---- the sweep behind autorun (§FS-005-dispatch.24) ----
+
+    /// A work root holding a plan, a machine, and whatever tickets are asked
+    /// for. `fix` runs, `needs-human` gates, `done` is over — the shipped
+    /// shape, narrowed to what the sweep has to tell apart.
+    fn due_root(root: &Path, tickets: &str) -> runtime::watch::RootPlans {
+        fs::create_dir_all(root).unwrap();
+        fs::write(
+            root.join("states.yaml"),
+            concat!(
+                "name: m\n",
+                "states:\n",
+                "  collect:\n    agent: x\n",
+                "  fix:\n    agent: x\n",
+                "  needs-human:\n    gating: true\n",
+                "  done:\n    final: true\n",
+            ),
+        )
+        .unwrap();
+        fs::write(
+            root.join("widget-42.rhei.md"),
+            format!("# Rhei: t\n**States:** m\n\n## Tasks\n\n{tickets}"),
+        )
+        .unwrap();
+        runtime::watch::RootPlans {
+            root: root.to_path_buf(),
+            plans: vec![runtime::watch::PlanRef {
+                project: "widget".to_string(),
+                plan_id: "widget-42".to_string(),
+                path: root.join("widget-42.rhei.md"),
+                item: Some("forge:widget/42".to_string()),
+                title: "Widen the retry window".to_string(),
+            }],
+        }
+    }
+
+    fn ticket_at(id: &str, state: &str) -> String {
+        format!("### Task {id}: do it\n**State:** {state}\n\nwork\n\n")
+    }
+
+    fn asking(recipes: &[&str]) -> BTreeMap<String, BTreeSet<String>> {
+        BTreeMap::from([(
+            "widget".to_string(),
+            recipes.iter().map(|id| id.to_string()).collect(),
+        )])
+    }
+
+    /// A runner every machine has, so nothing here is refused for want of one.
+    fn work_config() -> WorkConfig {
+        WorkConfig {
+            runner: Some("sh".to_string()),
+            ..WorkConfig::default()
+        }
+    }
+
+    fn empty_ledger() -> Ledger {
+        Ledger {
+            version: 1,
+            entries: BTreeMap::new(),
+            starts: BTreeMap::new(),
+        }
+    }
+
+    /// The plain case: an open ticket from a recipe that asked to run itself,
+    /// on a root nothing is running on, is due — and it says which ticket
+    /// made it so (§FS-005-dispatch.24).
+    #[test]
+    fn an_open_ticket_from_an_autorun_recipe_makes_its_root_due() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("panta");
+        let group = due_root(&root, &ticket_at("fix-gate-1", "collect"));
+        let due = due_among(
+            &work_config(),
+            std::slice::from_ref(&group),
+            &asking(&["fix-gate"]),
+            &empty_ledger(),
+            Utc::now(),
+        );
+        assert_eq!(due.len(), 1);
+        assert_eq!(due[0].root, root);
+        assert_eq!(due[0].plans, vec!["widget-42".to_string()]);
+        assert_eq!(due[0].tickets, vec!["widget-42.fix-gate-1".to_string()]);
+        // The checkout is the directory the work root sits in — where the
+        // runtime is run from (§FS-005-dispatch.3).
+        assert_eq!(due[0].checkout, tmp.path());
+    }
+
+    /// Silence means the key: a recipe that never asked to run itself is
+    /// started by the reader, as everything always was
+    /// (§FS-005-dispatch.24).
+    #[test]
+    fn a_recipe_that_did_not_ask_is_never_due() {
+        let tmp = tempfile::tempdir().unwrap();
+        let group = due_root(&tmp.path().join("panta"), &ticket_at("review-1", "fix"));
+        assert!(due_among(
+            &work_config(),
+            std::slice::from_ref(&group),
+            &asking(&["fix-gate"]),
+            &empty_ledger(),
+            Utc::now(),
+        )
+        .is_empty());
+    }
+
+    /// What a run would not advance is not what makes a root due: work that
+    /// is over, work parked on a question for a person, and work somebody
+    /// has claimed (§FS-005-dispatch.24, §FS-005-dispatch.15).
+    #[test]
+    fn finished_parked_and_claimed_tickets_make_nothing_due() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("panta");
+        let group = due_root(
+            &root,
+            &format!(
+                "{}{}{}",
+                ticket_at("fix-gate-1", "done"),
+                ticket_at("fix-gate-2", "needs-human"),
+                "### Task fix-gate-3: do it\n**State:** fix\n**Assignee:** luna\n\nwork\n\n",
+            ),
+        );
+        assert!(due_among(
+            &work_config(),
+            std::slice::from_ref(&group),
+            &asking(&["fix-gate"]),
+            &empty_ledger(),
+            Utc::now(),
+        )
+        .is_empty());
+    }
+
+    /// A root a run already holds gets nothing: the runtime schedules one run
+    /// per root, and the live run reaches a ticket written beneath it
+    /// (§FS-005-dispatch.24).
+    #[test]
+    fn a_root_a_run_already_holds_is_left_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("panta");
+        let group = due_root(&root, &ticket_at("fix-gate-1", "collect"));
+        fs::create_dir_all(root.join(".rhei")).unwrap();
+        fs::write(root.join(".rhei/run.lock"), "").unwrap();
+        let holder = fs::File::open(root.join(".rhei/run.lock")).unwrap();
+        holder.lock().unwrap();
+
+        assert!(
+            due_among(
+                &work_config(),
+                std::slice::from_ref(&group),
+                &asking(&["fix-gate"]),
+                &empty_ledger(),
+                Utc::now(),
+            )
+            .is_empty(),
+            "a second run there would only wait for the first"
+        );
+        // And once that run lets go, the root is due again. Closing the
+        // holder is not always the instant the kernel releases the lock —
+        // the release rides on the last reference to the open file going
+        // away, which can be deferred by a millisecond under load — so this
+        // waits for the world to agree rather than assuming it already does.
+        // Everything ephor does here reads the lock as it is at the moment it
+        // asks (§FS-005-dispatch.15), which is exactly what is being checked.
+        drop(holder);
+        let freed = std::time::Instant::now();
+        while runtime::watch::live(&work_config(), &root) {
+            assert!(
+                freed.elapsed() < std::time::Duration::from_secs(5),
+                "the run let go and the lock never came free"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert_eq!(
+            due_among(
+                &work_config(),
+                std::slice::from_ref(&group),
+                &asking(&["fix-gate"]),
+                &empty_ledger(),
+                Utc::now(),
+            )
+            .len(),
+            1
+        );
+    }
+
+    /// Finality and gating are the machine's words. With no machine to say
+    /// them, nothing can be judged runnable, and the sweep starts nothing
+    /// rather than guessing (§FS-005-dispatch.15).
+    #[test]
+    fn a_root_with_no_machine_starts_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("panta");
+        let group = due_root(&root, &ticket_at("fix-gate-1", "collect"));
+        fs::remove_file(root.join("states.yaml")).unwrap();
+        assert!(due_among(
+            &work_config(),
+            std::slice::from_ref(&group),
+            &asking(&["fix-gate"]),
+            &empty_ledger(),
+            Utc::now(),
+        )
+        .is_empty());
+    }
+
+    /// A root whose start failed rests, and is tried again once it has
+    /// (§FS-005-dispatch.24) — otherwise a runner that refuses turns every
+    /// sweep into another spawn.
+    #[test]
+    fn a_root_whose_start_failed_rests_before_it_is_tried_again() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("panta");
+        let group = due_root(&root, &ticket_at("fix-gate-1", "collect"));
+        let now = Utc::now();
+        let mut ledger = empty_ledger();
+        ledger.starts.insert(
+            root.to_string_lossy().into_owned(),
+            ledger::Start {
+                at: now,
+                failures: 1,
+                says: "the runner refused".to_string(),
+            },
+        );
+        let sweep = |ledger: &Ledger, at| {
+            due_among(
+                &work_config(),
+                std::slice::from_ref(&group),
+                &asking(&["fix-gate"]),
+                ledger,
+                at,
+            )
+        };
+        assert!(sweep(&ledger, now).is_empty(), "it has just failed");
+        assert_eq!(
+            sweep(&ledger, now + chrono::Duration::minutes(6)).len(),
+            1,
+            "and it is tried again once the interval is out"
+        );
+        // Two failures in a row and it waits longer than one did.
+        ledger
+            .starts
+            .get_mut(&root.to_string_lossy().into_owned())
+            .unwrap()
+            .failures = 3;
+        assert!(
+            sweep(&ledger, now + chrono::Duration::minutes(6)).is_empty(),
+            "the interval grows with each consecutive failure"
+        );
+    }
+
+    /// A ticket a hand appended is due exactly as a dispatched one: the
+    /// recipe is a fact about the ticket, read off its id where no dispatch
+    /// recorded one (§FS-005-dispatch.24).
+    #[test]
+    fn a_ticket_nobody_dispatched_is_due_by_the_recipe_its_id_names() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("panta");
+        let group = due_root(&root, &ticket_at("fix-gate-7", "fix"));
+        let due = due_among(
+            &work_config(),
+            std::slice::from_ref(&group),
+            &asking(&["fix-gate"]),
+            &empty_ledger(),
+            Utc::now(),
+        );
+        assert_eq!(due.len(), 1);
+        assert_eq!(due[0].tickets, vec!["widget-42.fix-gate-7".to_string()]);
+    }
+
+    /// An id that is not `<recipe>-<n>` names no recipe, and nothing is
+    /// guessed from it.
+    #[test]
+    fn a_ticket_id_that_names_no_recipe_makes_nothing_due() {
+        assert_eq!(recipe_of_ticket("fix-gate-1"), Some("fix-gate"));
+        assert_eq!(recipe_of_ticket("fix-gate-1-2"), Some("fix-gate-1"));
+        assert_eq!(recipe_of_ticket("housekeeping"), None);
+        assert_eq!(recipe_of_ticket("-1"), None);
+        assert_eq!(recipe_of_ticket("fix-gate-"), None);
+    }
+
+    /// Work about a branch belongs in that branch's working tree. A root
+    /// whose checkout has since moved to another branch holds different
+    /// code, and a start with nobody watching refuses exactly where dispatch
+    /// does (§FS-005-dispatch.24, §FS-005-dispatch.3).
+    #[test]
+    fn a_checkout_standing_on_another_branch_is_not_run_in() {
+        let tmp = tempfile::tempdir().unwrap();
+        let checkout = tmp.path().join("widget");
+        let root = checkout.join("panta");
+        let group = due_root(&root, &ticket_at("fix-gate-1", "collect"));
+        fs::create_dir_all(checkout.join(".git")).unwrap();
+        fs::write(checkout.join(".git/HEAD"), "ref: refs/heads/other\n").unwrap();
+
+        let mut ledger = empty_ledger();
+        ledger.entries.insert(
+            "forge:widget/42".to_string(),
+            Entry {
+                project: "widget".to_string(),
+                title: "t".to_string(),
+                url: None,
+                root: root.clone(),
+                checkout: checkout.clone(),
+                branch: Some("you/retry-window".to_string()),
+                plan_id: "widget-42".to_string(),
+                plan: root.join("widget-42.rhei.md"),
+                dispatches: Vec::new(),
+            },
+        );
+        let sweep = |ledger: &Ledger| {
+            due_among(
+                &work_config(),
+                std::slice::from_ref(&group),
+                &asking(&["fix-gate"]),
+                ledger,
+                Utc::now(),
+            )
+        };
+        assert!(
+            sweep(&ledger).is_empty(),
+            "the tree is standing on another branch"
+        );
+        // Back on the branch the work is about, and it runs.
+        fs::write(
+            checkout.join(".git/HEAD"),
+            "ref: refs/heads/you/retry-window\n",
+        )
+        .unwrap();
+        assert_eq!(sweep(&ledger).len(), 1);
+    }
+
+    /// A branch nobody recorded refuses nothing: an entry written before the
+    /// branch was kept, or work that matched no branch at all, is run where
+    /// it always was (§FS-005-dispatch.24).
+    #[test]
+    fn a_branch_nobody_recorded_refuses_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let checkout = tmp.path().join("widget");
+        let root = checkout.join("panta");
+        let group = due_root(&root, &ticket_at("fix-gate-1", "collect"));
+        fs::create_dir_all(checkout.join(".git")).unwrap();
+        fs::write(checkout.join(".git/HEAD"), "ref: refs/heads/other\n").unwrap();
+        let mut ledger = empty_ledger();
+        ledger.entries.insert(
+            "forge:widget/42".to_string(),
+            Entry {
+                project: "widget".to_string(),
+                title: "t".to_string(),
+                url: None,
+                root: root.clone(),
+                checkout: checkout.clone(),
+                branch: None,
+                plan_id: "widget-42".to_string(),
+                plan: root.join("widget-42.rhei.md"),
+                dispatches: Vec::new(),
+            },
+        );
+        assert_eq!(
+            due_among(
+                &work_config(),
+                std::slice::from_ref(&group),
+                &asking(&["fix-gate"]),
+                &ledger,
+                Utc::now(),
+            )
+            .len(),
+            1
+        );
+    }
+
+    /// The ledger says which recipe ephor wrote a ticket from, and that beats
+    /// the id's own shape: a ticket dispatched from a recipe that does not
+    /// autorun is not made due by an id that happens to look like one that
+    /// does (§FS-005-dispatch.24).
+    #[test]
+    fn the_ledgers_recipe_answers_for_a_ticket_ephor_dispatched() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("panta");
+        let group = due_root(&root, &ticket_at("fix-gate-1", "collect"));
+        let mut ledger = empty_ledger();
+        ledger.entries.insert(
+            "forge:widget/42".to_string(),
+            Entry {
+                project: "widget".to_string(),
+                title: "t".to_string(),
+                url: None,
+                root: root.clone(),
+                checkout: tmp.path().to_path_buf(),
+                branch: None,
+                plan_id: "widget-42".to_string(),
+                plan: root.join("widget-42.rhei.md"),
+                dispatches: vec![ledger::Dispatch {
+                    ticket: "fix-gate-1".to_string(),
+                    // Written from a recipe that asks nobody to run it, under
+                    // an id another recipe's tickets would carry.
+                    recipe: "review".to_string(),
+                    at: Utc::now(),
+                    plan: None,
+                    snapshot: Default::default(),
+                }],
+            },
+        );
+        assert!(due_among(
+            &work_config(),
+            std::slice::from_ref(&group),
+            &asking(&["fix-gate"]),
+            &ledger,
+            Utc::now(),
+        )
+        .is_empty());
+    }
+
+    /// The back-off's own arithmetic: it doubles, and it stops growing
+    /// (§FS-005-dispatch.24).
+    #[test]
+    fn the_back_off_doubles_and_is_capped() {
+        let at = Utc::now();
+        let rest = |failures| {
+            ledger::Start {
+                at,
+                failures,
+                says: String::new(),
+            }
+            .ready_at()
+                - at
+        };
+        assert_eq!(rest(1), chrono::Duration::minutes(5));
+        assert_eq!(rest(2), chrono::Duration::minutes(10));
+        assert_eq!(rest(3), chrono::Duration::minutes(20));
+        // However long it has been failing, it is always tried again.
+        assert_eq!(rest(99), chrono::Duration::hours(2));
     }
 }
