@@ -2355,6 +2355,13 @@ echo "Task $stem.$task transitioned: '$from' → '$to'"
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(&runner, fs::Permissions::from_mode(0o755)).unwrap();
         }
+        // The runner is named by path and looked up as one word, so unlike the
+        // other stand-ins it has to be executed rather than read. Settle it
+        // before any test runs it: `exec` on a file this process just wrote
+        // fails with `ETXTBSY` while a child another thread forked still holds
+        // it open, and the `exec` that trips is the shell's, where nothing can
+        // wait it out.
+        crate::seams::summons::settle_executable(&runner);
         let config = WorkConfig {
             runner: Some(runner.to_string_lossy().into_owned()),
             ..WorkConfig::default()

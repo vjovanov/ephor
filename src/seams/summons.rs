@@ -52,6 +52,37 @@ pub fn spawn(command: &mut Command) -> std::io::Result<std::process::Child> {
 
 const BUSY_RETRIES: u32 = 20;
 
+/// Wait until a stand-in this process just wrote can be executed.
+///
+/// The companion to [`spawn`]'s retry, for the case that retry cannot reach: a
+/// stand-in that must be found *by name* has to be executed, so it cannot dodge
+/// the race by being handed to an interpreter the way
+/// [`tests::stub`](tests) does. Executing it once here, waiting out `ETXTBSY`
+/// exactly as `spawn` does, settles it for good — the descriptors that make a
+/// file busy belong to children on their way to their own `exec`, they clear in
+/// microseconds, and nothing writes the file again afterwards. Every later
+/// `exec` of it, including the ones inside a shell where nothing could wait,
+/// then finds it free.
+///
+/// What the stand-in does when run with no arguments is the caller's business;
+/// its output is discarded and its exit code ignored.
+#[cfg(test)]
+pub(crate) fn settle_executable(path: &std::path::Path) {
+    for _ in 0..BUSY_RETRIES {
+        let mut probe = Command::new(path);
+        probe
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        match probe.status() {
+            Err(err) if err.raw_os_error() == Some(26) => {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            _ => return,
+        }
+    }
+}
+
 /// A value as one `sh` word, for building a binding out of parts. Single
 /// quotes take everything literally, so only the single quote itself has to be
 /// broken out.
@@ -483,20 +514,26 @@ mod tests {
 
     const SECOND: Duration = Duration::from_secs(10);
 
+    /// A stand-in script, bound as a command line the summons can run.
+    ///
+    /// The script is handed to `sh` as an **argument** rather than made
+    /// executable and run as one. A file this process is still writing is held
+    /// open for writing by any child another thread forked in the meantime —
+    /// until that child reaches its own `exec` — and `exec` on a file open for
+    /// writing fails with `ETXTBSY`. That failure is the one [`spawn`] cannot
+    /// wait out here: the `exec` that trips is the shell's, inside `sh -c`,
+    /// long after ephor's own spawn returned. Read as an argument the file is
+    /// only ever opened for *reading*, which no writer blocks — so the race has
+    /// nowhere to land rather than a shorter window to land in.
     fn stub(dir: &Path, script: &str) -> String {
         let path = dir.join("stub.sh");
         std::fs::write(&path, script).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
         // A binding is a command line, so the path in it is spelled for the
         // shell that will parse it, exactly as the dossier's paths are
         // (§FS-006-project-interface.3). A native path with a separator the
         // shell reads as an escape is not a binding a project would ever
         // write, and testing against one tests the wrong thing.
-        format!("{} ", crate::paths::for_shell(&path))
+        format!("sh {} ", crate::paths::for_shell(&path))
     }
 
     fn site(dir: &Path) -> Site {

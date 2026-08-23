@@ -307,12 +307,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let script = tmp.path().join("smoke-test.sh");
         std::fs::write(&script, "#!/bin/sh\nprintf 'reflection\\nresources\\n'\n").unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-        let bound = bind(Verb::Smoke, tmp.path(), None, None).unwrap();
+        // Bound as an argument to `sh` rather than probed and executed. What
+        // this test is about is the enumeration a smoke answers with, and the
+        // probe that finds `./smoke-test.sh` has its own tests above, which
+        // read the binding without running it. Running it would mean `exec` on
+        // a file this process just wrote — see `summons::tests::stub` for why
+        // that races.
+        let bound = bind(Verb::Smoke, tmp.path(), None, Some("sh ./smoke-test.sh")).unwrap();
         let answer = run(
             &bound,
             tmp.path(),
@@ -339,12 +340,9 @@ mod tests {
              \"failures\":[{\"job\":\"style\"},{\"job\":\"build\"}]}\nJSON\nexit 1\n",
         )
         .unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-        let bound = bind(Verb::Check, tmp.path(), None, None).unwrap();
+        // Read by `sh`, not executed, for the reason the smoke test above
+        // gives: what is under test is the envelope reaching the dossier.
+        let bound = bind(Verb::Check, tmp.path(), None, Some("sh ./check.sh")).unwrap();
         let answer = run(
             &bound,
             tmp.path(),

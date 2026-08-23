@@ -295,13 +295,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("gate.sh");
         std::fs::write(&path, script).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
         let bound = Bound::Command {
-            command: "./gate.sh".to_string(),
+            // Read by `sh`, never executed: a file this process is still
+            // writing is briefly held open for writing by a child another
+            // thread forked, and `exec` on it fails with `ETXTBSY` inside the
+            // shell, where nothing can wait it out. Opening it for reading
+            // cannot fail that way — see `summons::tests::stub`.
+            command: "sh ./gate.sh".to_string(),
             cwd: None,
         };
         run(
