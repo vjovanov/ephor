@@ -12,16 +12,18 @@ use serde_json::{json, Value};
 use common::*;
 
 /// A fake `gh` serving one pull request of the user's own with a failing
-/// check, and one review comment awaiting an answer.
+/// check, and one review comment awaiting an answer. The role searches arrive
+/// as one aliased GraphQL request (§FS-001-forge-interface.8), and the head
+/// branch and review decision ride in with it.
 const FAKE_GH: &str = r#"#!/usr/bin/env bash
 set -euo pipefail
 args="$*"
+conn() { printf '{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[%s]}' "$1"; }
+none=$(conn '')
 case "$args" in
-  *"search prs"*"--author"*)
-    printf '[{"number": 42, "title": "Retry window", "url": "https://github.com/acme/widget/pull/42", "updatedAt": "2026-08-01T10:00:00Z", "state": "open", "repository": {"nameWithOwner": "acme/widget"}}]'
-    ;;
-  *"pr view"*reviewDecision*)
-    printf '{"reviewDecision": "CHANGES_REQUESTED", "headRefName": "you/ABC-42-work"}'
+  *"search(query:"*"is:pr"*)
+    pr42='{"number": 42, "title": "Retry window", "url": "https://github.com/acme/widget/pull/42", "updatedAt": "2026-08-01T10:00:00Z", "state": "OPEN", "headRefName": "you/ABC-42-work", "reviewDecision": "CHANGES_REQUESTED", "repository": {"nameWithOwner": "acme/widget"}}'
+    printf '{"data":{"r0":%s,"r1":%s,"r2":%s,"r3":%s,"r4":%s}}' "$(conn "$pr42")" "$none" "$none" "$none" "$none"
     ;;
   *"pr checks"*)
     printf '[{"name": "gate", "state": "FAILURE", "link": "https://ci/1"}, {"name": "style", "state": "SUCCESS", "link": "https://ci/2"}]'

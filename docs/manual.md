@@ -744,9 +744,9 @@ A provider block always has `provider`; the rest is its own.
 
 | Provider | Source | Needs a response when |
 |---|---|---|
-| `github-prs` | `gh search prs` by every role: authored, and with `reviews` the ones you are in a thread on, cited in, asked to review, or assigned | authored: changes requested; reviewing: a review asked of you, or an unanswered citation |
+| `github-prs` | one GraphQL search per role in one request: authored, and with `reviews` the ones you are in a thread on, cited in, asked to review, or assigned | authored: changes requested; reviewing: a review asked of you, or an unanswered citation |
 | `github-ci` | `gh pr list` + `gh pr checks` per open PR | a check is failing |
-| `github-issues` | `gh search issues` by role, plus comments; with `labels`, the open issues carrying them whoever is in them | a comment awaits your reply |
+| `github-issues` | one GraphQL search per question in one request: by role, plus comments; with `labels`, the open issues carrying them whoever is in them | a comment awaits your reply |
 | `github-notifications` | `GET /notifications` — everything GitHub says is directed at you (§5.2) | GitHub's reason is a mention, a review request, an assignment, a broken gate, or an advisory |
 | `github-threads` | GraphQL unresolved review threads | the last comment is not yours |
 | `custom-status` | any shell command in the workspace | the JSON says so |
@@ -757,6 +757,21 @@ Two more sources need no provider block at all: a **task store** in the
 checkout is read on every refresh where one is there, and reports under its own
 name — `rhei`, `beads` (§4.2.5). Nothing configures them; finding one is what
 makes them a source.
+
+**What a refresh costs GitHub.** The two searching providers ask everything
+they need in **one request each**, whatever the number of roles, labels, or
+repositories a source names: every question rides in that request under its own
+alias, and repeated `repo:` qualifiers put a source's repositories in one
+question rather than one apiece
+([§FS-001-forge-interface.8](../requirements.md#8-a-refresh-is-asked-in-the-cheapest-form-the-forge-offers)).
+Those requests are metered against GitHub's GraphQL allowance — five thousand
+points an hour, one point per request — and not against its search allowance,
+which is thirty requests a *minute* and is what a per-role, per-repository,
+per-project search overruns on a registry of a handful of projects. What is
+still per-item is the conversation on a pull request or issue you did not open,
+and `gates` (one `gh pr checks` per unfinished pull request); both are answered
+from the roomy meter, and `ttl_seconds` is what decides how often either is
+asked at all.
 
 ### 5.1 Options
 
@@ -802,7 +817,7 @@ makes them a source.
 **Following a label.** `labels` asks a different question from the two role
 searches: not *which issues am I in* but *which issues carry this word* —
 `priority`, `regression`, whatever a project calls the work it wants followed.
-Each label is one `gh search issues --label <name> --state open`, so issues
+Each label is one `label:<name> state:open` search, so issues
 nobody has ever touched arrive too, and each lands under the role its author
 gives it: **My Issues** where you opened it, **Participating** otherwise
 ([§FS-001-forge-interface.1](../requirements.md#1-capabilities)). Only open

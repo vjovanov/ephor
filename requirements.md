@@ -272,6 +272,52 @@ None of this changes what a refresh costs the forge (§GOAL-005-costless):
 moving the waiting off the reader's screen is not licence to ask more sources
 at once than were being asked before it.
 
+### 8. A refresh is asked in the cheapest form the forge offers
+
+A forge meters what it will answer, and not evenly: the endpoint that searches
+is usually the scarcest thing it has, metered per minute where the ordinary API
+is metered per hour. A refresh that spends one search per role, per repository,
+per project therefore scales its cost by three numbers the reader never chose,
+and crosses that ceiling long before a registry looks large.
+
+What crossing it does is §6's failure arriving where §6 cannot see it. The forge
+does not refuse the refresh, it refuses the tail of it: the sources asked first
+answer, the ones asked last come back refused, and which is which depends only
+on the order the run happened to take. Every refused source does say so, and the
+reader is still misled — the same watch reports a different set of projects each
+run, for a reason that is nowhere in the feed and nothing to do with their work.
+A watch that is quietly short is worse than one that is plainly down
+(§GOAL-003-nothing-lost).
+
+So the cost of a refresh is bounded by the question being asked, not by the
+shape of the loop that asks it:
+
+#### 8.1 A role is not a request
+
+Where a forge answers about several roles at once, it is asked once. The
+reasons are still reported one by one
+([§1](#1-capabilities)) — what collapses is the asking, never the answer. An
+implementation that cannot recover the separate reasons from a combined answer
+asks the separate questions instead: a reason is a claim about the reader's
+involvement, and one that was not established is not reported.
+
+#### 8.2 The scarce meter is the last resort
+
+Where the same question can be put to an endpoint the forge meters more
+generously, it goes there. Two forms of one answer that differ only in which
+meter they draw on are not a tradeoff, and spending the scarce one buys
+nothing.
+
+#### 8.3 What is already in hand is not asked for again
+
+A field that arrives with the answer is not re-fetched per result. The
+per-result follow-up is where a refresh's cost stops being proportional to the
+registry and starts being proportional to the reader's own work — the one
+direction that punishes exactly the busiest reader.
+
+None of this licenses asking for more than is needed: the cheap form of a
+question is still only asked because the answer is read.
+
 ## FS-002-release: ephor releases from a tag, with a changelog entry per change
 
 Versions are semver, and a version exists exactly when a `vX.Y.Z` tag does. The

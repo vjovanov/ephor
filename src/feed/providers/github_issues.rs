@@ -26,6 +26,7 @@ use crate::feed::model::Item;
 use crate::feed::provider::{
     command_exists, run_json, Provider, ProviderContext, ProviderError, ProviderResult,
 };
+use crate::feed::providers::github;
 use crate::feed::providers::{gh_command, github_login, parse_config, parse_github_time};
 use crate::forge::{policy, Issue, Message, Role};
 
@@ -90,15 +91,16 @@ repository(owner:$owner,name:$repo){issue(number:$number){\
 comments(last:30){nodes{id author{login} body createdAt \
 reactions(first:50){nodes{content user{login}}}}}}}}";
 
-/// Search fields. `commentsCount` is what lets us skip the comment fetch for
-/// the many issues that have none — the difference between one API call and
-/// sixty on a forge-wide refresh.
+/// What a search reports about an issue. `comments.totalCount` is what lets us
+/// skip the comment fetch for the many issues that have none — the difference
+/// between one API call and sixty on a forge-wide refresh.
 ///
 /// `author` is what a label search reads the role off: it asked about the
 /// work, not about the reader, so who opened the issue is the only thing that
 /// says whose it is (§FS-001-forge-interface.1).
-const SEARCH_FIELDS: &str =
-    "number,title,url,updatedAt,state,repository,commentsCount,assignees,author";
+const SEARCH_SELECTION: &str = "... on Issue{\
+number title url updatedAt state repository{nameWithOwner} \
+author{login} assignees(first:20){nodes{login}} comments{totalCount}}";
 
 /// One question a search asks of the forge. The two role questions know the
 /// reader's role by construction; the label question does not.
@@ -129,6 +131,16 @@ impl Question<'_> {
                 }
             }
         }
+    }
+}
+
+/// A label as a search term: quoted where it has whitespace in it, since the
+/// forge's search syntax ends a bare term at the first space.
+fn quoted(label: &str) -> String {
+    if label.chars().any(char::is_whitespace) {
+        format!("\"{}\"", label.replace('"', ""))
+    } else {
+        label.to_string()
     }
 }
 
@@ -174,52 +186,69 @@ impl GithubIssues {
     /// a test can read the question off the command line. The label is passed
     /// as its own argument, so `gh` receives it whatever is in it and no shell
     /// ever sees it.
-    fn search_args(&self, question: Question<'_>) -> Vec<String> {
-        let mut args = vec!["search".to_string(), "issues".to_string()];
-        match question {
-            Question::Authored => args.extend(["--author".to_string(), "@me".to_string()]),
-            Question::Involves => args.extend(["--involves".to_string(), "@me".to_string()]),
-            // Following a label is following work, so only what is open is
-            // asked for: the closed would spend the limit on history
-            // (§FS-001-forge-interface.1).
-            Question::Labelled(label) => args.extend([
-                "--label".to_string(),
-                label.to_string(),
-                "--state".to_string(),
-                "open".to_string(),
-            ]),
-        }
+    /// What bounds every one of this source's searches: the kind, the
+    /// repositories, and the window. Repository qualifiers are OR'd by the
+    /// forge, so a source watching several repositories asks about all of them
+    /// in one question rather than one question each.
+    fn bounds(&self) -> String {
+        let mut bounds = String::from("is:issue");
         for repo in &self.config.repos {
-            args.extend(["--repo".to_string(), repo.clone()]);
+            bounds.push_str(&format!(" repo:{repo}"));
         }
         if self.config.updated_within_days > 0 {
             let since = Utc::now() - Duration::days(self.config.updated_within_days as i64);
-            args.extend([
-                "--updated".to_string(),
-                format!(">={}", since.format("%Y-%m-%d")),
-            ]);
+            bounds.push_str(&format!(" updated:>={}", since.format("%Y-%m-%d")));
         }
-        args.extend(["--sort".to_string(), "updated".to_string()]);
-        args.extend(["--order".to_string(), "desc".to_string()]);
-        args.extend(["--limit".to_string(), self.config.limit.to_string()]);
-        args.extend(["--json".to_string(), SEARCH_FIELDS.to_string()]);
-        args
+        bounds.push_str(" sort:updated-desc");
+        bounds
     }
 
-    /// One search for one question.
-    fn search(
+    /// One question as the forge's own search syntax.
+    fn query(&self, question: Question<'_>) -> String {
+        let bounds = self.bounds();
+        match question {
+            Question::Authored => format!("{bounds} author:@me"),
+            Question::Involves => format!("{bounds} involves:@me"),
+            // Following a label is following work, so only what is open is
+            // asked for: the closed would spend the limit on history
+            // (§FS-001-forge-interface.1).
+            Question::Labelled(label) => {
+                format!("{bounds} label:{} state:open", quoted(label))
+            }
+        }
+    }
+
+    /// Every question, asked in one request (§FS-001-forge-interface.8), in the
+    /// order they were asked in.
+    fn search<'q>(
         &self,
         ctx: &ProviderContext,
-        question: Question<'_>,
-    ) -> Result<Vec<Value>, ProviderError> {
-        let mut command = gh_command(self.config.host.as_deref());
-        command.args(self.search_args(question));
-        let result = run_json(command, ctx.timeout, false)?;
-        let found = result.as_array().cloned().unwrap_or_default();
-        // Only the label searches are held to this. The role searches have
-        // always truncated silently and are left as they are.
-        if let Question::Labelled(label) = question {
-            label_search_is_full(label, found.len(), self.config.limit)?;
+        questions: &[Question<'q>],
+    ) -> Result<Vec<(Question<'q>, Vec<Value>)>, ProviderError> {
+        let searches: Vec<github::Search> = questions
+            .iter()
+            .enumerate()
+            .map(|(index, question)| github::Search {
+                alias: format!("q{index}"),
+                query: self.query(*question),
+            })
+            .collect();
+        let mut answers = github::search(
+            self.config.host.as_deref(),
+            &searches,
+            SEARCH_SELECTION,
+            self.config.limit,
+            ctx.timeout,
+        )?;
+        let mut found = Vec::new();
+        for (index, question) in questions.iter().enumerate() {
+            let nodes = answers.remove(&format!("q{index}")).unwrap_or_default();
+            // Only the label searches are held to this. The role searches have
+            // always truncated silently and are left as they are.
+            if let Question::Labelled(label) = question {
+                label_search_is_full(label, nodes.len(), self.config.limit)?;
+            }
+            found.push((*question, nodes));
         }
         Ok(found)
     }
@@ -269,7 +298,7 @@ impl GithubIssues {
         let url = found.get("url").and_then(Value::as_str).map(String::from);
         let repo = repo_of(found)?;
         let has_comments = found
-            .get("commentsCount")
+            .pointer("/comments/totalCount")
             .and_then(Value::as_u64)
             .unwrap_or(0)
             > 0;
@@ -298,7 +327,7 @@ impl GithubIssues {
             // from the search result is not "nobody has it" — it is a field
             // that did not come back, so it stays unsaid.
             assigned: found
-                .get("assignees")
+                .pointer("/assignees/nodes")
                 .and_then(Value::as_array)
                 .map(|assignees| !assignees.is_empty()),
             messages,
@@ -392,8 +421,8 @@ impl Provider for GithubIssues {
             questions.push(Question::Involves);
         }
         questions.extend(self.config.labels.iter().map(|l| Question::Labelled(l)));
-        for question in questions {
-            for found in self.search(ctx, question)? {
+        for (question, nodes) in self.search(ctx, &questions)? {
+            for found in nodes {
                 let role = question.role(&found, &login);
                 let Some(issue) = self.issue(ctx, &found, role, &login) else {
                     continue;
@@ -526,7 +555,7 @@ mod tests {
     }
 
     #[test]
-    fn each_question_puts_its_own_flags_on_the_command_line() {
+    fn each_question_asks_for_itself_and_carries_the_same_bounds() {
         let provider = GithubIssues::from_config(&json!({
             "provider": "github-issues",
             "repos": ["oracle/graalvm-reachability-metadata"],
@@ -536,43 +565,31 @@ mod tests {
         }))
         .unwrap();
 
-        let authored = provider.search_args(Question::Authored);
-        assert_eq!(&authored[..4], &["search", "issues", "--author", "@me"]);
-        let involves = provider.search_args(Question::Involves);
-        assert_eq!(&involves[..4], &["search", "issues", "--involves", "@me"]);
+        let authored = provider.query(Question::Authored);
+        assert!(authored.contains("author:@me"));
+        let involves = provider.query(Question::Involves);
+        assert!(involves.contains("involves:@me"));
 
         // A label search names the label and asks for the open only; no role
-        // flag, since it asks about the work rather than about the reader
-        // (§FS-001-forge-interface.1). The label is one argument, spaces and
-        // all — no shell ever sees it.
-        let labelled = provider.search_args(Question::Labelled("high priority"));
-        assert_eq!(
-            &labelled[..6],
-            &[
-                "search",
-                "issues",
-                "--label",
-                "high priority",
-                "--state",
-                "open"
-            ]
-        );
-        assert!(!labelled
-            .iter()
-            .any(|arg| arg == "--author" || arg == "--involves"));
+        // qualifier, since it asks about the work rather than about the reader
+        // (§FS-001-forge-interface.1). A label with a space in it is quoted, or
+        // the search would end the term at the space and follow the wrong one.
+        let labelled = provider.query(Question::Labelled("high priority"));
+        assert!(labelled.contains("label:\"high priority\" state:open"));
+        assert!(!labelled.contains("author:@me") && !labelled.contains("involves:@me"));
+        // A label without one is left alone, so the common case reads as it is
+        // written.
+        assert!(provider
+            .query(Question::Labelled("priority"))
+            .contains("label:priority "));
 
         // The bounds every question carries are the same ones.
-        for args in [&authored, &involves, &labelled] {
-            assert!(args
-                .windows(2)
-                .any(|pair| pair == ["--repo", "oracle/graalvm-reachability-metadata"]));
-            assert!(args.windows(2).any(|pair| pair == ["--sort", "updated"]));
-            assert!(args.windows(2).any(|pair| pair == ["--limit", "40"]));
-            assert!(args
-                .windows(2)
-                .any(|pair| pair == ["--json", SEARCH_FIELDS]));
+        for query in [&authored, &involves, &labelled] {
+            assert!(query.contains("is:issue"));
+            assert!(query.contains("repo:oracle/graalvm-reachability-metadata"));
+            assert!(query.contains("sort:updated-desc"));
             // `updated_within_days: 0` removes the bound for all of them.
-            assert!(!args.iter().any(|arg| arg == "--updated"));
+            assert!(!query.contains("updated:>="));
         }
 
         // The window, where it is asked for, is on every question too.
@@ -582,9 +599,8 @@ mod tests {
         }))
         .unwrap();
         assert!(bounded
-            .search_args(Question::Labelled("priority"))
-            .iter()
-            .any(|arg| arg == "--updated"));
+            .query(Question::Labelled("priority"))
+            .contains("updated:>="));
     }
 
     /// A label search asked about the work, so whose the issue is comes from

@@ -9,33 +9,40 @@ use serde_json::json;
 use common::*;
 
 /// A fake `gh` that serves canned JSON for the calls github-prs/ci make.
+///
+/// The role searches arrive as **one** GraphQL request carrying an aliased
+/// search per role (§FS-001-forge-interface.8), so the answer is one object
+/// with every alias in it: `r0` authored, then in-a-thread, cited, review
+/// requested, assigned. `pr view` is a hard failure here — the head branch and
+/// the review decision ride in with the search now, and asking again per pull
+/// request is the cost §FS-001-forge-interface.8.3 exists to refuse.
 const FAKE_GH: &str = r#"#!/usr/bin/env bash
 set -euo pipefail
 args="$*"
+conn() { printf '{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[%s]}' "$1"; }
+none=$(conn '')
 case "$args" in
-  *"search prs"*"--author"*)
-    printf '[{"number": 42, "title": "Fix condition errors", "url": "https://github.com/acme/widget/pull/42", "updatedAt": "2026-08-01T10:00:00Z", "state": "open", "repository": {"nameWithOwner": "acme/widget"}}]'
+  *"search(query:"*"is:pr"*)
+    pr42='{"number": 42, "title": "Fix condition errors", "url": "https://github.com/acme/widget/pull/42", "updatedAt": "2026-08-01T10:00:00Z", "state": "OPEN", "headRefName": "you/ABC-42-work", "reviewDecision": "CHANGES_REQUESTED", "repository": {"nameWithOwner": "acme/widget"}}'
+    printf '{"data":{"r0":%s,"r1":%s,"r2":%s,"r3":%s,"r4":%s}}' "$(conn "$pr42")" "$none" "$none" "$none" "$none"
     ;;
-  *"search prs"*"--commenter"*|*"search prs"*"--mentions"*)
-    printf '[]'
+  *"search(query:"*"is:issue"*)
+    # One closed issue on a repository nobody configured, with no comments;
+    # the involves question returns it too (an author is involved) plus one
+    # that is someone else's, with a comment awaiting a reply.
+    mine='{"number": 7951, "title": "OSC 8 hyperlinks disabled", "url": "https://github.com/other/pi/issues/7951", "updatedAt": "2026-08-01T09:00:00Z", "state": "CLOSED", "repository": {"nameWithOwner": "other/pi"}, "comments": {"totalCount": 0}}'
+    theirs='{"number": 12, "title": "Retry window", "url": "https://github.com/other/lib/issues/12", "updatedAt": "2026-08-01T11:00:00Z", "state": "OPEN", "repository": {"nameWithOwner": "other/lib"}, "comments": {"totalCount": 1}}'
+    printf '{"data":{"q0":%s,"q1":%s}}' "$(conn "$mine")" "$(conn "$mine,$theirs")"
     ;;
-  *"pr view"*reviewDecision*)
-    printf '{"reviewDecision": "CHANGES_REQUESTED", "headRefName": "you/ABC-42-work"}'
+  *"pr view"*)
+    echo "the head branch and review decision came with the search" >&2
+    exit 1
     ;;
   *"pr list"*)
     printf '[{"number": 42, "title": "Fix condition errors", "url": "https://github.com/acme/widget/pull/42", "updatedAt": "2026-08-01T10:00:00Z"}]'
     ;;
   *"pr checks"*)
     printf '[{"name": "gate", "state": "FAILURE", "link": "https://ci/1"}, {"name": "style", "state": "SUCCESS", "link": "https://ci/2"}]'
-    ;;
-  *"search issues"*"--author"*)
-    # One closed issue on a repository nobody configured, with no comments.
-    printf '[{"number": 7951, "title": "OSC 8 hyperlinks disabled", "url": "https://github.com/other/pi/issues/7951", "updatedAt": "2026-08-01T09:00:00Z", "state": "closed", "repository": {"nameWithOwner": "other/pi"}, "commentsCount": 0}]'
-    ;;
-  *"search issues"*"--involves"*)
-    # Returns the authored one too (author is involved) plus one that is
-    # someone else's, with a comment awaiting a reply.
-    printf '[{"number": 7951, "title": "OSC 8 hyperlinks disabled", "url": "https://github.com/other/pi/issues/7951", "updatedAt": "2026-08-01T09:00:00Z", "state": "closed", "repository": {"nameWithOwner": "other/pi"}, "commentsCount": 0}, {"number": 12, "title": "Retry window", "url": "https://github.com/other/lib/issues/12", "updatedAt": "2026-08-01T11:00:00Z", "state": "open", "repository": {"nameWithOwner": "other/lib"}, "commentsCount": 1}]'
     ;;
   *graphql*issue*comments*)
     printf '{"data": {"repository": {"issue": {"comments": {"nodes": [{"id": "IC_1", "author": {"login": "someone"}, "body": "any update?", "createdAt": "2026-08-01T11:00:00Z", "reactions": {"nodes": []}}]}}}}}'
@@ -329,17 +336,21 @@ fn issues_arrive_by_role_from_repositories_nobody_configured() {
 
 /// A fake `gh` for a source that follows a label: only the label search is
 /// answered, and either role search is a hard failure — the label question is
-/// the whole of what this fixture asks.
+/// the whole of what this fixture asks. With every question in one request,
+/// "asked no role question" is now a claim about the request's contents.
 const FAKE_GH_LABEL: &str = r#"#!/usr/bin/env bash
 set -euo pipefail
 args="$*"
+conn() { printf '{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[%s]}' "$1"; }
 case "$args" in
-  *"search issues"*"--author"*|*"search issues"*"--involves"*)
+  *"search(query:"*"author:@me"*|*"search(query:"*"involves:@me"*)
     echo "a role search was made" >&2
     exit 1
     ;;
-  *"search issues"*"--label priority"*"--state open"*)
-    printf '[{"number": 101, "title": "Metadata for Netty 4.2", "url": "https://github.com/oracle/graalvm-reachability-metadata/issues/101", "updatedAt": "2026-08-01T09:00:00Z", "state": "open", "repository": {"nameWithOwner": "oracle/graalvm-reachability-metadata"}, "commentsCount": 0, "author": {"login": "tester"}}, {"number": 102, "title": "Reflection config drifts", "url": "https://github.com/oracle/graalvm-reachability-metadata/issues/102", "updatedAt": "2026-08-01T11:00:00Z", "state": "open", "repository": {"nameWithOwner": "oracle/graalvm-reachability-metadata"}, "commentsCount": 1, "author": {"login": "stranger"}}]'
+  *"search(query:"*"label:priority state:open"*)
+    ours='{"number": 101, "title": "Metadata for Netty 4.2", "url": "https://github.com/oracle/graalvm-reachability-metadata/issues/101", "updatedAt": "2026-08-01T09:00:00Z", "state": "OPEN", "repository": {"nameWithOwner": "oracle/graalvm-reachability-metadata"}, "comments": {"totalCount": 0}, "author": {"login": "tester"}}'
+    theirs='{"number": 102, "title": "Reflection config drifts", "url": "https://github.com/oracle/graalvm-reachability-metadata/issues/102", "updatedAt": "2026-08-01T11:00:00Z", "state": "OPEN", "repository": {"nameWithOwner": "oracle/graalvm-reachability-metadata"}, "comments": {"totalCount": 1}, "author": {"login": "stranger"}}'
+    printf '{"data":{"q0":%s}}' "$(conn "$ours,$theirs")"
     ;;
   *graphql*issue*comments*)
     printf '{"data": {"repository": {"issue": {"comments": {"nodes": [{"id": "IC_9", "author": {"login": "stranger"}, "body": "still reproducing?", "createdAt": "2026-08-01T11:00:00Z", "reactions": {"nodes": []}}]}}}}}'
@@ -545,16 +556,18 @@ fn status_check_exits_4_on_unread_needs_response() {
 }
 
 /// A fake `gh` for the reviewing path: the user is cited on PR 77 and the
-/// conversation records the exchange.
+/// conversation records the exchange. The search and the conversation are both
+/// GraphQL now, so they are told apart by what the query asks for.
 const FAKE_GH_REVIEW: &str = r#"#!/usr/bin/env bash
 set -euo pipefail
 args="$*"
+conn() { printf '{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[%s]}' "$1"; }
+none=$(conn '')
 case "$args" in
-  *"search prs"*"--author"*)
-    printf '[]'
-    ;;
-  *"search prs"*"--commenter"*|*"search prs"*"--mentions"*)
-    printf '[{"number": 77, "title": "Add layered workflow", "url": "https://github.com/acme/widget/pull/77", "updatedAt": "2026-08-02T10:00:00Z", "state": "open", "repository": {"nameWithOwner": "acme/widget"}}]'
+  *"search(query:"*"is:pr"*)
+    pr77='{"number": 77, "title": "Add layered workflow", "url": "https://github.com/acme/widget/pull/77", "updatedAt": "2026-08-02T10:00:00Z", "state": "OPEN", "repository": {"nameWithOwner": "acme/widget"}}'
+    # Nothing authored; found as a commenter and as a citation.
+    printf '{"data":{"r0":%s,"r1":%s,"r2":%s,"r3":%s,"r4":%s}}' "$none" "$(conn "$pr77")" "$(conn "$pr77")" "$none" "$none"
     ;;
   *"api user"*)
     printf 'tester'
@@ -680,12 +693,15 @@ fn answered_citation_stops_needing_a_response() {
 const FAKE_GH_NOTICES: &str = r#"#!/usr/bin/env bash
 set -euo pipefail
 args="$*"
+conn() { printf '{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[%s]}' "$1"; }
+none=$(conn '')
 case "$args" in
   *"api notifications"*)
     printf '[{"id": "9001", "unread": true, "reason": "team_mention", "updated_at": "2026-08-02T12:00:00Z", "repository": {"full_name": "acme/widget"}, "subject": {"title": "Add layered workflow", "type": "PullRequest", "url": "https://api.github.com/repos/acme/widget/pulls/77"}}, {"id": "9002", "unread": true, "reason": "review_requested", "updated_at": "2026-08-02T13:00:00Z", "repository": {"full_name": "other/lib"}, "subject": {"title": "Bump the timeout", "type": "PullRequest", "url": "https://api.github.com/repos/other/lib/pulls/5"}}, {"id": "9003", "unread": true, "reason": "security_alert", "updated_at": "2026-08-02T14:00:00Z", "repository": {"full_name": "acme/widget"}, "subject": {"title": "CVE-2026-1 in serde_yaml", "type": "RepositoryVulnerabilityAlert", "url": null}}, {"id": "9004", "unread": true, "reason": "subscribed", "updated_at": "2026-08-02T15:00:00Z", "repository": {"full_name": "acme/widget"}, "subject": {"title": "v2.1.0", "type": "Release", "url": "https://api.github.com/repos/acme/widget/releases/tag/v2.1.0"}}]'
     ;;
-  *"search prs"*"--commenter"*)
-    printf '[{"number": 77, "title": "Add layered workflow", "url": "https://github.com/acme/widget/pull/77", "updatedAt": "2026-08-02T10:00:00Z", "state": "open", "repository": {"nameWithOwner": "acme/widget"}}]'
+  *"search(query:"*"is:pr"*)
+    pr77='{"number": 77, "title": "Add layered workflow", "url": "https://github.com/acme/widget/pull/77", "updatedAt": "2026-08-02T10:00:00Z", "state": "OPEN", "repository": {"nameWithOwner": "acme/widget"}}'
+    printf '{"data":{"r0":%s,"r1":%s,"r2":%s,"r3":%s,"r4":%s}}' "$none" "$(conn "$pr77")" "$none" "$none" "$none"
     ;;
   *"api user"*)
     printf 'tester'

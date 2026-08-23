@@ -1,27 +1,28 @@
 //! Pull requests on GitHub, by every role that puts one in front of the user
 //! (§FS-001-forge-interface.1):
 //!
-//! - **authored** — `gh search prs --author @me`
-//! - **in a thread** — `--commenter @me`
-//! - **cited** — `--mentions @me`
-//! - **review requested** — `--review-requested @me`
-//! - **assigned** — `--assignee @me`
+//! - **authored** — `author:@me`
+//! - **in a thread** — `commenter:@me`
+//! - **cited** — `mentions:@me`
+//! - **review requested** — `review-requested:@me`
+//! - **assigned** — `assignee:@me`
 //!
-//! The last two are the ones that matter most and are the easiest to miss:
-//! being asked leaves nothing behind in the conversation, so a pull request
-//! waiting on the user looks, to every search that reads what they have said,
-//! exactly like one that has nothing to do with them.
+//! The last two matter most and are the easiest to miss: being asked leaves
+//! nothing behind in the conversation, so a pull request waiting on the user
+//! looks, to every search that reads what they have said, exactly like one
+//! with nothing to do with them. All five are one request, aliased side by
+//! side on the graph rather than spent on search (§FS-001-forge-interface.8).
 //!
 //! Like `github-issues`, the search is repository-scoped only when it is asked
 //! to be: with no `repos` the whole forge is searched, and what bounds it is
-//! `updated_within_days` instead. Finished pull requests come back too and land
-//! under Recent (§FS-003-feed-categories.2) — a question asked of the user does
-//! not stop being asked when the branch lands — but nothing more is fetched
-//! about them, since a merged pull request asks nothing of anyone.
+//! `updated_within_days` instead. Finished pull requests come back too and
+//! land under Recent (§FS-003-feed-categories.2) — a question asked of the
+//! user does not stop being asked when the branch lands — but nothing more is
+//! fetched about them, since a merged pull request asks nothing of anyone.
 //!
-//! What the pull requests *mean* is not decided here: this provider reports
-//! roles, reasons, conversation, gate, and the review the user themselves left,
-//! and `policy` turns them into feed items (§FS-001-forge-interface.3).
+//! What they *mean* is not decided here: this provider reports roles, reasons,
+//! conversation, gate, and the review the user left, and `policy` turns them
+//! into feed items (§FS-001-forge-interface.3).
 
 use std::collections::BTreeMap;
 
@@ -35,6 +36,7 @@ use crate::feed::model::Item;
 use crate::feed::provider::{
     command_exists, run_json, Provider, ProviderContext, ProviderError, ProviderResult,
 };
+use crate::feed::providers::github;
 use crate::feed::providers::{
     gh_command, github_login, parse_config, parse_github_time, restart_actions, show_failing_checks,
 };
@@ -98,19 +100,28 @@ comments(last:30){nodes{id author{login} body createdAt reactions(first:50){node
 reviewThreads(first:50){nodes{comments(last:20){nodes{\
 id author{login} body createdAt reactions(first:50){nodes{content user{login}}}}}}}}}}";
 
-/// Search fields. `state` is what tells a merged pull request from an open one
-/// — the search flag only knows open and closed — and `repository` is what
-/// makes a forge-wide search usable at all.
-const SEARCH_FIELDS: &str = "number,title,url,updatedAt,state,repository";
+/// What a search reports about a pull request. `state` is what tells a merged
+/// pull request from an open one, and `repository` is what makes a forge-wide
+/// search usable at all.
+///
+/// `headRefName` and `reviewDecision` are here because on this transport they
+/// are free: the graph hands them over with the row, where asking per pull
+/// request was a second request each, spent down the reader's longest list
+/// (§FS-001-forge-interface.8.3).
+const SEARCH_SELECTION: &str = "... on PullRequest{\
+number title url updatedAt state headRefName reviewDecision \
+repository{nameWithOwner}}";
 
 /// The searches that put a pull request in front of the user, and the reason
-/// each one reports (§FS-001-forge-interface.1).
-const AUTHORED: (Reason, &str) = (Reason::Authored, "--author");
+/// each one reports (§FS-001-forge-interface.1). Each stays its own question —
+/// they ride in one request, and a role still answers for itself
+/// (§FS-001-forge-interface.8.1).
+const AUTHORED: (Reason, &str) = (Reason::Authored, "author");
 const REVIEWING: [(Reason, &str); 4] = [
-    (Reason::InThread, "--commenter"),
-    (Reason::Mentioned, "--mentions"),
-    (Reason::ReviewRequested, "--review-requested"),
-    (Reason::Assigned, "--assignee"),
+    (Reason::InThread, "commenter"),
+    (Reason::Mentioned, "mentions"),
+    (Reason::ReviewRequested, "review-requested"),
+    (Reason::Assigned, "assignee"),
 ];
 
 impl GithubPrs {
@@ -120,63 +131,58 @@ impl GithubPrs {
         })
     }
 
-    /// One search for one role, over one repository or over the whole forge.
-    fn search(
-        &self,
-        ctx: &ProviderContext,
-        repo: Option<&str>,
-        role_flag: &str,
-    ) -> Result<Vec<Value>, ProviderError> {
-        let mut command = gh_command(self.config.host.as_deref());
-        command.args(["search", "prs", role_flag, "@me"]);
-        if let Some(repo) = repo {
-            command.args(["--repo", repo]);
+    /// What bounds every one of this source's searches: the kind, the
+    /// repositories, and the window. Repository qualifiers are OR'd by the
+    /// forge, so a source watching several repositories asks about all of them
+    /// in one question rather than one question each — with none configured
+    /// the whole forge is searched and the window is the only bound.
+    fn bounds(&self) -> String {
+        let mut bounds = String::from("is:pr");
+        for repo in &self.config.repos {
+            bounds.push_str(&format!(" repo:{repo}"));
         }
         if self.config.updated_within_days > 0 {
             let since = Utc::now() - Duration::days(self.config.updated_within_days as i64);
-            command.args(["--updated", &format!(">={}", since.format("%Y-%m-%d"))]);
+            bounds.push_str(&format!(" updated:>={}", since.format("%Y-%m-%d")));
         }
-        command
-            .args(["--sort", "updated", "--order", "desc"])
-            .args(["--limit", &self.config.limit.to_string()])
-            .args(["--json", SEARCH_FIELDS]);
-        let result = run_json(command, ctx.timeout, false)?;
-        Ok(result.as_array().cloned().unwrap_or_default())
+        bounds.push_str(" sort:updated-desc");
+        bounds
     }
 
-    /// The pull request's review decision and head branch (None on any
-    /// failure). Asked only for the user's own pull requests: it is their
-    /// review decision that says whether they owe work.
-    fn pr_details(
+    /// Every role, asked in one request (§FS-001-forge-interface.8). The
+    /// answers come back per role and in the order asked, so what the caller
+    /// sees is what a search per role gave it before.
+    fn search(
         &self,
         ctx: &ProviderContext,
-        repo: &str,
-        number: u64,
-    ) -> (Option<String>, Option<String>) {
-        let mut command = gh_command(self.config.host.as_deref());
-        command.args([
-            "pr",
-            "view",
-            &number.to_string(),
-            "--repo",
-            repo,
-            "--json",
-            "reviewDecision,headRefName",
-        ]);
-        let Ok(value) = run_json(command, ctx.timeout, true) else {
-            return (None, None);
-        };
-        let decision = value
-            .get("reviewDecision")
-            .and_then(Value::as_str)
-            .map(|decision| decision.to_lowercase())
-            .filter(|decision| !decision.is_empty());
-        let branch = value
-            .get("headRefName")
-            .and_then(Value::as_str)
-            .filter(|branch| !branch.is_empty())
-            .map(String::from);
-        (decision, branch)
+        roles: &[(Reason, &str)],
+    ) -> Result<Vec<(Reason, Vec<Value>)>, ProviderError> {
+        let bounds = self.bounds();
+        let searches: Vec<github::Search> = roles
+            .iter()
+            .enumerate()
+            .map(|(index, (_, qualifier))| github::Search {
+                alias: format!("r{index}"),
+                query: format!("{bounds} {qualifier}:@me"),
+            })
+            .collect();
+        let mut answers = github::search(
+            self.config.host.as_deref(),
+            &searches,
+            SEARCH_SELECTION,
+            self.config.limit,
+            ctx.timeout,
+        )?;
+        Ok(roles
+            .iter()
+            .enumerate()
+            .map(|(index, (reason, _))| {
+                (
+                    *reason,
+                    answers.remove(&format!("r{index}")).unwrap_or_default(),
+                )
+            })
+            .collect())
     }
 
     /// The pull request's checks as a gate summary. A pull request without CI
@@ -426,6 +432,26 @@ fn cited_in(threads: &[Thread], handles: &[String]) -> bool {
     })
 }
 
+/// The pull request's head branch, as the search reported it.
+fn head_branch(found: &Value) -> Option<String> {
+    found
+        .get("headRefName")
+        .and_then(Value::as_str)
+        .filter(|branch| !branch.is_empty())
+        .map(String::from)
+}
+
+/// What the review decided, as the search reported it. It is the author's
+/// question — whether they owe work — and absent where the forge has reached
+/// no verdict at all.
+fn review_decision(found: &Value) -> Option<String> {
+    found
+        .get("reviewDecision")
+        .and_then(Value::as_str)
+        .map(str::to_lowercase)
+        .filter(|decision| !decision.is_empty())
+}
+
 /// `owner/name` for a search result: from `repository.nameWithOwner`, or from
 /// the pull request url for a host that does not fill it in.
 fn repo_of(found: &Value) -> Option<String> {
@@ -491,16 +517,6 @@ impl Provider for GithubPrs {
     fn fetch(&self, ctx: &ProviderContext) -> ProviderResult {
         let login = github_login(ctx, self.config.host.as_deref())?;
 
-        // One pass per configured repository, or a single forge-wide pass.
-        let scopes: Vec<Option<&str>> = if self.config.repos.is_empty() {
-            vec![None]
-        } else {
-            self.config
-                .repos
-                .iter()
-                .map(|repo| Some(repo.as_str()))
-                .collect()
-        };
         let mut searches = vec![AUTHORED];
         if self.config.reviews {
             searches.extend(REVIEWING);
@@ -511,20 +527,18 @@ impl Provider for GithubPrs {
         // several searches, and it is one row with several reasons rather than
         // several rows (§FS-003-feed-categories.5).
         let mut found: BTreeMap<String, (Value, Vec<Reason>)> = BTreeMap::new();
-        for scope in scopes {
-            for (reason, role_flag) in &searches {
-                for pull in self.search(ctx, scope, role_flag)? {
-                    let (Some(repo), Some(number)) =
-                        (repo_of(&pull), pull.get("number").and_then(Value::as_u64))
-                    else {
-                        continue;
-                    };
-                    let entry = found
-                        .entry(format!("{repo}#{number}"))
-                        .or_insert_with(|| (pull, Vec::new()));
-                    if !entry.1.contains(reason) {
-                        entry.1.push(*reason);
-                    }
+        for (reason, pulls) in self.search(ctx, &searches)? {
+            for pull in pulls {
+                let (Some(repo), Some(number)) =
+                    (repo_of(&pull), pull.get("number").and_then(Value::as_u64))
+                else {
+                    continue;
+                };
+                let entry = found
+                    .entry(format!("{repo}#{number}"))
+                    .or_insert_with(|| (pull, Vec::new()));
+                if !entry.1.contains(&reason) {
+                    entry.1.push(reason);
                 }
             }
         }
@@ -559,10 +573,12 @@ impl Provider for GithubPrs {
             if !over {
                 if author {
                     // The author's question is what the review decided, and
-                    // their own review threads are `github-threads`' job.
-                    let (decision, head) = self.pr_details(ctx, &repo, number);
-                    branch = head;
-                    if let Some(decision) = decision {
+                    // their own review threads are `github-threads`' job. Both
+                    // the decision and the branch came back with the search, so
+                    // nothing is asked here at all
+                    // (§FS-001-forge-interface.8.3).
+                    branch = head_branch(&pull);
+                    if let Some(decision) = review_decision(&pull) {
                         state = Some(match &state {
                             Some(state) => format!("{state}:{decision}"),
                             None => decision,
@@ -753,20 +769,46 @@ mod tests {
         assert!(provider.config.reviews);
         assert_eq!(provider.config.updated_within_days, 30);
 
-        let flags: Vec<&str> = std::iter::once(AUTHORED)
+        let qualifiers: Vec<&str> = std::iter::once(AUTHORED)
             .chain(REVIEWING)
-            .map(|(_, flag)| flag)
+            .map(|(_, qualifier)| qualifier)
             .collect();
         assert_eq!(
-            flags,
+            qualifiers,
             [
-                "--author",
-                "--commenter",
-                "--mentions",
-                "--review-requested",
-                "--assignee"
+                "author",
+                "commenter",
+                "mentions",
+                "review-requested",
+                "assignee"
             ]
         );
+
+        // With no repository named, nothing scopes the search but the kind and
+        // the window: the whole forge is asked.
+        let bounds = provider.bounds();
+        assert!(bounds.contains("is:pr"));
+        assert!(bounds.contains("updated:>="));
+        assert!(bounds.contains("sort:updated-desc"));
+        assert!(!bounds.contains("repo:"));
+    }
+
+    /// Every repository a source watches is asked about in one question, not
+    /// one question each: the forge reads repeated qualifiers as alternatives
+    /// (§FS-001-forge-interface.8).
+    #[test]
+    fn every_watched_repository_rides_in_one_question() {
+        let provider = GithubPrs::from_config(&json!({
+            "provider": "github-prs",
+            "repos": ["acme/widget", "acme/gadget"],
+            "updated_within_days": 0
+        }))
+        .unwrap();
+        let bounds = provider.bounds();
+        assert!(bounds.contains("repo:acme/widget"));
+        assert!(bounds.contains("repo:acme/gadget"));
+        // Zero removes the window, here as everywhere else.
+        assert!(!bounds.contains("updated:>="));
     }
 
     /// A merged pull request is news, and news is cheap: nothing further is
