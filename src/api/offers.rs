@@ -676,6 +676,12 @@ pub fn gate_of(action: &ActionConfig, state: &WorkspaceState, can: &CapabilitySe
         // There is always a checkout to run first now, configured or
         // ephor's own (§FS-004-quick-actions.7).
         WorkspaceState::Missing(_) => Gate::NeedsCheckout,
+        // Not NeedsCheckout: this project has one checkout and it is standing
+        // on other code, so there is no workspace a checkout could make
+        // (§FS-005-dispatch.3). The entry is blocked, and says on what.
+        WorkspaceState::Elsewhere(head) => Gate::Blocked(format!(
+            "this action needs the item's branch, and the checkout is standing on {head}"
+        )),
         // A workspace the item cannot be resolved to is the branch-addressable
         // rung failing on this item (§FS-006-project-interface.10).
         WorkspaceState::Unmatched => Gate::Blocked(

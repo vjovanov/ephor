@@ -12,9 +12,11 @@
 //! Unlike the pull request providers, the search is not repository-scoped
 //! unless it is asked to be: with no `repos` the whole forge is searched, so an
 //! issue filed against a stranger's project is followed like any other. Closed
-//! issues come back too — a closing is usually the activity worth seeing — and
-//! land under Recent (§FS-003-feed-categories.2). What bounds the search
-//! instead of a repository list is time: `updated_within_days`.
+//! issues come back too, with the conversation on them — which is what lets a
+//! closed issue somebody is still talking on keep its place under Recent, and
+//! lets the one nobody is talking on leave (§FS-003-feed-categories.2). What
+//! bounds the search instead of a repository list is time:
+//! `updated_within_days`.
 
 use std::collections::HashSet;
 

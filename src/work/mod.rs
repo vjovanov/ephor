@@ -1035,18 +1035,42 @@ impl Dispatcher {
         // lets work about a conversation run without the checkout-able rung
         // (§FS-006-project-interface.10).
         let checkout = placement.checkout(item);
-        if let WorkspaceState::Missing(target) = &checkout.state {
-            // Only for work that edits the change. A review or a reply runs in
-            // the project's own checkout and fetches what it needs.
-            if needs_checkout {
-                return Err(EphorError::Command(format!(
-                    "{}: branch {} is not checked out ({} is missing). Make it with:\n  \
-                     ephor checkout --item {}",
-                    item.project,
-                    checkout.branch.as_deref().unwrap_or("?"),
-                    target.display(),
-                    item.id
-                )));
+        // Only for work that edits the change. A review or a reply runs in
+        // the project's own checkout and fetches what it needs.
+        if needs_checkout {
+            let wanted = checkout.branch.as_deref().unwrap_or("?");
+            match &checkout.state {
+                WorkspaceState::Missing(target) => {
+                    return Err(EphorError::Command(format!(
+                        "{}: branch {} is not checked out ({} is missing). Make it with:\n  \
+                         ephor checkout --item {}",
+                        item.project,
+                        wanted,
+                        target.display(),
+                        item.id
+                    )));
+                }
+                // The one checkout is standing on other code. There is no
+                // workspace to make, so the refusal names both ways out
+                // rather than offering a checkout that cannot be made
+                // (§FS-005-dispatch.3).
+                WorkspaceState::Elsewhere(head) => {
+                    return Err(EphorError::Command(format!(
+                        "{}: branch {} is not checked out — {} is standing on {}, and it is \
+                         the only checkout this project has. Put the branch there:\n  \
+                         git -C {} switch {}\n\
+                         or give '{}' a branch_root_template in the registry, so its branches \
+                         get workspaces of their own.",
+                        item.project,
+                        wanted,
+                        placement.root.display(),
+                        head,
+                        placement.root.display(),
+                        wanted,
+                        item.project,
+                    )));
+                }
+                WorkspaceState::Ready | WorkspaceState::Unmatched => {}
             }
         }
         let subject = Subject {
@@ -1147,9 +1171,54 @@ impl Dispatcher {
         let states = self.states_yaml(&item.project)?;
         let plan_id = plan::plan_id(&item.id);
 
+        // Where a machine is already in force, it answers before anything is
+        // written: a recipe naming a state it does not have is refused, and a
+        // refusal should leave nothing behind.
+        let undeclared = |root: &WorkRoot| {
+            EphorError::Command(format!(
+                "recipe '{}' starts in state '{}', which the machine '{}' in {} does not declare (it has: {}).",
+                recipe.id,
+                recipe.state,
+                root.machine,
+                root.dir.display(),
+                root.state_names().join(", ")
+            ))
+        };
+        // A state that waits on files an earlier state writes is not one a
+        // fresh ticket can start in: there is no earlier state, so the work
+        // would be written and then sit there unrunnable — which is the thing
+        // this whole check exists to prevent (§FS-005-dispatch.6).
+        let unopenable = |root: &WorkRoot| {
+            let openable = root.openable_states();
+            let instead = match openable.is_empty() {
+                true => "no state of it opens without one".to_string(),
+                false => format!("states that open without one: {}", openable.join(", ")),
+            };
+            EphorError::Command(format!(
+                "recipe '{}' starts in state '{}', which the machine '{}' in {} declares inputs for. \
+                 A fresh ticket has no earlier state to have written them, so it would never run \
+                 — {instead}. Give the recipe a 'state' in the work configuration.",
+                recipe.id,
+                recipe.state,
+                root.machine,
+                root.dir.display(),
+            ))
+        };
+        let vet = |root: &WorkRoot| match () {
+            _ if !root.declares(&recipe.state) => Err(undeclared(root)),
+            _ if root.needs_input(&recipe.state) => Err(unopenable(root)),
+            _ => Ok(()),
+        };
         if dry_run {
-            // Nothing is created, so the machine cannot be consulted; what a
-            // dry run promises is where the ticket would go.
+            // A machine already in force is read without creating anything, and
+            // it answers here too: a dry run that promises a ticket the real
+            // dispatch would refuse is the most misleading promise of the set
+            // (§FS-005-dispatch.6). Where no root exists yet there is nothing
+            // to consult, and what the run promises is where the ticket would
+            // go.
+            if let Some(existing) = WorkRoot::open(&site.dir)? {
+                vet(&existing)?;
+            }
             let path = plan::plan_path_in(&site.dir, &plan_id);
             let existing = Plan::read(&path)?;
             let ticket = existing
@@ -1190,28 +1259,11 @@ impl Dispatcher {
             });
         }
 
-        // Where a machine is already in force, it answers before anything is
-        // written: a recipe naming a state it does not have is refused, and a
-        // refusal should leave nothing behind.
-        let undeclared = |root: &WorkRoot| {
-            EphorError::Command(format!(
-                "recipe '{}' starts in state '{}', which the machine '{}' in {} does not declare (it has: {}).",
-                recipe.id,
-                recipe.state,
-                root.machine,
-                root.dir.display(),
-                root.state_names().join(", ")
-            ))
-        };
         if let Some(existing) = WorkRoot::open(&site.dir)? {
-            if !existing.declares(&recipe.state) {
-                return Err(undeclared(&existing));
-            }
+            vet(&existing)?;
         }
         let root = WorkRoot::ensure(&site.dir, &states)?;
-        if !root.declares(&recipe.state) {
-            return Err(undeclared(&root));
-        }
+        vet(&root)?;
         let path = root.plan_path(&plan_id);
         let mut brief = dossier::render(&recipe.brief, &site.values);
         // What is handed over is the situation rather than the request to

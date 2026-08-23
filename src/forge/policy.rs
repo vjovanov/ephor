@@ -335,8 +335,16 @@ pub fn notice_item(forge: &str, project: &str, notice: &Notice) -> Item {
 
 /// Finished work is news, not a task (§FS-003-feed-categories.2): whoever had
 /// the last word, a merged or closed item asks nothing of anyone.
+///
+/// The answer it was owed is kept as news rather than dropped: it is the loose
+/// end that decides whether the news is worth showing at all, and a report that
+/// forgot it would leave Recent unable to tell the merge somebody commented on
+/// from the merge nobody did.
 fn settle(item: &mut Item) {
     if item.is_finished() {
+        if item.needs_response {
+            crate::feed::model::note_unanswered(&mut item.raw);
+        }
         item.needs_response = false;
     }
 }
@@ -1002,6 +1010,41 @@ mod tests {
         let mut merged = pr(Vec::new(), false, "merged:changes_requested", Role::Author);
         merged.state = Some("merged".to_string());
         assert!(!pull_request_item("forge", "widget", &merged).needs_response);
+    }
+
+    /// …but the answer it was owed is kept as news, and that is what decides
+    /// whether the finished row is worth showing at all
+    /// (§FS-003-feed-categories.2). Settling clears the task; it does not
+    /// forget that somebody spoke last.
+    #[test]
+    fn settling_keeps_the_answer_it_was_owed_as_the_loose_end() {
+        let commented = Issue {
+            key: "acme/widget#7".to_string(),
+            title: "Hyperlinks".to_string(),
+            status: Some("closed".to_string()),
+            url: None,
+            updated_at: Utc::now(),
+            role: Role::Author,
+            assigned: None,
+            messages: vec![message("me", true), message("them", false)],
+        };
+        let item = issue_item("github-issues", "widget", &commented, Unclaimed::Ignored);
+        assert!(!item.needs_response);
+        assert_eq!(
+            item.loose_end(),
+            Some(crate::feed::model::LooseEnd::Unanswered)
+        );
+        assert!(item.is_visible(Utc::now(), 7));
+
+        // Closed with the reader's own word last: nothing is missing, so
+        // nothing keeps it on the feed.
+        let answered = Issue {
+            messages: vec![message("them", false), message("me", true)],
+            ..commented.clone()
+        };
+        let item = issue_item("github-issues", "widget", &answered, Unclaimed::Ignored);
+        assert_eq!(item.loose_end(), None);
+        assert!(!item.is_visible(Utc::now(), 7));
     }
 
     /// An issue nobody has taken awaits somebody however the conversation

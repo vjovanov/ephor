@@ -472,7 +472,7 @@ impl Session {
             };
             let (mut total, mut unread, mut respond) = (0, 0, 0);
             for item in feed.items() {
-                if !item.is_visible(now, self.recent_days) {
+                if !self.shows(&item, now) {
                     continue;
                 }
                 total += 1;
@@ -916,6 +916,55 @@ impl Session {
         self.work = work;
     }
 
+    /// Whether the runtime still holds a ticket open about this matter — a
+    /// line the plan is going on with, or one parked for a person
+    /// (§FS-005-dispatch.23). What is over is one line and is not one of them.
+    ///
+    /// It is the third loose end of §FS-003-feed-categories.2, and the ledger's
+    /// rather than any report's: a finished matter with a run still on it stays
+    /// on the feed, because the run stands on rows beneath it and a run nobody
+    /// can see is a run nobody can take back.
+    pub fn working(&self, id: &str) -> bool {
+        self.work.get(id).is_some_and(|lines| {
+            lines.iter().any(|line| {
+                matches!(
+                    line.tone,
+                    crate::work::Tone::Going | crate::work::Tone::Waiting
+                )
+            })
+        })
+    }
+
+    /// The whole of §FS-003-feed-categories.2 for one matter: the two loose
+    /// ends a report knows, and the one only the ledger does. None on
+    /// unfinished work, which is in the feed because of its category.
+    ///
+    /// Work is asked about first because it is the one the window does not age
+    /// out: a run in flight is not history, however long ago the matter it was
+    /// asked about last moved.
+    pub fn loose_end(
+        &self,
+        item: &Item,
+        now: chrono::DateTime<Utc>,
+    ) -> Option<crate::feed::model::LooseEnd> {
+        if !item.is_finished() {
+            return None;
+        }
+        if self.working(&item.id) {
+            return Some(crate::feed::model::LooseEnd::Working);
+        }
+        item.within_recent_window(now, self.recent_days)
+            .then(|| item.loose_end())
+            .flatten()
+    }
+
+    /// In the feed at all, asked with the ledger in hand
+    /// (§FS-003-feed-categories.2): unfinished work always, finished work while
+    /// it still has a loose end.
+    pub fn shows(&self, item: &Item, now: chrono::DateTime<Utc>) -> bool {
+        !item.is_finished() || self.loose_end(item, now).is_some()
+    }
+
     /// The window opener bound here (§FS-005-dispatch.22, §AR-002-summons.6):
     /// what site configuration names, else the environment ephor was started
     /// in, else none. None is the terminal, which is the floor and is never
@@ -955,7 +1004,7 @@ impl Session {
             .feeds
             .iter()
             .flat_map(|feed| feed.items())
-            .filter(|item| item.is_visible(now, self.recent_days))
+            .filter(|item| self.shows(item, now))
             .collect();
         items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
         items
@@ -1079,6 +1128,71 @@ mod tests {
             dossier: Vec::new(),
             started: String::new(),
         }
+    }
+
+    fn merged(updated_at: chrono::DateTime<Utc>) -> Item {
+        Item {
+            id: "github-prs:acme/widget#42".to_string(),
+            project: "widget".to_string(),
+            source: "github-prs".to_string(),
+            kind: crate::feed::model::ItemKind::Pr,
+            role: None,
+            title: "Retry window".to_string(),
+            url: None,
+            state: Some("merged".to_string()),
+            needs_response: false,
+            updated_at,
+            raw: Value::Null,
+        }
+    }
+
+    fn work_line(tone: crate::work::Tone) -> crate::work::WorkLine {
+        crate::work::WorkLine {
+            tone,
+            marker: "⚙",
+            said: "fix-gate · running".to_string(),
+            ticket: Some("t1".to_string()),
+            asked: None,
+        }
+    }
+
+    /// The third loose end of §FS-003-feed-categories.2 is the ledger's: a
+    /// finished matter the runtime is still working on stays on the feed,
+    /// because the work stands on rows beneath it (§FS-005-dispatch.23) and a
+    /// run nobody can see is a run nobody can take back. What is over is not
+    /// one of those rows, and does not hold the matter here.
+    #[test]
+    fn a_finished_matter_stays_while_work_is_still_open_on_it() {
+        let now = Utc::now();
+        let item = merged(now - chrono::Duration::hours(2));
+        let mut session = Session {
+            recent_days: 7,
+            ..Session::default()
+        };
+        assert!(!session.shows(&item, now), "merged, and nothing left to do");
+
+        session
+            .work
+            .insert(item.id.clone(), vec![work_line(crate::work::Tone::Going)]);
+        assert!(session.working(&item.id));
+        assert!(session.shows(&item, now));
+        assert_eq!(
+            session.loose_end(&item, now),
+            Some(crate::feed::model::LooseEnd::Working)
+        );
+
+        // The window does not age out a run in flight: the ledger says it is
+        // going, whatever the matter's own last activity says.
+        let old = merged(now - chrono::Duration::days(90));
+        assert!(session.shows(&old, now));
+
+        // A plan holding nothing open is one line for what the last ticket
+        // decided — history, not a run.
+        session
+            .work
+            .insert(item.id.clone(), vec![work_line(crate::work::Tone::Over)]);
+        assert!(!session.working(&item.id));
+        assert!(!session.shows(&item, now));
     }
 
     /// A job's line is filed under what the job was about, so it lands on that

@@ -326,6 +326,31 @@ pub fn is_work_tree(path: &Path) -> bool {
             .is_some_and(|answer| answer.trim() == "true")
 }
 
+/// Which branch a working tree is standing on, read rather than asked for.
+///
+/// [`Placement::checkout`](crate::branches::Placement::checkout) asks this of
+/// every item a surface renders, so it is a file read and not a subprocess:
+/// `.git/HEAD` names the branch on its one line, and a linked worktree keeps a
+/// `gitdir:` pointer where that directory would be.
+///
+/// `None` is "this cannot be said" and never "some other branch": an
+/// unreadable HEAD, a detached one, a path that is no repository at all. The
+/// caller turns a positive disagreement into a refusal
+/// (§FS-005-dispatch.3), so a `None` that guessed would refuse work that would
+/// have run.
+pub fn head_branch(repo: &Path) -> Option<String> {
+    let dot_git = repo.join(".git");
+    let git_dir = if dot_git.is_dir() {
+        dot_git
+    } else {
+        let pointer = std::fs::read_to_string(&dot_git).ok()?;
+        PathBuf::from(pointer.trim().strip_prefix("gitdir:")?.trim())
+    };
+    let head = std::fs::read_to_string(git_dir.join("HEAD")).ok()?;
+    let name = head.trim().strip_prefix("ref: refs/heads/")?;
+    (!name.is_empty()).then(|| name.to_string())
+}
+
 /// Which remote this repository's folds fetch from, push to and measure
 /// against. A fact that can be probed is probed, whatever a row says
 /// (§AR-004-forest.2): the branch's own upstream where git records one, the

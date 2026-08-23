@@ -293,7 +293,10 @@ impl NavigatorState {
         for (header, section_filter) in SECTIONS {
             let mut rows: Vec<Row> = feed
                 .items()
-                .filter(|item| item.is_visible(now, ctx.recent_days))
+                // With the ledger in hand, so a finished matter the runtime is
+                // still working on keeps the rows its work stands on
+                // (§FS-003-feed-categories.2, §FS-005-dispatch.23).
+                .filter(|item| ctx.shows(item, now))
                 .filter(|item| section_filter(item))
                 .filter(|item| !ctx.unread_only || cache::is_unread(&ctx.seen, item))
                 .map(|item| Row {
@@ -397,7 +400,7 @@ impl NavigatorState {
         let mut orphans: Vec<Row> = ctx
             .unattributed
             .iter()
-            .filter(|item| item.is_visible(now, ctx.recent_days))
+            .filter(|item| ctx.shows(item, now))
             .filter(|item| !ctx.unread_only || cache::is_unread(&ctx.seen, item))
             .map(|item| Row {
                 stale: false,

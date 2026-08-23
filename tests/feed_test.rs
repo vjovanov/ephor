@@ -314,14 +314,16 @@ fn issues_arrive_by_role_from_repositories_nobody_configured() {
     for (key, value) in feed_env(tmp.path()) {
         cmd.env(key, value);
     }
+    // Fetched is not shown: the closed issue asks nothing of anybody, so it
+    // has no loose end and never reaches the feed (§FS-003-feed-categories.2).
+    // The open one, which is waiting on an answer, does.
     cmd.args(["feed"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("other/pi#7951"))
-        .stdout(predicate::str::contains("[closed]"))
+        .stdout(predicate::str::contains("other/pi#7951").not())
         .stdout(predicate::str::contains("other/lib#12"));
 
-    // Filtering by the new kind reaches both.
+    // Filtering by the new kind reaches the one the feed holds.
     let mut cmd = ephor_cmd();
     cmd.env("PATH", &path);
     for (key, value) in feed_env(tmp.path()) {
@@ -330,7 +332,6 @@ fn issues_arrive_by_role_from_repositories_nobody_configured() {
     cmd.args(["feed", "--kind", "issue"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("other/pi#7951"))
         .stdout(predicate::str::contains("other/lib#12"));
 }
 

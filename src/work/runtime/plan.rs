@@ -64,6 +64,10 @@ pub struct StateInfo {
     /// The runtime will not leave this state on its own: it is where work
     /// waits for a person (§FS-005-dispatch.9).
     pub is_gating: bool,
+    /// The state declares `inputs:` — files an earlier state was supposed to
+    /// write. A fresh ticket has no earlier state, so this is where one may
+    /// not start (§FS-005-dispatch.6).
+    pub needs_input: bool,
 }
 
 impl WorkRoot {
@@ -206,6 +210,24 @@ impl WorkRoot {
     pub fn state_names(&self) -> Vec<String> {
         self.states.iter().map(|info| info.name.clone()).collect()
     }
+
+    /// Whether a state expects files an earlier state writes, which is what
+    /// makes it somewhere a fresh ticket cannot start
+    /// (§FS-005-dispatch.6).
+    pub fn needs_input(&self, state: &str) -> bool {
+        self.flag(state, |info| info.needs_input)
+    }
+
+    /// The states a ticket could start in: declared, not already over, and
+    /// waiting on nothing an earlier state was to write. What a refusal offers
+    /// instead of the state it refused (§FS-005-dispatch.6).
+    pub fn openable_states(&self) -> Vec<String> {
+        self.states
+            .iter()
+            .filter(|info| !info.is_final && !info.needs_input)
+            .map(|info| info.name.clone())
+            .collect()
+    }
 }
 
 /// The plan file for an id inside a work root. The same path
@@ -308,6 +330,7 @@ fn state_infos(yaml: &str) -> Vec<StateInfo> {
                 name: trimmed.trim_end_matches(':').to_string(),
                 is_final: false,
                 is_gating: false,
+                needs_input: false,
             });
         } else if indent > 2 {
             let flag = |prefix: &str| {
@@ -321,6 +344,12 @@ fn state_infos(yaml: &str) -> Vec<StateInfo> {
                 }
                 if let Some(value) = flag("gating:") {
                     last.is_gating = value;
+                }
+                // The key alone, at the state's own level: what hangs under it
+                // is the runtime's to read, and this only has to know that
+                // something does (§FS-005-dispatch.6).
+                if indent == 4 && trimmed == "inputs:" {
+                    last.needs_input = true;
                 }
             }
         }
@@ -914,6 +943,43 @@ mod tests {
         // default quietly standing in for it.
         fs::write(tmp.path().join("states.yaml"), "states:\n  todo:\n").unwrap();
         assert!(WorkRoot::in_force(tmp.path()).is_err());
+    }
+
+    /// A state waiting on files an earlier one writes is not somewhere a fresh
+    /// ticket can start, and the openable ones are what a refusal offers
+    /// instead (§FS-005-dispatch.6). This is the shape of the machine that put
+    /// two tickets into `fix` with the `collect` that feeds it never run.
+    #[test]
+    fn a_state_that_waits_on_an_earlier_ones_files_is_not_one_to_start_in() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(
+            tmp.path().join("states.yaml"),
+            r#"name: work
+states:
+  collect:
+    program:
+      command: ci.sh
+    outputs:
+      - name: failures
+        path: "f.md"
+  fix:
+    agent: a
+    inputs:
+      - name: failures
+        path: "f.md"
+  done:
+    final: true
+"#,
+        )
+        .unwrap();
+        let root = WorkRoot::ensure(tmp.path(), SHIPPED_STATES).unwrap();
+
+        assert!(root.needs_input("fix"));
+        // Producing files is not waiting on them, and neither is saying nothing.
+        assert!(!root.needs_input("collect"));
+        assert!(!root.needs_input("done"));
+        // Final states are over, not open, so the offer is `collect` alone.
+        assert_eq!(root.openable_states(), vec!["collect".to_string()]);
     }
 
     /// The shipped machine declares the abandonment state and it is final;

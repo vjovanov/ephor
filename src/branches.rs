@@ -156,6 +156,12 @@ pub enum WorkspaceState {
     /// The project defines branch workspaces and this one is missing;
     /// carries the directory a checkout must create.
     Missing(PathBuf),
+    /// The project keeps one checkout for every branch and it is standing on
+    /// another one; carries the branch it is actually on
+    /// (§FS-005-dispatch.3). Unlike [`Missing`](Self::Missing) there is no
+    /// checkout to offer — the directory is right there, holding different
+    /// code.
+    Elsewhere(String),
     /// The item is not linked to any registry branch.
     Unmatched,
 }
@@ -627,8 +633,21 @@ impl Placement {
             .and_then(|name| expand_workspace(self.template.as_deref(), &self.root, name));
 
         let (workspace, state) = match (&expanded, self.template.is_some()) {
-            // A single-checkout project: the root is the workspace.
-            (_, false) => (self.root.clone(), WorkspaceState::Ready),
+            // A single-checkout project: the root is the workspace, and it is
+            // this branch's working tree only while it is standing on the
+            // branch (§FS-005-dispatch.3). Only a branch that can be read and
+            // disagrees says so; an unreadable or detached HEAD leaves the
+            // root as ready, because refusing on a fact nobody could establish
+            // is worse than the ticket.
+            (_, false) => {
+                let state = match (&branch, crate::git::head_branch(&self.root)) {
+                    (Some(wanted), Some(head)) if &head != wanted => {
+                        WorkspaceState::Elsewhere(head)
+                    }
+                    _ => WorkspaceState::Ready,
+                };
+                (self.root.clone(), state)
+            }
             (Some(target), true) if target.is_dir() => (target.clone(), WorkspaceState::Ready),
             (Some(target), true) => (self.root.clone(), WorkspaceState::Missing(target.clone())),
             (None, true) => (self.root.clone(), WorkspaceState::Unmatched),
@@ -889,5 +908,66 @@ mod tests {
         let checkout = placement.checkout(&item("Unrelated", json!({})));
         assert_eq!(checkout.workspace, tmp.path());
         assert!(matches!(checkout.state, WorkspaceState::Ready));
+    }
+
+    /// Write a `.git/HEAD` standing on `branch`, which is all
+    /// [`crate::git::head_branch`] reads.
+    fn standing_on(root: &Path, head: &str) {
+        let git_dir = root.join(".git");
+        std::fs::create_dir_all(&git_dir).unwrap();
+        std::fs::write(git_dir.join("HEAD"), format!("ref: refs/heads/{head}\n")).unwrap();
+    }
+
+    /// The single checkout is the branch's working tree only while it is
+    /// standing on the branch (§FS-005-dispatch.3). A directory that exists is
+    /// not the same fact as the change being in it — which is how work was
+    /// once dispatched against a root sitting on the main branch.
+    #[test]
+    fn a_single_checkout_standing_on_another_branch_is_not_this_ones() {
+        let tmp = tempfile::tempdir().unwrap();
+        let placement = placement(tmp.path(), None);
+        let on_a_branch = |name: &str| item("Unrelated", json!({ "branch": name }));
+
+        standing_on(tmp.path(), "main");
+        let checkout = placement.checkout(&on_a_branch("fissile-0.6.0"));
+        // Still the root — a refusal names where the branch should have been,
+        // and the workspace is where every other reader of this looks.
+        assert_eq!(checkout.workspace, tmp.path());
+        match &checkout.state {
+            WorkspaceState::Elsewhere(head) => assert_eq!(head, "main"),
+            other => panic!("standing on main, not {other:?}"),
+        }
+
+        // The branch it is actually on is ready, as it always was.
+        assert!(matches!(
+            placement.checkout(&on_a_branch("main")).state,
+            WorkspaceState::Ready
+        ));
+    }
+
+    /// A fact nobody can establish is not a refusal: a detached HEAD, an
+    /// unreadable one, or no repository at all leaves the root ready, because
+    /// refusing there would block work that would have run
+    /// (§FS-005-dispatch.3).
+    #[test]
+    fn a_head_that_names_no_branch_refuses_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let placement = placement(tmp.path(), None);
+        let item = item("Unrelated", json!({ "branch": "fissile-0.6.0" }));
+
+        // No repository at all.
+        assert!(matches!(
+            placement.checkout(&item).state,
+            WorkspaceState::Ready
+        ));
+
+        // Detached: a commit id, naming no branch to disagree with.
+        let git_dir = tmp.path().join(".git");
+        std::fs::create_dir_all(&git_dir).unwrap();
+        std::fs::write(git_dir.join("HEAD"), "de2700aeb4c0ffee\n").unwrap();
+        assert!(matches!(
+            placement.checkout(&item).state,
+            WorkspaceState::Ready
+        ));
     }
 }

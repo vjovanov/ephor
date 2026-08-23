@@ -620,6 +620,7 @@ fn workspace_state_name(state: &WorkspaceState) -> &'static str {
     match state {
         WorkspaceState::Ready => "ready",
         WorkspaceState::Missing(_) => "missing",
+        WorkspaceState::Elsewhere(_) => "elsewhere",
         WorkspaceState::Unmatched => "unmatched",
     }
 }

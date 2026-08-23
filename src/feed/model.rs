@@ -56,6 +56,43 @@ pub fn is_terminal(state: Option<&str>) -> bool {
     TERMINAL_STATES.iter().any(|needle| state.contains(needle))
 }
 
+/// Where a settled report keeps the answer it was owed
+/// (§FS-003-feed-categories.2). Finishing clears `needs_response`, because a
+/// finished item is news and not a task; this is the same fact kept as news,
+/// which is what tells the finished work that still has a loose end from the
+/// finished work that has none.
+pub const UNANSWERED: &str = "unanswered";
+
+/// Record on a report's passthrough that an answer was missing when the
+/// subject finished. Written wherever settling clears the response it owed, so
+/// that clearing it does not also forget it (§FS-003-feed-categories.2).
+pub fn note_unanswered(raw: &mut Value) {
+    match raw {
+        Value::Object(map) => {
+            map.insert(UNANSWERED.to_string(), Value::Bool(true));
+        }
+        // A report that carried nothing else still carries this.
+        Value::Null => *raw = serde_json::json!({ UNANSWERED: true }),
+        _ => {}
+    }
+}
+
+/// Why a finished item is still in front of the reader
+/// (§FS-003-feed-categories.2). Finished work with none of these is over in
+/// every sense the reader cares about and leaves the feed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LooseEnd {
+    /// An answer is missing — whatever would have made the subject await one
+    /// while it was still open (§FS-003-feed-categories.4).
+    Unanswered,
+    /// The gate went the other way, after the merge or before it.
+    RedGate,
+    /// The runtime still holds a ticket about this matter
+    /// (§FS-005-dispatch.23). Not a fact of any report: the ledger's, so a
+    /// surface that reads the ledger adds it and the model never guesses it.
+    Working,
+}
+
 /// Whether an item is the user's own work or something they are reviewing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -101,10 +138,44 @@ impl Item {
         recent_days > 0 && (now - self.updated_at).num_days() < recent_days as i64
     }
 
-    /// In the feed at all: unfinished work always, finished work only while it
-    /// is recent (§FS-003-feed-categories.2).
+    /// What this finished item still leaves its reader to do
+    /// (§FS-003-feed-categories.2). None while it is unfinished — such an item
+    /// is in the feed because of its category, not because of this — and None
+    /// on finished work that asks nothing, which is most of it.
+    ///
+    /// Two of the three the spec lists are facts of the report and are read
+    /// here. The third, work still open on the matter, belongs to the ledger
+    /// and is added by the surfaces that read one.
+    pub fn loose_end(&self) -> Option<LooseEnd> {
+        if !self.is_finished() {
+            return None;
+        }
+        if self
+            .raw
+            .get(UNANSWERED)
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            return Some(LooseEnd::Unanswered);
+        }
+        crate::feed::gate::Gate::of(self)
+            .is_some_and(|gate| gate.is_red())
+            .then_some(LooseEnd::RedGate)
+    }
+
+    /// In the feed at all: unfinished work always; finished work only while it
+    /// still has a loose end (§FS-003-feed-categories.2) whose last activity is
+    /// inside the recency window (§FS-003-feed-categories.3).
+    ///
+    /// Work the runtime still holds open keeps a matter here too, and is not
+    /// bounded by the window — but it is the ledger's fact rather than the
+    /// report's, so it is added where a ledger is in hand rather than guessed
+    /// at from a row.
     pub fn is_visible(&self, now: DateTime<Utc>, recent_days: u64) -> bool {
-        !self.is_finished() || self.within_recent_window(now, recent_days)
+        if !self.is_finished() {
+            return true;
+        }
+        self.within_recent_window(now, recent_days) && self.loose_end().is_some()
     }
 
     /// The repository, best effort: `raw.repo`, or the `owner/name` between
@@ -175,6 +246,82 @@ mod tests {
         assert!(two_days_ago.within_recent_window(now, 7));
         assert!(!two_days_ago.within_recent_window(now, 1));
         assert!(!two_days_ago.within_recent_window(now, 0));
+    }
+
+    /// Finished work is in the feed only while it still leaves something to do
+    /// (§FS-003-feed-categories.2). The merge that went as asked is over: it is
+    /// not news anybody has to clear, and Recent is not a list of it.
+    #[test]
+    fn a_finished_item_with_nothing_left_to_do_leaves_the_feed_at_once() {
+        let now = Utc::now();
+        let merged = item(Some("merged"), now - chrono::Duration::hours(2));
+        assert_eq!(merged.loose_end(), None);
+        assert!(
+            !merged.is_visible(now, 7),
+            "inside the window and still over"
+        );
+
+        // Unfinished work is in the feed because of its category, and this
+        // question is never asked of it.
+        let open = item(Some("open"), now - chrono::Duration::days(400));
+        assert_eq!(open.loose_end(), None);
+        assert!(open.is_visible(now, 7));
+    }
+
+    /// The two loose ends a report knows: an answer that was missing when the
+    /// subject finished, and a gate that went the other way
+    /// (§FS-003-feed-categories.2).
+    #[test]
+    fn a_finished_item_stays_while_an_answer_is_missing_or_the_gate_is_red() {
+        let now = Utc::now();
+
+        let mut commented = item(Some("merged"), now - chrono::Duration::hours(2));
+        note_unanswered(&mut commented.raw);
+        assert_eq!(commented.loose_end(), Some(LooseEnd::Unanswered));
+        assert!(commented.is_visible(now, 7));
+
+        let mut red = item(Some("merged"), now - chrono::Duration::hours(2));
+        red.raw = serde_json::json!({ "gate": { "repos": [
+            { "repo": "acme/widget", "passed": 3, "failed": 1 }
+        ] } });
+        assert_eq!(red.loose_end(), Some(LooseEnd::RedGate));
+        assert!(red.is_visible(now, 7));
+
+        // A gate that went green is not a loose end, whatever else it says.
+        let mut green = item(Some("merged"), now - chrono::Duration::hours(2));
+        green.raw = serde_json::json!({ "gate": { "repos": [
+            { "repo": "acme/widget", "passed": 4 }
+        ] } });
+        assert_eq!(green.loose_end(), None);
+        assert!(!green.is_visible(now, 7));
+    }
+
+    /// The window still bounds a loose end the report knows: a conversation
+    /// nobody answered a year ago is not this week's work
+    /// (§FS-003-feed-categories.3).
+    #[test]
+    fn a_loose_end_outside_the_window_leaves_with_everything_else() {
+        let now = Utc::now();
+        let mut old = item(Some("closed"), now - chrono::Duration::days(30));
+        note_unanswered(&mut old.raw);
+        assert_eq!(old.loose_end(), Some(LooseEnd::Unanswered));
+        assert!(!old.is_visible(now, 7));
+        assert!(old.is_visible(now, 90));
+    }
+
+    /// The mark goes on a report that carried nothing else as readily as on one
+    /// that carried a conversation: a notice is the thinnest report there is,
+    /// and it is exactly the report that says somebody is waiting.
+    #[test]
+    fn the_unanswered_mark_lands_on_a_report_that_carried_nothing() {
+        let mut raw = Value::Null;
+        note_unanswered(&mut raw);
+        assert_eq!(raw[UNANSWERED], serde_json::json!(true));
+
+        let mut carrying = serde_json::json!({ "repo": "acme/widget" });
+        note_unanswered(&mut carrying);
+        assert_eq!(carrying["repo"], serde_json::json!("acme/widget"));
+        assert_eq!(carrying[UNANSWERED], serde_json::json!(true));
     }
 
     #[test]

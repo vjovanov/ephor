@@ -593,8 +593,22 @@ impl Matter {
     /// Finished work is news, not a task (§FS-003-feed-categories.2). Applied
     /// wherever a matter's state or its `needs_response` is set, because the
     /// two arrive from different reports and the row is the pair of them.
+    ///
+    /// The answer it was owed is kept as news rather than dropped: it is the
+    /// loose end that decides whether the news is worth showing. This is where
+    /// the fold records it, and the fold is where it usually arrives — a
+    /// notice saying somebody is waiting is exactly the report that did not
+    /// know the subject had already finished.
     fn settle(&mut self) {
         if self.is_finished() {
+            if self.needs_response
+                || self
+                    .discussions
+                    .iter()
+                    .any(|discussion| discussion.needs_response)
+            {
+                crate::feed::model::note_unanswered(&mut self.raw);
+            }
             self.needs_response = false;
             for discussion in &mut self.discussions {
                 discussion.needs_response = false;
@@ -1298,6 +1312,35 @@ mod tests {
         assert!(rows[0].is_finished());
         assert!(!rows[0].needs_response, "a merged change asks nothing");
         assert!(!rows[0].awaits());
+
+        // …and yet the row stays: the notice is the report that says somebody
+        // is waiting, and the fold keeps that as the loose end that earns the
+        // merged change its place under Recent (§FS-003-feed-categories.2).
+        assert_eq!(
+            rows[0].as_item().loose_end(),
+            Some(crate::feed::model::LooseEnd::Unanswered)
+        );
+        let just_after = rows[0].updated_at + chrono::Duration::hours(1);
+        assert!(rows[0].as_item().is_visible(just_after, 7));
+    }
+
+    /// The merge nobody said anything about is over in every sense the reader
+    /// cares about, and leaves the feed at once (§FS-003-feed-categories.2).
+    #[test]
+    fn a_merge_nobody_is_waiting_on_leaves_the_feed() {
+        let mut merged_pr = report(
+            "github-prs",
+            "github-prs:acme/widget#42",
+            json!({ "repo": "acme/widget", "branch": "you/ABC-42" }),
+        );
+        merged_pr.state = Some("merged".to_string());
+        merged_pr.needs_response = false;
+
+        let rows = merge(vec![merged_pr]);
+        assert_eq!(rows.len(), 1);
+        let just_after = rows[0].updated_at + chrono::Duration::hours(1);
+        assert_eq!(rows[0].as_item().loose_end(), None);
+        assert!(!rows[0].as_item().is_visible(just_after, 7));
     }
 
     /// A source that answers the envelope directly does not pass through

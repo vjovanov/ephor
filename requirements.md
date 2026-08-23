@@ -395,24 +395,53 @@ role on it:
 | Participating | issues the user is in but did not open, or follows by a label the source names (§FS-001-forge-interface.1) |
 | Tasks | the project's own tasks, from a store in its checkout (§FS-006-project-interface.7) |
 | Messages | anything addressed to the user that is not a pull request or an issue |
-| Recent | finished items — see [§2](#2-recent) |
+| Recent | finished work that still leaves something to do — see [§2](#2-recent) |
 
 Exactly one, so that the size of a category is the size of that pile of work
 and not a double count.
 
 ### 2. Recent
 
-Work does not stop mattering the moment it is finished. An item whose state is
-terminal — closed, merged, done, resolved, declined, however its forge spells
-it — leaves its category and appears under **Recent** for as long as its last
-activity falls inside the recency window; past that it leaves the feed
-entirely. Being closed is itself activity: an issue closed with no reply shows
-up under Recent precisely because closing it was the answer.
+Work does not stop mattering the moment it is finished, but most of it stops
+asking for anything. An item whose state is terminal — closed, merged, done,
+resolved, declined, however its forge spells it — leaves its category, and it
+appears under **Recent** only while it still leaves the reader something to do.
+There are three such things, and they are the whole list:
 
-Finished work never awaits a response. Whatever its conversation looks like —
-someone else had the last word, the user was named and never answered — a
-finished item is news and not a task, and nothing that counts work left to do
-counts it.
+- **An answer is missing** — whatever would have made the subject await one
+  while it was still open
+  ([§4](#4-a-conversation-is-answered-in-whatever-form-the-forge-recorded-it)):
+  somebody else had the last word, a task box on it is unticked, a notice named
+  the reader. The comment that lands on the way out, or after it, is the case
+  this exists for.
+- **The gate is red** — the run that went the other way after the merge. A red
+  gate is a thing to look at whatever the state beside it says, and the action
+  that reads its log is offered on the row it is on
+  ([§FS-004-quick-actions.4](#4-failing-ci-answers-what-failed-and-why)).
+- **Work is still open on it** — the runtime holds a ticket about this matter.
+  Work stands on rows beneath the matter (§FS-005-dispatch.23), so a matter
+  that leaves the feed takes the work rows with it, and a run nobody can see is
+  a run nobody can take back.
+
+A finished item with none of the three leaves the feed the moment it finishes,
+whatever the recency window would still allow. Nothing is lost by that: it
+merged, which is what it was for, and a merge that went as asked is not news
+anybody has to clear. Listing it anyway makes Recent a list of things nobody
+will do anything about — read every day, at the cost of the rows that need
+doing (§GOAL-002-glance).
+
+The recency window bounds the two the report knows: a missing answer and a red
+gate are worth showing only while the item's own last activity falls inside it
+([§3](#3-the-recency-window-is-configured)). Open work is not bounded by it. A
+run in flight is not history, however long ago the matter it was asked about
+last moved, and the ledger — not the forge — is what says it is still going.
+
+**A loose end is not a response owed.** Finished work never awaits one:
+whatever its conversation looks like — someone else had the last word, the user
+was named and never answered — a finished item is news and not a task, and
+nothing that counts work left to do counts it. What the loose end decides is
+whether the news is worth putting in front of anybody, never that somebody owes
+an answer.
 
 ### 3. The recency window is configured
 
@@ -973,6 +1002,15 @@ change is, where the tools run, and where the runtime will put the agent. Where
 the branch is not checked out, dispatch says so and offers the checkout,
 because writing a ticket about code that is not on the machine only moves the
 problem.
+
+A project that keeps a single checkout for every branch is not exempt from
+that. Its root is the branch's working tree only while it is standing on the
+branch; a root standing on another one is a checkout of different code, and a
+directory existing is not the same fact as the change being in it. Dispatch
+refuses there too, naming the branch the root is actually on — and it offers no
+checkout, because there is none to make: the remedies are to put the branch in
+that root or to give the project branch workspaces of its own, and both are the
+reader's to choose between.
 
 ### 4. The ledger is ephor's record, and never the truth about the work
 

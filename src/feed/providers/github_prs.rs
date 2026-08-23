@@ -15,10 +15,10 @@
 //!
 //! Like `github-issues`, the search is repository-scoped only when it is asked
 //! to be: with no `repos` the whole forge is searched, and what bounds it is
-//! `updated_within_days` instead. Finished pull requests come back too and
-//! land under Recent (§FS-003-feed-categories.2) — a question asked of the
-//! user does not stop being asked when the branch lands — but nothing more is
-//! fetched about them, since a merged pull request asks nothing of anyone.
+//! `updated_within_days` instead. Finished pull requests come back too, but
+//! nothing more is fetched about them: no gate, no conversation. Recent keeps
+//! only the finished work with a loose end (§FS-003-feed-categories.2), so a
+//! comment or a red run after the merge is somebody else's report to make.
 //!
 //! What they *mean* is not decided here: this provider reports roles, reasons,
 //! conversation, gate, and the review the user left, and `policy` turns them
@@ -471,9 +471,10 @@ fn repo_of(found: &Value) -> Option<String> {
 }
 
 /// Whether the search says this pull request is over. Nothing further is
-/// fetched about one that is: it settles under Recent whatever its
-/// conversation looks like (§FS-003-feed-categories.2), so a gate and a comment
-/// thread would be an API call spent on a row that cannot change.
+/// fetched about one that is — no gate, no comment thread — which is two API
+/// calls saved per merge and, since Recent now keeps only what still has a
+/// loose end (§FS-003-feed-categories.2), also the reason this source cannot
+/// be the one that notices a comment or a red run arriving after the merge.
 fn finished(found: &Value) -> bool {
     let state = found
         .get("state")
@@ -811,8 +812,9 @@ mod tests {
         assert!(!bounds.contains("updated:>="));
     }
 
-    /// A merged pull request is news, and news is cheap: nothing further is
-    /// asked about it (§FS-003-feed-categories.2).
+    /// A finished pull request is recognized however the forge spelled the
+    /// ending, since that is what decides whether anything more is asked about
+    /// it (§FS-003-feed-categories.2).
     #[test]
     fn a_finished_pull_request_is_recognized_however_it_ended() {
         for state in ["closed", "MERGED", "Merged"] {
