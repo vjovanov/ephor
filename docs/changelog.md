@@ -33,7 +33,7 @@ ships, the previous "latest" section moves verbatim to
 - **Work nobody has to start starts itself**
   ([§FS-005-dispatch.24](../requirements.md#24-work-nobody-has-to-start-starts-itself),
   [§DA-008-a-run-follows-the-ticket](decisions/architectural/DA-008-a-run-follows-the-ticket.md),
-  PR #7). A recipe may now say `"autorun": true`, and a ticket written from it
+  PR #6). A recipe may now say `"autorun": true`, and a ticket written from it
   gets its run without anyone pressing a key: the reader's deliberate act
   moves one step earlier and is made once, when the recipe is adopted. What
   starts runs is a **sweep** — `ephor work run --due`, run by dispatch in the
@@ -60,7 +60,7 @@ ships, the previous "latest" section moves verbatim to
 
 - **A ticket a run has in hand says so on its own row**
   ([§FS-005-dispatch.23](../requirements.md#23-work-stands-on-rows-of-its-own-beneath-the-row-it-is-about),
-  PR #7). *Open* and *being worked on right now* were one yellow `⚙`: the
+  PR #6). *Open* and *being worked on right now* were one yellow `⚙`: the
   ticket an agent was inside of and the ticket nothing had picked up looked
   identical, and telling them apart meant leaving for the board. A ticket a
   live run holds is now `▶` in green, one it will reach says `· queued`, and a
@@ -75,7 +75,7 @@ ships, the previous "latest" section moves verbatim to
   journal that outlives every run**
   ([§FS-005-dispatch.15.2](../requirements.md#152-what-a-run-is-doing-is-read-from-the-runs-own-stream),
   [§FS-005-dispatch.15](../requirements.md#15-every-operation-is-visible-in-one-place),
-  PR #7). The runtime writes a record of each run — truncated when that run
+  PR #6). The runtime writes a record of each run — truncated when that run
   starts, one line per structural move, numbered and terminated — and ephor
   now reads it wherever it asks which tickets a run has in hand: the board,
   the rows beneath a matter, and the check a cancel makes. It removes a whole
