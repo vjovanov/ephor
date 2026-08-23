@@ -86,7 +86,22 @@ if [ "$verb" = templates ]; then
     "path": "venue-intake", "description": "Resolve a venue.",
     "inputs": [
       { "name": "conference", "description": "The venue.",
-        "type": "string", "required": true, "default": null, "validate": null }
+        "type": "string", "required": true, "default": null, "validate": null,
+        "format": null, "positional": 1, "items": null, "properties": null },
+      { "name": "intake_target", "description": "Who reads the call.",
+        "type": "string", "required": false, "default": "someone-elses-model",
+        "validate": null, "format": "execution-target",
+        "positional": null, "items": null, "properties": null },
+      { "name": "harvest_targets", "description": "Who harvests the roster.",
+        "type": "array", "required": false, "default": [], "validate": null,
+        "format": null, "positional": null, "properties": null,
+        "items": { "type": "string", "format": "execution-target",
+                   "required": true, "default": null, "validate": null,
+                   "items": null, "properties": null } },
+      { "name": "harvest_pc", "description": "Whether to harvest at all.",
+        "type": "string", "required": false, "default": "none",
+        "validate": "^(none|listed|all)$", "format": null,
+        "positional": null, "items": null, "properties": null }
     ] }
 ]
 JSON
@@ -170,7 +185,10 @@ fn watching() -> World {
           "agents": { "claude-code": { "command": ["sh"], "modes": { "high": [] } } },
           "models": { "luna": { "provider": "anthropic", "model": "opus",
                                 "default_agent": "claude-code",
-                                "agents": { "claude-code": {} } } }
+                                "agents": { "claude-code": {} } },
+                      "sol": { "provider": "openai", "model": "gpt",
+                               "default_agent": "claude-code",
+                               "agents": { "claude-code": {} } } }
         }"#,
     )
     .expect("the binding's registry of who can be asked");
@@ -220,6 +238,90 @@ fn the_runtime_is_asked_what_workflows_it_offers() {
         .stdout(predicate::str::contains("change_ref"))
         .stdout(predicate::str::contains("required"))
         .stdout(predicate::str::contains("names who does the work"));
+}
+
+/// A workflow the runtime keeps inside itself — no directory beside it, and so
+/// no manifest of its own to read — still has who does the work answered by
+/// ephor, because the runtime's own listing says which inputs those are
+/// (§DA-006-hands-fill-a-workflows-targets). An input wanting several of them
+/// is answered with several, said on one line.
+#[test]
+fn the_listing_alone_says_which_inputs_name_who_does_the_work() {
+    let world = watching();
+
+    // The listing says it, so the reading says it — with nothing on disk to
+    // read it from.
+    world
+        .ephor()
+        .args(["work", "workflows", "venue-intake"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("intake_target"))
+        .stdout(predicate::str::contains("names who does the work"));
+
+    world
+        .ephor()
+        .args([
+            "work",
+            "lay",
+            "venue-intake",
+            "--item",
+            "acmeforge:app/101",
+            "--set",
+            "conference=ECOOP 2027",
+            "--set",
+            "intake_target=luna:high",
+            "--set",
+            r#"harvest_targets=["luna:high","sol:high"]"#,
+        ])
+        .assert()
+        .success();
+
+    let laid = work_root(&world).join("acmeforge-app-101-venue-intake");
+    let given = read_json(&laid.join("values-as-given.json"));
+    assert_eq!(given["conference"], json!("ECOOP 2027"));
+    // Hands, rendered into the binding's own selector — the workflow's own
+    // default for the input never stands where a hand was named.
+    assert_eq!(
+        given["intake_target"],
+        json!("claude-code[high]:anthropic:opus")
+    );
+    assert_eq!(
+        given["harvest_targets"],
+        json!([
+            "claude-code[high]:anthropic:opus",
+            "claude-code[high]:openai:gpt"
+        ])
+    );
+}
+
+/// A hand a project does not permit is refused wherever it was named — inside
+/// a list of them as much as beside one (§DA-006-hands-fill-a-workflows-targets).
+#[test]
+fn a_hand_named_inside_a_list_is_refused_like_any_other() {
+    let world = watching();
+    world
+        .ephor()
+        .args([
+            "work",
+            "lay",
+            "venue-intake",
+            "--item",
+            "acmeforge:app/101",
+            "--set",
+            "conference=ECOOP 2027",
+            "--set",
+            r#"harvest_targets=["luna:high","nobody"]"#,
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("nobody"));
+    assert!(
+        !work_root(&world)
+            .join("acmeforge-app-101-venue-intake")
+            .exists(),
+        "nothing is written behind a refusal"
+    );
 }
 
 /// The whole of §FS-005-dispatch.19 on one item: the entry beside the workflow

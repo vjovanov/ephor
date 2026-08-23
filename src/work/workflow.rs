@@ -239,12 +239,13 @@ fn answer_one(
     //    a narrowing binds what the reader typed too
     //    (§DA-006-hands-fill-a-workflows-targets).
     if let Some(word) = typed.get(&input.name) {
+        // As the input's own type either way: an input wanting several hands
+        // is answered with several, and one line of `--set` says so as a list
+        // (§DA-006-hands-fill-a-workflows-targets).
+        let said = coerce(word, input.kind);
         return match is_hand {
-            true => Ok((
-                Some(hands(&Value::String(word.clone()), input, named)?),
-                From::Reader,
-            )),
-            false => Ok((Some(coerce(word, input.kind)), From::Reader)),
+            true => Ok((Some(hands(&said, input, named)?), From::Reader)),
+            false => Ok((Some(said), From::Reader)),
         };
     }
     // 2. What the entry says.
@@ -340,7 +341,11 @@ fn fill(written: &Value, values: &BTreeMap<&'static str, String>) -> Value {
 /// One line the reader typed, as the input's own type. What does not parse as
 /// the type asked for stays the text they typed: the binding validates its own
 /// inputs, and guessing on their behalf would refuse a value it would accept.
-fn coerce(word: &str, kind: Kind) -> Value {
+///
+/// Public within the crate because the hands named in such a line are
+/// resolved before the answering runs, and one line cannot be read two ways
+/// (§DA-006-hands-fill-a-workflows-targets).
+pub(crate) fn coerce(word: &str, kind: Kind) -> Value {
     let text = || Value::String(word.to_string());
     match kind {
         Kind::Number => word
@@ -379,6 +384,8 @@ mod tests {
             default: None,
             hand,
             principal: false,
+            choices: Vec::new(),
+            of: None,
         }
     }
 
@@ -455,6 +462,53 @@ mod tests {
             out.answer("change_ref").expect("answered").from,
             From::Reader
         );
+    }
+
+    /// An input wanting several hands is answered with several, said on one
+    /// line — which is what the screen writes when the reader takes more than
+    /// one, and what `--set <input>=["a","b"]` says on the command line
+    /// (§DA-006-hands-fill-a-workflows-targets).
+    #[test]
+    fn one_line_may_name_several_hands_for_an_input_that_wants_several() {
+        let flow = workflow(vec![input("review_targets", Kind::List, false, true)]);
+        let ask = WorkflowAsk {
+            name: flow.id.clone(),
+            inputs: BTreeMap::new(),
+            hands: Vec::new(),
+        };
+        let typed = BTreeMap::from([(
+            "review_targets".to_string(),
+            r#"["luna","sol"]"#.to_string(),
+        )]);
+        let out = answer(&flow, &ask, &typed, &matter(), None, &roster);
+        assert_eq!(
+            out.values["review_targets"],
+            Value::Array(vec![
+                Value::String("claude-code[high]:anthropic:opus".into()),
+                Value::String("codex[xhigh]:openai:gpt".into()),
+            ])
+        );
+
+        // And one hand said plainly is still one hand, wrapped as the list the
+        // input wants.
+        let typed = BTreeMap::from([("review_targets".to_string(), "luna".to_string())]);
+        let out = answer(&flow, &ask, &typed, &matter(), None, &roster);
+        assert_eq!(
+            out.values["review_targets"],
+            Value::Array(vec![Value::String(
+                "claude-code[high]:anthropic:opus".into()
+            )])
+        );
+
+        // A hand the narrowing refuses is refused wherever it was named, list
+        // or no list.
+        let typed = BTreeMap::from([(
+            "review_targets".to_string(),
+            r#"["luna","walled"]"#.to_string(),
+        )]);
+        let out = answer(&flow, &ask, &typed, &matter(), None, &roster);
+        assert!(out.values.is_empty());
+        assert_eq!(out.refusals.len(), 1, "{:?}", out.refusals);
     }
 
     #[test]

@@ -13,6 +13,7 @@
 //! resurfaces when it changes again.
 
 mod actions;
+mod answers;
 mod gate;
 mod navigator;
 mod operations;
@@ -45,6 +46,7 @@ pub(crate) use crate::api::{Session as Ctx, WorkBadge};
 pub(crate) use crate::branches::BranchInfo;
 pub(crate) use crate::branches::WorkspaceState;
 use actions::{ActionMenu, MenuOutcome};
+use answers::{AnswerOutcome, AnswerScreen};
 use gate::GateScreen;
 use navigator::NavigatorState;
 use operations::OperationsScreen;
@@ -185,6 +187,10 @@ struct App {
     menu: Option<ActionMenu>,
     /// A line the reader is typing, drawn over everything else.
     prompt: Option<Prompt>,
+    /// A workflow's inputs, being answered before it is laid down
+    /// (§FS-005-dispatch.19). Over the screen it was reached from, and under
+    /// the prompt like everything else.
+    answers: Option<AnswerScreen>,
     /// A refresh running underneath this screen, where one is
     /// (§FS-001-forge-interface.7).
     refresh: Option<crate::feed::refresh::BackgroundRefresh>,
@@ -235,6 +241,7 @@ impl App {
             saved: None,
             menu: None,
             prompt: None,
+            answers: None,
             refresh: None,
             work: config.work.clone(),
             work_groups: Vec::new(),
@@ -353,6 +360,18 @@ impl App {
                 }
                 continue;
             }
+            // A workflow's inputs, answered over whatever opened them. Above
+            // the menu — the menu is closed by the time this is up — and below
+            // the prompt, like every other second level (§FS-005-dispatch.19).
+            if self.answers.is_some() {
+                let outcome = self
+                    .answers
+                    .as_mut()
+                    .expect("the answers are open")
+                    .handle_key(key.code, key.modifiers);
+                self.answered(terminal, outcome)?;
+                continue;
+            }
             if let Some(menu) = &mut self.menu {
                 match menu.handle_key(key.code) {
                     MenuOutcome::Stay => {}
@@ -378,7 +397,7 @@ impl App {
                         } else if entry.is_workflows {
                             self.open_workflows(&menu);
                         } else if entry.action.workflow.is_some() {
-                            self.lay_entry(terminal, &menu, &entry)?;
+                            self.lay_entry(&menu, &entry)?;
                         } else {
                             self.run_menu_entry(terminal, &menu, &entry)?;
                         }
@@ -603,7 +622,7 @@ impl App {
             }
             Action::OpenWork(item) => self.open_work(item),
             Action::DispatchWork { item, entry } => {
-                self.dispatch_work(terminal, &item, &entry)?;
+                self.dispatch_work(&item, &entry)?;
                 self.open_work(item);
             }
             Action::SyncWork(item) => {
@@ -832,18 +851,6 @@ impl App {
                 self.rebuild_view();
                 self.open_work(item);
             }
-            // One input, answered on one line, and the laying tried again
-            // with it (§FS-005-dispatch.19).
-            Asking::Input {
-                item,
-                entry,
-                mut typed,
-                input,
-                picked,
-            } => {
-                typed.insert(input, line.to_string());
-                self.lay_workflow(terminal, &item, &entry, typed, picked)?;
-            }
             Asking::Command(menu) => {
                 let entry = actions::MenuEntry {
                     action: ActionConfig {
@@ -968,15 +975,10 @@ impl App {
     /// dispatching something the reading no longer offers.
     ///
     /// Which move that is belongs to the entry, not to the screen: a recipe
-    /// opens a ticket, and a workflow is laid down after whatever nobody has
-    /// answered has been asked for (§FS-005-dispatch.19) — the same two moves
-    /// the action menu makes, through the same two calls.
-    fn dispatch_work(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-        item: &Item,
-        key: &str,
-    ) -> Result<()> {
+    /// opens a ticket, and a workflow opens the screen its inputs are answered
+    /// on (§FS-005-dispatch.19) — the same two moves the action menu makes,
+    /// through the same two calls.
+    fn dispatch_work(&mut self, item: &Item, key: &str) -> Result<()> {
         let found = match self.ctx.work_entries(item) {
             Ok(entries) => entries.into_iter().find(|entry| entry.key() == key),
             // The menu could not be assembled at all — its sentence, not a
@@ -1001,13 +1003,7 @@ impl App {
             }
             let action = entry.action.clone();
             let picked = entry.picked.clone();
-            return self.lay_workflow(
-                terminal,
-                item,
-                &action,
-                std::collections::BTreeMap::new(),
-                picked,
-            );
+            return self.lay_workflow(item, &action, std::collections::BTreeMap::new(), picked);
         }
         self.hand_over(item, &entry);
         Ok(())
@@ -1077,12 +1073,7 @@ impl App {
     }
 
     /// A workflow entry of the action menu, laid down (§FS-005-dispatch.19).
-    fn lay_entry(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-        menu: &ActionMenu,
-        entry: &actions::MenuEntry,
-    ) -> Result<()> {
+    fn lay_entry(&mut self, menu: &ActionMenu, entry: &actions::MenuEntry) -> Result<()> {
         if let actions::Gate::Blocked(reason) = &entry.gate {
             self.message = reason.clone();
             return Ok(());
@@ -1093,28 +1084,25 @@ impl App {
         };
         let action = entry.action.clone();
         let picked = entry.picked.clone();
-        self.lay_workflow(
-            terminal,
-            &item,
-            &action,
-            std::collections::BTreeMap::new(),
-            picked,
-        )
+        self.lay_workflow(&item, &action, std::collections::BTreeMap::new(), picked)
     }
 
-    /// Lay one workflow down about one item, asking for whatever nobody has
-    /// answered (§FS-005-dispatch.19): one missing scalar is one line typed
-    /// where the reader is standing, and anything more — or anything wanting
-    /// a list or a record — is a file in their editor, which is the form a
-    /// one-line prompt could never carry.
+    /// Lay one workflow down about one item (§FS-005-dispatch.19). What a
+    /// key press does here is open the screen its inputs are answered on:
+    /// every input the workflow declares, with the answer the five steps
+    /// reached and where it came from, and none of it written until the
+    /// reader says so ([§FS-005-dispatch.7](crate)).
     fn lay_workflow(
         &mut self,
-        terminal: &mut DefaultTerminal,
         item: &Item,
         entry: &ActionConfig,
         typed: std::collections::BTreeMap<String, String>,
         picked: Option<crate::work::recipe::HandPin>,
     ) -> Result<()> {
+        // Who could be chosen for an input that names who does the work, read
+        // once against the work root the laying will use, exactly as the
+        // menu's picker reads it (§FS-005-dispatch.14).
+        let root = self.ctx.work_root(item);
         let Some(dispatcher) = &mut self.ctx.dispatcher else {
             self.message = "Work needs the registry, which could not be read".to_string();
             return Ok(());
@@ -1126,78 +1114,151 @@ impl App {
                 return Ok(());
             }
         };
-        if !laying.answered.refusals.is_empty() {
-            self.message = laying.answered.refusals.join("; ");
-            return Ok(());
-        }
-        // One missing scalar: one line, here.
-        let alone = match laying.answered.missing.as_slice() {
-            [only] => laying
-                .workflow
-                .input(only)
-                .filter(|input| input.kind.is_scalar())
-                .map(|input| (input.name.clone(), input.description.clone())),
-            _ => None,
+        let roster = match root {
+            Some(root) => dispatcher.pickable(&item.project, &root),
+            None => Vec::new(),
         };
-        if let Some((input, says)) = alone {
-            self.prompt = Some(Prompt::new(
-                Asking::Input {
-                    item: Box::new(item.clone()),
-                    entry: Box::new(entry.clone()),
-                    typed,
-                    input: input.clone(),
-                    picked,
-                },
-                format!("{}: {input}", laying.workflow.id),
-                match says.is_empty() {
-                    true => "enter answers  ·  esc cancels".to_string(),
-                    false => format!("{says}  ·  enter answers  ·  esc cancels"),
-                },
-            ));
-            return Ok(());
-        }
-        // Anything else: the file, with everything already resolved in it and
-        // every unanswered input named.
-        if !laying.answered.missing.is_empty() {
-            let path = match self.write_answers(&laying) {
-                Ok(path) => path,
-                Err(err) => {
-                    self.message = err.to_string();
-                    return Ok(());
-                }
-            };
-            self.edit_file(terminal, &path)?;
-            let answered = read_answers(&path);
-            if answered.is_empty() {
-                self.message = format!("{} was not laid down", laying.workflow.id);
-                return Ok(());
+        let mut screen = AnswerScreen::over(item.clone(), entry.clone(), picked, &laying, roster);
+        screen.typed = typed;
+        self.answers = Some(screen);
+        Ok(())
+    }
+
+    /// What the reader did on that screen. Every answer sends the answering
+    /// back through the session (§AR-009-surfaces.1), so provenance, the
+    /// hands a narrowing refuses, and what is still missing are one reading
+    /// and never the screen's own arithmetic.
+    fn answered(&mut self, terminal: &mut DefaultTerminal, outcome: AnswerOutcome) -> Result<()> {
+        match outcome {
+            AnswerOutcome::Stay => {}
+            AnswerOutcome::Close => {
+                self.answers = None;
+                self.message = "Nothing laid down".to_string();
             }
-            let mut again = typed;
-            again.extend(answered);
-            return self.lay_workflow(terminal, item, entry, again, picked);
+            AnswerOutcome::Set { input, value } => {
+                if let Some(screen) = &mut self.answers {
+                    screen.typed.insert(input, value);
+                }
+                self.resolve_answers();
+            }
+            // The file, with everything already resolved in it and every
+            // unanswered input named — where what no row can carry is
+            // answered, and where a reader who would rather type them all is
+            // at home (§FS-005-dispatch.19).
+            AnswerOutcome::Edit => self.edit_answers(terminal)?,
+            AnswerOutcome::Preview => self.preview_answers(),
+            AnswerOutcome::Lay => self.lay_it_down(),
         }
-        // Everything is answered, so the laying itself is the API's move
-        // (§AR-009-surfaces.1): `ephor actions run --set …` and this key lay
-        // the same plan down through the same code. What is above is the
-        // interaction and nothing else — a screen may *ask* for an input where
-        // a command takes it as an argument (§REQ-002-parity.2), and asking is
-        // presentation. The answers travel as the `--set` pairs the command
-        // takes, which is what makes them the same call.
-        let answers: Vec<String> = typed
+        Ok(())
+    }
+
+    /// The laying as it stands, for the screen to show. The answers travel as
+    /// the `--set` pairs a command takes, which is what makes it the same
+    /// call (§REQ-002-parity.2).
+    fn laying_now(&mut self) -> Option<crate::work::Laying> {
+        let screen = self.answers.as_ref()?;
+        let item = screen.item.clone();
+        let entry = screen.entry.clone();
+        let typed = screen.typed.clone();
+        let picked = screen.picked.clone();
+        let dispatcher = self.ctx.dispatcher.as_mut()?;
+        match dispatcher.laying(&item, &entry, &typed, picked.as_ref()) {
+            Ok(laying) => Some(laying),
+            Err(err) => {
+                self.message = err.to_string();
+                None
+            }
+        }
+    }
+
+    fn resolve_answers(&mut self) {
+        let Some(laying) = self.laying_now() else {
+            return;
+        };
+        if let Some(screen) = &mut self.answers {
+            screen.refresh(&laying);
+        }
+    }
+
+    /// What the binding would write, before it writes it (§FS-005-dispatch.19)
+    /// — its own account, in its own words, which is the half of the account
+    /// that is not ephor's to give.
+    fn preview_answers(&mut self) {
+        let Some(laying) = self.laying_now() else {
+            return;
+        };
+        let Some(screen) = &self.answers else {
+            return;
+        };
+        let item = screen.item.clone();
+        let Some(dispatcher) = &mut self.ctx.dispatcher else {
+            return;
+        };
+        match dispatcher.lay(&item, &laying, true) {
+            Ok(laid) => {
+                let account = match laid.report.trim().is_empty() {
+                    true => laid.outcome.describe(),
+                    false => laid.report,
+                };
+                if let Some(screen) = &mut self.answers {
+                    screen.account(account);
+                }
+            }
+            Err(err) => self.message = err.to_string(),
+        }
+    }
+
+    /// The laying itself, which is the API's move (§AR-009-surfaces.1):
+    /// `ephor work lay --set …` and this row lay the same plan down through
+    /// the same code. A refusal — a required input nobody answered, a hand a
+    /// narrowing does not permit — leaves the screen open on what is wrong.
+    fn lay_it_down(&mut self) {
+        let Some(screen) = &self.answers else {
+            return;
+        };
+        let item = screen.item.clone();
+        let answers: Vec<String> = screen
+            .typed
             .iter()
             .map(|(name, value)| format!("{name}={value}"))
             .collect();
         let laid = actions::MenuEntry {
-            action: entry.clone(),
+            action: (*screen.entry).clone(),
             is_checkout: false,
             is_freehand: false,
             is_workflows: false,
-            picked,
+            picked: screen.picked.clone(),
             gate: actions::Gate::Ready,
             running: None,
         };
-        self.message = self.ctx.hand_over(item, &laid, &answers, false).says;
-        self.rebuild_view();
+        let outcome = self.ctx.hand_over(&item, &laid, &answers, false);
+        self.message = outcome.says;
+        if outcome.ok {
+            self.answers = None;
+            self.rebuild_view();
+        }
+    }
+
+    /// Everything resolved, in a file, opened in the reader's editor
+    /// (§FS-005-dispatch.19). What comes back is read as answers of the
+    /// reader's own, which is exactly what a row's answer is.
+    fn edit_answers(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
+        let Some(laying) = self.laying_now() else {
+            return Ok(());
+        };
+        let path = match self.write_answers(&laying) {
+            Ok(path) => path,
+            Err(err) => {
+                self.message = err.to_string();
+                return Ok(());
+            }
+        };
+        self.edit_file(terminal, &path)?;
+        let answered = read_answers(&path);
+        if let Some(screen) = &mut self.answers {
+            screen.typed.extend(answered);
+        }
+        self.resolve_answers();
         Ok(())
     }
 
@@ -1918,12 +1979,17 @@ impl App {
         ])
         .areas(frame.area());
 
-        let title = match &self.screen {
-            Screen::Navigator => self.navigator.title(&self.ctx),
-            Screen::Thread(thread) => thread.title(),
-            Screen::Gate(gate) => gate.title(),
-            Screen::Work(work) => work.title(),
-            Screen::Operations(board) => board.title(),
+        let title = match &self.answers {
+            // What is being answered is what the reader is doing, so it is
+            // what the header says while the answers are up.
+            Some(answers) => answers.title(),
+            None => match &self.screen {
+                Screen::Navigator => self.navigator.title(&self.ctx),
+                Screen::Thread(thread) => thread.title(),
+                Screen::Gate(gate) => gate.title(),
+                Screen::Work(work) => work.title(),
+                Screen::Operations(board) => board.title(),
+            },
         };
         // A screen that stays live during a fetch is also a screen that looks
         // finished, so a run in flight says so and says where it has got to —
@@ -1958,15 +2024,21 @@ impl App {
         if let Some(menu) = &self.menu {
             menu.draw(frame, body_area);
         }
+        // Over the menu it was reached from, under the prompt like everything
+        // else (§FS-005-dispatch.19).
+        if let Some(answers) = &self.answers {
+            answers.draw(frame, body_area);
+        }
         if let Some(prompt) = &self.prompt {
             prompt.draw(frame, body_area);
         }
 
         let footer = if self.prompt.is_some() {
             " type  ·  enter sends  ·  esc cancels  ·  ^w word back  ·  ^u clear".to_string()
-        // Built from what is selected, not fixed for the menu: an entry that
-        // hands work over and an entry that runs a command are not the same
-        // key (§FS-004-quick-actions.2).
+        // Built from what is open, not fixed for the screen: what Enter does
+        // on a row of answers depends on the row (§FS-004-quick-actions.2).
+        } else if let Some(answers) = &self.answers {
+            answers.footer()
         } else if let Some(menu) = &self.menu {
             menu.footer()
         } else {
