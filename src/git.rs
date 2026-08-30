@@ -858,12 +858,19 @@ fn replay_one(
 /// What became of one repository of a workspace being checked out.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Created {
-    /// A working tree on the branch itself, which the repository already had.
+    /// A working tree on the branch itself, which the repository already had,
+    /// and the forge has a copy of it too.
     Tracking,
     /// The repository does not have that branch, so it was grown from the base
     /// named here — what a change touching one repository of a tree looks like
     /// (§FS-004-quick-actions.7).
     Branched(String),
+    /// A working tree on the branch itself, which the repository already had,
+    /// but the forge has no copy of it: published nowhere, so the checkout
+    /// changed no tracking configuration and pushed nothing
+    /// (§FS-004-quick-actions.7). `tracks` is what the branch's tracking
+    /// configuration records, where it records anything.
+    Unpublished { tracks: Option<String> },
     /// A working tree was already there; reported rather than skipped.
     Present,
     /// git would not, and this is what it said. A branch another working tree
@@ -877,6 +884,7 @@ impl Created {
         match self {
             Created::Tracking => "tracking",
             Created::Branched(_) => "branched",
+            Created::Unpublished { .. } => "unpublished",
             Created::Present => "present",
             Created::Refused(_) => "refused",
         }
@@ -885,7 +893,10 @@ impl Created {
     pub fn is_ready(&self) -> bool {
         matches!(
             self,
-            Created::Tracking | Created::Branched(_) | Created::Present
+            Created::Tracking
+                | Created::Branched(_)
+                | Created::Unpublished { .. }
+                | Created::Present
         )
     }
 }
@@ -945,6 +956,9 @@ impl Creation {
                     if let Created::Branched(base) = &repo.created {
                         row.insert("from".to_string(), serde_json::json!(base));
                     }
+                    if let Created::Unpublished { tracks: Some(tracks) } = &repo.created {
+                        row.insert("tracks".to_string(), serde_json::json!(tracks));
+                    }
                     if let Created::Refused(why) = &repo.created {
                         row.insert("says".to_string(), serde_json::json!(why));
                     }
@@ -960,11 +974,13 @@ impl Creation {
         }
         let mut tracking = 0;
         let mut branched = 0;
+        let mut unpublished = 0;
         let mut present = 0;
         for repo in &self.repos {
             match repo.created {
                 Created::Tracking => tracking += 1,
                 Created::Branched(_) => branched += 1,
+                Created::Unpublished { .. } => unpublished += 1,
                 Created::Present => present += 1,
                 Created::Refused(_) => {}
             }
@@ -975,6 +991,12 @@ impl Creation {
         }
         if branched > 0 {
             parts.push(format!("{branched} branched"));
+        }
+        if unpublished > 0 {
+            parts.push(format!(
+                "{unpublished} on {} published nowhere",
+                self.branch
+            ));
         }
         if present > 0 {
             parts.push(format!("{present} already there"));
@@ -1011,6 +1033,24 @@ impl Creation {
                     "The repository has no `{}`, so it was started from `{}/{base}`.\n\n",
                     self.branch, repo.remote
                 )),
+                Created::Unpublished { tracks } => {
+                    out.push_str(&format!(
+                        "A working tree on `{}`, which this repository already had; `{}` has \
+                         no branch of that name, so nothing is published.",
+                        self.branch, repo.remote
+                    ));
+                    if let Some(tracks) = tracks {
+                        out.push_str(&format!(
+                            " Its tracking configuration still names `{tracks}`"
+                        ));
+                        if *tracks == format!("{}/{}", repo.remote, self.branch) {
+                            out.push_str(&format!(", which `{}` does not have.", repo.remote));
+                        } else {
+                            out.push('.');
+                        }
+                    }
+                    out.push_str("\n\n");
+                }
                 Created::Present => {
                     out.push_str("A working tree was already here; nothing was touched.\n\n")
                 }
@@ -1101,7 +1141,7 @@ fn create_one(source: &Path, target: &Path, remote: &str, branch: &str, base: &s
         // Already a branch here — check it out into the new tree as it stands.
         // git refuses if another working tree holds it, which is the answer.
         return match run(source, &["worktree", "add", &target, branch]) {
-            Ok(_) => Created::Tracking,
+            Ok(_) => created_for_local_branch(source, remote, branch),
             Err(message) => Created::Refused(message),
         };
     }
@@ -1132,6 +1172,39 @@ fn create_one(source: &Path, target: &Path, remote: &str, branch: &str, base: &s
         Ok(_) => Created::Branched(base.to_string()),
         Err(message) => Created::Refused(message),
     }
+}
+
+/// What a local branch's checkout came to, once the worktree is made: the
+/// fetch just above is what makes `refs/remotes/<remote>/<branch>` the
+/// forge's current answer, not this clone's last look at it
+/// (§FS-004-quick-actions.7).
+fn created_for_local_branch(source: &Path, remote: &str, branch: &str) -> Created {
+    let published = format!("refs/remotes/{remote}/{branch}");
+    if git(source, &["rev-parse", "--verify", "--quiet", &published]).is_some() {
+        Created::Tracking
+    } else {
+        Created::Unpublished {
+            tracks: tracks_of(source, branch),
+        }
+    }
+}
+
+/// What `branch`'s tracking configuration records, as `<remote>/<branch>` —
+/// read with `for-each-ref` rather than `rev-parse @{u}` so a `[gone]`
+/// upstream still answers. Read and reported, never rewritten or trusted as
+/// where the branch is published: a tracking configuration names where a
+/// branch was cut, not where it stands now (§DA-003-upstream-is-the-published-copy).
+fn tracks_of(repo: &Path, branch: &str) -> Option<String> {
+    let upstream = git(
+        repo,
+        &[
+            "for-each-ref",
+            "--format=%(upstream:short)",
+            &format!("refs/heads/{branch}"),
+        ],
+    )?;
+    let upstream = upstream.trim();
+    (!upstream.is_empty()).then(|| upstream.to_string())
 }
 
 /// Paths git reports as unmerged, or None when it could not say.
@@ -1440,6 +1513,141 @@ mod tests {
         assert!(!target.join("ee/mine.txt").exists());
     }
 
+    /// A branch the repository has, tracking the base it was cut from rather
+    /// than a copy on the forge (§DA-003-upstream-is-the-published-copy): the
+    /// checkout reports it as published nowhere and names what it tracks,
+    /// never as tracking a branch the forge has (§FS-004-quick-actions.7) —
+    /// the ticket's own shape, and reading the tracking configuration does
+    /// not touch it.
+    #[test]
+    fn a_branch_that_tracks_the_base_is_reported_unpublished() {
+        let temp = tempfile::tempdir().unwrap();
+        let checkout = checkout_with_origin(temp.path(), "app");
+        let source = checkout.parent().unwrap().to_path_buf();
+        run_in(
+            &checkout,
+            &["branch", "--set-upstream-to=origin/master", "feature"],
+        );
+        // `worktree add` refuses a branch the source checkout is standing on.
+        run_in(&checkout, &["checkout", "-q", "master"]);
+        let before = git(&checkout, &["config", "branch.feature.merge"]);
+
+        let target = temp.path().join("ws").join("feature");
+        let made = super::create(
+            &source,
+            &target,
+            &Forest::resolve(&source, None, &[]),
+            "feature",
+            "master",
+        );
+
+        assert_eq!(
+            made.repos[0].created,
+            Created::Unpublished {
+                tracks: Some("origin/master".to_string())
+            }
+        );
+        assert!(made.is_ready());
+        let report = made.report();
+        assert!(report.contains("origin/master"));
+        assert!(!report.contains("forge has"));
+        assert_eq!(git(&checkout, &["config", "branch.feature.merge"]), before);
+    }
+
+    /// A branch that was pushed and tracked under its own name, then the
+    /// forge deleted it — git's `[gone]` upstream. `tracks_of` still answers
+    /// `origin/feature`, the same name the report just said `origin` does
+    /// not have, so the sentence must mark the tracking configuration as a
+    /// record rather than a live claim; otherwise it reads as contradicting
+    /// itself in the one line above (§DA-003-upstream-is-the-published-copy).
+    #[test]
+    fn a_branch_the_forge_deleted_after_tracking_it_still_names_its_gone_upstream() {
+        let temp = tempfile::tempdir().unwrap();
+        let checkout = checkout_with_origin(temp.path(), "app");
+        let source = checkout.parent().unwrap().to_path_buf();
+        run_in(&checkout, &["push", "-q", "-u", "origin", "feature"]);
+        run_in(&temp.path().join("app.git"), &["branch", "-D", "feature"]);
+        // `worktree add` refuses a branch the source checkout is standing on.
+        run_in(&checkout, &["checkout", "-q", "master"]);
+        let before = git(&checkout, &["config", "branch.feature.merge"]);
+
+        let target = temp.path().join("ws").join("feature");
+        let made = super::create(
+            &source,
+            &target,
+            &Forest::resolve(&source, None, &[]),
+            "feature",
+            "master",
+        );
+
+        assert_eq!(
+            made.repos[0].created,
+            Created::Unpublished {
+                tracks: Some("origin/feature".to_string())
+            }
+        );
+        assert!(made.is_ready());
+        let report = made.report();
+        assert!(
+            report.contains("still names `origin/feature`, which `origin` does not have."),
+            "{report}"
+        );
+        assert!(!report.contains("configuration names `origin/feature`."));
+        assert_eq!(git(&checkout, &["config", "branch.feature.merge"]), before);
+    }
+
+    /// No tracking configuration at all — plain `checkout -b` from a local
+    /// branch sets none — and no remote copy: still `Unpublished`, with
+    /// nothing to name (§FS-004-quick-actions.7).
+    #[test]
+    fn a_branch_with_no_tracking_configuration_and_no_remote_copy_names_nothing() {
+        let temp = tempfile::tempdir().unwrap();
+        let checkout = checkout_with_origin(temp.path(), "app");
+        let source = checkout.parent().unwrap().to_path_buf();
+        // `worktree add` refuses a branch the source checkout is standing on.
+        run_in(&checkout, &["checkout", "-q", "master"]);
+
+        let target = temp.path().join("ws").join("feature");
+        let made = super::create(
+            &source,
+            &target,
+            &Forest::resolve(&source, None, &[]),
+            "feature",
+            "master",
+        );
+
+        assert_eq!(made.repos[0].created, Created::Unpublished { tracks: None });
+        assert!(made.is_ready());
+        assert!(!made.report().contains("tracking configuration"));
+    }
+
+    /// A local branch with no tracking configuration that *was* pushed under
+    /// its own name — the shape `git worktree add -b` leaves behind
+    /// (§DA-003-upstream-is-the-published-copy) — still comes out `Tracking`:
+    /// the forge does have a copy, tracking configuration or not. The
+    /// regression guard for the fix above.
+    #[test]
+    fn a_pushed_branch_with_no_tracking_configuration_still_reports_tracking() {
+        let temp = tempfile::tempdir().unwrap();
+        let checkout = checkout_with_origin(temp.path(), "app");
+        let source = checkout.parent().unwrap().to_path_buf();
+        run_in(&checkout, &["push", "-q", "origin", "feature"]);
+        // `worktree add` refuses a branch the source checkout is standing on.
+        run_in(&checkout, &["checkout", "-q", "master"]);
+
+        let target = temp.path().join("ws").join("feature");
+        let made = super::create(
+            &source,
+            &target,
+            &Forest::resolve(&source, None, &[]),
+            "feature",
+            "master",
+        );
+
+        assert_eq!(made.repos[0].created, Created::Tracking);
+        assert!(made.report().contains("tracking the branch the forge has"));
+    }
+
     #[test]
     fn a_branch_another_working_tree_holds_is_refused_and_named() {
         let temp = tempfile::tempdir().unwrap();
@@ -1466,6 +1674,12 @@ mod tests {
     }
 
     /// Asked twice, the second is not an error: it says what is already there.
+    ///
+    /// `checkout_with_origin` never pushes `feature` — its origin only ever
+    /// gets `master` — so the first checkout's answer here is `Unpublished`,
+    /// not `Tracking`: this test used to assert `Tracking` for that shape,
+    /// which is exactly the bug the ticket reports pinned as a passing test
+    /// (§FS-004-quick-actions.7).
     #[test]
     fn a_workspace_that_is_already_there_is_reported_not_remade() {
         let temp = tempfile::tempdir().unwrap();
@@ -1481,7 +1695,10 @@ mod tests {
             "feature",
             "master",
         );
-        assert_eq!(first.repos[0].created, Created::Tracking);
+        assert_eq!(
+            first.repos[0].created,
+            Created::Unpublished { tracks: None }
+        );
 
         let again = super::create(
             &source,
@@ -1810,6 +2027,9 @@ mod tests {
         for created in [
             Created::Tracking,
             Created::Branched("main".to_string()),
+            Created::Unpublished {
+                tracks: Some("origin/master".to_string()),
+            },
             Created::Present,
             Created::Refused("no remote".to_string()),
         ] {
@@ -1832,6 +2052,7 @@ mod tests {
             let row = &view["repos"][0];
             assert_eq!(row["created"], name);
             assert_eq!(row.get("from").is_some(), name == "branched", "{row}");
+            assert_eq!(row.get("tracks").is_some(), name == "unpublished", "{row}");
             assert_eq!(row.get("says").is_some(), name == "refused", "{row}");
         }
     }

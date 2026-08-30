@@ -212,10 +212,11 @@
         "repo": { "type": "string" },
         "remote": { "type": "string" },
         "created": {
-          "enum": ["tracking", "branched", "present", "refused"],
-          "description": "How the working tree came to be there, or why it did not."
+          "enum": ["tracking", "branched", "unpublished", "present", "refused"],
+          "description": "How the working tree came to be there, or why it did not. `unpublished` is a branch the repository already had that the forge has no copy of (FS-004-quick-actions.7)."
         },
         "from": { "type": "string", "description": "What a new branch was grown from, where one was." },
+        "tracks": { "type": "string", "description": "What an `unpublished` branch's tracking configuration records, where it records anything (DA-003-upstream-is-the-published-copy)." },
         "says": { "type": "string", "description": "Why it was refused, where it was." }
       }
     },

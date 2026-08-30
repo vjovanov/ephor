@@ -1216,8 +1216,13 @@ repositories it holds, and its `main_branch` says what a new branch grows from.
 Each repository gets its own working tree: the branch itself where that
 repository has it, and a new branch of the same name off the main branch where
 it does not, which is what a change touching one repository of a tree looks
-like on disk. A repository whose branch another working tree is already holding
-is reported and left alone — git refuses that, and it is right to. Run it on a
+like on disk. Where a repository already has the branch but the forge does
+not, it is checked out as it stands and reported *published nowhere*, naming
+what its tracking configuration records — never claimed as tracking a branch
+the forge has. Nothing is pushed and no tracking configuration is written or
+rewritten either way. A repository whose branch another working tree is
+already holding is reported and left alone — git refuses that, and it is
+right to. Run it on a
 workspace that is already there and it leaves every repository alone; run it on
 one holding only some of the project's repositories and it makes the rest,
 because a directory is not a workspace and this is the command that answers
