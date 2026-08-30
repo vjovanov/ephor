@@ -37,13 +37,23 @@ set -euo pipefail
 cat > /dev/null
 case "${1:?subcommand}" in
   capabilities)
-    printf '{"issues":true}'
+    printf '{"issues":true,"pull_requests":true}'
     ;;
   issues)
     printf '%s' '[
       { "key": "acme/widget#95", "title": "Durations read as seconds",
         "url": "https://acme.example/issue/95",
         "updated_at": "2026-07-30T12:00:00Z", "status": "open" }
+    ]'
+    ;;
+  pull-requests)
+    printf '%s' '[
+      { "id": "widget/101", "repo": "widget", "number": "101",
+        "title": "Widen the retry window",
+        "url": "https://acme.example/pr/101",
+        "branch": "you/ABC-42-retry",
+        "updated_at": "2026-07-30T12:00:00Z",
+        "role": "author", "state": "open", "cited": false }
     ]'
     ;;
   *)
@@ -153,7 +163,7 @@ fn watching(branch_template: Option<&str>, branch_root: bool) -> World {
         "id": "fix-issue",
         "icon": "⛬",
         "description": "fix the issue",
-        "when": { "kinds": ["issue"] },
+        "when": { "kinds": ["issue", "pr"] },
         "inputs": { "ticket": "{repo}#{number}" }
     });
     match branch_template {
@@ -377,6 +387,49 @@ fn a_refusal_after_the_template_resolved_leaves_no_workspace() {
     );
 }
 
+/// A matter that has a branch of its own keeps it: the template applies only
+/// where there is none, so a pull request is placed exactly where it was
+/// before the key existed (§FS-005-dispatch.25).
+#[test]
+fn a_matter_with_a_branch_of_its_own_is_placed_through_that_branch() {
+    let world = watching(Some("fix/issue-{number}"), true);
+
+    // The pull request's own workspace, made by the operation the dispatch
+    // would have used for a minted one.
+    world
+        .ephor()
+        .args([
+            "checkout",
+            "--project",
+            PROJECT,
+            "--branch",
+            "you/ABC-42-retry",
+        ])
+        .assert()
+        .success();
+
+    world
+        .ephor()
+        .args(["work", "lay", "fix-issue", "--item", "acmeforge:widget/101"])
+        .assert()
+        .success();
+
+    let theirs = world.forest().join("you/ABC-42-retry");
+    assert!(
+        theirs
+            .join("panta/acmeforge-widget-101-fix-issue/index.rhei.md")
+            .is_file(),
+        "the plan is not in the branch the forge recorded"
+    );
+    // And the template rendered nothing anywhere: no `fix/issue-101`.
+    assert!(!world.forest().join("fix/issue-101").exists());
+    let ledger = read_json(&world.path().join("state/ephor/work.json"));
+    assert_eq!(
+        ledger["entries"]["acmeforge:widget/101"]["branch"],
+        json!("you/ABC-42-retry")
+    );
+}
+
 /// A recipe says it the same way, and the ticket it opens lands in the
 /// workspace the template named (§FS-005-dispatch.25). The key is read
 /// wherever an entry hands work over, not only beside a workflow.
@@ -441,6 +494,15 @@ fn a_recipe_may_say_the_branch_its_work_belongs_on() {
 fn the_offer_follows_the_template_on_both_surfaces() {
     let world = watching(Some("fix/issue-{number}"), true);
 
+    // The prose form, which is what the work screen draws from
+    // (§REQ-002-parity.2).
+    world
+        .ephor()
+        .args(["work", "offers", "--item", ITEM])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("fix-issue"));
+
     let said = world
         .ephor()
         .args(["work", "offers", "--item", ITEM, "--json"])
@@ -463,6 +525,12 @@ fn the_offer_follows_the_template_on_both_surfaces() {
     // The same work saying only that it edits the change is not on the table:
     // there is no workspace for it and the dispatch refuses it.
     let world = watching(None, true);
+    world
+        .ephor()
+        .args(["work", "offers", "--item", ITEM])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("fix-issue").not());
     let said = world
         .ephor()
         .args(["work", "offers", "--item", ITEM, "--json"])
