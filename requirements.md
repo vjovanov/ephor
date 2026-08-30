@@ -734,11 +734,13 @@ workspace: the directory is the project's template applied to the branch, the
 same one every other part of ephor resolves, because a checkout that landed
 somewhere else would be a checkout nothing else could find.
 
-Like the rebase, it is one implementation for both callers
+Like the rebase, it is one implementation for every caller
 ([§FS-005-dispatch.12](#12-work-an-algorithm-can-finish-does-not-start-with-a-model)):
-the key the reader presses and the command a state machine runs are the same
-operation, since two of them would eventually disagree about what a checked-out
-workspace is.
+the key the reader presses, the command a state machine runs, and the dispatch
+that makes the workspace a `branch` template named
+([§FS-005-dispatch.25](#25-work-about-a-matter-with-no-branch-can-mint-the-branch-it-needs))
+are the same operation, since two of them would eventually disagree about what
+a checked-out workspace is.
 
 #### 7.1 A workspace that is there is still owed its store
 
@@ -2356,6 +2358,100 @@ sweep only removes the requirement that somebody be present, and the board
 stays what it is: it starts nothing itself, and what it shows is the run,
 whoever asked for it
 ([§15](#15-every-operation-is-visible-in-one-place)).
+
+### 25. Work about a matter with no branch can mint the branch it needs
+
+A pull request arrives with a branch, and everything above resolves from it:
+the workspace it is checked out in, the work root inside that workspace, the
+`{branch}` the ticket carries. An issue arrives with none — which is not a gap
+in what ephor knows, because an issue *has* no branch until somebody cuts one.
+But it leaves the kind of work that most needs a checkout, *do this issue*,
+with nowhere to be done: a project whose checkouts are one per branch has no
+workspace for a branch nobody has cut, and its root is a directory holding
+those workspaces rather than a checkout of anything.
+
+So **an entry that hands work over may say which branch that work belongs on**,
+as a template rendered against the matter: `"branch": "fix/issue-{number}"`. It
+is written on an entry that asks for a ticket or lays down a workflow — a
+configured action carrying `agent` or `workflow`, a project's own offer naming
+a workflow, the entry beside a workflow, and a recipe
+([§1](#1-a-recipe-decides-which-items-deserve-work-and-what-to-ask-for),
+[§19](#19-a-workflow-the-runtime-offers-is-an-action-and-its-inputs-are-answered-here),
+[§FS-006-project-interface.9](#9-offers-the-projects-actions)) — and never on
+one that runs a command here: those say what they need on disk with
+`requires_checkout`, and the workspace they need is one somebody else has
+already made ([§FS-004-quick-actions.7](#7-a-workspace-that-is-not-there-is-offered-the-checkout)).
+
+**The template is rendered like a brief**, from the same fields — `{number}`,
+`{repo}`, `{kind}`, `{title}`, `{ticket}`, and the rest of
+[§2](#2-the-ticket-carries-what-ephor-knows-not-a-link-to-it)'s vocabulary —
+and three of them it may not name, because they are what it produces:
+`{branch}`, `{workspace}` and `{reply}`. A template naming one of those is
+refused by name where it is read, rather than rendered into a directory nobody
+meant.
+
+**The matter's own branch always wins.** A pull request keeps the branch the
+forge recorded and a matter the registry placed keeps the branch it matched;
+the template applies only where the matter has no branch at all. Rendering it
+*is* the resolution, and nothing is written down: a second dispatch about the
+same matter renders the same name, resolves the same workspace, and lands
+beside the first, and a workspace that is already on disk is worked in as it
+stands.
+
+**Saying it means the work needs the checkout.** An entry carrying a `branch`
+is work about a change and belongs inside that change's own workspace;
+`needs_checkout` and `requires_checkout` go on meaning exactly what they meant
+for every entry that says nothing.
+
+**The workspace is made by the one checkout operation**
+([§FS-004-quick-actions.7](#7-a-workspace-that-is-not-there-is-offered-the-checkout),
+[§12](#12-work-an-algorithm-can-finish-does-not-start-with-a-model)): the same
+source checkout, the same directory template, the same trees grown from the
+project's main branch, the same task store — the third caller of one
+implementation, so a workspace dispatch makes and a workspace the reader's key
+makes cannot be two different things. Nothing is written to the registry: a
+workspace ephor made is found on disk like every other
+([§FS-008-attribution.2](#2-two-stages-one-engine)). Nothing is pushed either
+— publishing the branch is the work's move, not ephor's
+([§7](#7-handing-over-work-is-the-readers-move-and-stays-inside-the-machine)).
+And a project with no directory template for its branches is refused by name,
+the way a single-checkout project standing on other code already is
+([§3](#3-one-rhei-per-item-one-ticket-per-dispatch)): nothing is minted into a
+root that is itself the checkout.
+
+**It is made after every refusal and before the first write.** Who does the
+work is chosen, the machine already in force is vetted, the workflow's inputs
+are answered — and only then does the workspace appear, so a refusal still
+leaves nothing behind
+([§19](#19-a-workflow-the-runtime-offers-is-an-action-and-its-inputs-are-answered-here)).
+A run asked what it would do makes nothing at all: not the workspace, not the
+work root inside it, not the files a runtime would be shown — those have
+nowhere to go until the workspace exists — and it says the branch and the
+directory it would make and the plan path inside it instead. A repository the
+checkout refuses is the checkout's own refusal, reported in the checkout's own
+words, and nothing is dispatched behind it.
+
+**What the work sees is the minted branch.** `{branch}` and `{workspace}`
+render with it, the ticket's identifiers carry it
+([§8](#8-the-ticket-carries-the-item-as-data-not-only-as-prose)), the ledger
+records it, and the work root resolves inside the workspace — so the plan lands
+in the tree the work will edit rather than beside it.
+
+**Offers follow.** An entry carrying a `branch` is offered on a matter with no
+branch, in the *will check out first* shape rather than blocked as *the
+matter's branch is unknown*
+([§FS-004-quick-actions.2](#2-offered-only-where-it-would-work)), on the menu
+and in every reading of the same menu (§REQ-002-parity.3).
+
+**And without a template, the command line refuses what the menu refuses.**
+Work that edits the change, about a matter no branch could be found for, on a
+project whose checkouts are one per branch, is refused — naming `branch` as the
+way out — where it used to be written at the project root. That fallback was
+the defect: work about a change, written into a directory that holds no change,
+which [§6](#6-dispatch-is-offered-where-it-would-work-and-refuses-where-it-would-not)
+does not allow and the menu has always blocked. This is the two surfaces coming
+to agree (§REQ-002-parity.2), and it is the one thing here that changes for a
+configuration written before it.
 
 ## FS-006-project-interface: a project and ephor meet over one interface, in three homes
 
