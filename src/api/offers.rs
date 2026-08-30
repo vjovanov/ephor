@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 
 use crate::branches::WorkspaceState;
 use crate::capabilities::CapabilitySet;
-use crate::feed::config::{ActionConfig, CheckoutConfig};
+use crate::feed::config::{ActionConfig, CheckoutConfig, Minted};
 use crate::feed::model::Item;
 use crate::forest::{Forest, Trail, Upstream};
 use crate::work::recipe::{Facts, HandPin};
@@ -668,9 +668,19 @@ pub fn gate_of(action: &ActionConfig, state: &WorkspaceState, can: &CapabilitySe
     if let Some(refusal) = action.hand.as_ref().and_then(|hand| hand.refusal.clone()) {
         return Gate::Blocked(refusal);
     }
-    if !action.requires_checkout {
+    // Saying which branch the work belongs on says that it needs the checkout
+    // (§FS-005-dispatch.25).
+    if !action.requires_checkout && action.branch.is_none() {
         return Gate::Ready;
     }
+    // Where a `branch` template decided the workspace, that is the workspace
+    // this entry is gated on — not the one the matter resolves to, which is
+    // the project root of a matter on no branch (§FS-005-dispatch.25).
+    let state = match &action.minted {
+        Some(Minted::Refused(why)) => return Gate::Blocked(why.clone()),
+        Some(Minted::Named { state, .. }) => state,
+        None => state,
+    };
     match state {
         WorkspaceState::Ready => Gate::Ready,
         // There is always a checkout to run first now, configured or
@@ -683,7 +693,10 @@ pub fn gate_of(action: &ActionConfig, state: &WorkspaceState, can: &CapabilitySe
             "this action needs the item's branch, and the checkout is standing on {head}"
         )),
         // A workspace the item cannot be resolved to is the branch-addressable
-        // rung failing on this item (§FS-006-project-interface.10).
+        // rung failing on this item (§FS-006-project-interface.10). An entry
+        // that hands work over may say which branch that work belongs on and
+        // be offered here after all (§FS-005-dispatch.25) — this is what is
+        // left when nothing does.
         WorkspaceState::Unmatched => Gate::Blocked(
             "this action needs a branch workspace, and the item's branch is unknown".to_string(),
         ),

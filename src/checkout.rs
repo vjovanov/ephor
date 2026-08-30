@@ -246,7 +246,11 @@ pub fn checkout(args: &CheckoutArgs) -> Result<ExitCode> {
             "{} is missing {} — making {}.",
             made.target.display(),
             made.missing.join(", "),
-            if made.missing.len() == 1 { "it" } else { "them" }
+            if made.missing.len() == 1 {
+                "it"
+            } else {
+                "them"
+            }
         );
     }
     if args.json {

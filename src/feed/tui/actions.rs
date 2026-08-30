@@ -1182,6 +1182,7 @@ mod tests {
             state: "fix".to_string(),
             when: Default::default(),
             needs_checkout: false,
+            branch: None,
             autorun: false,
             brief: "b".to_string(),
             opens_with: None,

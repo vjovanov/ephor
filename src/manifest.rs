@@ -170,6 +170,13 @@ pub struct Offer {
     /// (§DA-006-hands-fill-a-workflows-targets).
     #[serde(default)]
     pub hands: Vec<String>,
+    /// Which branch the work this offer lays down belongs on, where the matter
+    /// has none of its own (§FS-005-dispatch.25). A template rendered from the
+    /// matter's fields, and the one thing a project may say about where a
+    /// workspace goes: what it names is its own branch, made under the
+    /// registry's own template for them.
+    #[serde(default)]
+    pub branch: Option<String>,
     #[serde(default)]
     pub cwd: Option<String>,
     #[serde(default)]
@@ -220,9 +227,15 @@ impl Offer {
             kinds: Vec::new(),
             when: self.when.clone(),
             requires: self.requires.clone(),
-            // A project cannot ask ephor to make a workspace for it; what it
-            // needs on disk it says through `requires` like everything else.
+            // A project cannot ask ephor to run a checkout before a command
+            // it offers; what such an offer needs on disk it says through
+            // `requires` like everything else. Work it lays down is the other
+            // case: `branch` names the branch that work belongs on, and the
+            // workspace made for it is that branch's own
+            // (§FS-005-dispatch.25).
             requires_checkout: false,
+            branch: self.branch.clone(),
+            minted: None,
             confirm: self.confirm,
             background: self.background,
             window: self.window,
@@ -457,6 +470,34 @@ mod tests {
         // and a project cannot ask ephor to make it a workspace.
         assert_eq!(action.icon, OFFER_ICON);
         assert!(!action.requires_checkout);
+    }
+
+    /// An offer that lays a workflow down may say which branch that work
+    /// belongs on, for the matter that has none (§FS-005-dispatch.25). An
+    /// offer that runs a command may not: it runs in the workspace the project
+    /// already has.
+    #[test]
+    fn an_offer_that_lays_work_down_may_say_the_branch_it_belongs_on() {
+        let manifest = parse(
+            r#"{"actions": [{"id": "do-issue", "description": "do the issue",
+                             "workflow": "supervised-ticket-fix",
+                             "branch": "fix/issue-{number}",
+                             "when": {"kinds": ["issue"]}}]}"#,
+            "ephor.json",
+        )
+        .unwrap();
+        assert_eq!(
+            manifest.offers[0].action().branch.as_deref(),
+            Some("fix/issue-{number}")
+        );
+
+        let err = parse(
+            r#"{"actions": [{"id": "bench", "description": "d", "command": "./bench.sh",
+                             "branch": "fix/issue-{number}"}]}"#,
+            "ephor.json",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("manifest schema"), "{err}");
     }
 
     /// The selector is the recipes' language, so a field neither of them has

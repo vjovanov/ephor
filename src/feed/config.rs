@@ -121,6 +121,19 @@ pub struct ActionConfig {
     /// answered by withholding the offer rather than by checking out first
     /// (§FS-004-quick-actions.7).
     pub requires_checkout: bool,
+    /// Which branch this entry's work belongs on, where the matter has none of
+    /// its own (§FS-005-dispatch.25). A template rendered from the matter's
+    /// fields exactly as a brief is — `fix/issue-{number}` — and only on an
+    /// entry that hands work over: an entry that runs a command here says what
+    /// it needs on disk with `requires_checkout`. Saying it means the work
+    /// needs the checkout, and dispatch makes the workspace.
+    pub branch: Option<String>,
+    /// What that template came to on the matter this menu is about, filled in
+    /// when the menu opens (§FS-005-dispatch.25). Never configuration — the
+    /// template is what somebody wrote, and this is the workspace it names
+    /// here — so it is resolved beside [`ActionConfig::hand`] and read by the
+    /// same gate.
+    pub minted: Option<Minted>,
     /// Ask before running it.
     pub confirm: bool,
     /// It runs beneath the screen as a job rather than taking the terminal
@@ -147,6 +160,25 @@ pub struct ActionConfig {
 pub struct Handed {
     pub says: String,
     pub refusal: Option<String>,
+}
+
+/// What an entry's `branch` template came to on one matter
+/// (§FS-005-dispatch.25): where the work it hands over would go, or why the
+/// template could not say. Resolved when the menu opens, exactly as [`Handed`]
+/// is — nobody writes this down, ephor answers it — so the gate on the row and
+/// the refusal at the keystroke are one answer (§FS-004-quick-actions.2).
+#[derive(Debug, Clone)]
+pub enum Minted {
+    /// The branch the template named, the workspace it belongs in, and where
+    /// that workspace stands: ready where it is on disk, missing where the
+    /// dispatch would make it.
+    Named {
+        branch: String,
+        workspace: std::path::PathBuf,
+        state: crate::branches::WorkspaceState,
+    },
+    /// The template names no workspace here, and why.
+    Refused(String),
 }
 
 /// What an entry says when it asks for work instead of running a command
@@ -220,6 +252,8 @@ struct RawAction {
     #[serde(default)]
     requires_checkout: bool,
     #[serde(default)]
+    branch: Option<String>,
+    #[serde(default)]
     confirm: bool,
     #[serde(default)]
     background: bool,
@@ -275,6 +309,19 @@ impl TryFrom<RawAction> for ActionConfig {
         // Beneath the screen and in a window of the reader's own are two
         // different places, and an entry saying both leaves one of them
         // silently unused (§FS-005-dispatch.17, §FS-005-dispatch.22).
+        // A branch template says where handed-over work belongs
+        // (§FS-005-dispatch.25). An entry that runs something here runs it in
+        // the workspace the project already has, and says what it needs of one
+        // with `requires_checkout` (§FS-004-quick-actions.7) — so the key on
+        // such an entry is refused where it is written rather than read and
+        // never used.
+        if raw.branch.is_some() && raw.agent.is_none() && raw.workflow.is_none() {
+            return Err(format!(
+                "action {named} carries 'branch' and runs a command: a branch template says where \
+                 work handed over belongs, and a command runs in the workspace the project \
+                 already has — say what it needs of one with 'requires_checkout'"
+            ));
+        }
         if raw.background && raw.window {
             return Err(format!(
                 "action {named} says both 'background' and 'window': a move that needs nobody runs \
@@ -307,6 +354,7 @@ impl TryFrom<RawAction> for ActionConfig {
             state: ask.state.unwrap_or_else(crate::work::recipe::default_state),
             when: raw.when.clone(),
             needs_checkout: raw.requires_checkout,
+            branch: raw.branch.clone(),
             autorun: ask.autorun,
             brief: ask.brief,
             // Ephor's own deterministic moves belong to the recipes that ship
@@ -330,6 +378,8 @@ impl TryFrom<RawAction> for ActionConfig {
             when: raw.when,
             requires: raw.requires,
             requires_checkout: raw.requires_checkout,
+            branch: raw.branch,
+            minted: None,
             confirm: raw.confirm,
             background: raw.background,
             window: raw.window,
@@ -608,6 +658,43 @@ mod tests {
             "id": "note@work", "icon": "✎", "description": "d", "command": "true"
         }))
         .is_ok());
+    }
+
+    /// An entry that hands work over may say which branch that work belongs on
+    /// (§FS-005-dispatch.25). It reaches the entry and — where the entry is a
+    /// recipe under another name — the recipe too, since dispatch resolves it
+    /// from there.
+    #[test]
+    fn an_entry_that_hands_work_over_may_say_the_branch_it_belongs_on() {
+        let asks: ActionConfig = serde_json::from_value(serde_json::json!({
+            "id": "do-issue", "icon": "◆", "description": "do the issue",
+            "branch": "fix/issue-{number}",
+            "agent": { "brief": "Do {title}." }
+        }))
+        .unwrap();
+        assert_eq!(asks.branch.as_deref(), Some("fix/issue-{number}"));
+        assert_eq!(
+            asks.agent.as_ref().unwrap().branch.as_deref(),
+            Some("fix/issue-{number}")
+        );
+
+        let lays: ActionConfig = serde_json::from_value(serde_json::json!({
+            "id": "ship", "icon": "◆", "description": "lay it down",
+            "branch": "fix/issue-{number}", "workflow": "supervised-ticket-fix"
+        }))
+        .unwrap();
+        assert_eq!(lays.branch.as_deref(), Some("fix/issue-{number}"));
+
+        // Never on an entry that runs something here: such an entry runs in
+        // the workspace the project already has, and says what it needs of one
+        // with `requires_checkout` (§FS-004-quick-actions.7).
+        let refused = serde_json::from_value::<ActionConfig>(serde_json::json!({
+            "id": "gate", "icon": "🧪", "description": "gate",
+            "branch": "fix/issue-{number}", "command": "just gate"
+        }))
+        .unwrap_err()
+        .to_string();
+        assert!(refused.contains("runs a command"), "{refused}");
     }
 }
 
