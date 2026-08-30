@@ -7,7 +7,7 @@
 //! is already in the registry — the directory template, the repositories, the
 //! main branch — which is why nobody has to configure a command for it.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use crate::branches::Placement;
@@ -25,6 +25,156 @@ fn or_env(flag: &Option<String>, name: &str) -> Option<String> {
         .or_else(|| std::env::var(name).ok())
         .map(|value| value.trim().to_string())
         .filter(|value| crate::forest::is_branch_name(value))
+}
+
+/// What making one branch workspace came to (§FS-004-quick-actions.7), in the
+/// shape every caller of [`make`] needs: what was already there, what git did
+/// with the rest, and what the store came to.
+pub struct Made {
+    /// The directory the workspace belongs at — made now, or found there.
+    pub target: PathBuf,
+    /// Every declared repository was already on disk, so there was no tree
+    /// left to make and the store was all this had left to do
+    /// (§FS-004-quick-actions.7.1).
+    pub already: bool,
+    /// The repositories that were absent from a directory that was there, for
+    /// the line a reader is owed about what is being made.
+    pub missing: Vec<String>,
+    /// What git came to, where anything was made.
+    pub outcome: Option<git::Creation>,
+    /// None where the tree is half-made: a work root inside one would be a
+    /// place for plans that cannot be worked (§FS-006-project-interface.7).
+    pub store: Option<Store>,
+}
+
+impl Made {
+    /// Why this is not a workspace, where it is not: nothing to make it from,
+    /// or a repository the checkout refused. Half a workspace is not one —
+    /// whatever is missing, the next thing to run in here would fail on it.
+    ///
+    /// Returned rather than printed, because the two callers answer for it
+    /// differently: the command has already reported every repository and
+    /// stops at an exit code, and a dispatch has written nothing yet and
+    /// refuses in the checkout's own words (§FS-005-dispatch.25).
+    pub fn refusal(&self, source: &Path) -> Option<String> {
+        let outcome = self.outcome.as_ref()?;
+        if outcome.repos.is_empty() {
+            return Some(format!(
+                "No repository under {} to make a workspace from.",
+                source.display()
+            ));
+        }
+        (!outcome.refused().is_empty()).then(|| outcome.report())
+    }
+}
+
+/// Make the branch workspace `branch` belongs in, or find it already made
+/// (§FS-004-quick-actions.7).
+///
+/// The one implementation of that operation, for every caller: the key the
+/// reader presses, the command a state machine runs, and the dispatch that
+/// makes the workspace a `branch` template named (§FS-005-dispatch.25). Two
+/// of them would eventually disagree about what a checked-out workspace is —
+/// which repositories it holds, what its branches are grown from, whether it
+/// has a store — and the disagreement would be discovered by work landing in
+/// a directory that is not one.
+///
+/// It writes nothing to the registry and pushes nothing: a workspace is found
+/// on disk like every other (§FS-008-attribution.2), and publishing a branch
+/// is the work's move.
+pub fn make(
+    placement: &Placement,
+    project: &str,
+    branch: &str,
+    from: Option<&str>,
+) -> Result<(Made, PathBuf)> {
+    let target = placement.workspace_for(branch).ok_or_else(|| {
+        EphorError::Command(format!(
+            "{project} does not use a checkout per branch (no branch_root_template), so \
+             there is no workspace to make for {branch} — its root is the checkout."
+        ))
+    })?;
+    // A directory is not a workspace: the declared repositories are what make
+    // it one. This is the operation whose answer says whether the workspace is
+    // whole (§AR-004-forest.1), so a directory that is there is asked which of
+    // them are — by path, which is what tells presence (§AR-004-forest.3) —
+    // and only a whole one stops here. A project that declares no forest has
+    // nothing to be missing and answers as it always did.
+    let mut missing = Vec::new();
+    if target.is_dir() {
+        missing = placement.forest(&target).absent;
+        if missing.is_empty() {
+            // Every repository is here, so there is no tree left to make. The
+            // store still may be: a workspace made before ephor made stores at
+            // all, or made by the project's own checkout command, holds every
+            // repository it should and has nowhere for a plan to land
+            // (§FS-004-quick-actions.7.1). Asking again is what repairs it.
+            let store = init_store(project, &target, &placement.root);
+            return Ok((
+                Made {
+                    target: target.clone(),
+                    already: true,
+                    missing,
+                    outcome: None,
+                    store: Some(store),
+                },
+                target,
+            ));
+        }
+    }
+
+    // A working tree is added from a repository, so one has to be on disk —
+    // and not this one: a half-made workspace cannot supply the repositories it
+    // is itself missing, and taking it as the source would answer *no
+    // repository at* per repository instead of saying there is nothing to grow
+    // them from.
+    let source = placement
+        .source_checkout()
+        .filter(|source| source != &target)
+        .ok_or_else(|| {
+            EphorError::Command(format!(
+                "{project} has no checkout on disk to make {} from — clone the project first.",
+                target.display()
+            ))
+        })?;
+
+    // The shape of the workspace being made is the shape of the one it is made
+    // from: the declared forest where the row declares one, the source
+    // checkout's own repositories otherwise (§AR-004-forest.1).
+    let forest = placement.forest(&source);
+    let base = match from
+        .map(str::to_string)
+        .or_else(|| placement.main_branch.clone())
+    {
+        Some(base) => base,
+        None => forest
+            .repos
+            .first()
+            .and_then(|repo| git::default_base(&repo.path, &repo.remote))
+            .ok_or_else(|| {
+                EphorError::Command(format!(
+                    "Nothing says what to grow {branch} from — pass --from, or give \
+                     {project} a main_branch in the registry."
+                ))
+            })?,
+    };
+
+    let outcome = git::create(&source, &target, &forest, branch, &base);
+    // The store goes in only where the tree it belongs to is whole: a half-made
+    // workspace is refused by the caller, and a work root inside one would be a
+    // place for plans that cannot be worked (§FS-006-project-interface.7).
+    let store = (outcome.refused().is_empty() && !outcome.repos.is_empty())
+        .then(|| init_store(project, &target, &placement.root));
+    Ok((
+        Made {
+            target,
+            already: false,
+            missing,
+            outcome: Some(outcome),
+            store,
+        },
+        source,
+    ))
 }
 
 pub fn checkout(args: &CheckoutArgs) -> Result<ExitCode> {
@@ -58,97 +208,47 @@ pub fn checkout(args: &CheckoutArgs) -> Result<ExitCode> {
             )
         })?;
 
-    let target = placement.workspace_for(&branch).ok_or_else(|| {
-        EphorError::Command(format!(
-            "{project} does not use a checkout per branch (no branch_root_template), so \
-             there is no workspace to make for {branch} — its root is the checkout."
-        ))
-    })?;
-    // A directory is not a workspace: the declared repositories are what make
-    // it one. This is the command whose exit code answers whether the
-    // workspace is whole (§AR-004-forest.1), so a directory that is there is
-    // asked which of them are — by path, which is what tells presence
-    // (§AR-004-forest.3) — and only a whole one stops here. A project that
-    // declares no forest has nothing to be missing and answers as it always
-    // did.
-    if target.is_dir() {
-        let missing = placement.forest(&target).absent;
-        if missing.is_empty() {
-            // Every repository is here, so there is no tree left to make. The
-            // store still may be: a workspace made before ephor made stores at
-            // all, or made by the project's own checkout command, holds every
-            // repository it should and has nowhere for a plan to land
-            // (§FS-004-quick-actions.7.1). Asking again is what repairs it.
-            let store = init_store(&project, &target, &placement.root);
-            let summary = format!("{} is already checked out", target.display());
-            if args.json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&serde_json::json!({
-                        "workspace": target,
-                        "branch": branch,
-                        "ready": true,
-                        "summary": summary,
-                        "repos": [],
-                        "store": store.view(),
-                    }))
-                    .unwrap_or_else(|_| "null".to_string())
-                );
-            } else {
-                println!("{summary}.");
+    // Everything below is reporting: what the workspace came to is the one
+    // operation's answer, and this command is the reading of it
+    // (§AR-009-surfaces.1).
+    let (made, source) = make(
+        &placement,
+        &project,
+        &branch,
+        or_env(&args.from, "FROM").as_deref(),
+    )?;
+    if made.already {
+        let summary = format!("{} is already checked out", made.target.display());
+        if args.json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "workspace": made.target,
+                    "branch": branch,
+                    "ready": true,
+                    "summary": summary,
+                    "repos": [],
+                    "store": made.store.as_ref().map(Store::view),
+                }))
+                .unwrap_or_else(|_| "null".to_string())
+            );
+        } else {
+            println!("{summary}.");
+            if let Some(store) = &made.store {
                 store.say();
             }
-            return Ok(ExitCode::SUCCESS);
         }
-        if !args.json {
-            println!(
-                "{} is missing {} — making {}.",
-                target.display(),
-                missing.join(", "),
-                if missing.len() == 1 { "it" } else { "them" }
-            );
-        }
+        return Ok(ExitCode::SUCCESS);
     }
-
-    // A working tree is added from a repository, so one has to be on disk —
-    // and not this one: a half-made workspace cannot supply the repositories it
-    // is itself missing, and taking it as the source would answer *no
-    // repository at* per repository instead of saying there is nothing to grow
-    // them from.
-    let source = placement
-        .source_checkout()
-        .filter(|source| source != &target)
-        .ok_or_else(|| {
-            EphorError::Command(format!(
-                "{project} has no checkout on disk to make {} from — clone the project first.",
-                target.display()
-            ))
-        })?;
-
-    // The shape of the workspace being made is the shape of the one it is made
-    // from: the declared forest where the row declares one, the source
-    // checkout's own repositories otherwise (§AR-004-forest.1).
-    let forest = placement.forest(&source);
-    let base = match or_env(&args.from, "FROM").or_else(|| placement.main_branch.clone()) {
-        Some(base) => base,
-        None => forest
-            .repos
-            .first()
-            .and_then(|repo| git::default_base(&repo.path, &repo.remote))
-            .ok_or_else(|| {
-                EphorError::Command(format!(
-                    "Nothing says what to grow {branch} from — pass --from, or give \
-                     {project} a main_branch in the registry."
-                ))
-            })?,
-    };
-
-    let outcome = git::create(&source, &target, &forest, &branch, &base);
-    // The store goes in only where the tree it belongs to is whole: a half-made
-    // workspace is refused below, and a work root inside one would be a place
-    // for plans that cannot be worked (§FS-006-project-interface.7).
-    let store = (outcome.refused().is_empty() && !outcome.repos.is_empty())
-        .then(|| init_store(&project, &target, &placement.root));
+    let outcome = made.outcome.as_ref().expect("a workspace that was made");
+    if !args.json && !made.missing.is_empty() {
+        println!(
+            "{} is missing {} — making {}.",
+            made.target.display(),
+            made.missing.join(", "),
+            if made.missing.len() == 1 { "it" } else { "them" }
+        );
+    }
     if args.json {
         let mut view = outcome.view();
         if let Some(object) = view.as_object_mut() {
@@ -156,7 +256,7 @@ pub fn checkout(args: &CheckoutArgs) -> Result<ExitCode> {
                 "report".to_string(),
                 serde_json::Value::String(outcome.report()),
             );
-            if let Some(store) = &store {
+            if let Some(store) = &made.store {
                 object.insert("store".to_string(), store.view());
             }
         }
@@ -171,20 +271,19 @@ pub fn checkout(args: &CheckoutArgs) -> Result<ExitCode> {
         write_report(&path, &outcome.report())?;
     }
 
-    if outcome.repos.is_empty() {
-        return Err(EphorError::Command(format!(
-            "No repository under {} to make a workspace from.",
-            source.display()
-        )));
-    }
-    if !outcome.refused().is_empty() {
-        // Half a workspace is not one: whatever is missing, the next thing to
-        // run in here would fail on it.
+    if let Some(why) = made.refusal(&source) {
+        // Nothing to make it from is this command refusing. Half a workspace is
+        // not one either — whatever is missing, the next thing to run in here
+        // would fail on it — but every repository has already been reported
+        // above, so that one stops at the exit code.
+        if outcome.repos.is_empty() {
+            return Err(EphorError::Command(why));
+        }
         return Ok(ExitCode::from(1));
     }
     if !args.json {
         println!("{}", outcome.summary());
-        if let Some(store) = &store {
+        if let Some(store) = &made.store {
             store.say();
         }
     }
@@ -230,18 +329,18 @@ fn init_store(project: &str, workspace: &std::path::Path, root: &std::path::Path
 /// What the store came to, in the shape both answers need: the reading prints
 /// it and `--json` carries it, so a runtime is told what a reader is told
 /// (§REQ-002-parity.3).
-struct Store {
+pub struct Store {
     /// None where none could be made; the note says why.
-    dir: Option<PathBuf>,
-    made: bool,
-    note: Option<String>,
+    pub dir: Option<PathBuf>,
+    pub made: bool,
+    pub note: Option<String>,
 }
 
 impl Store {
     /// The line worth printing, where there is one: what was made now, and
     /// whatever could not be. A store that was already there says nothing —
     /// the reader asked for a checkout and it changed nothing.
-    fn say(&self) {
+    pub fn say(&self) {
         if let (true, Some(dir)) = (self.made, &self.dir) {
             println!("  task store at {}", dir.display());
         }
@@ -250,7 +349,7 @@ impl Store {
         }
     }
 
-    fn view(&self) -> serde_json::Value {
+    pub fn view(&self) -> serde_json::Value {
         serde_json::json!({
             "dir": self.dir,
             "made": self.made,
