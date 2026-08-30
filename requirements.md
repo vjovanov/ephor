@@ -717,10 +717,15 @@ but nothing has to be configured for the offer to exist.
 What it does is git and nothing else, and it has the rebase's shape. A
 poly-repo workspace is several repositories sharing one branch name, so each
 gets a working tree under the new directory: the branch itself where the forge
-has it, and a new branch of that name grown from the main branch where it does
-not — which is what a change touching one repository of a tree looks like on
-disk. The answer is per repository, and one that was already there is reported
-as already there rather than silently skipped.
+has it, a new branch of that name grown from the main branch where it does
+not, and — where the repository already has the branch but the forge does
+not — the branch as it stands, checked out and reported as published nowhere,
+naming what its tracking configuration records, if anything (a tracking
+configuration naming the base is where the branch was cut, not where it is
+published, §DA-003-upstream-is-the-published-copy). That third case changes no
+tracking configuration and pushes nothing: the reader is told the fact rather
+than handed a claim. The answer is per repository, and one that was already
+there is reported as already there rather than silently skipped.
 
 Two things it will not do. It will not move a branch another working tree is
 holding — git refuses that, and it is right to; the repository is reported and

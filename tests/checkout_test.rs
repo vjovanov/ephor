@@ -226,6 +226,86 @@ fn a_missing_workspace_is_made_from_the_registry_alone() {
     assert!(ignore.contains('*'), "{ignore}");
 }
 
+/// The ticket's own transcript (issue #7): `ce` already has a local `feature`
+/// that tracks `origin/master` — where it was cut from, not where it is
+/// published (§DA-003-upstream-is-the-published-copy) — and `origin` has no
+/// `feature` of its own. The checkout must not claim `ce`'s tree tracks a
+/// branch the forge has; it names `origin/master` instead, changes no
+/// tracking configuration, and pushes nothing (§FS-004-quick-actions.7).
+#[test]
+fn a_branch_that_tracks_the_base_is_reported_published_nowhere() {
+    let tmp = tempdir();
+    let root = fixture(tmp.path());
+    let ce = repo(tmp.path(), "ce");
+    let _ee = repo(tmp.path(), "ee");
+    // `ce` already has a local `feature`, deliberately tracking the base it
+    // was cut from — never pushed anywhere (§DA-003-upstream-is-the-published-copy).
+    git(&ce, &["branch", "--track", "feature", "origin/master"]);
+    let before = fs::read_to_string(ce.join(".git/config")).unwrap();
+
+    let target = root.join("feature");
+    assert!(!target.exists());
+
+    let view: serde_json::Value = serde_json::from_slice(
+        &ephor(tmp.path())
+            .args([
+                "checkout",
+                "--project",
+                "demo",
+                "--branch",
+                "feature",
+                "--json",
+            ])
+            .assert()
+            .success()
+            .get_output()
+            .stdout,
+    )
+    .unwrap();
+    let report = view["report"].as_str().unwrap();
+    assert!(report.contains("origin/master"), "{report}");
+    assert!(!report.contains("tracking the branch"), "{report}");
+
+    for name in ["ce", "ee"] {
+        let path = target.join(name);
+        assert!(path.join(".git").exists(), "{name} has no working tree");
+    }
+    // Reading the tracking configuration did not rewrite it, and nothing was
+    // pushed: `ce`'s own config is unchanged, and `origin` still has no
+    // `feature` of its own.
+    assert_eq!(fs::read_to_string(ce.join(".git/config")).unwrap(), before);
+    let ls_remote = Command::new("git")
+        .args(["ls-remote", "--heads", "origin", "feature"])
+        .current_dir(&ce)
+        .output()
+        .unwrap();
+    assert!(ls_remote.status.success());
+    assert!(ls_remote.stdout.is_empty());
+
+    let rows = view["repos"].as_array().unwrap();
+    let ce_row = rows.iter().find(|row| row["repo"] == "ce").unwrap();
+    assert_eq!(ce_row["created"], "unpublished");
+    assert_eq!(ce_row["tracks"], "origin/master");
+    assert!(ce_row.get("says").is_none(), "{ce_row}");
+
+    // The new working tree still answers `origin/master` for its upstream —
+    // the fact the checkout named, not one it changed.
+    let upstream = Command::new("git")
+        .args([
+            "rev-parse",
+            "--abbrev-ref",
+            "--symbolic-full-name",
+            "@{upstream}",
+        ])
+        .current_dir(target.join("ce"))
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&upstream.stdout).trim(),
+        "origin/master"
+    );
+}
+
 /// Asked again it is not an error, and nothing is remade.
 #[test]
 fn a_workspace_that_is_already_there_says_so_and_succeeds() {
