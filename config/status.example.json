@@ -55,6 +55,15 @@
             "needs_checkout": true,
             "when": { "kinds": ["pr"], "roles": ["author"] },
             "brief": "Run the benchmark suite on {branch} and against {root}'s main branch, and write the comparison into the report. Change nothing."
+          },
+          {
+            "id": "do-issue",
+            "icon": "🧩",
+            "description": "do the issue on a branch of its own",
+            "state": "fix",
+            "branch": "fix/issue-{number}",
+            "when": { "kinds": ["issue"], "roles": ["author"] },
+            "brief": "Do {title} on {branch}, in {workspace}. The issue and its comments are above."
           }
         ]
       },

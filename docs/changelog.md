@@ -30,6 +30,31 @@ ships, the previous "latest" section moves verbatim to
 
 ### Added
 
+- **Work about a matter with no branch can mint the branch it needs**
+  ([§FS-005-dispatch.25](../requirements.md#25-work-about-a-matter-with-no-branch-can-mint-the-branch-it-needs),
+  [§FS-004-quick-actions.7](../requirements.md#7-a-workspace-that-is-not-there-is-offered-the-checkout),
+  PR #N). An entry that hands work over may now say which branch that work
+  belongs on: `"branch": "fix/issue-{number}"`, on a configured action carrying
+  `agent` or `workflow`, a project's own offer naming a workflow, the entry
+  beside a workflow, or a recipe. It is a template rendered from the matter
+  exactly as a brief is — and refused by name where it names `{branch}`,
+  `{workspace}` or `{reply}`, which are what it produces, or a field the matter
+  has not got. The matter's own branch always wins: a pull request keeps the
+  branch the forge recorded, and the template applies only where there is none.
+  Rendering it *is* the resolution and nothing is written down, so a second
+  dispatch about the same matter lands in the same workspace, and one already
+  on disk is worked in as it stands. Saying it means the work needs the
+  checkout, and the dispatch makes that workspace with the operation
+  `ephor checkout` already is — one implementation with a third caller, not a
+  second copy of it — after the hand is chosen, the machine vetted and the
+  inputs answered, so a refusal still leaves nothing behind. A dry run makes
+  nothing at all, including the work root and the files the runtime would be
+  shown, and names the branch and the directory it would have made instead.
+  Nothing is written to the registry and nothing is pushed; a project with no
+  `branch_root_template` is refused by name. The offer follows on both
+  surfaces: such an entry stands on a branch-less matter in the *will check out
+  first* shape, and the reading carries the branch and the workspace.
+
 - **Work nobody has to start starts itself**
   ([§FS-005-dispatch.24](../requirements.md#24-work-nobody-has-to-start-starts-itself),
   [§DA-008-a-run-follows-the-ticket](decisions/architectural/DA-008-a-run-follows-the-ticket.md),
@@ -57,6 +82,21 @@ ships, the previous "latest" section moves verbatim to
   means the key — nothing autoruns unasked.
 
 ### Changed
+
+- **Work that edits the change, about a matter on no branch, is refused on the
+  command line instead of written at the project root**
+  ([§FS-005-dispatch.25](../requirements.md#25-work-about-a-matter-with-no-branch-can-mint-the-branch-it-needs),
+  [§FS-005-dispatch.6](../requirements.md#6-dispatch-is-offered-where-it-would-work-and-refuses-where-it-would-not),
+  PR #N). A recipe with `needs_checkout` or an entry with `requires_checkout`,
+  dispatched about a matter no branch could be found for on a project whose
+  checkouts are one per branch, used to resolve its work root from the project
+  root — which on such a project is the directory those workspaces sit in and
+  holds no change to edit, so an agent started there stood in the wrong tree.
+  It now refuses, naming `branch` as the way out. The menu has always blocked
+  exactly that entry, so this is the two surfaces coming to agree
+  (§REQ-002-parity.2). Everything with a branch of its own, every project
+  keeping one checkout at its root, and all work that reads the change rather
+  than editing it are placed exactly as before.
 
 - **A ticket a run has in hand says so on its own row**
   ([§FS-005-dispatch.23](../requirements.md#23-work-stands-on-rows-of-its-own-beneath-the-row-it-is-about),
