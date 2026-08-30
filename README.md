@@ -282,6 +282,21 @@ Without a configured checkout command, or when the item is not linked to
 any registry branch, such actions are shown "(unavailable)" and refuse
 with the reason.
 
+**A branch for work about an item that has none**: an entry that *hands work
+over* — one carrying `agent` or `workflow`, a project's own offer naming a
+workflow, the entry beside a workflow, or a recipe — may add
+`"branch": "fix/issue-{number}"`. It is a template rendered from the item
+exactly as a brief is (never `{branch}`, `{workspace}` or `{reply}`, which are
+what it produces), and it applies only where the item has no branch of its own
+— a pull request always keeps the branch the forge recorded. Saying it means
+the work needs the checkout, so ephor makes that branch's workspace with the
+same operation `ephor checkout` is — the repositories grown from the project's
+main branch, plus the task store — before writing anything, and the work root
+resolves inside it. A project with
+no `branch_root_template` is refused by name, and so is checkout-needing work
+about an item with no branch and no template
+([§FS-005-dispatch.25](requirements.md#25-work-about-a-matter-with-no-branch-can-mint-the-branch-it-needs)).
+
 The command runs via `sh -c` **in the item's checkout**, resolved through
 the org → project → branch hierarchy: the item is matched to its registry
 branch (the same matching the tree uses for grouping), and when the
@@ -472,7 +487,8 @@ finished work never matches. The brief takes `{title}`, `{url}`, `{repo}`,
 `{number}`, `{branch}`, `{ticket}`, `{state}`, `{gate}`, `{workspace}`,
 `{root}`, `{project}`, `{source}`, `{kind}`, `{id}`, and `{reply}` — the file a
 drafted answer belongs in. A recipe may also pin the runtime's execution
-identity with `"target"` or `"model"`.
+identity with `"target"` or `"model"`, and say with `"branch"` which branch its
+work belongs on for an item that has none of its own.
 
 **An answer comes back as a proposal.** The shipped `answer` recipe asks for
 the reply as a file of its own, and nothing posts it: the run writes it, ephor

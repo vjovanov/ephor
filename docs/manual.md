@@ -1294,6 +1294,7 @@ difference is only whether anyone expects to want their own.
 | `when` | which items it is offered on, in the language recipes use (§8.3) |
 | `requires` | capability rungs it needs (§7.5); an unmet one shows its reason |
 | `requires_checkout` | the action needs the item's branch workspace on disk |
+| `branch` | on an entry that hands work over, the branch that work belongs on where the item has none (§8.18) |
 | `confirm` | ask before running it: the second Enter on the row runs it |
 | `background` | run it beneath the interface as a job rather than taking the terminal (§8.14) |
 | `window` | run its program in a window of your own instead of taking the terminal (§8.16) |
@@ -1338,7 +1339,9 @@ gated on it: when the workspace is missing the menu annotates them *(will check
 out first)* and running one chains checkout → action. On an item linked to no
 branch there is no workspace to make, so they show *(unavailable)* with the
 reason on the row itself — and `Enter` there leaves the menu standing rather
-than taking it down to repeat in the header what you are already reading.
+than taking it down to repeat in the header what you are already reading. An
+entry that *hands work over* has one more way out: `branch` names the branch
+that work belongs on, and ephor makes its workspace (§8.18).
 
 **Where a command runs.** In the item's checkout, resolved org → project →
 branch: the item is matched to its registry branch, and if that branch
@@ -1570,6 +1573,8 @@ Add your own, or replace a shipped one by reusing its id:
         "description": "fix the red gate",
         "state": "fix",                 // the state a fresh ticket starts in
         "needs_checkout": true,
+        // For an item with no branch of its own; ephor makes the workspace (§8.18)
+        "branch": "fix/issue-{number}",
         "autorun": true,                // and do not wait for me to start it
         "when": { "kinds": ["pr"], "roles": ["author"], "gate": "failing" },
         "brief": "The gate on {title} is red. Run `just check` in {workspace} …",
@@ -1642,6 +1647,11 @@ what was pushed of it — and a recipe may ask both.
 in, named absolutely ([§8.12](#812-an-answer-comes-back-as-a-proposal)). An
 unknown name is left as written, so a typo is visible in the ticket instead of
 becoming a blank.
+
+**`branch`** is the other template a recipe may carry: which branch its work
+belongs on, for an item that has none of its own — an issue. ephor makes that
+workspace before writing the ticket, and `{branch}` and `{workspace}` render
+with it (§8.18).
 
 ### 8.4 Where work goes, and what runs it
 
@@ -2228,7 +2238,10 @@ ephor work states
   the key.
 - **`workflows`** and **`lay`** are the runtime's own workflows, offered as
   actions (§8.15). `lay` writes a plan of its own beside the matter's and runs
-  nothing; `--dry-run` shows what would answer every input first.
+  nothing; `--dry-run` shows what would answer every input first. Where the
+  entry says which branch its work belongs on (§8.18) and that workspace is not
+  there, `lay` makes it before writing — and `--dry-run` makes nothing at all
+  and names the workspace it would have made.
 - **`forget`** drops ledger entries only. The plans stay on disk: they are the
   record of what was done.
 
@@ -2623,7 +2636,9 @@ Three places it may live, narrow beating broad:
 
 A workflow the runtime ships ranks with what ephor ships, one the project
 keeps with the project's offers, one you keep with your own — the provenance
-the menu already orders by.
+the menu already orders by. Wherever it lives, the entry may also say
+`"branch"`: which branch the work it lays down belongs on, for a matter that
+has none of its own (§8.18).
 
 **Answering the inputs.** Five steps, each displacing the ones after it:
 
@@ -2843,6 +2858,70 @@ a foreground command must not end a run another screen may also be watching.
 Stopping stays out of the screen — the row carries the runner's own stop
 command, shown and never run. Where the runner has no detached shape, the run is
 watched as it always was, the terminal handed over, and the line says so.
+
+### 8.18 A branch for work about an item that has none
+
+An issue has no branch. On a project whose checkouts are one per branch, that
+leaves work about the issue with nowhere to be done — the project root is the
+directory those workspaces sit in, not a checkout of anything — so an entry
+that *hands work over* can say which branch its work belongs on
+([§FS-005-dispatch.25](../requirements.md#25-work-about-a-matter-with-no-branch-can-mint-the-branch-it-needs)):
+
+```jsonc
+// beside a workflow, in the workflow's own directory
+{ "id": "fix-issue", "description": "fix the issue",
+  "when": { "kinds": ["issue"] },
+  "branch": "fix/issue-{number}",
+  "inputs": { "ticket": "{repo}#{number}" } }
+```
+
+The key is `branch`, and it is read on every entry that hands work over: a
+configured action carrying `agent` or `workflow` (§7.2), a project's own offer
+naming a workflow (§4.2.1), the entry beside a workflow (§8.15), and a recipe
+(§8.3). It is refused on an entry that runs a command here — such an entry runs
+in the workspace the project already has and says what it needs of one with
+`requires_checkout`.
+
+**What it may say.** The same fields a brief takes (§8.2) — `{number}`,
+`{repo}`, `{kind}`, `{title}`, `{ticket}`, … — and never `{branch}`,
+`{workspace}` or `{reply}`, which are what it produces. A template naming one
+of those, or naming a field this item has not got, is refused by name rather
+than rendered into a directory nobody meant.
+
+**The item's own branch always wins.** A pull request keeps the branch the
+forge recorded and an item the registry matched keeps the branch it matched;
+the template applies only where the item has no branch at all. Rendering it
+*is* the resolution — nothing is written down — so a second dispatch about the
+same item renders the same name and lands in the same workspace, and one that
+is already on disk is worked in as it stands.
+
+**Saying it means the work needs the checkout**, and ephor makes it: the same
+operation `ephor checkout` is (§7.1), with the same directory template, the
+same trees grown from the project's main branch, and the same task store. The
+workspace is made **after every refusal and before anything is written** — the
+hand chosen, the machine vetted, the inputs answered — and **never on
+`--dry-run`**, which makes nothing at all and says the branch, the directory
+and the plan path instead:
+
+```console
+$ ephor work lay fix-issue --item acmeforge:acme/widget#95 --dry-run --json
+{
+  "plan": "…/widget/fix/issue-95/panta/acmeforge-acme-widget-95-fix-issue",
+  "report": "would check out fix/issue-95 at …/widget/fix/issue-95 first, …"
+}
+```
+
+Nothing is written to the registry and nothing is pushed: the workspace is
+found on disk like every other, and publishing the branch is the work's move.
+A project with no `branch_root_template` is refused by name — nothing is minted
+into a root that is itself the checkout.
+
+**Without a template, checkout-needing work about an item with no branch is
+refused.** `needs_checkout` / `requires_checkout` work on such an item used to
+be written at the project root; it now refuses on the command line, naming
+`branch` as the way out, which is what the menu has always done. Everything
+with a branch of its own, and every project keeping one checkout at its root,
+is placed exactly as before.
 
 ---
 
@@ -3189,10 +3268,18 @@ under `projects` in `status.json`, or the two spell its id differently.
 exist. Configure a `checkout` command for the project and the menu will offer
 to make it, or check it out by hand.
 
+**"… is on no branch, and this work edits the change."** The item has no branch
+of its own — an issue, usually — and the entry that would hand the work over
+says it needs the checkout without saying which branch to make. Give it a
+`branch` template (§8.18), or hand over work that reads the change rather than
+editing it.
+
 **An action shows "(unavailable)".** The reason is on the row: usually it
 declares `requires_checkout` and the item is linked to no branch, so there is
 no workspace to make. `Enter` on it does nothing on purpose — the menu stays
-where it is, with the reason still under your eye.
+where it is, with the reason still under your eye. An entry that hands work
+over can answer this by naming the branch its work belongs on: give it
+`"branch": "fix/issue-{number}"` and ephor makes that workspace (§8.18).
 
 **Dispatch says a recipe "starts in state 'x', which the machine … does not
 declare".** The work root's `states.yaml` governs. Either use a state it has,
