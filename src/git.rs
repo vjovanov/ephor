@@ -1040,7 +1040,14 @@ impl Creation {
                         self.branch, repo.remote
                     ));
                     if let Some(tracks) = tracks {
-                        out.push_str(&format!(" Its tracking configuration names `{tracks}`."));
+                        out.push_str(&format!(
+                            " Its tracking configuration still names `{tracks}`"
+                        ));
+                        if *tracks == format!("{}/{}", repo.remote, self.branch) {
+                            out.push_str(&format!(", which `{}` does not have.", repo.remote));
+                        } else {
+                            out.push('.');
+                        }
                     }
                     out.push_str("\n\n");
                 }
@@ -1544,6 +1551,48 @@ mod tests {
         let report = made.report();
         assert!(report.contains("origin/master"));
         assert!(!report.contains("forge has"));
+        assert_eq!(git(&checkout, &["config", "branch.feature.merge"]), before);
+    }
+
+    /// A branch that was pushed and tracked under its own name, then the
+    /// forge deleted it — git's `[gone]` upstream. `tracks_of` still answers
+    /// `origin/feature`, the same name the report just said `origin` does
+    /// not have, so the sentence must mark the tracking configuration as a
+    /// record rather than a live claim; otherwise it reads as contradicting
+    /// itself in the one line above (§DA-003-upstream-is-the-published-copy).
+    #[test]
+    fn a_branch_the_forge_deleted_after_tracking_it_still_names_its_gone_upstream() {
+        let temp = tempfile::tempdir().unwrap();
+        let checkout = checkout_with_origin(temp.path(), "app");
+        let source = checkout.parent().unwrap().to_path_buf();
+        run_in(&checkout, &["push", "-q", "-u", "origin", "feature"]);
+        run_in(&temp.path().join("app.git"), &["branch", "-D", "feature"]);
+        // `worktree add` refuses a branch the source checkout is standing on.
+        run_in(&checkout, &["checkout", "-q", "master"]);
+        let before = git(&checkout, &["config", "branch.feature.merge"]);
+
+        let target = temp.path().join("ws").join("feature");
+        let made = super::create(
+            &source,
+            &target,
+            &Forest::resolve(&source, None, &[]),
+            "feature",
+            "master",
+        );
+
+        assert_eq!(
+            made.repos[0].created,
+            Created::Unpublished {
+                tracks: Some("origin/feature".to_string())
+            }
+        );
+        assert!(made.is_ready());
+        let report = made.report();
+        assert!(
+            report.contains("still names `origin/feature`, which `origin` does not have."),
+            "{report}"
+        );
+        assert!(!report.contains("configuration names `origin/feature`."));
         assert_eq!(git(&checkout, &["config", "branch.feature.merge"]), before);
     }
 
