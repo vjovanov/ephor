@@ -196,11 +196,111 @@ pub struct Placement {
     pub trust: crate::manifest::Trust,
 }
 
+/// The placeholders a `branch` template may not name, because they are what
+/// it decides (§FS-005-dispatch.25). Rendering one of them would answer the
+/// template's own question with the answer it has not given yet.
+const DECIDED: [&str; 3] = ["branch", "workspace", "reply"];
+
+/// What an entry's `branch` template comes to on one matter
+/// (§FS-005-dispatch.25): the branch it names, and where that branch's
+/// workspace stands — [`WorkspaceState::Ready`] where it is already on disk,
+/// [`WorkspaceState::Missing`] where dispatch would make it.
+///
+/// The rendering *is* the resolution and nothing is written down, so asking
+/// again about the same matter gives the same branch and the same directory.
+/// The caller applies it only where the matter has no branch of its own: the
+/// forge's answer is never displaced by a template ([`Placement::checkout`]).
+///
+/// Refused rather than rendered where the template names what it produces,
+/// where it names a field this matter has not got — a branch with a hole in
+/// it would be one directory shared by every matter missing that field — and
+/// where the project keeps no workspace per branch to put it in.
+pub fn minted(
+    placement: &Placement,
+    item: &Item,
+    template: &str,
+) -> std::result::Result<Checkout, String> {
+    let here = placement.checkout(item);
+    let subject = crate::work::dossier::Subject {
+        item,
+        checkout: &here,
+        root: &placement.root,
+    };
+    let values = subject.placeholders();
+    for name in named(template) {
+        if DECIDED.contains(&name.as_str()) {
+            return Err(format!(
+                "the branch template '{template}' names {{{name}}}, which is what it decides: a \
+                 branch template is rendered from the matter's own fields — {{number}}, {{repo}}, \
+                 {{kind}}, {{title}} — and never from the branch, the workspace or the reply that \
+                 follow from it."
+            ));
+        }
+        if values
+            .get(name.as_str())
+            .is_some_and(|value| value.is_empty())
+        {
+            return Err(format!(
+                "the branch template '{template}' names {{{name}}}, and {} has none — every \
+                 matter missing it would land on one branch.",
+                item.id
+            ));
+        }
+    }
+    let branch = crate::work::dossier::render(template, &values)
+        .trim()
+        .to_string();
+    if !crate::forest::is_branch_name(&branch) {
+        return Err(format!(
+            "the branch template '{template}' rendered '{branch}', which is not a branch name."
+        ));
+    }
+    let target = placement.workspace_for(&branch).ok_or_else(|| {
+        format!(
+            "{project} does not use a checkout per branch (no branch_root_template), so there is \
+             nowhere to put {branch} — give '{project}' a branch_root_template in the registry, so \
+             its branches get workspaces of their own.",
+            project = placement.project
+        )
+    })?;
+    let state = match target.is_dir() {
+        true => WorkspaceState::Ready,
+        false => WorkspaceState::Missing(target.clone()),
+    };
+    Ok(Checkout {
+        workspace: target,
+        ticket: Some(crate::ticket_ids::extract_ticket(&branch)).filter(|key| !key.is_empty()),
+        branch: Some(branch),
+        state,
+    })
+}
+
+/// Every `{placeholder}` a template names, in the order it names them. The
+/// same grammar [`crate::work::dossier::render`] reads, asked before the
+/// rendering rather than after it: a template is refused for what it says,
+/// not for what its refusal happened to look like.
+fn named(template: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut rest = template;
+    while let Some(open) = rest.find('{') {
+        let after = &rest[open + 1..];
+        let Some(close) = after.find('}') else {
+            return names;
+        };
+        names.push(after[..close].to_string());
+        rest = &after[close + 1..];
+    }
+    names
+}
+
 /// Where one item's work belongs.
 #[derive(Clone, Debug)]
 pub struct Checkout {
     /// The directory a command about this item runs in: the branch workspace
-    /// when it exists, otherwise the project root.
+    /// when it exists, otherwise the project root. A workspace a `branch`
+    /// template named is this even before it is made ([`minted`]): dispatch
+    /// makes it, and everything the work is told about where it is has to
+    /// agree with where the work will actually be (§FS-005-dispatch.25).
     pub workspace: PathBuf,
     /// The branch name — the provider-recorded one, or the matched registry
     /// branch's.
@@ -969,5 +1069,76 @@ mod tests {
             placement.checkout(&item).state,
             WorkspaceState::Ready
         ));
+    }
+
+    /// An item with no branch — an issue — is placed by the template the entry
+    /// carries, and the workspace it names is the registry's own directory for
+    /// that branch (§FS-005-dispatch.25).
+    #[test]
+    fn a_branch_template_names_the_branch_and_the_workspace_it_belongs_in() {
+        let tmp = tempfile::tempdir().unwrap();
+        let placement = placement(tmp.path(), Some("{project_root}/{branch}"));
+        let issue = issue();
+
+        let named = minted(&placement, &issue, "fix/issue-{number}").unwrap();
+        assert_eq!(named.branch.as_deref(), Some("fix/issue-95"));
+        assert_eq!(named.workspace, tmp.path().join("fix/issue-95"));
+        // Not there yet, and the state carries the directory to make.
+        assert!(matches!(
+            &named.state,
+            WorkspaceState::Missing(target) if target == &tmp.path().join("fix/issue-95")
+        ));
+
+        // Rendering it again is the whole of the resolution: the same matter
+        // gets the same directory, and one that is there is used as it stands.
+        std::fs::create_dir_all(&named.workspace).unwrap();
+        let again = minted(&placement, &issue, "fix/issue-{number}").unwrap();
+        assert_eq!(again.workspace, named.workspace);
+        assert!(matches!(again.state, WorkspaceState::Ready));
+    }
+
+    /// The three placeholders a branch template produces are refused inside it
+    /// by name, and so is a field this matter has not got — a branch with a
+    /// hole in it would be one directory every such matter shared
+    /// (§FS-005-dispatch.25).
+    #[test]
+    fn a_template_naming_what_it_decides_is_refused_by_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let placement = placement(tmp.path(), Some("{project_root}/{branch}"));
+        let issue = issue();
+
+        for name in ["branch", "workspace", "reply"] {
+            let why = minted(&placement, &issue, &format!("fix/{{{name}}}")).unwrap_err();
+            assert!(why.contains(&format!("{{{name}}}")), "{why}");
+        }
+        // A field the matter has not got. This issue carries no ticket key.
+        let why = minted(&placement, &issue, "fix/{ticket}").unwrap_err();
+        assert!(why.contains("{ticket}"), "{why}");
+        // And one nobody has heard of, which renders as itself.
+        let why = minted(&placement, &issue, "fix/{sprint}").unwrap_err();
+        assert!(why.contains("not a branch name"), "{why}");
+    }
+
+    /// Nothing is minted into a root that is itself the checkout: a project
+    /// with no `branch_root_template` is refused by name
+    /// (§FS-005-dispatch.25).
+    #[test]
+    fn a_project_with_no_workspace_per_branch_is_refused_by_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let placement = placement(tmp.path(), None);
+
+        let why = minted(&placement, &issue(), "fix/issue-{number}").unwrap_err();
+        assert!(why.contains("branch_root_template"), "{why}");
+        assert!(why.contains("widget"), "{why}");
+    }
+
+    /// An issue: the matter a branch template is for, with no branch of its
+    /// own and no ticket key in it.
+    fn issue() -> Item {
+        let mut item = item("Humanize durations", json!({}));
+        item.id = "github-issues:acme/widget#95".to_string();
+        item.kind = ItemKind::Issue;
+        item.raw = json!({ "repo": "widget", "number": "95" });
+        item
     }
 }

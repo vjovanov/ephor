@@ -148,6 +148,12 @@
           "window": { "const": true }
         }
       },
+      "dependentSchemas": {
+        "branch": {
+          "required": ["workflow"],
+          "description": "A branch template says where handed-over work belongs (FS-005-dispatch.25); an offer that runs a command runs in the workspace the project already has."
+        }
+      },
       "description": "One menu entry the project offers. It either runs a command here or lays down one of the runtime's workflows — never both and never neither (FS-006-project-interface.9, FS-005-dispatch.19).",
       "properties": {
         "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
@@ -165,6 +171,7 @@
           "items": { "type": "string" },
           "description": "Inputs of that workflow that name who does the work, for a workflow whose own manifest does not say so. Each resolves through ephor's hand resolution and is refused where a narrowing does not permit it (DA-006-hands-fill-a-workflows-targets)."
         },
+        "branch": { "type": "string", "description": "Which branch the work this offer lays down belongs on, where the matter has none of its own (FS-005-dispatch.25). A template rendered from the matter's fields as `inputs` are — 'fix/issue-{number}' — and never naming {branch}, {workspace} or {reply}, which are what it produces. Saying it means the work needs the checkout, and the dispatch makes that branch's workspace under the registry's own branch_root_template. Only on an offer that names a workflow." },
         "cwd": { "$ref": "#/$defs/cwd" },
         "when": { "$ref": "#/$defs/selector" },
         "requires": {

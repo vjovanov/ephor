@@ -11,6 +11,7 @@ use serde_json::Value;
 
 use crate::branches::{BranchInfo, WorkspaceState};
 use crate::capabilities::Rung;
+use crate::feed::config::Minted;
 use crate::feed::model::Item;
 
 use super::offers;
@@ -122,6 +123,9 @@ impl Session {
                 });
                 let mut applicable = self.actions_with(&item, &recipes, &beside);
                 self.name_the_hands(&item, &mut applicable);
+                // And where the workspace would be, for an entry that says
+                // which branch its work belongs on (§FS-005-dispatch.25).
+                self.name_the_branches(&item, &mut applicable);
                 (applicable, has_workflows)
             }
             // A branch row carries ephor's own offers only: there is no matter
@@ -542,6 +546,16 @@ pub fn offer_of(entry: &offers::MenuEntry) -> views::Offer {
         // against, which is the one that answers about work
         // ([`Session::work_of`]).
         brief: None,
+        // What a `branch` template came to on this matter, where the entry
+        // carries one: a reading knows what the row shows (§REQ-002-parity.3).
+        branch: match &entry.action.minted {
+            Some(Minted::Named { branch, .. }) => Some(branch.clone()),
+            _ => None,
+        },
+        workspace: match &entry.action.minted {
+            Some(Minted::Named { workspace, .. }) => Some(workspace.clone()),
+            _ => None,
+        },
         cwd: entry.action.cwd.clone(),
         background: entry.action.background,
         window: entry.action.window,

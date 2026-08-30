@@ -1050,13 +1050,24 @@ impl Dispatcher {
     /// Where an item's work belongs, refusing where it would not run
     /// (§FS-005-dispatch.6).
     fn site(&mut self, item: &Item, recipe: &Recipe) -> Result<Site> {
-        self.site_for(item, recipe.needs_checkout)
+        self.site_for(item, recipe.needs_checkout, recipe.branch.as_deref())
     }
 
     /// The same, for an entry that is not a recipe: a workflow says what it
     /// needs on disk through its own `requires_checkout`
     /// (§FS-005-dispatch.19).
-    fn site_for(&mut self, item: &Item, needs_checkout: bool) -> Result<Site> {
+    ///
+    /// `branch` is the entry's template for the branch its work belongs on,
+    /// where it carries one (§FS-005-dispatch.25). It applies only to a matter
+    /// with no branch of its own, and saying it means the work needs the
+    /// checkout — so it decides where the work goes without resolving anything
+    /// the matter already answered.
+    fn site_for(
+        &mut self,
+        item: &Item,
+        needs_checkout: bool,
+        branch: Option<&str>,
+    ) -> Result<Site> {
         let template = self.root_template(&item.project);
         // A project ephor cannot place has nowhere to put the work, and the
         // ladder owns that sentence (§AR-005-capabilities.2).
@@ -1071,12 +1082,33 @@ impl Dispatcher {
         // none does (§FS-005-dispatch.13, §AR-004-forest.1) — which is what
         // lets work about a conversation run without the checkout-able rung
         // (§FS-006-project-interface.10).
-        let checkout = placement.checkout(item);
+        let mut checkout = placement.checkout(item);
+        // The matter's own branch always wins: a template supplies the branch
+        // a matter has none of, and never displaces the one the forge recorded
+        // or the registry matched (§FS-005-dispatch.25).
+        let mut mint = None;
+        if checkout.branch.is_none() {
+            if let Some(template) = branch {
+                checkout = crate::branches::minted(&placement, item, template)
+                    .map_err(EphorError::Command)?;
+                if let WorkspaceState::Missing(target) = &checkout.state {
+                    mint = Some(target.clone());
+                }
+            }
+        }
+        // Saying which branch the work belongs on says that it needs the
+        // checkout: the template is about where the change will be edited
+        // (§FS-005-dispatch.25).
+        let needs_checkout = needs_checkout || branch.is_some();
         // Only for work that edits the change. A review or a reply runs in
         // the project's own checkout and fetches what it needs.
         if needs_checkout {
             let wanted = checkout.branch.as_deref().unwrap_or("?");
             match &checkout.state {
+                // A workspace this dispatch is about to make is not a missing
+                // one: it is named, it is this matter's, and making it is the
+                // move that comes after the last refusal (§FS-005-dispatch.25).
+                WorkspaceState::Missing(_) if mint.is_some() => {}
                 WorkspaceState::Missing(target) => {
                     return Err(EphorError::Command(format!(
                         "{}: branch {} is not checked out ({} is missing). Make it with:\n  \
@@ -1107,7 +1139,22 @@ impl Dispatcher {
                         item.project,
                     )));
                 }
-                WorkspaceState::Ready | WorkspaceState::Unmatched => {}
+                // The matter is on no branch and no entry said which one its
+                // work belongs on, so there is no workspace for work that
+                // edits the change — and the project root of a project whose
+                // checkouts are one per branch holds no change to edit. This
+                // used to be written there anyway; it is refused now, which is
+                // what the menu has always done (§FS-005-dispatch.25).
+                WorkspaceState::Unmatched => {
+                    return Err(EphorError::Command(format!(
+                        "{}: {} is on no branch, and this work edits the change. Give the entry \
+                         a 'branch' template naming the branch it belongs on, so dispatch makes \
+                         the workspace:\n  \"branch\": \"fix/issue-{{number}}\"\n\
+                         or hand over work that reads the change instead of editing it.",
+                        item.project, item.id,
+                    )));
+                }
+                WorkspaceState::Ready => {}
             }
         }
         let subject = Subject {
@@ -1132,7 +1179,38 @@ impl Dispatcher {
             metadata: subject.metadata(),
             values,
             checkout: checkout.clone(),
+            mint,
         })
+    }
+
+    /// Make the workspace a `branch` template named, where it named one that is
+    /// not on disk (§FS-005-dispatch.25).
+    ///
+    /// Called after every refusal and before the first write, so a refusal
+    /// still leaves nothing behind — and never on a dry run, which is the
+    /// caller's to decide because it is the caller that knows it is one.
+    /// It is `ephor checkout`'s own operation ([`crate::checkout::make`]), so
+    /// the workspace a dispatch makes and the workspace a reader's key makes
+    /// are the same thing (§FS-004-quick-actions.7).
+    fn mint(&mut self, item: &Item, site: &Site) -> Result<()> {
+        if site.mint.is_none() {
+            return Ok(());
+        }
+        let branch = site.checkout.branch.clone().unwrap_or_default();
+        let placement = self
+            .placement(&item.project)
+            .cloned()
+            .ok_or_else(|| EphorError::Command(format!("{} cannot be placed", item.project)))?;
+        let (made, source) = crate::checkout::make(&placement, &item.project, &branch, None)?;
+        // A repository the checkout refused is the checkout's own refusal, in
+        // the checkout's own words, and nothing is dispatched behind it.
+        if let Some(why) = made.refusal(&source) {
+            return Err(EphorError::Command(why));
+        }
+        if let Some(note) = made.store.as_ref().and_then(|store| store.note.clone()) {
+            self.note_once(&note);
+        }
+        Ok(())
     }
 
     /// The deterministic opening move a recipe declares, made before the
@@ -1256,6 +1334,17 @@ impl Dispatcher {
             if let Some(existing) = WorkRoot::open(&site.dir)? {
                 vet(&existing)?;
             }
+            // A dry run makes nothing, so it says what it would have made:
+            // the branch, and the workspace the plan path below is inside
+            // (§FS-005-dispatch.25).
+            if let Some(target) = &site.mint {
+                let note = format!(
+                    "{} is not checked out — the dispatch would make {} first.",
+                    site.checkout.branch.as_deref().unwrap_or("?"),
+                    target.display()
+                );
+                self.note_once(&note);
+            }
             let path = plan::plan_path_in(&site.dir, &plan_id);
             let existing = Plan::read(&path)?;
             let ticket = existing
@@ -1295,6 +1384,12 @@ impl Dispatcher {
                 report,
             });
         }
+
+        // The workspace a `branch` template named, made now: after the hand,
+        // the machine and the opening move have all had their chance to refuse,
+        // and before the work root below is the first thing written
+        // (§FS-005-dispatch.25).
+        self.mint(item, &site)?;
 
         if let Some(existing) = WorkRoot::open(&site.dir)? {
             vet(&existing)?;
@@ -1484,7 +1579,7 @@ impl Dispatcher {
                 ),
             })
         })?;
-        let site = self.site_for(item, entry.requires_checkout)?;
+        let site = self.site_for(item, entry.requires_checkout, entry.branch.as_deref())?;
         // Where the plan goes: named after the matter and the entry, and
         // named apart from what an earlier run of the same entry left, since
         // two runs of one workflow about one item are two records and not a
@@ -1620,7 +1715,35 @@ impl Dispatcher {
                 laying.answered.missing.join(", ")
             )));
         }
+        // A run asked what it would do makes nothing at all. Where the
+        // workspace itself is not there yet, that has to include the work root
+        // and the files the runtime would be shown: they have nowhere to go
+        // until the workspace exists, and a dry run that made the directory
+        // tree to report on it would be the thing this refuses to do
+        // (§FS-005-dispatch.25).
+        if dry_run {
+            if let Some(target) = &laying.site.mint {
+                return Ok(Laid {
+                    outcome: Outcome::Laid {
+                        plan: laying.output.clone(),
+                        plan_id: laying.plan_id.clone(),
+                        workflow: laying.workflow.id.clone(),
+                        entry: laying.entry.clone(),
+                    },
+                    report: format!(
+                        "would check out {} at {} first, and lay {} down inside it",
+                        laying.site.checkout.branch.as_deref().unwrap_or("?"),
+                        target.display(),
+                        laying.workflow.id,
+                    ),
+                });
+            }
+        }
         let states = self.states_yaml(&item.project)?;
+        // Everything above could still refuse; nothing above has written
+        // anything. The workspace goes in here, and the work root is the first
+        // thing inside it (§FS-005-dispatch.25).
+        self.mint(item, &laying.site)?;
         let root = WorkRoot::ensure(&laying.site.dir, &states)?;
         let carried = carried(&root.dir, &laying.plan_id);
         std::fs::create_dir_all(&carried).map_err(|err| {
@@ -1690,6 +1813,7 @@ impl Dispatcher {
         ledger_entry.url = item.url.clone();
         ledger_entry.root = root.dir.clone();
         ledger_entry.checkout = laying.site.checkout.workspace.clone();
+        ledger_entry.branch = laying.site.checkout.branch.clone();
         ledger_entry.dispatches.push(Dispatch {
             ticket: String::new(),
             recipe: entry_id.clone(),
@@ -1734,6 +1858,9 @@ impl Dispatcher {
             // that is not here is a fact for the dossier to state, not a
             // reason to refuse the reader.
             needs_checkout: false,
+            // And so it mints nothing: what is asked for on the spot is asked
+            // about the matter as it stands (§FS-005-dispatch.25).
+            branch: None,
             // Typed on the spot by somebody who is right there: the reader
             // starts it, as they always did (§FS-005-dispatch.24).
             autorun: false,
@@ -2895,6 +3022,11 @@ struct Site {
     values: BTreeMap<&'static str, String>,
     #[allow(dead_code)] // kept for callers that report where work landed
     checkout: crate::branches::Checkout,
+    /// The branch workspace this dispatch has to make before it writes
+    /// anything, where a `branch` template named one that is not on disk
+    /// (§FS-005-dispatch.25). None for everything else, including a workspace
+    /// the template named that is already there.
+    mint: Option<PathBuf>,
 }
 
 #[cfg(test)]

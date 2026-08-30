@@ -47,6 +47,10 @@ pub struct Beside {
     pub requires: Vec<String>,
     #[serde(default)]
     pub requires_checkout: bool,
+    /// Which branch this workflow's work belongs on, where the matter has none
+    /// (§FS-005-dispatch.25).
+    #[serde(default)]
+    pub branch: Option<String>,
     #[serde(default)]
     pub confirm: bool,
     #[serde(default)]
@@ -81,6 +85,8 @@ impl Beside {
             when: self.when.clone(),
             requires: self.requires.clone(),
             requires_checkout: self.requires_checkout,
+            branch: self.branch.clone(),
+            minted: None,
             confirm: self.confirm,
             // What a workflow lays down is files, and running it is the move
             // after (§FS-005-dispatch.19): there is no terminal to take, and so
@@ -712,6 +718,25 @@ mod tests {
         assert_eq!(
             action.workflow.expect("names one").inputs["change_ref"],
             Value::String("{branch}".into())
+        );
+        // Nothing said, nothing minted: the entry places its work through the
+        // matter as it always did (§FS-005-dispatch.25).
+        assert!(action.branch.is_none());
+    }
+
+    /// An entry beside a workflow may say which branch its work belongs on,
+    /// for the matter that has none (§FS-005-dispatch.25) — the third home an
+    /// entry lives in, reading the key the other two read.
+    #[test]
+    fn an_entry_beside_a_workflow_may_say_the_branch_its_work_belongs_on() {
+        let flow = workflow(vec![input("change_ref", Kind::Text, true, false)]);
+        let entry: Beside = serde_json::from_str(
+            "{\"when\": {\"kinds\": [\"issue\"]}, \"branch\": \"fix/issue-{number}\"}",
+        )
+        .expect("parses");
+        assert_eq!(
+            entry.action(&flow).branch.as_deref(),
+            Some("fix/issue-{number}")
         );
     }
 }

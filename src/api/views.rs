@@ -43,6 +43,15 @@ pub struct Offer {
     /// something: it is the thing a reader is deciding about.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub brief: Option<String>,
+    /// The branch this entry's work would be made on, where its own `branch`
+    /// template named one the matter has not got (§FS-005-dispatch.25).
+    /// Absent on every entry that resolves through the matter's own branch.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// The workspace that branch belongs in: already there where `gate` is
+    /// `ready`, made by the dispatch where it is `needs-checkout`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<std::path::PathBuf>,
     /// Where it runs — `workspace`, `root`, or `repo:<name>`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,

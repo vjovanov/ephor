@@ -240,6 +240,13 @@ pub struct Recipe {
     /// says `false` and runs in the project's own checkout.
     #[serde(default = "yes")]
     pub needs_checkout: bool,
+    /// Which branch this work belongs on, where the matter has none of its own
+    /// (§FS-005-dispatch.25). A template rendered from the matter's fields
+    /// exactly as [`Recipe::brief`] is — `fix/issue-{number}` — which dispatch
+    /// resolves and makes the workspace of. Saying it means the work needs the
+    /// checkout; a recipe that says nothing is placed as it always was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
     /// This work needs nobody to start it: a ticket written from this recipe
     /// gets its run without anyone pressing a key (§FS-005-dispatch.24). The
     /// reader's deliberate act is adopting the recipe, made once, rather than
@@ -454,6 +461,10 @@ pub fn shipped() -> Vec<Recipe> {
         state: default_state(),
         when,
         needs_checkout,
+        // What ships is about a matter the forge already put on a branch, or
+        // about no branch at all: a template naming one is a thing a project
+        // says about its own work (§FS-005-dispatch.25).
+        branch: None,
         // Silence means the key: what ships is started by the reader, and
         // saying otherwise is a thing configuration does (§FS-005-dispatch.24).
         autorun: false,

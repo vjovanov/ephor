@@ -52,6 +52,8 @@
         "refusal": { "type": "string", "description": "Why it cannot run — the ladder's own sentence, the same one a greyed row shows (FS-006-project-interface.10)." },
         "hand": { "type": "string", "description": "Who the work would go to, on an entry that hands work over (FS-005-dispatch.14)." },
         "command": { "type": "string", "description": "What it would run, where it runs one." },
+        "branch": { "type": "string", "description": "The branch this entry's work would be made on, where its own `branch` template named one the matter has not got (FS-005-dispatch.25). Absent on every entry that resolves through the matter's own branch." },
+        "workspace": { "type": "string", "description": "The workspace that branch belongs in: already there where `gate` is `ready`, made by the dispatch where it is `needs-checkout` (FS-005-dispatch.25)." },
         "cwd": { "type": "string", "description": "Where it runs: `workspace`, `root`, or `repo:<name>`." },
         "background": { "type": "boolean", "description": "It runs beneath the terminal as a job rather than taking it (FS-005-dispatch.17)." },
         "window": { "type": "boolean", "description": "It runs in a window of the reader's own where one is bound, and takes the terminal where none is (FS-005-dispatch.22)." },

@@ -17,7 +17,7 @@ use crate::branches::{BranchInfo, Checkout, Placement, WorkspaceState};
 use crate::capabilities::{Bindings, CapabilitySet};
 use crate::error::Result;
 use crate::feed::cache::{self, ProjectFeed, Seen};
-use crate::feed::config::{ActionConfig, CheckoutConfig, Handed, StatusConfig};
+use crate::feed::config::{ActionConfig, CheckoutConfig, Handed, Minted, StatusConfig};
 use crate::feed::model::Item;
 use crate::forest::{Staleness, Standing, Upstream};
 use crate::registry;
@@ -229,15 +229,27 @@ impl Session {
         // question rather than the work's (§FS-004-quick-actions.7). An offer
         // that would be refused on the keystroke is worse than no offer
         // (§FS-004-quick-actions.2).
-        let here = matches!(
-            self.checkout(item).map(|checkout| checkout.state),
-            Some(WorkspaceState::Ready)
-        );
+        let placed = self.checkout(item).map(|checkout| checkout.state);
+        let here = matches!(placed, Some(WorkspaceState::Ready));
+        // The one matter a `branch` template applies to: one on no branch at
+        // all, where there is nothing for a template to displace and no
+        // workspace for work that edits the change to run in. Such an entry
+        // says which branch it belongs on and dispatch makes it, so it is
+        // offered rather than withheld (§FS-005-dispatch.25) — and what its
+        // template comes to here is the gate's answer, not this one's.
+        let branchless = matches!(placed, Some(WorkspaceState::Unmatched));
+        let offered = |needs_checkout: bool, branch: &Option<String>| {
+            here || !needs_checkout || (branchless && branch.is_some())
+        };
         menu.retain(|entry| match (&entry.agent, &entry.workflow) {
-            (Some(recipe), _) => !item.is_finished() && (here || !recipe.needs_checkout),
+            (Some(recipe), _) => {
+                !item.is_finished() && offered(recipe.needs_checkout, &recipe.branch)
+            }
             // A workflow hands work over too, so it is gated the same way
             // (§FS-005-dispatch.19).
-            (None, Some(_)) => !item.is_finished() && (here || !entry.requires_checkout),
+            (None, Some(_)) => {
+                !item.is_finished() && offered(entry.requires_checkout, &entry.branch)
+            }
             _ => true,
         });
         menu
@@ -1065,6 +1077,44 @@ impl Session {
     /// built (§FS-005-dispatch.14). Never configuration: nobody writes it,
     /// ephor resolves it so the reader sees it before pressing the key —
     /// or, on the command line, before typing the id.
+    /// Fill in what each entry's `branch` template comes to on this matter
+    /// (§FS-005-dispatch.25), so the gate on the row is the answer the
+    /// dispatch would give (§FS-004-quick-actions.2).
+    ///
+    /// Only where the matter has no branch of its own — the forge's answer is
+    /// never displaced by a template — and only on an entry that hands work
+    /// over, which is the only kind the key is accepted on.
+    pub fn name_the_branches(&mut self, item: &Item, menu: &mut [ActionConfig]) {
+        let template_of = |entry: &ActionConfig| match &entry.agent {
+            Some(recipe) => recipe.branch.clone(),
+            None => entry.workflow.as_ref().and(entry.branch.clone()),
+        };
+        if !menu.iter().any(|entry| template_of(entry).is_some()) {
+            return;
+        }
+        let Some(placement) = self.placements.get(&item.project).cloned() else {
+            return;
+        };
+        // A matter the registry or the forge already put on a branch resolves
+        // through that branch, and a template has nothing to add.
+        if placement.branch_name(item).is_some() {
+            return;
+        }
+        for entry in menu.iter_mut() {
+            let Some(template) = template_of(entry) else {
+                continue;
+            };
+            entry.minted = Some(match crate::branches::minted(&placement, item, &template) {
+                Ok(checkout) => Minted::Named {
+                    branch: checkout.branch.unwrap_or_default(),
+                    workspace: checkout.workspace,
+                    state: checkout.state,
+                },
+                Err(why) => Minted::Refused(why),
+            });
+        }
+    }
+
     pub fn name_the_hands(&mut self, item: &Item, menu: &mut [ActionConfig]) {
         if !menu.iter().any(|entry| entry.agent.is_some()) {
             return;
