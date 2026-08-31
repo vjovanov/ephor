@@ -22,6 +22,15 @@
       "description": "run the tests",
       "command": "just test",
       "background": true
+    },
+    {
+      "id": "fix-task",
+      "icon": "⛬",
+      "description": "fix this task end to end",
+      "workflow": "supervised-ticket-fix",
+      "autorun": true,
+      "when": { "kinds": ["task"] },
+      "inputs": { "ticket": "{title}" }
     }
   ],
   "work": {

@@ -559,3 +559,352 @@ fn a_narrowing_binds_the_hand_a_workflow_would_have_used() {
         .join("acmeforge-app-101-review-change")
         .exists());
 }
+
+/// A workflow entry that asked to run itself, and the loop that closes around
+/// it (§FS-005-dispatch.28).
+///
+/// Four issues nobody here opened, with no conversation and no branch — so no
+/// shipped recipe covers any of them, and the only thing that applies is the
+/// entry beside the runtime's own workflow. That is the matter the ticket is
+/// about: an issue a machine filed, which a workflow can fix end to end and
+/// which never entered that workflow without a person.
+mod autorun {
+    use super::*;
+
+    const ISSUE_FORGE: &str = r#"#!/usr/bin/env bash
+set -euo pipefail
+cat > /dev/null
+case "${1:?subcommand}" in
+  capabilities)
+    printf '{"issues":true}'
+    ;;
+  issues)
+    printf '%s' '[
+      { "key": "acme/widget#10", "title": "Alpha", "url": "https://acme.example/issue/10",
+        "updated_at": "2026-07-27T12:00:00Z", "status": "open",
+        "role": "reviewer" },
+      { "key": "acme/widget#11", "title": "Beta", "url": "https://acme.example/issue/11",
+        "updated_at": "2026-07-28T12:00:00Z", "status": "open",
+        "role": "reviewer" },
+      { "key": "acme/widget#12", "title": "Gamma", "url": "https://acme.example/issue/12",
+        "updated_at": "2026-07-29T12:00:00Z", "status": "open",
+        "role": "reviewer" },
+      { "key": "acme/widget#13", "title": "Delta", "url": "https://acme.example/issue/13",
+        "updated_at": "2026-07-30T12:00:00Z", "status": "open",
+        "role": "reviewer" }
+    ]'
+    ;;
+  *)
+    printf '[]'
+    ;;
+esac
+"#;
+
+    /// The half of the runtime this scenario needs to lay: its own listing,
+    /// and an `instantiate` that renders the workspace shape — an index, a
+    /// state machine of its own, and the tasks in files beside them.
+    const RENDERS: &str = r#"#!/usr/bin/env bash
+set -euo pipefail
+verb="$1"; shift
+
+if [ "$verb" = templates ]; then
+  cat <<JSON
+[
+  { "name": "supervised-fix", "version": "1.0.0", "source": "project",
+    "path": "$WORKFLOWS/supervised-fix",
+    "description": "Fix a ticket end to end.",
+    "inputs": [
+      { "name": "ticket", "description": "The ticket to fix.",
+        "type": "string", "required": true, "default": null, "validate": null } ] }
+]
+JSON
+  exit 0
+fi
+
+if [ "$verb" = instantiate ]; then
+  ref="$1"; shift
+  values=""; output=""; dry=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --values) values="$2"; shift 2 ;;
+      --output) output="$2"; shift 2 ;;
+      --dry-run) dry=yes; shift ;;
+      *) shift ;;
+    esac
+  done
+  if [ -n "$dry" ]; then
+    echo "would render $(basename "$ref") into $output"
+    exit 0
+  fi
+  mkdir -p "$output/tasks"
+  printf '# Rhei: fix it\n**States:** supervised-fix\n' > "$output/index.rhei.md"
+  printf 'name: supervised-fix\nstates:\n  implementing:\n    agent: x\n  done:\n    final: true\n' \
+    > "$output/states.yaml"
+  printf '### Task fix: fix the ticket\n**State:** implementing\n\nwork\n' \
+    > "$output/tasks/01-fix.md"
+  cp "$values" "$output/values-as-given.json"
+  echo "Instantiated $(basename "$ref") into $output"
+  exit 0
+fi
+"#;
+
+    /// And the other half: a runner that can start a run beneath the screen,
+    /// which is what makes a laid plan startable by the sweep after.
+    const DETACHES: &str = r#"
+if [ "$verb" = run ]; then
+  case "$*" in
+    *--help*)
+      printf 'Options:\n      --headless  detach it\n'
+      exit 0 ;;
+    *--headless*)
+      printf '%s\n' "$*" >> "$RUNS"
+      printf '{"id":"3f9a2c","pid":9,"status":"running","exit_code":null}\n'
+      exit 0 ;;
+  esac
+fi
+"#;
+
+    const REFUSES: &str = r#"
+echo "unknown verb $verb" >&2
+exit 1
+"#;
+
+    /// A world whose only offer about an issue is the entry beside the
+    /// workflow. `runner` names the stub deliberately: whether a runtime can
+    /// detach is asked once per runner name and remembered, so a case about
+    /// laying and a case about starting must not share one.
+    fn world(runner: &str, script: &str, autorun: bool) -> World {
+        let world = World::new();
+        world.stub("ephor-forge-acmeforge", ISSUE_FORGE);
+        let workflows = world.path().join("workflows");
+        std::fs::create_dir_all(workflows.join("supervised-fix")).expect("a workflow directory");
+        std::fs::write(
+            workflows.join("supervised-fix").join("template.yaml"),
+            "name: supervised-fix\ninputs:\n  - name: ticket\n    type: string\n",
+        )
+        .expect("the workflow's own manifest");
+        std::fs::write(
+            workflows.join("supervised-fix").join(".ephor.json"),
+            format!(
+                r#"{{
+                  "id": "fix-issue",
+                  "icon": "⛬",
+                  "description": "fix this issue end to end",
+                  "when": {{ "kinds": ["issue"] }},
+                  "autorun": {autorun},
+                  "inputs": {{ "ticket": "{{repo}}#{{number}}" }}
+                }}"#
+            ),
+        )
+        .expect("the entry beside the workflow");
+        world.stub(
+            runner,
+            &script
+                .replace("$WORKFLOWS", &workflows.to_string_lossy())
+                .replace("$RUNS", &world.path().join("runs.log").to_string_lossy()),
+        );
+        world.configure(json!({
+            "projects": { PROJECT: {
+                "providers": [ { "provider": "acmeforge", "user": "you", "repos": ["widget"] } ]
+            } },
+            "work": { "runner": runner }
+        }));
+        world.ephor().args(["refresh", PROJECT]).assert().success();
+        world
+    }
+
+    fn laying_world(autorun: bool) -> World {
+        world("acme-lay", &format!("{RENDERS}{REFUSES}"), autorun)
+    }
+
+    fn dispatch(world: &World, extra: &[&str]) -> serde_json::Value {
+        let mut args = vec!["work", "dispatch", "--json"];
+        args.extend_from_slice(extra);
+        let output = world.ephor().args(&args).output().expect("dispatch runs");
+        assert!(
+            output.status.success(),
+            "dispatch failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        json_of(&output)
+    }
+
+    fn plan_of(world: &World, n: u32) -> std::path::PathBuf {
+        work_root(world).join(format!("acmeforge-acme-widget-{n}-fix-issue"))
+    }
+
+    /// The sweep lays it about every matter it applies to, and the record of
+    /// the laying is what makes the next sweep leave those matters alone
+    /// (§FS-005-dispatch.28).
+    #[test]
+    fn the_sweep_lays_an_entry_that_asked_and_does_not_lay_it_twice() {
+        let world = laying_world(true);
+        let swept = dispatch(&world, &[]);
+        assert_eq!(swept["laid"], 4, "{swept}");
+        assert_eq!(swept["opened"], 0, "no recipe covers any of them");
+        let outcomes: Vec<&str> = swept["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["outcome"].as_str().unwrap())
+            .collect();
+        assert_eq!(outcomes, ["laid"; 4]);
+        assert_eq!(swept["items"][0]["entry"], json!("fix-issue"));
+        assert_eq!(swept["items"][0]["workflow"], json!("supervised-fix"));
+
+        // What the entry answered reached the workflow, exactly as a laying
+        // by hand would have (§FS-005-dispatch.19).
+        for n in [10, 11, 12, 13] {
+            let given = read_json(&plan_of(&world, n).join("values-as-given.json"));
+            assert_eq!(given["ticket"], json!(format!("acme/widget#{n}")));
+        }
+
+        // And a second sweep lays nothing: the matters have work now.
+        let again = dispatch(&world, &[]);
+        assert_eq!(again["laid"], 0, "{again}");
+        assert!(again["items"].as_array().unwrap().is_empty(), "{again}");
+    }
+
+    /// Silence means the key (§FS-005-dispatch.28): an entry that said
+    /// nothing is a menu row, laid by the reader and started by the reader.
+    #[test]
+    fn an_entry_that_did_not_ask_is_never_laid_by_the_sweep() {
+        let world = laying_world(false);
+        let swept = dispatch(&world, &[]);
+        assert_eq!(swept["laid"], 0, "{swept}");
+        assert_eq!(swept["refused"], 0, "{swept}");
+        assert!(!plan_of(&world, 13).exists());
+
+        // The reader's own key is untouched.
+        world
+            .ephor()
+            .args([
+                "work",
+                "lay",
+                "fix-issue",
+                "--item",
+                "acmeforge:acme/widget#13",
+            ])
+            .assert()
+            .success();
+        assert!(plan_of(&world, 13).join("index.rhei.md").is_file());
+    }
+
+    /// Recipes keep their priority (§FS-005-dispatch.28): a matter a recipe
+    /// covers gets the ticket it always got, and the entry gets its turn only
+    /// where nothing else applies. A reader who wants the workflow instead
+    /// narrows the recipe, which is the mechanism recipes already have.
+    #[test]
+    fn a_matter_a_recipe_covers_still_gets_the_ticket() {
+        let world = laying_world(true);
+        world.configure(json!({
+            "projects": { PROJECT: {
+                "providers": [ { "provider": "acmeforge", "user": "you", "repos": ["widget"] } ]
+            } },
+            "work": {
+                "runner": "acme-lay",
+                "recipes": [{
+                    "id": "triage",
+                    "icon": "◆",
+                    "description": "look at the issue",
+                    "state": "fix",
+                    "when": { "kinds": ["issue"] },
+                    "brief": "Look at {title}."
+                }]
+            }
+        }));
+        let swept = dispatch(&world, &["--limit", "1"]);
+        assert_eq!(swept["laid"], 0, "{swept}");
+        assert_eq!(swept["opened"], 1, "{swept}");
+        assert_eq!(swept["items"][0]["recipe"], json!("triage"));
+        assert!(!plan_of(&world, 13).exists());
+    }
+
+    /// A sweep asked what it would do makes nothing at all: not the plan, not
+    /// the record of it, and not the work root the laying would have needed
+    /// (§FS-005-dispatch.28).
+    #[test]
+    fn a_dry_run_says_what_it_would_lay_and_writes_nothing() {
+        let world = laying_world(true);
+        let swept = dispatch(&world, &["--dry-run"]);
+        assert_eq!(swept["laid"], 4, "{swept}");
+        assert_eq!(swept["items"][0]["outcome"], json!("would-lay"));
+        assert!(!work_root(&world).exists(), "a dry run made a work root");
+        assert!(!world.path().join("state/ephor/work.json").exists());
+    }
+
+    /// The ordering the reader already made orders what the sweep lays, and
+    /// `--limit` bounds it from the top of that order
+    /// (§FS-005-dispatch.28, §FS-005-dispatch.26).
+    #[test]
+    fn the_ranking_orders_what_is_laid_and_a_limit_bounds_it() {
+        let world = laying_world(true);
+        let ranking = world.path().join("ranking.txt");
+        std::fs::write(
+            &ranking,
+            "acmeforge:acme/widget#10\nacmeforge:acme/widget#12\n",
+        )
+        .unwrap();
+        let swept = dispatch(
+            &world,
+            &["--ranking", ranking.to_str().unwrap(), "--limit", "2"],
+        );
+        assert_eq!(swept["laid"], 2, "{swept}");
+        let items: Vec<&str> = swept["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["item"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            items,
+            ["acmeforge:acme/widget#10", "acmeforge:acme/widget#12"]
+        );
+        assert!(plan_of(&world, 10).exists());
+        assert!(!plan_of(&world, 13).exists());
+    }
+
+    /// The whole of it: what the sweep laid, the sweep starts. The plan's own
+    /// task lives in a file beside its index and runs under the machine
+    /// beside it, and neither of those is the work root's
+    /// (§FS-005-dispatch.28).
+    #[test]
+    fn what_the_sweep_laid_is_due_and_the_sweep_after_starts_it() {
+        let world = world("acme-loop", &format!("{RENDERS}{DETACHES}{REFUSES}"), true);
+        world
+            .ephor()
+            .args(["work", "dispatch", "--limit", "1"])
+            .assert()
+            .success();
+        assert!(plan_of(&world, 13).join("tasks/01-fix.md").is_file());
+
+        let output = world
+            .ephor()
+            .args(["work", "run", "--due", "--json"])
+            .output()
+            .expect("the due sweep runs");
+        assert!(output.status.success());
+        let reading = json_of(&output);
+        assert_eq!(reading["failed"], 0, "{reading}");
+        assert_eq!(reading["runs"][0]["outcome"], "started", "{reading}");
+        assert_eq!(
+            reading["runs"][0]["tickets"],
+            json!(["acmeforge-acme-widget-13-fix-issue.fix"]),
+            "{reading}"
+        );
+
+        // The task is over, and the root goes quiet — the plan's own machine
+        // is what says so.
+        std::fs::write(
+            plan_of(&world, 13).join("tasks/01-fix.md"),
+            "### Task fix: fix the ticket\n**State:** done\n\nwork\n",
+        )
+        .unwrap();
+        world
+            .ephor()
+            .args(["work", "run", "--due"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Nothing is due"));
+    }
+}

@@ -170,6 +170,12 @@ pub struct Offer {
     /// (§DA-006-hands-fill-a-workflows-targets).
     #[serde(default)]
     pub hands: Vec<String>,
+    /// The work this offer lays down needs nobody to start it
+    /// (§FS-005-dispatch.28). Only on an offer that names a workflow: an
+    /// offer that runs a command here has no run to start, and the schema
+    /// refuses it there.
+    #[serde(default)]
+    pub autorun: bool,
     /// Which branch the work this offer lays down belongs on, where the matter
     /// has none of its own (§FS-005-dispatch.25). A template rendered from the
     /// matter's fields, and the one thing a project may say about where a
@@ -221,6 +227,7 @@ impl Offer {
                     name,
                     inputs: self.inputs.clone(),
                     hands: self.hands.clone(),
+                    autorun: self.autorun,
                 }),
             hand: None,
             cwd: self.cwd.clone(),
@@ -302,6 +309,9 @@ pub fn parse(text: &str, source: &str) -> Result<Manifest> {
     if let Some(why) = says_two_places(&value) {
         return Err(EphorError::Registry(format!("{source}: {why}")));
     }
+    if let Some(why) = starts_a_command(&value) {
+        return Err(EphorError::Registry(format!("{source}: {why}")));
+    }
     if let Some(error) = validator().iter_errors(&value).next() {
         return Err(EphorError::Registry(format!(
             "{source} does not match the manifest schema at '{}': {error}",
@@ -330,6 +340,40 @@ fn says_two_places(value: &Value) -> Option<String> {
                 "offer '{}' says both 'background' and 'window': a move that needs nobody runs \
                  beneath the screen, and a program somebody types into runs in a window — never \
                  both",
+                offer
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("(unnamed)")
+            )
+        })
+}
+
+/// Why an offer here asks to run work it does not hand over, or None where
+/// none does.
+///
+/// Work nobody has to start is said on the thing that hands work over
+/// (§FS-005-dispatch.28), and an offer that runs a command here has no run to
+/// start. The schema says it too — as a `dependentSchemas`, so a manifest
+/// validated by anything but ephor hears it — but says it as a shape; the
+/// reader gets the sentence, and it is the one a person's own configuration is
+/// refused in (§AR-005-capabilities.2).
+fn starts_a_command(value: &Value) -> Option<String> {
+    value
+        .get("actions")?
+        .as_array()?
+        .iter()
+        .find(|offer| {
+            offer
+                .get("autorun")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+                && offer.get("workflow").is_none()
+        })
+        .map(|offer| {
+            format!(
+                "offer '{}' says 'autorun' and runs a command here: work nobody has to start is \
+                 said on the thing that hands it over, and a command runs here — there is no run \
+                 to start",
                 offer
                     .get("id")
                     .and_then(Value::as_str)
@@ -371,6 +415,34 @@ mod tests {
         assert!(manifest.forest.is_empty());
         assert!(manifest.offers.is_empty());
         assert!(manifest.checks.check.is_none());
+    }
+
+    /// A project's own offer that lays a workflow down may say the work needs
+    /// nobody to start it, and an offer that runs a command may not — there
+    /// is no run to start (§FS-005-dispatch.28). The schema says it too, so a
+    /// manifest validated by anything but ephor hears the same refusal.
+    #[test]
+    fn an_offer_that_lays_a_workflow_down_may_ask_to_run_itself() {
+        let manifest = parse(
+            r#"{"actions": [{"id": "fix-issue", "description": "fix it",
+                             "workflow": "supervised-fix", "autorun": true}]}"#,
+            "ephor.json",
+        )
+        .unwrap();
+        let ask = manifest.offers[0]
+            .action()
+            .workflow
+            .expect("it lays a workflow down");
+        assert!(ask.autorun);
+
+        let refused = parse(
+            r#"{"actions": [{"id": "gate", "description": "gate",
+                             "command": "just gate", "autorun": true}]}"#,
+            "ephor.json",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(refused.contains("no run to start"), "{refused}");
     }
 
     #[test]

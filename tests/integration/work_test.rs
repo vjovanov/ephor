@@ -1989,3 +1989,113 @@ fn a_start_that_fails_is_said_and_rests_before_it_is_tried_again() {
         .stdout(predicate::str::contains("Nothing is due"));
     assert_eq!(starts(&log), tried, "the root rests after a failed start");
 }
+
+/// A workflow entry a person wrote in their own configuration — the third of
+/// the three homes (§FS-005-dispatch.19) — asks to run itself and the sweep
+/// lays it (§FS-005-dispatch.28).
+///
+/// The matter is a project's own task: it carries no role at all, so no
+/// shipped recipe covers it (§FS-005-dispatch.27), and the entry is the only
+/// thing that applies. What lands is a plan of its own beside the matter's,
+/// and the record of the laying is what makes the next sweep leave it alone.
+#[test]
+fn a_workflow_entry_in_the_persons_own_configuration_is_laid_by_the_sweep() {
+    let tmp = tempdir();
+    fixture(tmp.path(), Value::Null);
+    // A runner that offers one workflow and renders it as a workspace of its
+    // own — an index, a machine beside it, and the tasks in files.
+    fs::create_dir_all(tmp.path().join("fakebin")).unwrap();
+    make_executable(
+        &tmp.path().join("fakebin/rhei"),
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+verb="${1:-}"; shift || true
+if [ "$verb" = templates ]; then
+  printf '%s' '[{"name":"supervised-fix","version":"1.0.0","source":"user","path":"supervised-fix",
+                 "description":"Fix a ticket end to end.",
+                 "inputs":[{"name":"ticket","description":"The ticket.","type":"string",
+                            "required":true,"default":null,"validate":null}]}]'
+  exit 0
+fi
+if [ "$verb" = instantiate ]; then
+  output=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --output) output="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  mkdir -p "$output/tasks"
+  printf '# Rhei: fix it\n**States:** supervised-fix\n' > "$output/index.rhei.md"
+  printf 'name: supervised-fix\nstates:\n  implementing:\n  done:\n    final: true\n' \
+    > "$output/states.yaml"
+  printf '### Task fix: fix the ticket\n**State:** implementing\n\nwork\n' \
+    > "$output/tasks/01-fix.md"
+  echo "instantiated into $output"
+  exit 0
+fi
+exit 1
+"#,
+    );
+    let mut config: Value =
+        serde_json::from_str(&fs::read_to_string(tmp.path().join("status.json")).unwrap()).unwrap();
+    config["actions"] = json!([{
+        "id": "fix-task",
+        "icon": "⛬",
+        "description": "fix this task end to end",
+        "workflow": "supervised-fix",
+        "autorun": true,
+        "when": { "kinds": ["task"] },
+        "inputs": { "ticket": "{title}" }
+    }]);
+    fs::write(
+        tmp.path().join("status.json"),
+        serde_json::to_string_pretty(&config).unwrap(),
+    )
+    .unwrap();
+    ephor(tmp.path())
+        .args(["refresh", "demo"])
+        .assert()
+        .success();
+    // A project's own task, in the cached feed the sweep reads: no role, and
+    // so nothing ephor ships has anything to say about it.
+    with_pr(tmp.path(), |item| {
+        item["kind"] = json!("task");
+        item.as_object_mut().unwrap().remove("role");
+    });
+
+    let output = ephor(tmp.path())
+        .args(["work", "dispatch", "--json"])
+        .output()
+        .expect("the sweep runs");
+    assert!(output.status.success());
+    let swept: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(swept["laid"], 1, "{swept}");
+    assert_eq!(swept["opened"], 0, "{swept}");
+    assert_eq!(swept["items"][0]["outcome"], json!("laid"), "{swept}");
+    assert_eq!(swept["items"][0]["entry"], json!("fix-task"), "{swept}");
+
+    let plan = tmp
+        .path()
+        .join("demo/panta/github-prs-acme-widget-42-fix-task");
+    assert!(plan.join("tasks/01-fix.md").is_file());
+    // The record says which entry laid it, which is what the due sweep reads
+    // (§FS-005-dispatch.28) and what makes a second sweep lay nothing.
+    let ledger: Value = serde_json::from_str(
+        &fs::read_to_string(tmp.path().join("state/ephor/work.json")).unwrap(),
+    )
+    .unwrap();
+    let dispatch = &ledger["entries"]["github-prs:acme/widget#42"]["dispatches"][0];
+    assert_eq!(dispatch["recipe"], json!("fix-task"));
+    assert_eq!(
+        dispatch["plan"],
+        json!("github-prs-acme-widget-42-fix-task")
+    );
+
+    let again = ephor(tmp.path())
+        .args(["work", "dispatch", "--json"])
+        .output()
+        .expect("the sweep runs again");
+    let swept: Value = serde_json::from_slice(&again.stdout).unwrap();
+    assert_eq!(swept["laid"], 0, "{swept}");
+}

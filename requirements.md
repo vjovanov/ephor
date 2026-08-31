@@ -2301,9 +2301,12 @@ belongs beside it.
 
 **Nothing autoruns unasked.** Silence means the key, exactly as before: a
 recipe that says nothing about this is started by the reader, and so is
-every menu entry, every workflow, and every plan somebody wrote by hand. The
-setting is per recipe and nowhere else, because the reader who trusts one
-kind of work to start itself has said nothing about the rest.
+every menu entry, every workflow entry that did not say it, and every plan
+somebody wrote by hand. The setting is written on the thing that hands work
+over — a recipe, or an entry that lays a workflow down
+([§28](#28-a-workflow-entry-can-ask-for-the-same-thing-a-recipe-can)) — and
+nowhere else, because the reader who trusts one kind of work to start itself
+has said nothing about the rest.
 
 **Starting is a sweep, and the sweep reads the world.** What starts a run is
 not a memory of having dispatched something — that would be the ledger
@@ -2623,6 +2626,81 @@ looks, without explanation, like it covers nothing about a project's own
 tasks. This is a reading only: dispatch itself, and what it hands over, are
 unaffected — the exclusion is `ephor work offers`' own diagnosis of one
 matter, not a second thing the selector decides.
+
+### 28. A workflow entry can ask for the same thing a recipe can
+
+[§24](#24-work-nobody-has-to-start-starts-itself) removed the key from the
+front of a recipe's work and left it in front of every workflow's, which is
+where the unattended loop actually stops. A workflow is what fixes a matter
+end to end — implement, review, ship — and it is exactly the shape of work
+nobody should have to be present for. Yet it took two deliberate acts per
+matter: laying the plan down, and then starting the run. Both are the
+formality [§24](#24-work-nobody-has-to-start-starts-itself) already refuses to
+charge a reader for.
+
+**So a workflow entry may say `autorun`, and it means what it means on a
+recipe.** The entry is the one
+[§19](#19-a-workflow-the-runtime-offers-is-an-action-and-its-inputs-are-answered-here)
+already describes, in any of its three homes, and this is one more thing it
+says beside its `when` and its `inputs`. Nothing else may say it: an entry
+that runs a command here has no work to start, and an entry that asks for a
+ticket says it inside the recipe it already is — two spellings of one fact
+would drift, so the second is refused where it is written.
+
+**The sweep lays it, where nothing else would.** `ephor work dispatch`
+already walks the matters that deserve work and hands each one to the first
+recipe that applies. A matter no recipe applies to and that has no work at
+all is where the entry gets its turn: the first workflow entry that both
+matches and asked to run itself is laid down about that matter, through the
+one path [§19](#19-a-workflow-the-runtime-offers-is-an-action-and-its-inputs-are-answered-here)
+already writes plans through. Recipes keep their priority — a matter a recipe
+covers is a ticket, exactly as before — and a matter that already has work is
+left alone, `--again` included: a second plan about one matter is something
+`ephor work lay` is asked for, never something a sweep decides.
+
+**It counts, reports, and refuses like a dispatch.** Laying is one of the
+things `--limit` bounds
+([§26](#26-an-ordering-already-made-can-be-read-and-a-limit-bounds-what-runs)),
+taken in the ranking's own order like everything else that sweep does. Under
+`--dry-run` everything is resolved and nothing is written — not the plan, not
+the record of it, and not the files a real laying would put beside it. An
+entry that cannot be laid down — a required input nobody answered, a hand a
+narrowing refuses — is reported as a refusal with nothing written, the way a
+dispatch that could not open a ticket already is, and the sweep goes on to
+the next matter. Both forms of the reading carry it in the same words
+([§REQ-002-parity.3](docs/requirements/REQ-002-parity.md#3-every-reading-answers-a-program)).
+
+**And what it laid is due like anything else.** A plan a workflow wrote is
+work in a work root, so
+[§24](#24-work-nobody-has-to-start-starts-itself)'s sweep is what starts it:
+its root is **due** when that plan holds a task that is open, unclaimed and
+not parked on a question, and no run is live on the root. Two things are the
+plan's own rather than the root's, and both are read where the plan is. Its
+tasks are wherever the runtime wrote them — a plan rendered as a directory
+keeps them in files beside its index, and those are as much the plan's tasks
+as one written inside it. And they run under **the machine in force for that
+plan**, which is the machine beside it where it has one, because a task's
+state means whatever the machine in force for its own store says it means
+([§FS-006-project-interface.7](requirements.md#7-the-projects-own-tasks-are-read-where-they-live)).
+A root's own machine answers for the plans the root holds directly, as it
+always did.
+
+**What asked for it is what the ledger says asked for it.** A recipe is a
+fact about a ticket; the entry is the fact about a laid plan, and ephor's
+record of the laying is where it is read from
+([§4](#4-the-ledger-is-ephors-record-and-never-the-truth-about-the-work)) —
+not from the plan, which is the runtime's and says nothing about who asked.
+A plan nothing in the record laid — one a reader laid by hand, one that was
+simply found in the root — asked for nothing and is nobody's to start, which
+is [§24](#24-work-nobody-has-to-start-starts-itself)'s silence again.
+
+**Everything else about the sweep is untouched.** The aggregate and project
+ceilings, the cross-process reservation, the ranking, the failed-start
+back-off, the one-run-per-root rule and the refusal to run in a working tree
+standing on another branch all apply to a root a workflow laid exactly as
+they apply to one a recipe wrote: it is the same root, reached the same way.
+An entry that says nothing about this is a menu entry and only a menu entry,
+laid by the reader and started by the reader, as it was.
 
 ## FS-006-project-interface: a project and ephor meet over one interface, in three homes
 

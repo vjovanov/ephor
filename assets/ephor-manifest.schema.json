@@ -152,6 +152,10 @@
         "branch": {
           "required": ["workflow"],
           "description": "A branch template says where handed-over work belongs (FS-005-dispatch.25); an offer that runs a command runs in the workspace the project already has."
+        },
+        "autorun": {
+          "required": ["workflow"],
+          "description": "Work nobody has to start is said on the thing that hands work over (FS-005-dispatch.28); an offer that runs a command here has no run to start."
         }
       },
       "description": "One menu entry the project offers. It either runs a command here or lays down one of the runtime's workflows — never both and never neither (FS-006-project-interface.9, FS-005-dispatch.19).",
@@ -172,6 +176,7 @@
           "description": "Inputs of that workflow that name who does the work, for a workflow whose own manifest does not say so. Each resolves through ephor's hand resolution and is refused where a narrowing does not permit it (DA-006-hands-fill-a-workflows-targets)."
         },
         "branch": { "type": "string", "description": "Which branch the work this offer lays down belongs on, where the matter has none of its own (FS-005-dispatch.25). A template rendered from the matter's fields as `inputs` are — 'fix/issue-{number}' — and never naming {branch}, {workspace} or {reply}, which are what it produces. Saying it means the work needs the checkout, and the dispatch makes that branch's workspace under the registry's own branch_root_template. Only on an offer that names a workflow." },
+        "autorun": { "type": "boolean", "description": "The work this offer lays down needs nobody to start it (FS-005-dispatch.28): `ephor work dispatch` lays it about a matching matter that no recipe covers and that has no work, and the sweep that follows starts what it laid. Omitted is today's behaviour — the entry is a menu row the reader lays and the reader starts. Only on an offer that names a workflow." },
         "cwd": { "$ref": "#/$defs/cwd" },
         "when": { "$ref": "#/$defs/selector" },
         "requires": {

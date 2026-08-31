@@ -257,9 +257,12 @@
         "item": { "type": "string" },
         "title": { "type": "string" },
         "recipe": { "type": "string" },
+        "entry": { "type": "string", "description": "The workflow entry that laid a plan down about this matter (FS-005-dispatch.28). On a `laid`, `would-lay`, or refused-laying row in place of `recipe`, which names a recipe." },
+        "workflow": { "type": "string", "description": "The workflow that entry named (FS-005-dispatch.19)." },
+        "plan": { "type": "string", "description": "Where the laid plan went, or would go (FS-005-dispatch.19)." },
         "outcome": {
-          "enum": ["opened", "would-open", "reopened", "would-reopen", "settled", "has-work", "refused"],
-          "description": "`settled` is a deterministic opening move that finished, so there was nothing to hand over (FS-005-dispatch.12); `has-work` is a matter left alone because it already has some."
+          "enum": ["opened", "would-open", "reopened", "would-reopen", "settled", "has-work", "laid", "would-lay", "refused"],
+          "description": "`settled` is a deterministic opening move that finished, so there was nothing to hand over (FS-005-dispatch.12); `has-work` is a matter left alone because it already has some; `laid` is a workflow entry that asked to run itself, laid down about a matter no recipe covers (FS-005-dispatch.28)."
         },
         "ticket": { "type": "string" },
         "says": { "type": "string" }
@@ -773,9 +776,10 @@
     "work-dispatch": {
       "description": "`ephor work dispatch --json` (FS-005-dispatch.1) — the sweep, and what each matter it reached came to.",
       "type": "object",
-      "required": ["opened", "settled", "refused", "dry_run", "items"],
+      "required": ["opened", "laid", "settled", "refused", "dry_run", "items"],
       "properties": {
         "opened": { "type": "integer" },
+        "laid": { "type": "integer", "description": "Plans laid down by a workflow entry that asked to run itself, for matters no recipe covers (FS-005-dispatch.28). Counted apart from tickets, and against `--limit` beside them." },
         "settled": { "type": "integer", "description": "Deterministic opening moves that finished, so nothing was handed over (FS-005-dispatch.12)." },
         "refused": { "type": "integer" },
         "dry_run": { "type": "boolean" },
