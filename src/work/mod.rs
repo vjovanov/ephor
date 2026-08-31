@@ -10,6 +10,7 @@
 pub mod commands;
 pub mod dossier;
 pub mod ledger;
+mod ranking;
 pub mod recipe;
 pub mod runtime;
 pub mod workflow;
