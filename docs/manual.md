@@ -2253,7 +2253,8 @@ ephor work states
   starts a detached run on each root holding an open, unclaimed, unparked
   ticket from a recipe that said `"autorun": true` — or a plan a workflow
   entry that said it laid down, whose tasks are read where the runtime wrote
-  them and judged by the machine beside them (§8.15.1). A root a run already holds
+  them and judged by the machine beside them — or by the root's, where they
+  keep none (§8.15.1). A root a run already holds
   gets nothing, so the sweep is safe to run as often as you like and starts one
   run however many times you invoke it. A root whose start failed rests before
   it is tried again, longer each consecutive time, so a runner that refuses
@@ -2512,14 +2513,19 @@ never reads *running* under a run that came later. And a work root whose
 `states.yaml` cannot be read is not guessed at: running, claimed, and
 dropped still show — the lock, the journal, and the plans carry those on
 their own — but nothing there is called queued or finished on the word of a
-machine that is not there, and the row says so itself: `no states.yaml —
-nothing judged queued or finished`. That is the root's own machine, and it
-answers for the plans the root holds directly. A plan that is a **store of its
-own** — one the runtime rendered as a directory, its `states.yaml` beside its
-index, which is what a laid workflow lands as (§8.15.1) — is judged by the
-machine in force *there*, on this board exactly as in `ephor work run --due`:
-a task its own machine parks reads *waiting on you* on both, and neither
-calls it queued.
+machine that is not there, and the row says so itself, naming the plans it
+happened to: `no states.yaml — nothing judged queued or finished in
+widget-42`. That is the root's own machine, and it answers for the plans the
+root holds directly. A plan that is a **store of its own** — one the runtime
+rendered as a directory, its index in a directory of its own, which is what a
+laid workflow lands as (§8.15.1) — is judged by the machine in force *there*,
+on this board exactly as in `ephor work run --due`: a task its own machine
+parks reads *waiting on you* on both, and neither calls it queued. Where such
+a plan keeps no `states.yaml` beside it, the root's machine answers for it as
+well — that is the machine the runtime itself resolves it against, and its
+`**States:**` line names one the project holds. Only a `states.yaml` that is
+there and will not read leaves a plan judged by nothing, and the row's note
+names that plan too.
 
 | Key | Does |
 |---|---|
@@ -2723,7 +2729,10 @@ under the same id, which is how recipes have always been overridden.
 plan about one matter is something `ephor work lay` is asked for, never
 something a sweep decides. The record of the laying is what says so, and it is
 also what the due sweep reads to know which entry asked — a plan you laid by
-hand, or one that was simply found in a work root, is still yours to start.
+hand, or one that was simply found in a work root, is still yours to start,
+whatever its tasks are called. The `<recipe>-<n>` ticket ids ephor writes into
+a matter's own plan say which recipe asked for them; a workflow's own tasks
+are named in the runtime's language, where the same spelling says nothing.
 
 Say nothing and nothing changes: the entry is a menu row, laid by you and
 started by you.

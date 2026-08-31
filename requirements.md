@@ -1554,15 +1554,19 @@ empty. The tickets themselves stay readable
 exactly as everywhere else in dispatch: work state is read from the plan
 files on disk, that reading is the floor and is never removed, and where the
 bound runner itself can be asked for a sharper listing, its answer may
-refine what the files said — it never replaces them. And a work root whose
-own state machine cannot be read is reported at the same altitude: liveness,
-running, claims, and what a dead run dropped are facts the lock, the
-journal, and the plans carry on their own, and the board still says them —
-but nothing there is called queued or waiting and nothing is counted
-finished, because those are the machine's words and the machine is not
-there to say them. The row itself says the machine could not be read, in so
-many words: a count left silently at zero would read as nothing done, which
-is exactly the guess the withholding exists to avoid.
+refine what the files said — it never replaces them. And a plan whose state
+machine cannot be read is reported at the same altitude: liveness, running,
+claims, and what a dead run dropped are facts the lock, the journal, and the
+plans carry on their own, and the board still says them — but nothing in
+that plan is called queued or waiting and nothing of it counted finished,
+because those are the machine's words and the machine is not there to say
+them. The row itself says the machine could not be read, **naming the plans
+it happened to**, in so many words: a count left silently at zero would read
+as nothing done, which is exactly the guess the withholding exists to avoid.
+Which machine that was is the plan's own question
+([§28](#28-a-workflow-entry-can-ask-for-the-same-thing-a-recipe-can)), so a
+plan judged by a machine of its own is never among them — a row that said
+otherwise would deny a count the work beside it really earned.
 
 #### 15.1 The board keeps itself current
 
@@ -2679,9 +2683,16 @@ plan's own rather than the root's, and both are read where the plan is. Its
 tasks are wherever the runtime wrote them — a plan rendered as a directory
 keeps them in files beside its index, and those are as much the plan's tasks
 as one written inside it. And they run under **the machine in force for that
-plan**, which is the machine beside it where it has one, because a task's
+plan**, which is the machine beside it where it declares one, because a task's
 state means whatever the machine in force for its own store says it means
 ([§FS-006-project-interface.7](requirements.md#7-the-projects-own-tasks-are-read-where-they-live)).
+Where such a plan declares no machine of its own, **the root's own answers**:
+that is the machine the runtime resolves it against — a plan that names a
+machine names the project's — and reading it under a default nobody chose
+would call its finished work unfinished. A machine that is there and will not
+read is neither: nothing in that plan is judged at all, rather than judged by
+a machine that answers for other work
+([§15](#15-every-operation-is-visible-in-one-place)).
 A root's own machine answers for the plans the root holds directly, as it
 always did.
 
@@ -2692,7 +2703,12 @@ record of the laying is where it is read from
 not from the plan, which is the runtime's and says nothing about who asked.
 A plan nothing in the record laid — one a reader laid by hand, one that was
 simply found in the root — asked for nothing and is nobody's to start, which
-is [§24](#24-work-nobody-has-to-start-starts-itself)'s silence again.
+is [§24](#24-work-nobody-has-to-start-starts-itself)'s silence again. That
+holds however its tasks are named: the ticket id that says which recipe wrote
+it ([§24](#24-work-nobody-has-to-start-starts-itself)) is a fact about the
+tickets ephor itself wrote into the root's own plan, and a store of its own
+names its tasks in the runtime's language, where the same spelling means
+nothing of the kind.
 
 **Everything else about the sweep is untouched.** The aggregate and project
 ceilings, the cross-process reservation, the ranking, the failed-start

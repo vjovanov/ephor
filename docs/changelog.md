@@ -48,9 +48,13 @@ ships, the previous "latest" section moves verbatim to
   laid plan as ordinary work: its tasks are read wherever the runtime wrote
   them — including the `tasks/*.md` of a plan rendered as a directory — and
   every surface that reads them judges them by the state machine in force for
-  that plan rather than the work root's: the due sweep, the operations board,
-  and the menu row all call a task its own machine parks *waiting on you*
-  rather than queued. It runs with capacity ceilings, cross-process
+  that plan — the one beside it where it declares one, and the work root's
+  where it declares none, which is what the runtime itself resolves such a
+  plan against: the due sweep, the operations board, and the menu row all
+  call a task its own machine parks *waiting on you* rather than queued, and
+  a board that had to withhold judgment for want of a machine names the plans
+  it withheld it for. A plan nothing in the record laid is still nobody's to
+  start, whatever its tasks are named. It runs with capacity ceilings, cross-process
   reservation, ranking, failed-start back-off and the branch guard applying
   exactly as they do to a root a recipe wrote. Recipes keep their priority, and an entry that says
   nothing behaves exactly as before: a menu row, laid by you and started by

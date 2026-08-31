@@ -776,6 +776,24 @@ pub fn own_store(plan: &Path) -> Option<&Path> {
     }
 }
 
+/// The machine that answers for a plan's tasks, resolved the way the runtime
+/// itself resolves it (§FS-005-dispatch.28): the machine declared in the
+/// plan's own store, where the plan is a store of its own and declares one.
+///
+/// `Ok(None)` is the other two shapes at once, because the answer is the same
+/// for both: a plan the work root holds directly, and a store of its own that
+/// declares nothing — whose `**States:**` names a machine the runtime resolves
+/// from the project it sits in. In both, the root's own machine is the one in
+/// force, and the caller supplies it. `Err` is a store that declares a machine
+/// which will not read, where nothing there is judged at all rather than
+/// judged by a machine that answers for other work (§FS-005-dispatch.15).
+pub fn own_machine(plan: &Path) -> Result<Option<WorkRoot>> {
+    match own_store(plan) {
+        Some(dir) => WorkRoot::open(dir),
+        None => Ok(None),
+    }
+}
+
 /// The task files of a plan rendered as a directory: the direct children of
 /// the `tasks/` directory beside its index, in name order, read as they
 /// stand (§FS-005-dispatch.28). Empty for a plan written as one file, which
