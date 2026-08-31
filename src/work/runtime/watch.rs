@@ -660,11 +660,14 @@ pub struct Operation {
     pub done: usize,
     /// Tickets in the abandonment state, counted beside the finished.
     pub cancelled: usize,
-    /// Why this root's own state machine could not be read, where it could
-    /// not (§FS-005-dispatch.15): finality and gating are the machine's
-    /// words, so nothing on such a row is called queued or waiting and
-    /// nothing is counted finished — and the row says so itself, rather than
-    /// leaving a zero to be misread as nothing done.
+    /// Why a plan here could not be judged, where one could not, and which
+    /// plans it was (§FS-005-dispatch.15): finality and gating are the
+    /// machine's words, so nothing in such a plan is called queued or waiting
+    /// and nothing of it counted finished — and the row says so itself,
+    /// rather than leaving a zero to be misread as nothing done. Judgment is
+    /// the plan's own question (§FS-005-dispatch.28), so the plans judged by
+    /// a machine of their own are never in it: the note would otherwise deny
+    /// a count they really earned.
     pub machine_unread: Option<String>,
     /// Every plan the caller knows in this root, one path each — what
     /// [`Operation::plan`] falls back to when every ticket was filtered out
@@ -771,6 +774,42 @@ pub struct Board {
     pub refusal: Option<String>,
 }
 
+/// One of the two ways the machine that would judge a plan goes missing:
+/// nothing declared where the plan is judged from (§FS-005-dispatch.15).
+const NO_MACHINE: &str = "no states.yaml";
+
+/// The other: something declared there that will not read
+/// (§FS-005-dispatch.15).
+const UNREADABLE_MACHINE: &str = "states.yaml unreadable";
+
+/// Note that a plan went unjudged, under the reason it went unjudged for:
+/// the row names the plans, and a reason shared by several says them together
+/// (§FS-005-dispatch.15).
+fn withhold<'a>(withheld: &mut Vec<(&'a str, Vec<String>)>, reason: &'a str, plan_id: &str) {
+    match withheld.iter_mut().find(|(known, _)| *known == reason) {
+        Some((_, plans)) => plans.push(plan_id.to_string()),
+        None => withheld.push((reason, vec![plan_id.to_string()])),
+    }
+}
+
+/// What the row says about the judgment it withheld, or None where it
+/// withheld none: the reason, and the plans it happened to, so a count the
+/// rest of the floor really earned is not denied (§FS-005-dispatch.15).
+fn says_unread(withheld: &[(&str, Vec<String>)]) -> Option<String> {
+    (!withheld.is_empty()).then(|| {
+        withheld
+            .iter()
+            .map(|(reason, plans)| {
+                format!(
+                    "{reason} — nothing judged queued or finished in {}",
+                    plans.join(", ")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ")
+    })
+}
+
 /// The board, read from the artifacts: liveness from the lock, held tickets
 /// from the journal, state and assignee from the plans with the runner's own
 /// listing sharpening them where the binary is there (§FS-005-dispatch.15).
@@ -825,21 +864,21 @@ pub fn board(config: &WorkConfig, roots: &[RootPlans]) -> Board {
             BTreeMap::new()
         };
         let machine = WorkRoot::open(&group.root);
-        // Read or not is a fact the row carries (§FS-005-dispatch.15): with
-        // the machine unreadable, queued and finished are withheld below, and
-        // a row that withheld them silently would leave its zero to be read
-        // as nothing done. Carried only where a plan actually leaned on it —
-        // a floor of plans that are stores of their own is judged whole, and
-        // saying nothing was judged there would be untrue.
-        let unread = match &machine {
+        // Why the root's own machine could not be read, where it could not:
+        // the two ways it goes missing, in the words the row says them in
+        // (§FS-005-dispatch.15).
+        let root_unread = match &machine {
             Ok(Some(_)) => None,
-            Ok(None) => Some("no states.yaml — nothing judged queued or finished".to_string()),
-            Err(_) => {
-                Some("states.yaml unreadable — nothing judged queued or finished".to_string())
-            }
+            Ok(None) => Some(NO_MACHINE),
+            Err(_) => Some(UNREADABLE_MACHINE),
         };
         let machine = machine.ok().flatten();
-        let mut leaned_on_root = false;
+        // Which plans went unjudged, and why: read or not is a fact the row
+        // carries (§FS-005-dispatch.15), and since judgment is per plan the
+        // row names the plans it happened to. A plan judged by a machine of
+        // its own is never in it — its count is real, and a row saying
+        // nothing was judged would deny it (§FS-005-dispatch.28).
+        let mut withheld: Vec<(&str, Vec<String>)> = Vec::new();
         let is_final = |judge: Option<&WorkRoot>, state: Option<&str>| {
             state
                 .zip(judge)
@@ -864,22 +903,28 @@ pub fn board(config: &WorkConfig, roots: &[RootPlans]) -> Board {
         let mut cancelled = 0;
         let mut known: BTreeSet<(String, String)> = BTreeSet::new();
         for (plan_ref, title, floor_tickets) in &floor {
-            // Which machine answers for this plan's tasks: the one in force
-            // in the plan's own store where the plan is one, because a task's
+            // Which machine answers for this plan's tasks: the one the plan's
+            // own store declares where the plan is one, because a task's
             // state means whatever the machine in force for its own store
             // says it means (§FS-006-project-interface.7,
-            // §FS-005-dispatch.28). A store whose machine cannot be read
-            // judges nothing — falling back on the root's would answer for
-            // this plan with a machine that is about other work
-            // (§FS-005-dispatch.15). The root's own answers for the plans the
-            // root holds directly, as it always did.
-            let own = super::plan::own_store(&plan_ref.path).map(WorkRoot::in_force);
+            // §FS-005-dispatch.28). A store that declares none is resolved
+            // against the root's, as the runtime resolves it and as the plans
+            // the root holds directly always were. A store whose own machine
+            // will not read judges nothing — falling back on the root's would
+            // answer for this plan with a machine that is about other work —
+            // and says so on the row (§FS-005-dispatch.15).
+            let own = super::plan::own_machine(&plan_ref.path);
             let judge: Option<&WorkRoot> = match &own {
-                Some(Ok(store)) => Some(store),
-                Some(Err(_)) => None,
-                None => {
-                    leaned_on_root = true;
+                Ok(Some(store)) => Some(store),
+                Ok(None) => {
+                    if let Some(reason) = root_unread {
+                        withhold(&mut withheld, reason, &plan_ref.plan_id);
+                    }
                     machine.as_ref()
+                }
+                Err(_) => {
+                    withhold(&mut withheld, UNREADABLE_MACHINE, &plan_ref.plan_id);
+                    None
                 }
             };
             for ticket in floor_tickets {
@@ -1022,7 +1067,7 @@ pub fn board(config: &WorkConfig, roots: &[RootPlans]) -> Board {
                 tickets,
                 done,
                 cancelled,
-                machine_unread: leaned_on_root.then_some(unread).flatten(),
+                machine_unread: says_unread(&withheld),
                 plans: group.plans.iter().map(|plan| plan.path.clone()).collect(),
             });
         }
@@ -1824,7 +1869,7 @@ mod tests {
         assert_eq!(op.done, 0);
         assert_eq!(
             op.machine_unread.as_deref(),
-            Some("no states.yaml — nothing judged queued or finished")
+            Some("no states.yaml — nothing judged queued or finished in widget-42")
         );
         drop(holder);
 
@@ -1856,7 +1901,7 @@ mod tests {
         let board = super::board(&config(), std::slice::from_ref(&group));
         assert_eq!(
             board.operations[0].machine_unread.as_deref(),
-            Some("states.yaml unreadable — nothing judged queued or finished")
+            Some("states.yaml unreadable — nothing judged queued or finished in widget-42")
         );
     }
 

@@ -627,14 +627,15 @@ impl WorkAt<'_> {
             // tasks mean what the machine in force there says they mean
             // (§FS-005-dispatch.28, §FS-006-project-interface.7) — the board
             // reads it the same way, and one row must not disagree with the
-            // screen it was narrowed from (§AR-009-surfaces.1). With that
-            // machine unreadable nothing there is judged, rather than judged
-            // by a machine that answers for other work.
-            let own = plan::own_store(&laid.path).map(WorkRoot::in_force);
+            // screen it was narrowed from (§AR-009-surfaces.1). Declaring
+            // none, it is the root's machine the runtime resolves it against;
+            // with one that will not read, nothing there is judged, rather
+            // than judged by a machine that answers for other work.
+            let own = plan::own_machine(&laid.path);
             let judge: Option<&WorkRoot> = match &own {
-                Some(Ok(store)) => Some(store),
-                Some(Err(_)) => None,
-                None => self.machine.as_ref(),
+                Ok(Some(store)) => Some(store),
+                Ok(None) => self.machine.as_ref(),
+                Err(_) => None,
             };
             for ticket in plan.tickets() {
                 consider(judge, &laid.plan_id, &laid.path, &ticket);
@@ -2321,6 +2322,14 @@ pub fn due_among(
             // it (§FS-005-dispatch.28). A plan the record knows nothing
             // about asked for nothing, and is nobody's to start.
             let laid = laid_by.get(&canonical(&plan_ref.path)).map(String::as_str);
+            // For a store of its own, the entry is the only way that can be
+            // said: its tasks are the runtime's own, and the `<recipe>-<n>`
+            // shape below is a fact about the tickets ephor wrote into the
+            // root's own plan, so no spelling in there names a recipe
+            // (§FS-005-dispatch.28).
+            if laid.is_none() && runtime::plan::own_store(&plan_ref.path).is_some() {
+                continue;
+            }
             let asked = match laid {
                 Some(_) => workflow_autoruns.get(&plan_ref.project),
                 None => autoruns.get(&plan_ref.project),
@@ -2329,21 +2338,20 @@ pub fn due_among(
             if asked.is_empty() {
                 continue;
             }
-            // A plan that is a store of its own runs under the machine in
-            // force there, not the root's: a task's state means whatever the
-            // machine in force for its own store says it means
+            // A plan that is a store of its own runs under the machine it
+            // declares there, not the root's: a task's state means whatever
+            // the machine in force for its own store says it means
             // (§FS-006-project-interface.7) — which is a plan a workflow laid
             // down, and the same question the board asks of the same plan
-            // (§AR-009-surfaces.1). With none to be read there, nothing in
-            // that plan can be judged runnable, and the honest move is to
-            // start nothing rather than to fall back on a machine that
-            // answers for other work (§FS-005-dispatch.15). The root's own
-            // answers for the plans the root holds directly, as it always
-            // did.
-            let own = match runtime::plan::own_store(&plan_ref.path).map(WorkRoot::in_force) {
-                Some(Ok(store)) => Some(store),
-                Some(Err(_)) => continue,
-                None => None,
+            // (§AR-009-surfaces.1). Declaring none, it is the root's the
+            // runtime resolves it against, as it is for the plans the root
+            // holds directly. With one that will not read, nothing in that
+            // plan can be judged runnable, and the honest move is to start
+            // nothing rather than to fall back on a machine that answers for
+            // other work (§FS-005-dispatch.15).
+            let own = match runtime::plan::own_machine(&plan_ref.path) {
+                Ok(store) => store,
+                Err(_) => continue,
             };
             let judge = own.as_ref().unwrap_or(&machine);
             let Ok(Some(plan)) = Plan::read(&plan_ref.path) else {
@@ -4927,22 +4935,84 @@ echo "Task $stem.$task transitioned: '$from' → '$to'"
 
     /// A plan the record says nothing about asked for nothing
     /// (§FS-005-dispatch.28): one a reader laid by hand, or one enumeration
-    /// simply found in the root, is the reader's to start — and its tasks
-    /// carry no recipe id for the ticket rule to fall back on either.
+    /// simply found in the root, is the reader's to start — and that holds
+    /// however its tasks are named. `fix-issue-1` is the shape ephor's own
+    /// ticket ids have, but the tasks of a store of its own are the runtime's
+    /// and the spelling says nothing about who asked.
     #[test]
     fn a_plan_nothing_in_the_ledger_laid_is_nobodys_to_start() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("panta");
-        let group = laid_root(&root, "fix-issue", &[&ticket_at("ticket", "open")]);
-        assert!(due_among(
-            &work_config(),
-            std::slice::from_ref(&group),
-            &asking(&["fix-issue"]),
-            &laying(&["fix-issue"]),
-            &empty_ledger(),
-            Utc::now(),
-        )
+        let sweep = |group| {
+            due_among(
+                &work_config(),
+                std::slice::from_ref(&group),
+                &asking(&["fix-issue"]),
+                &laying(&["fix-issue"]),
+                &empty_ledger(),
+                Utc::now(),
+            )
+        };
+        assert!(sweep(laid_root(
+            &root,
+            "fix-issue",
+            &[&ticket_at("ticket", "open")]
+        ))
         .is_empty());
+
+        // And with an id the recipe rule would otherwise read a recipe out of.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("panta");
+        assert_eq!(recipe_of_ticket("fix-issue-1"), Some("fix-issue"));
+        assert!(sweep(laid_root(
+            &root,
+            "fix-issue",
+            &[&ticket_at("fix-issue-1", "open")]
+        ))
+        .is_empty());
+    }
+
+    /// A laid plan that declares no machine of its own runs under the root's,
+    /// which is what the runtime resolves such a plan against — not under a
+    /// default nobody chose (§FS-005-dispatch.28,
+    /// §FS-006-project-interface.7). Both directions: what the root's machine
+    /// calls over or parked makes nothing due, and what it calls work does.
+    #[test]
+    fn a_laid_workflow_that_declares_no_machine_is_judged_by_the_roots() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("panta");
+        // `done` is final and `needs-human` gating in the root's machine, and
+        // neither is a state the runtime's default declares at all.
+        let group = laid_root(
+            &root,
+            "fix-issue",
+            &[
+                &ticket_at("over", "done"),
+                &ticket_at("parked", "needs-human"),
+            ],
+        );
+        fs::remove_file(root.join("forge-widget-42-fix-issue/states.yaml")).unwrap();
+        let ledger = laid_ledger(&root, "fix-issue");
+        let sweep = || {
+            due_among(
+                &work_config(),
+                std::slice::from_ref(&group),
+                &asking(&[]),
+                &laying(&["fix-issue"]),
+                &ledger,
+                Utc::now(),
+            )
+        };
+        assert!(sweep().is_empty(), "the root's machine says both are over");
+
+        // And the way round that does start a run: `fix` is work under the
+        // root's machine, and the plan borrowing it is what makes it due.
+        fs::write(
+            root.join("forge-widget-42-fix-issue/tasks/01-task.md"),
+            ticket_at("parked", "fix"),
+        )
+        .unwrap();
+        assert_eq!(sweep().len(), 1, "the root's machine says it is open");
     }
 
     /// A root a workflow laid into flows through the same sweep as one a

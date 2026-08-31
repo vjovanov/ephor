@@ -967,6 +967,51 @@ exit 1
         drop(holder);
     }
 
+    /// And the same question where the laid plan declares **no** machine of
+    /// its own: `**States:**` names one the runtime resolves from the project
+    /// the plan sits in, so the root's is the machine in force
+    /// (§FS-005-dispatch.28, §FS-006-project-interface.7). The root's says
+    /// `done` is over; the runtime's built-in default has no word for it at
+    /// all, and reaching for that one calls a finished matter *queued* on the
+    /// menu — work waiting for a turn that is not coming
+    /// (§FS-005-dispatch.15).
+    #[test]
+    fn a_laid_plan_with_no_machine_beside_it_is_judged_by_the_roots() {
+        let world = laying_world(true);
+        let swept = dispatch(&world, &["--item", "acmeforge:acme/widget#13"]);
+        assert_eq!(swept["laid"], 1, "{swept}");
+        let plan = plan_of(&world, 13);
+        std::fs::remove_file(plan.join("states.yaml")).expect("no machine beside the plan");
+        std::fs::write(
+            plan.join("tasks/01-fix.md"),
+            "### Task fix: fix the ticket\n**State:** done\n\nwork\n",
+        )
+        .expect("the finished task");
+
+        // A run is live on the root, which is what makes the wrong machine's
+        // answer *queued* rather than nothing at all.
+        let lock = work_root(&world).join(".rhei/run.lock");
+        std::fs::create_dir_all(lock.parent().expect("a parent")).expect("the lock directory");
+        std::fs::write(&lock, "").expect("the lock file");
+        let holder = std::fs::File::open(&lock).expect("the lock file");
+        holder.lock().expect("the run lock");
+
+        let view = world
+            .ephor()
+            .args(["actions", "--item", "acmeforge:acme/widget#13", "--json"])
+            .output()
+            .expect("actions runs");
+        let view = json_of(&view);
+        let offer = view["offers"]
+            .as_array()
+            .expect("a menu")
+            .iter()
+            .find(|offer| offer["id"] == "fix-issue")
+            .unwrap_or_else(|| panic!("the entry is on the menu: {view}"));
+        assert!(offer["running"].is_null(), "the work is over: {offer}");
+        drop(holder);
+    }
+
     /// A sweep asked what it would do makes nothing at all: not the plan, not
     /// the record of it, and not the work root the laying would have needed
     /// (§FS-005-dispatch.28).

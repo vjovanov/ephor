@@ -681,6 +681,180 @@ fn a_plan_that_is_a_store_of_its_own_is_judged_by_the_machine_beside_it() {
     drop(holder);
 }
 
+/// A store of its own that declares **no** machine beside it is judged by the
+/// root's, because that is the machine the runtime resolves such a plan
+/// against — a plan naming one names the project's (§FS-005-dispatch.28,
+/// §FS-006-project-interface.7). Under a default nobody chose, `done` is not
+/// final and `needs-human` is not gating, so the finished task would go
+/// uncounted and the parked one would be called queued — the one word
+/// §FS-005-dispatch.15 forbids for work that waits on a person.
+#[test]
+fn a_store_of_its_own_with_no_machine_beside_it_is_judged_by_the_roots() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("work");
+    // The root's machine, and no `states.yaml` under `widget-42/`.
+    write(
+        &root.join("states.yaml"),
+        concat!(
+            "name: m\n",
+            "states:\n",
+            "  fix:\n    agent: x\n",
+            "  needs-human:\n    gating: true\n",
+            "  done:\n    final: true\n",
+        ),
+    );
+    write(
+        &root.join("widget-42/index.rhei.md"),
+        "# Rhei: acme/widget#42\n**States:** m\n",
+    );
+    write(
+        &root.join("widget-42/tasks/001-fix.md"),
+        "### Task fix: fix the ticket\n**State:** needs-human\n\nwork\n",
+    );
+    write(
+        &root.join("widget-42/tasks/002-old.md"),
+        "### Task old: shipped\n**State:** done\n\nwork\n",
+    );
+    let group = RootPlans {
+        root: root.clone(),
+        plans: vec![PlanRef {
+            project: "widget".to_string(),
+            plan_id: "widget-42".to_string(),
+            path: root.join("widget-42/index.rhei.md"),
+            item: Some("forge:widget/42".to_string()),
+            title: "Widen the retry window".to_string(),
+        }],
+    };
+    let holder = hold_lock(&root);
+
+    let board = watch::board(&floor_config(), std::slice::from_ref(&group));
+    let op = &board.operations[0];
+    assert!(op.live);
+    assert_eq!(op.tickets.len(), 1);
+    assert_eq!(op.tickets[0].ticket, "fix");
+    assert_eq!(op.tickets[0].doing, Doing::Waiting);
+    assert_eq!(op.done, 1);
+    // The root's machine was read, so nothing was withheld anywhere.
+    assert_eq!(op.machine_unread, None);
+    drop(holder);
+}
+
+/// Judgment is the plan's own question, so the note about judgment withheld
+/// is too (§FS-005-dispatch.15, §FS-005-dispatch.28): on a floor where one
+/// plan leans on a root that has no machine and another carries its own, the
+/// row names the plan it happened to — and does not deny the count the other
+/// plan really earned.
+#[test]
+fn the_unread_machine_note_names_the_plans_it_happened_to() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("work");
+    // No machine in the root: the flat plan has nothing to be judged by.
+    write(
+        &root.join("widget-42.rhei.md"),
+        "# Rhei: acme/widget#42\n**States:** m\n\n## Tasks\n\n\
+         ### Task fix-gate-1: fix the gate\n**State:** fix\n\nwork\n",
+    );
+    write(
+        &root.join("widget-99/states.yaml"),
+        concat!(
+            "name: supervised-fix\n",
+            "states:\n",
+            "  waiting:\n    gating: true\n",
+            "  shipped:\n    final: true\n",
+        ),
+    );
+    write(
+        &root.join("widget-99/index.rhei.md"),
+        "# Rhei: acme/widget#99\n**States:** supervised-fix\n",
+    );
+    write(
+        &root.join("widget-99/tasks/001-fix.md"),
+        "### Task fix: fix the ticket\n**State:** waiting\n\nwork\n",
+    );
+    write(
+        &root.join("widget-99/tasks/002-ship.md"),
+        "### Task ship: ship it\n**State:** shipped\n\nwork\n",
+    );
+    let plan = |id: &str, path: &str| PlanRef {
+        project: "widget".to_string(),
+        plan_id: id.to_string(),
+        path: root.join(path),
+        item: None,
+        title: String::new(),
+    };
+    let group = RootPlans {
+        root: root.clone(),
+        plans: vec![
+            plan("widget-42", "widget-42.rhei.md"),
+            plan("widget-99", "widget-99/index.rhei.md"),
+        ],
+    };
+    let holder = hold_lock(&root);
+
+    let board = watch::board(&floor_config(), std::slice::from_ref(&group));
+    let op = &board.operations[0];
+    // The plan with a machine of its own was judged whole: parked, and one
+    // finished task counted.
+    assert_eq!(op.tickets.len(), 1);
+    assert_eq!(op.tickets[0].plan_id, "widget-99");
+    assert_eq!(op.tickets[0].doing, Doing::Waiting);
+    assert_eq!(op.done, 1);
+    assert_eq!(
+        op.machine_unread.as_deref(),
+        Some("no states.yaml — nothing judged queued or finished in widget-42")
+    );
+    drop(holder);
+}
+
+/// A store whose own machine will not read says so on the row it withheld
+/// (§FS-005-dispatch.15): its rows are dropped because finality and gating
+/// are that machine's words, and a floor that dropped them silently would
+/// show a live root with nothing on it and no reason why.
+#[test]
+fn a_store_whose_own_machine_will_not_read_says_so_on_the_row() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("work");
+    write(
+        &root.join("states.yaml"),
+        "name: m\nstates:\n  fix:\n    agent: x\n  done:\n    final: true\n",
+    );
+    // A states document beside the plan that names no machine: it is there,
+    // and it will not read.
+    write(&root.join("widget-7/states.yaml"), "states:\n  fix:\n");
+    write(
+        &root.join("widget-7/index.rhei.md"),
+        "# Rhei: acme/widget#7\n**States:** w\n",
+    );
+    write(
+        &root.join("widget-7/tasks/001-fix.md"),
+        "### Task fix: fix the ticket\n**State:** fix\n\nwork\n",
+    );
+    let group = RootPlans {
+        root: root.clone(),
+        plans: vec![PlanRef {
+            project: "widget".to_string(),
+            plan_id: "widget-7".to_string(),
+            path: root.join("widget-7/index.rhei.md"),
+            item: None,
+            title: String::new(),
+        }],
+    };
+    let holder = hold_lock(&root);
+
+    let board = watch::board(&floor_config(), std::slice::from_ref(&group));
+    let op = &board.operations[0];
+    assert!(op.live);
+    assert!(op.tickets.is_empty());
+    assert_eq!(op.done, 0);
+    assert_eq!(
+        op.machine_unread.as_deref(),
+        Some("states.yaml unreadable — nothing judged queued or finished in widget-7")
+    );
+    // And the row says it where a reader would see it.
+    assert!(op.badges().iter().any(|badge| badge.contains("widget-7")));
+    drop(holder);
+}
+
 /// A held task the floor cannot see still shows through the runner's own
 /// listing (§FS-005-dispatch.15): the listing sharpens the floor, and a run
 /// working a ticket the plan read yields nothing for is exactly what
@@ -766,7 +940,7 @@ fn a_root_with_no_machine_carries_the_fact_on_its_row() {
     assert_eq!(op.tickets.len(), 1);
     assert_eq!(
         op.machine_unread.as_deref(),
-        Some("no states.yaml — nothing judged queued or finished")
+        Some("no states.yaml — nothing judged queued or finished in widget-42")
     );
     drop(holder);
 }

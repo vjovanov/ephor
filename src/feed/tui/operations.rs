@@ -806,10 +806,12 @@ mod tests {
     fn an_unreadable_machine_is_said_on_the_row() {
         let mut row = running_row();
         row.op.machine_unread =
-            Some("no states.yaml — nothing judged queued or finished".to_string());
+            Some("no states.yaml — nothing judged queued or finished in widget-42".to_string());
         let text = text(&OperationsScreen::new(rows(vec![row]), None), None);
         assert!(
-            text.contains("running · no states.yaml — nothing judged queued or finished"),
+            text.contains(
+                "running · no states.yaml — nothing judged queued or finished in widget-42"
+            ),
             "{text}"
         );
     }
