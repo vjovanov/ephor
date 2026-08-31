@@ -1136,10 +1136,6 @@ impl Session {
         }
     }
 
-    /// Who each entry's work would go to, filled in when the list is
-    /// built (§FS-005-dispatch.14). Never configuration: nobody writes it,
-    /// ephor resolves it so the reader sees it before pressing the key —
-    /// or, on the command line, before typing the id.
     /// Fill in what each entry's `branch` template comes to on this matter
     /// (§FS-005-dispatch.25), so the gate on the row is the answer the
     /// dispatch would give (§FS-004-quick-actions.2).
@@ -1178,6 +1174,10 @@ impl Session {
         }
     }
 
+    /// Who each entry's work would go to, filled in when the list is
+    /// built (§FS-005-dispatch.14). Never configuration: nobody writes it,
+    /// ephor resolves it so the reader sees it before pressing the key —
+    /// or, on the command line, before typing the id.
     fn name_the_hands(&mut self, item: &Item, menu: &mut [ActionConfig]) {
         if !menu.iter().any(|entry| entry.agent.is_some()) {
             return;
