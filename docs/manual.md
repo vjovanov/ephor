@@ -143,7 +143,7 @@ checkout at the root.
 provider may watch several projects with different settings.
 
 **Item** — one thing in the feed. It has a stable `id`, a `kind`
-(`pr`/`ci`/`issue`/`message`/`status`), an optional `role`
+(`pr`/`ci`/`issue`/`task`/`message`/`status`), an optional `role`
 (`author`/`reviewer`), a title, a url, a state as its forge spells it, a
 `needs_response` flag, a last-activity time, and a `raw` blob its provider
 filled with whatever else it knows — conversation, gate, branch.
@@ -305,7 +305,7 @@ the registry — that is where its root and branches come from.
 ```bash
 ephor refresh [PROJECT ...] [--quiet]      # fetch into the cache
 ephor status [PROJECT] [--refresh|--cached] [--max-age SECS] [--json] [--check]
-ephor feed [--project P ...] [--unread] [--kind pr|ci|issue|message|status] [--json]
+ephor feed [--project P ...] [--unread] [--kind pr|ci|issue|task|message|status] [--json]
 ephor mark-read PROJECT | --all | --id ITEM_ID [--kind K]
 ephor failures --project P --source S --repo R --number N
 ephor rebase [--checkout DIR] [--project P] [--onto BRANCH | --upstream] [--item ID] [--dispatch] [--report PATH]
