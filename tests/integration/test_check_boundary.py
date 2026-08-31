@@ -17,10 +17,14 @@ Debt = check_boundary.Debt
 Product = check_boundary.Product
 
 
-def read(source: str):
-    """Run the Rust reader over a snippet, as the check does over a file."""
+def read(source: str, name: str = "snippet.rs"):
+    """Run the Rust reader over a snippet, as the check does over a file.
+
+    `name` matters: the reader decides from it whether the whole file is one
+    module's test body moved out of line.
+    """
     with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "snippet.rs"
+        path = Path(tmp) / name
         path.write_text(source, encoding="utf-8")
         return check_boundary.read_rust(str(path))
 
@@ -65,6 +69,18 @@ class ReadRustTests(unittest.TestCase):
         self.assertTrue(by_number[4].in_test, "the test body is a test body")
         self.assertFalse(by_number[6].in_test, "and it ends where it ends")
 
+    def test_a_sibling_tests_file_is_a_test_body_all_the_way_down(self):
+        # Its `#[cfg(test)]` sits on the attachment in the parent, so the file
+        # itself carries no marker: the name is what says it.
+        lines = read('use super::*;\nlet name = "widget";\n', "mod_tests.rs")
+        self.assertTrue(all(line.in_test for line in lines))
+
+    def test_a_file_that_is_not_one_still_has_its_bodies_tracked(self):
+        source = '#[cfg(test)]\nmod tests {\n    let a = 1;\n}\nlet b = 2;\n'
+        by_number = {line.number: line for line in read(source, "engine.rs")}
+        self.assertTrue(by_number[3].in_test)
+        self.assertFalse(by_number[5].in_test)
+
     def test_a_raw_string_keeps_its_hashes_and_its_newlines(self):
         lines = read('const S: &str = r##"a "quoted" {\nb"##;\nlet after = 1;\n')
         self.assertIn('a "quoted" {', lines[0].code)
@@ -106,6 +122,12 @@ class LiteralConfinementTests(unittest.TestCase):
     def test_a_fixture_is_an_example_and_is_allowed(self):
         source = '#[cfg(test)]\nmod tests {\n    let name = "widget";\n}\n'
         files = {"src/engine.rs": read(source)}
+        findings, _ = literals(files, [self.WIDGET])
+        self.assertEqual(findings, [])
+
+    def test_a_fixture_the_module_moved_to_a_sibling_is_still_an_example(self):
+        source = 'use super::*;\nlet name = "widget";\n'
+        files = {"src/engine_tests.rs": read(source, "engine_tests.rs")}
         findings, _ = literals(files, [self.WIDGET])
         self.assertEqual(findings, [])
 
