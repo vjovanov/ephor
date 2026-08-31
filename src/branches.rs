@@ -275,6 +275,28 @@ pub fn minted(
     })
 }
 
+/// Where an entry's work resolves, with no refusal to answer for: the matter's
+/// own checkout where the forge or the registry gave it a branch, the workspace
+/// a `branch` template names where it did not, and the matter's own again where
+/// that template will not render (§FS-005-dispatch.25).
+///
+/// [`minted`] is the answer that decides; this is the one every surface asking
+/// *where would this work go* reads, so the root a hand is resolved against and
+/// the root the dispatch writes into cannot be two different directories. A
+/// template that will not render is reported where it is read — carried onto
+/// the entry as [`crate::feed::config::Minted::Refused`], which blocks it — and
+/// not by moving the work somewhere else.
+pub fn placed_through(placement: &Placement, item: &Item, branch: Option<&str>) -> Checkout {
+    let here = placement.checkout(item);
+    if here.branch.is_some() {
+        return here;
+    }
+    match branch {
+        Some(template) => minted(placement, item, template).unwrap_or(here),
+        None => here,
+    }
+}
+
 /// Every `{placeholder}` a template names, in the order it names them. The
 /// same grammar [`crate::work::dossier::render`] reads, asked before the
 /// rendering rather than after it: a template is refused for what it says,

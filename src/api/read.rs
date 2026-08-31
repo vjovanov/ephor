@@ -320,17 +320,11 @@ impl Session {
         // would use (§FS-005-dispatch.14) — empty where there is no agent
         // entry to pick for or nobody to pick, which is what withholds the
         // choice entirely.
-        let roster = match (
-            entries.iter().any(|entry| entry.action.agent.is_some()),
-            subject,
-        ) {
-            (true, Subject::Item(item)) => {
-                let root = self.work_root(item);
-                match (root, &mut self.dispatcher) {
-                    (Some(root), Some(dispatcher)) => dispatcher.pickable(&project, &root),
-                    _ => Vec::new(),
-                }
-            }
+        let roster = match subject {
+            Subject::Item(item) => match (self.roster_root(item, &entries), &mut self.dispatcher) {
+                (Some(root), Some(dispatcher)) => dispatcher.pickable(&project, &root),
+                _ => Vec::new(),
+            },
             _ => Vec::new(),
         };
         let (kind, id, title) = match subject {

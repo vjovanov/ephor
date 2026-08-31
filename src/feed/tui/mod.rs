@@ -1145,10 +1145,6 @@ impl App {
         typed: std::collections::BTreeMap<String, String>,
         picked: Option<crate::work::recipe::HandPin>,
     ) -> Result<()> {
-        // Who could be chosen for an input that names who does the work, read
-        // once against the work root the laying will use, exactly as the
-        // menu's picker reads it (§FS-005-dispatch.14).
-        let root = self.ctx.work_root(item);
         let Some(dispatcher) = &mut self.ctx.dispatcher else {
             self.message = "Work needs the registry, which could not be read".to_string();
             return Ok(());
@@ -1160,10 +1156,12 @@ impl App {
                 return Ok(());
             }
         };
-        let roster = match root {
-            Some(root) => dispatcher.pickable(&item.project, &root),
-            None => Vec::new(),
-        };
+        // Who could be chosen for an input that names who does the work, read
+        // against the work root the laying will use, exactly as the menu's
+        // picker reads it (§FS-005-dispatch.14) — asked of the laying itself,
+        // which already knows the workspace a `branch` template named
+        // (§FS-005-dispatch.25).
+        let roster = dispatcher.pickable(&item.project, laying.root());
         let mut screen = AnswerScreen::over(item.clone(), entry.clone(), picked, &laying, roster);
         screen.typed = typed;
         self.answers = Some(screen);
@@ -1501,12 +1499,12 @@ impl App {
         // root the dispatch will use (§FS-005-dispatch.14) — empty where there
         // is no agent entry to pick for or nobody to pick, which is what
         // withholds the picker entirely.
-        let roster = match entries.iter().any(|entry| entry.action.agent.is_some()) {
-            true => match (self.ctx.work_root(&item), &mut self.ctx.dispatcher) {
-                (Some(root), Some(dispatcher)) => dispatcher.pickable(&item.project, &root),
-                _ => Vec::new(),
-            },
-            false => Vec::new(),
+        let roster = match (
+            self.ctx.roster_root(&item, &entries),
+            &mut self.ctx.dispatcher,
+        ) {
+            (Some(root), Some(dispatcher)) => dispatcher.pickable(&item.project, &root),
+            _ => Vec::new(),
         };
         let checkout = self.ctx.checkouts.get(&item.project).cloned();
         Ok(ActionMenu::over(
@@ -2304,6 +2302,51 @@ mod tests {
             updated_at: Utc::now(),
             raw: json!({}),
         }
+    }
+
+    /// An issue: no branch, because an issue has none until somebody cuts one.
+    fn issue_item() -> Item {
+        Item {
+            id: "github-issues:acme/widget#95".to_string(),
+            kind: ItemKind::Issue,
+            source: "github-issues".to_string(),
+            title: "Durations read as seconds".to_string(),
+            ..ticket_item()
+        }
+    }
+
+    /// The root a surface asks about is the root the dispatch will use
+    /// (§FS-005-dispatch.14). An entry that says which branch its work belongs
+    /// on is dispatched inside the workspace that template names, so the hand
+    /// shown on its row and the roster its picker offers are read there — not
+    /// at the project root, which for a branch-addressable project holds no
+    /// change at all (§FS-005-dispatch.25).
+    #[test]
+    fn the_root_a_surface_asks_about_is_the_one_the_entry_would_be_dispatched_into() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = ctx_with_branch(tmp.path(), Some("{project_root}/{branch}"));
+        let issue = issue_item();
+
+        // Nothing said which branch: the matter is on none, so the answer is
+        // the project's own root — which is what the dispatch refuses over
+        // where the work edits the change.
+        assert_eq!(
+            ctx.work_root(&issue, None),
+            Some(tmp.path().join("panta")),
+            "the matter's own"
+        );
+        // And with the entry's template, the root inside the workspace that
+        // template names — where its dispatch writes the plan.
+        assert_eq!(
+            ctx.work_root(&issue, Some("fix/issue-{number}")),
+            Some(tmp.path().join("fix/issue-95/panta"))
+        );
+        // A matter with a branch of its own is never displaced by a template.
+        let pr = ticket_item();
+        assert_eq!(
+            ctx.work_root(&pr, Some("fix/issue-{number}")),
+            ctx.work_root(&pr, None)
+        );
     }
 
     /// One project's cached feed, holding one matter the forge put on `branch`.
