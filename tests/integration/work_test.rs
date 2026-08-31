@@ -1449,11 +1449,13 @@ fn capacity_runner(tmp: &Path, log: &Path) {
                  exit 0\n\
                fi\n\
                mkdir -p \"$root/.rhei\"\n\
-               flock \"$root/.rhei/run.lock\" sleep 20 >/dev/null 2>&1 &\n\
+               ready=\"$root/.rhei/run-lock-ready\"\n\
+               python -c 'import fcntl,pathlib,sys,time; lock=open(sys.argv[1],\"w\"); fcntl.flock(lock,fcntl.LOCK_EX); pathlib.Path(sys.argv[2]).touch(); time.sleep(20)' \"$root/.rhei/run.lock\" \"$ready\" >/dev/null 2>&1 &\n\
                for _ in {{1..100}}; do\n\
-                 flock -n \"$root/.rhei/run.lock\" -c true >/dev/null 2>&1 || break\n\
+                 [[ -e \"$ready\" ]] && break\n\
                  sleep 0.01\n\
                done\n\
+               [[ -e \"$ready\" ]] || exit 1\n\
                printf '{{\"id\":\"live\",\"status\":\"running\",\"exit_code\":null}}\\n'\n\
                exit 0 ;;\n\
              *) exit 0 ;;\n\
@@ -1487,11 +1489,13 @@ fn overlapping_capacity_runner(tmp: &Path, log: &Path) {
                printf '%s\\n' \"$*\" >> {log}\n\
                root=\"$4\"\n\
                mkdir -p \"$root/.rhei\"\n\
-               flock \"$root/.rhei/run.lock\" sleep 20 >/dev/null 2>&1 &\n\
+               ready=\"$root/.rhei/run-lock-ready\"\n\
+               python -c 'import fcntl,pathlib,sys,time; lock=open(sys.argv[1],\"w\"); fcntl.flock(lock,fcntl.LOCK_EX); pathlib.Path(sys.argv[2]).touch(); time.sleep(20)' \"$root/.rhei/run.lock\" \"$ready\" >/dev/null 2>&1 &\n\
                for _ in {{1..100}}; do\n\
-                 flock -n \"$root/.rhei/run.lock\" -c true >/dev/null 2>&1 || break\n\
+                 [[ -e \"$ready\" ]] && break\n\
                  sleep 0.01\n\
                done\n\
+               [[ -e \"$ready\" ]] || exit 1\n\
                printf '{{\"id\":\"live\",\"status\":\"running\",\"exit_code\":null}}\\n'\n\
                exit 0 ;;\n\
              *) exit 0 ;;\n\
