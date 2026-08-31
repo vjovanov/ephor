@@ -36,7 +36,7 @@ anything to count from ([§FS-002-release](../requirements.md#fs-002-release-eph
 
 The boundary half of the same law — the seams a capability is reached across,
 rather than the forges reached through them — is
-[§RM-003-boundary](#rm-003-boundary-the-seams-the-law-still-owes).
+[§RM-003-boundary](roadmap.md#rm-003-boundary-the-seams-the-law-still-owes).
 
 ### 2. Why now
 
@@ -55,13 +55,13 @@ public GitHub repository.
 
 ## RM-003-boundary: the seams the law still owes
 
-Serves [§REQ-001-boundary](requirements/REQ-001-boundary.md#req-001-boundary-every-capacity-ephor-does-not-embody-is-reached-across-a-seam).
+Serves [§REQ-001-boundary](requirements/REQ-001-boundary.md#req-001-boundary-every-capacity-ephor-lacks-crosses-a-seam-and-the-seam-has-one-anatomy).
 The law landed with the interface it describes — the summons executor, the
 capability table, the verb seams, the runtime binding, the manifest, and a
 literal-confinement check that fails the build
 ([`## Unreleased`](changelog.md#unreleased)). Four things it names are not
 finished, and each is small enough to say exactly.
-[§RM-001-forge-interface](#rm-001-forge-interface-put-every-forge-behind-the-interface)
+[§RM-001-forge-interface](roadmap.md#rm-001-forge-interface-put-every-forge-behind-the-interface)
 is the forge half of the same law.
 
 ### 1. What
@@ -81,7 +81,7 @@ is the forge half of the same law.
   so a project with an internal gate is not yet indistinguishable from a
   forge-hosted one where a person actually looks
   ([§FS-006-project-interface.6](../requirements.md#6-the-gate-is-the-projects-in-three-verbs),
-  [§E2E-003-gate-verbs](../e2e/cases/E2E-003-gate-verbs.rs)).
+  [tests/e2e/cases/E2E-003-gate-verbs.rs](../tests/e2e/cases/E2E-003-gate-verbs.rs)).
 - **One task store is recognized and unread.** `beads` is probed and reports
   nothing rather than pretending
   ([§FS-006-project-interface.7](../requirements.md#7-the-projects-own-tasks-are-read-where-they-live)).
@@ -154,7 +154,7 @@ helper built bindings the same way.
 
 ### 2. What is left
 
-- **An out-of-process forge extension is a shell script.** §FS-001-forge-interface.2
+- **An out-of-process forge extension is a shell script.** [§FS-001-forge-interface.2](../requirements.md#2-two-transports-one-interface)
   says a shell script with `jq` is a complete implementation, and on Windows it
   is not one: `CreateProcess` cannot exec a file whose executability is a
   `#!` line. Either ephor reads the shebang and runs the extension through the
@@ -168,8 +168,8 @@ helper built bindings the same way.
 
 ### 3. Measurable
 
-`windows-latest` is back in the matrix and green, or §FS-001-forge-interface.2
-and §FS-006-project-interface.3 say plainly which platforms they hold on and
+`windows-latest` is back in the matrix and green, or [§FS-001-forge-interface.2](../requirements.md#2-two-transports-one-interface)
+and [§FS-006-project-interface.3](../requirements.md#3-a-summons-environment-in-exit-code-and-answer-out) say plainly which platforms they hold on and
 this entry is closed as decided rather than done. A port half finished, with a
 leg red and a promise that reads as universal, is the outcome this entry
 exists to avoid.

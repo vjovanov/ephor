@@ -139,8 +139,8 @@ pub fn command_path(named: &str) -> String {
 /// wrong thing entirely passes: `branches` was declared an object while the
 /// command printed an array, and half a dozen fields were declared `string`
 /// where the code emits `null`. A declared shape nobody validates against is a
-/// declaration, not a contract — so the E2E case runs the real commands and
-/// puts what they print through here (§E2E-012-command-line-parity).
+/// declaration, not a contract — so `tests/e2e/cases/E2E-012-command-line-parity.rs`
+/// runs the real commands and puts what they print through here.
 ///
 /// The named shape's subschema is validated as a document of its own with the
 /// shared `$defs` carried along, so `#/$defs/offer` still resolves.
