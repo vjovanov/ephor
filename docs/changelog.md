@@ -33,7 +33,7 @@ ships, the previous "latest" section moves verbatim to
 - **Work about a matter with no branch can mint the branch it needs**
   ([§FS-005-dispatch.25](../requirements.md#25-work-about-a-matter-with-no-branch-can-mint-the-branch-it-needs),
   [§FS-004-quick-actions.7](../requirements.md#7-a-workspace-that-is-not-there-is-offered-the-checkout),
-  PR #N). An entry that hands work over may now say which branch that work
+  PR #13). An entry that hands work over may now say which branch that work
   belongs on: `"branch": "fix/issue-{number}"`, on a configured action carrying
   `agent` or `workflow`, a project's own offer naming a workflow, the entry
   beside a workflow, or a recipe. It is a template rendered from the matter
@@ -100,7 +100,7 @@ ships, the previous "latest" section moves verbatim to
   command line instead of written at the project root**
   ([§FS-005-dispatch.25](../requirements.md#25-work-about-a-matter-with-no-branch-can-mint-the-branch-it-needs),
   [§FS-005-dispatch.6](../requirements.md#6-dispatch-is-offered-where-it-would-work-and-refuses-where-it-would-not),
-  PR #N). A recipe with `needs_checkout` or an entry with `requires_checkout`,
+  PR #13). A recipe with `needs_checkout` or an entry with `requires_checkout`,
   dispatched about a matter no branch could be found for on a project whose
   checkouts are one per branch, used to resolve its work root from the project
   root — which on such a project is the directory those workspaces sit in and
