@@ -134,14 +134,22 @@ impl ActionMenu {
         can: &CapabilitySet,
         actions: Vec<ActionConfig>,
     ) -> Self {
-        let entries = offers::entries(&state, &checkout, can, actions, false);
+        let entries = offers::entries(&state, &checkout, can, actions, false, &mut offers::Unnamed);
         ActionMenu::over(subject, root, workspace, branch, state, checkout, entries)
     }
 
     /// The same menu over a different list — how the workflows row replaces
     /// the menu with the runtime's own offers (§FS-005-dispatch.19). The
-    /// gating is the session's, as it is for every other list.
-    pub fn rebuilt(&self, actions: Vec<ActionConfig>, can: &CapabilitySet) -> ActionMenu {
+    /// gating is the session's, as it is for every other list, and so is the
+    /// naming the gating reads: this list is about the same matter, and an
+    /// entry offered here has to be offered in the shape the menu behind it
+    /// offered it (§REQ-002-parity.3).
+    pub fn rebuilt(
+        &self,
+        actions: Vec<ActionConfig>,
+        can: &CapabilitySet,
+        naming: &mut dyn offers::Naming,
+    ) -> ActionMenu {
         ActionMenu::over(
             self.subject.clone(),
             self.root.clone(),
@@ -149,7 +157,7 @@ impl ActionMenu {
             self.branch.clone(),
             self.state.clone(),
             self.checkout.clone(),
-            offers::entries(&self.state, &self.checkout, can, actions, false),
+            offers::entries(&self.state, &self.checkout, can, actions, false, naming),
         )
     }
 
@@ -775,7 +783,14 @@ mod tests {
         actions: Vec<ActionConfig>,
     ) -> ActionMenu {
         let pr = item(ItemKind::Pr, "github-prs:acme/widget#42", json!({}));
-        let entries = offers::entries(&state, &checkout, &can_everything(), actions, false);
+        let entries = offers::entries(
+            &state,
+            &checkout,
+            &can_everything(),
+            actions,
+            false,
+            &mut offers::Unnamed,
+        );
         ActionMenu::over(
             Subject::Item(Box::new(pr)),
             PathBuf::from("/tmp"),
@@ -828,6 +843,7 @@ mod tests {
             &can_everything(),
             actions,
             false,
+            &mut offers::Unnamed,
         );
         // The second entry has a job going about it.
         let mut entries = entries;
@@ -1259,6 +1275,7 @@ mod tests {
                 // resolves to the *tasks* rung (§FS-006-project-interface.10).
                 vec![requiring(&["ticketed"])],
                 false,
+                &mut offers::Unnamed,
             ),
         );
         match menu.gate(0) {

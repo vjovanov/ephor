@@ -505,6 +505,25 @@ pub struct MenuEntry {
     pub running: Option<Running>,
 }
 
+/// What an entry cannot know about itself, filled in before the list is gated:
+/// who the work would go to (§FS-005-dispatch.14) and which branch a `branch`
+/// template comes to on this matter (§FS-005-dispatch.25). Both are readings
+/// of the world rather than properties of the entry (§AR-009-surfaces.1), and
+/// both decide a gate — so the assembly asks for them instead of trusting each
+/// caller to have asked first.
+pub trait Naming {
+    fn name(&mut self, actions: &mut [ActionConfig]);
+}
+
+/// A list with no matter behind it to resolve against: a branch row carries
+/// none (§FS-005-dispatch.2), and neither does a fixture that writes the facts
+/// it is testing straight onto its entries.
+pub struct Unnamed;
+
+impl Naming for Unnamed {
+    fn name(&mut self, _actions: &mut [ActionConfig]) {}
+}
+
 /// The whole list a subject carries, gated: the checkout row where the branch
 /// workspace is missing, then every configured and synthesized entry with the
 /// one table's answer to what it said it needs, then the freehand row and —
@@ -519,7 +538,15 @@ pub fn entries(
     can: &CapabilitySet,
     actions: Vec<ActionConfig>,
     has_workflows: bool,
+    naming: &mut dyn Naming,
 ) -> Vec<MenuEntry> {
+    // Before anything is gated: the gate on a row reads facts nobody wrote on
+    // the entry, and a list assembled without them is a list gated against the
+    // wrong answer. It happens here rather than in each caller because the two
+    // that forgot showed the same entry blocked that the menu beside them
+    // offered (§REQ-002-parity.3, §FS-005-dispatch.25).
+    let mut actions = actions;
+    naming.name(&mut actions);
     let mut entries = Vec::new();
     // A missing workspace is directly runnable as its own entry. The
     // project's own command where it configured one, and ephor's otherwise
@@ -770,6 +797,54 @@ mod tests {
         }
     }
 
+    /// Every list is named before it is gated, whoever assembled it. An entry
+    /// that says which branch its work belongs on is gated on what that
+    /// template comes to, and a surface that never filled it in would show the
+    /// entry blocked as *the item's branch is unknown* while the menu beside
+    /// it offered the same entry as *will check out first*
+    /// (§REQ-002-parity.3, §FS-005-dispatch.25).
+    #[test]
+    fn a_list_is_named_before_it_is_gated() {
+        struct Mints;
+        impl Naming for Mints {
+            fn name(&mut self, actions: &mut [ActionConfig]) {
+                for action in actions {
+                    action.minted = Some(Minted::Named {
+                        branch: "fix/issue-95".to_string(),
+                        workspace: PathBuf::from("/demo/fix/issue-95"),
+                        state: WorkspaceState::Missing(PathBuf::from("/demo/fix/issue-95")),
+                    });
+                }
+            }
+        }
+        let hands_work_over = || ActionConfig {
+            branch: Some("fix/issue-{number}".to_string()),
+            ..plain("fix-issue")
+        };
+        let gate = |naming: &mut dyn Naming| {
+            entries(
+                // The matter is on no branch, which is what the entry is for.
+                &WorkspaceState::Unmatched,
+                &None,
+                &CapabilitySet::unknown("demo"),
+                vec![hands_work_over()],
+                false,
+                naming,
+            )
+            .into_iter()
+            .find(|entry| entry.key() == "fix-issue")
+            .expect("the entry")
+            .gate
+        };
+        assert!(
+            matches!(gate(&mut Mints), Gate::NeedsCheckout),
+            "the assembly gates on the branch the template named"
+        );
+        // And the shape the defect had: nothing named, so the gate falls back
+        // to the matter's own answer.
+        assert!(matches!(gate(&mut Unnamed), Gate::Blocked(_)));
+    }
+
     /// The `@` namespace is ephor's, and an entry claiming it never reaches
     /// the menu under that name. `deny_unknown_fields` refuses an unknown
     /// *key* and says nothing about what a known one holds, so this is the
@@ -783,6 +858,7 @@ mod tests {
             &CapabilitySet::unknown("demo"),
             vec![plain(FREEHAND_ID), plain(WORKFLOWS_ID), plain("note")],
             true,
+            &mut Unnamed,
         );
         let freehand: Vec<&MenuEntry> = entries
             .iter()
