@@ -2438,6 +2438,16 @@ The machine vetted is the one in force where the work root is already there,
 and the one ephor would install where it is not: a workspace that does not
 exist declares nothing, and minting one in order to read its machine back is
 the leaving-behind this rule forbids.
+One case escapes it, and is the only one: a runtime that installs a machine of
+its own when it is asked to make the store
+([§FS-006-project-interface.7](#7-the-projects-own-tasks-are-read-where-they-live))
+installs it inside the workspace the mint has just made, and ephor leaves what
+the runner left standing. That machine is read after the workspace exists, so a
+refusal on it is the one refusal that outlives the mint — and it says so,
+naming the workspace it made, because a workspace nothing mentioned is one
+nobody knows to look at. Nothing further is made behind it: dispatching into
+that workspace again refuses on the same machine, now the one the work root
+declares.
 A run asked what it would do makes nothing at all: not the workspace, not the
 work root inside it, not the files a runtime would be shown — those have
 nowhere to go until the workspace exists — and it says the branch and the
