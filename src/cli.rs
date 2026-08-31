@@ -274,7 +274,7 @@ pub struct WorkDispatchArgs {
     #[arg(long)]
     pub recipe: Option<String>,
 
-    /// Restrict to one item kind (pr, ci, issue, message, status).
+    /// Restrict to one item kind (pr, ci, issue, task, message, status).
     #[arg(long)]
     pub kind: Option<String>,
 
@@ -540,7 +540,7 @@ pub struct FeedArgs {
     #[arg(long)]
     pub unread: bool,
 
-    /// Filter by item kind (pr, ci, issue, message, status).
+    /// Filter by item kind (pr, ci, issue, task, message, status).
     #[arg(long)]
     pub kind: Option<String>,
 
@@ -808,7 +808,7 @@ pub struct MarkReadArgs {
     #[arg(long)]
     pub id: Option<String>,
 
-    /// Restrict to one item kind (pr, ci, issue, message, status).
+    /// Restrict to one item kind (pr, ci, issue, task, message, status).
     #[arg(long)]
     pub kind: Option<String>,
 

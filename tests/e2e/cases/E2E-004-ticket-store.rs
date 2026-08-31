@@ -20,6 +20,7 @@ mod support;
 use ephor::capabilities::{Bindings, CapabilitySet, Rung};
 
 use predicates::prelude::*;
+use serde_json::json;
 
 use support::*;
 
@@ -252,4 +253,55 @@ fn a_project_without_a_store_is_watched_all_the_same_and_says_what_it_looked_for
         },
     );
     assert!(with_store.holds(Rung::Tasks));
+}
+
+/// A project's own task carries no role at all (§FS-003-feed-categories.1),
+/// so a `roles` selector — non-empty by definition once written — refuses
+/// every one of them, correctly: role-less matches only an empty `roles`. But
+/// a recipe covering issues and pull requests with `roles: [author]` used to
+/// silently never fire on a task too, and `ephor work offers` said only
+/// "nothing matches this matter" with no way to tell that from nothing being
+/// configured at all. It now names the recipe and the field that refused it,
+/// in the same words on both readings (§FS-005-dispatch.27, §REQ-002-parity.3).
+#[test]
+fn a_role_less_task_names_the_recipe_a_roles_selector_excluded() {
+    let world = World::new();
+    world.file("panta/window.rhei.md", PLAN);
+    world.configure(json!({
+        "projects": { PROJECT: { "work": { "recipes": [ {
+            "id": "task-work",
+            "description": "handle a task",
+            "when": { "kinds": ["task"], "roles": ["author"] },
+            "brief": "Handle {title}."
+        } ] } } }
+    }));
+    world.ephor().args(["refresh", PROJECT]).assert().success();
+
+    let view = shaped(
+        "work",
+        &world
+            .ephor()
+            .args(["work", "offers", "--item", "rhei:window.1", "--json"])
+            .output()
+            .expect("the work reading"),
+    );
+    assert_eq!(view["offers"], json!([]), "{view}");
+    let excluded = view["excluded"].as_array().expect("the exclusions");
+    assert_eq!(excluded.len(), 1, "{view}");
+    assert_eq!(excluded[0]["recipe"], "task-work");
+    let reason = excluded[0]["reason"].as_str().unwrap_or_default();
+    assert!(reason.contains("carries no role"), "{reason}");
+    assert!(reason.contains("`author`"), "{reason}");
+
+    // The prose form says the same, under the same "nothing matches this
+    // matter" a reader already looks under — neither reading knows something
+    // the other does not.
+    world
+        .ephor()
+        .args(["work", "offers", "--item", "rhei:window.1"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("nothing matches this matter"))
+        .stdout(predicate::str::contains("task-work"))
+        .stdout(predicate::str::contains("carries no role"));
 }

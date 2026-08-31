@@ -67,6 +67,15 @@
         "running": { "$ref": "#/$defs/running" }
       }
     },
+    "exclusion": {
+      "type": "object",
+      "description": "A recipe considered for a matter whose selector refused it, and why (FS-005-dispatch.27). Additive beside `offers`: naming a refused recipe is a different fact from offering nothing.",
+      "required": ["recipe", "reason"],
+      "properties": {
+        "recipe": { "type": "string", "description": "The recipe's own id, the same one an offer for it would carry." },
+        "reason": { "type": "string", "description": "Which selector field refused, and what it found instead of what it asked for — the role-less case worded plainly: the matter carries no role, the selector asks for one." }
+      }
+    },
     "hand": {
       "type": "object",
       "description": "A hand the roster offers (FS-005-dispatch.14). An unavailable one stays on the list with its reason rather than being hidden (DA-004-roster-is-asked-not-configured).",
@@ -468,6 +477,11 @@
         "offers": {
           "type": "array",
           "items": { "$ref": "#/$defs/offer" }
+        },
+        "excluded": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/exclusion" },
+          "description": "Recipes considered for this matter and refused, and why (FS-005-dispatch.27). Empty means nothing was refused, not that nothing was considered — an empty `offers` beside it is what says that."
         },
         "status": {
           "type": "object",

@@ -347,6 +347,21 @@ pub struct Thread {
     pub draft: Option<Draft>,
 }
 
+/// A recipe considered for this matter whose selector refused it, and which
+/// field refused (§FS-005-dispatch.27). Additive beside `offers`: naming a
+/// refused recipe is a different fact from offering nothing, and a reader —
+/// or a program — told only the second cannot tell "nothing is configured for
+/// this" from "something is, and this matter did not fit it".
+#[derive(Debug, Clone, Serialize)]
+pub struct Exclusion {
+    /// The recipe's own id, the same one an offer for it would carry.
+    pub recipe: String,
+    /// Which selector field refused, and what it found instead of what it
+    /// asked for — the role-less case worded plainly: the matter carries no
+    /// role, the selector asks for one.
+    pub reason: String,
+}
+
 /// What is being done about one matter, and what could be
 /// (§FS-011-command-line.5).
 #[derive(Debug, Clone, Serialize)]
@@ -372,6 +387,11 @@ pub struct Work {
     /// What could be handed over about it: the recipes that match and the
     /// workflows that could be laid beside it.
     pub offers: Vec<Offer>,
+    /// Recipes considered for this matter and refused, and why
+    /// (§FS-005-dispatch.27). Empty means nothing was refused, not that
+    /// nothing was considered — `offers` being empty too is what says that.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub excluded: Vec<Exclusion>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<WorkStatus>,
     /// What ephor has run about it itself (§FS-005-dispatch.17).

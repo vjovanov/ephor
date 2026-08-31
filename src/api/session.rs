@@ -309,6 +309,67 @@ impl Session {
             .unwrap_or_default()
     }
 
+    /// Recipes considered for this matter and refused, and which selector
+    /// field refused each one (§FS-005-dispatch.27).
+    ///
+    /// "Considered" narrows [`crate::work::recipe::Selector::explain`]'s full
+    /// generality to what a reader can act on. A recipe whose `kinds` refused
+    /// was never in the running for a matter of this shape at all — a `pr`
+    /// recipe has nothing to say about a task — so it is dropped rather than
+    /// burying the one refusal worth reading under every recipe that was
+    /// never close. `behind` and `behind_upstream` are dropped the same way
+    /// when they are all that refused: whether a branch trails is a fact
+    /// about a checkout on this machine, already its own concept on the menu
+    /// (the rebase entries, and the `needs_checkout` gate), and reporting
+    /// "could not be measured" on every item with no local checkout would be
+    /// noise on nearly every reading rather than the one thing worth saying.
+    /// What is left — `roles`, `gate`, `needs_response`, `sources` — are
+    /// facts about the matter itself, true wherever it is read from.
+    ///
+    /// The same recipes and the same facts [`Session::actions_with`] matches
+    /// them against, so the offers reading never says less than what decided
+    /// the menu (§REQ-002-parity.3). Empty on a finished item — the same
+    /// population [`crate::work::recipe::Recipe::matches`] itself never
+    /// offers to.
+    pub fn excluded_recipes(
+        &self,
+        item: &Item,
+        recipes: &[crate::work::recipe::Recipe],
+    ) -> Vec<super::views::Exclusion> {
+        if item.is_finished() {
+            return Vec::new();
+        }
+        let trailing = self.item_trailing(item);
+        let facts = trailing
+            .as_ref()
+            .map(offers::Trailing::facts)
+            .unwrap_or_default();
+        recipes
+            .iter()
+            .filter_map(|recipe| {
+                let refused = recipe.when.explain(item, &facts);
+                if refused.iter().any(|refusal| refusal.field == "kinds") {
+                    return None;
+                }
+                let worth_reading: Vec<_> = refused
+                    .into_iter()
+                    .filter(|refusal| !matches!(refusal.field, "behind" | "behind_upstream"))
+                    .collect();
+                if worth_reading.is_empty() {
+                    return None;
+                }
+                Some(super::views::Exclusion {
+                    recipe: recipe.id.clone(),
+                    reason: worth_reading
+                        .into_iter()
+                        .map(|refusal| refusal.reason)
+                        .collect::<Vec<_>>()
+                        .join("; "),
+                })
+            })
+            .collect()
+    }
+
     /// Where the item's own checkout stands. What decides this is whether the
     /// item resolves to a branch workspace on disk, never what kind of row it
     /// is (§FS-004-quick-actions.6): a change is stale or it is not, and a

@@ -312,10 +312,11 @@ fn yes() -> bool {
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Selector {
-    /// `pr`, `ci`, `issue`, `message`, `status`.
+    /// `pr`, `ci`, `issue`, `task`, `message`, `status`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub kinds: Vec<String>,
-    /// `author`, `reviewer`. An item whose source reported no role matches
+    /// `author`, `reviewer`. An item whose source reported no role — a
+    /// project's own task among them (§FS-003-feed-categories.1) — matches
     /// only when this is empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub roles: Vec<String>,
@@ -365,14 +366,31 @@ impl Selector {
     /// language selects menu offers, whoever wrote them
     /// (§FS-006-project-interface.9).
     pub fn matches(&self, item: &Item, facts: &Facts) -> bool {
+        self.explain(item, facts).is_empty()
+    }
+
+    /// The explain-capable companion to [`Selector::matches`]: every field
+    /// that refused, and what it found instead of what it asked for
+    /// (§FS-005-dispatch.27). Empty exactly where `matches` would answer
+    /// `true` — this decides nothing `matches` did not already decide, it
+    /// only says why where `matches` only said no.
+    pub fn explain(&self, item: &Item, facts: &Facts) -> Vec<Refusal> {
+        let mut refusals = Vec::new();
         if let Some(want) = self.behind {
             match facts.behind {
-                Some(behind) => {
-                    if (behind > 0) != want {
-                        return false;
-                    }
-                }
-                None => return false,
+                Some(behind) if (behind > 0) == want => {}
+                Some(behind) => refusals.push(Refusal::new(
+                    "behind",
+                    format!(
+                        "the branch is {} its main branch; the selector asks for {}",
+                        if behind > 0 { "behind" } else { "level with" },
+                        if want { "behind" } else { "level with it" }
+                    ),
+                )),
+                None => refusals.push(Refusal::new(
+                    "behind",
+                    "the branch could not be measured against a main branch here",
+                )),
             }
         }
         // The same shape for the other distance, and asked the same way: a
@@ -380,32 +398,120 @@ impl Selector {
         // (§FS-004-quick-actions.8).
         if let Some(want) = self.behind_upstream {
             match facts.behind_upstream {
-                Some(behind) => {
-                    if (behind > 0) != want {
-                        return false;
-                    }
-                }
-                None => return false,
+                Some(behind) if (behind > 0) == want => {}
+                Some(behind) => refusals.push(Refusal::new(
+                    "behind_upstream",
+                    format!(
+                        "the branch is {} its published copy; the selector asks for {}",
+                        if behind > 0 { "behind" } else { "level with" },
+                        if want { "behind" } else { "level with it" }
+                    ),
+                )),
+                None => refusals.push(Refusal::new(
+                    "behind_upstream",
+                    "the branch has no published copy to measure against",
+                )),
             }
         }
         if !self.kinds.is_empty() && !self.kinds.iter().any(|kind| kind_matches(item.kind, kind)) {
-            return false;
+            refusals.push(Refusal::new(
+                "kinds",
+                format!(
+                    "the matter's kind is `{}`; the selector asks for {}",
+                    item.kind.label(),
+                    join_quoted(&self.kinds)
+                ),
+            ));
         }
         if !self.roles.is_empty() && !self.roles.iter().any(|role| role_matches(item.role, role)) {
-            return false;
+            refusals.push(Refusal::new(
+                "roles",
+                match item.role {
+                    // The role-less case this exists for: a project's own
+                    // task carries no role at all, so it is not merely a
+                    // role the selector did not ask for
+                    // (§FS-003-feed-categories.1).
+                    None => format!(
+                        "the matter carries no role; the selector asks for {}",
+                        join_quoted(&self.roles)
+                    ),
+                    Some(role) => format!(
+                        "the matter's role is `{}`; the selector asks for {}",
+                        role_label(role),
+                        join_quoted(&self.roles)
+                    ),
+                },
+            ));
         }
         if !self.sources.is_empty() && !self.sources.contains(&item.source) {
-            return false;
+            refusals.push(Refusal::new(
+                "sources",
+                format!(
+                    "the matter's source is `{}`; the selector asks for {}",
+                    item.source,
+                    join_quoted(&self.sources)
+                ),
+            ));
         }
         if let Some(needs_response) = self.needs_response {
             if item.needs_response != needs_response {
-                return false;
+                refusals.push(Refusal::new(
+                    "needs_response",
+                    format!(
+                        "the matter {} an answer; the selector asks for one that {}",
+                        if item.needs_response {
+                            "needs"
+                        } else {
+                            "does not need"
+                        },
+                        if needs_response { "does" } else { "does not" }
+                    ),
+                ));
             }
         }
-        match self.gate.as_deref() {
-            None => true,
-            Some(want) => gate_matches(Gate::of(item), want),
+        if let Some(want) = self.gate.as_deref() {
+            if !gate_matches(Gate::of(item), want) {
+                refusals.push(Refusal::new(
+                    "gate",
+                    format!("the matter's gate does not match `{want}`"),
+                ));
+            }
         }
+        refusals
+    }
+}
+
+/// Why a selector refused an item, one per field that asked for something the
+/// item did not answer (§FS-005-dispatch.27). `field` is the selector's own
+/// name for it, so a caller naming the refusal names the same word a person
+/// would edit in the recipe.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Refusal {
+    pub field: &'static str,
+    pub reason: String,
+}
+
+impl Refusal {
+    fn new(field: &'static str, reason: impl Into<String>) -> Self {
+        Refusal {
+            field,
+            reason: reason.into(),
+        }
+    }
+}
+
+fn join_quoted(values: &[String]) -> String {
+    values
+        .iter()
+        .map(|value| format!("`{value}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn role_label(role: ItemRole) -> &'static str {
+    match role {
+        ItemRole::Author => "author",
+        ItemRole::Reviewer => "reviewer",
     }
 }
 
@@ -743,6 +849,42 @@ mod tests {
         assert!(selector("any").matches(&clean, &Facts::default()));
         // No gate at all answers no gate question.
         assert!(!selector("any").matches(&item(ItemKind::Pr, None), &Facts::default()));
+    }
+
+    /// A project's own task carries no role at all (§FS-003-feed-categories.1),
+    /// and a `roles` selector matches a role-less item only when it is empty
+    /// — that does not change here (§FS-005-dispatch.27). What changes is
+    /// that the refusal now says so, naming `roles` and that the matter
+    /// carries no role, instead of leaving the exclusion silent.
+    #[test]
+    fn a_role_less_item_explains_the_roles_refusal_by_name() {
+        let wants_author = Selector {
+            roles: vec!["author".to_string()],
+            ..Selector::default()
+        };
+        let task = item(ItemKind::Task, None);
+
+        assert!(!wants_author.matches(&task, &Facts::default()));
+        let refused = wants_author.explain(&task, &Facts::default());
+        assert_eq!(refused.len(), 1);
+        assert_eq!(refused[0].field, "roles");
+        assert!(refused[0].reason.contains("carries no role"));
+        assert!(refused[0].reason.contains("`author`"));
+
+        // An empty `roles` still matches the same role-less item, and
+        // explains nothing because nothing refused.
+        let no_roles = Selector::default();
+        assert!(no_roles.matches(&task, &Facts::default()));
+        assert!(no_roles.explain(&task, &Facts::default()).is_empty());
+
+        // A role that is merely the wrong one is named the same way, without
+        // the role-less wording.
+        let reviewer = item(ItemKind::Pr, Some(ItemRole::Reviewer));
+        let wants_reviewer_role = wants_author.explain(&reviewer, &Facts::default());
+        assert_eq!(wants_reviewer_role.len(), 1);
+        assert_eq!(wants_reviewer_role[0].field, "roles");
+        assert!(wants_reviewer_role[0].reason.contains("`reviewer`"));
+        assert!(!wants_reviewer_role[0].reason.contains("carries no role"));
     }
 
     #[test]

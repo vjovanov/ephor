@@ -483,10 +483,16 @@ shipped one by reusing its id:
 }
 ```
 
-A selector asks about `kinds`, `roles` (`author`/`reviewer`), `gate`
-(`failing` — jobs failed, `blocked` — the forge refuses, `red` — either,
-`green`, `any`), `needs_response`, and `sources`. Every field set must hold;
-finished work never matches. The brief takes `{title}`, `{url}`, `{repo}`,
+A selector asks about `kinds` (`pr`, `ci`, `issue`, `task`, `message`,
+`status`), `roles` (`author`/`reviewer`), `gate` (`failing` — jobs failed,
+`blocked` — the forge refuses, `red` — either, `green`, `any`),
+`needs_response`, and `sources`. Every field set must hold; finished work
+never matches. A project's own tasks carry no role, so a non-empty `roles`
+excludes them all — write a task recipe with `kinds: ["task"]` and no
+`roles`; where a recipe is refused this way, `ephor work offers` names the
+field that refused it
+([§FS-005-dispatch.27](requirements.md#27-an-offer-that-a-selector-refused-says-why)).
+The brief takes `{title}`, `{url}`, `{repo}`,
 `{number}`, `{branch}`, `{ticket}`, `{state}`, `{gate}`, `{workspace}`,
 `{root}`, `{project}`, `{source}`, `{kind}`, `{id}`, and `{reply}` — the file a
 drafted answer belongs in. A recipe may also pin the runtime's execution
