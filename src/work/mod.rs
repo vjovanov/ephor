@@ -18,6 +18,7 @@ pub mod workflow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -1893,6 +1894,32 @@ impl Dispatcher {
             }
         }
         let states = self.states_yaml(&item.project)?;
+        let values_json = serde_json::to_string_pretty(&laying.answered.values)
+            .unwrap_or_else(|_| "{}".to_string());
+        if dry_run {
+            // The runtime validates the resolved inputs even when it is only
+            // reporting what it would render. Its values file is staged in a
+            // private temporary directory so asking that question cannot make
+            // any part of the destination (§FS-005-dispatch.19).
+            let staged = StagedValues::new(&values_json)?;
+            let report = runtime::workflow::lay(
+                &self.global,
+                &laying.site.checkout.workspace,
+                &laying.workflow,
+                &staged.path,
+                &laying.output,
+                true,
+            )?;
+            return Ok(Laid {
+                outcome: Outcome::Laid {
+                    plan: laying.output.clone(),
+                    plan_id: laying.plan_id.clone(),
+                    workflow: laying.workflow.id.clone(),
+                    entry: laying.entry.clone(),
+                },
+                report,
+            });
+        }
         // Everything above could still refuse; nothing above has written
         // anything. The workspace goes in here, and the work root is the first
         // thing inside it (§FS-005-dispatch.25).
@@ -1918,30 +1945,15 @@ impl Dispatcher {
             &format!("# {}\n\n{}", item.title, laying.site.dossier),
         )?;
         put(ITEM, &identifiers(&laying.site.metadata))?;
-        let values = put(
-            VALUES,
-            &serde_json::to_string_pretty(&laying.answered.values)
-                .unwrap_or_else(|_| "{}".to_string()),
-        )?;
+        let values = put(VALUES, &values_json)?;
         let report = runtime::workflow::lay(
             &self.global,
             &laying.site.checkout.workspace,
             &laying.workflow,
             &values,
             &laying.output,
-            dry_run,
+            false,
         )?;
-        if dry_run {
-            return Ok(Laid {
-                outcome: Outcome::Laid {
-                    plan: laying.output.clone(),
-                    plan_id: laying.plan_id.clone(),
-                    workflow: laying.workflow.id.clone(),
-                    entry: laying.entry.clone(),
-                },
-                report,
-            });
-        }
         // Where the plan actually landed is the binding's answer, not a path
         // ephor composed (§AR-007-runtime.1).
         let plan = runtime::workflow::laid(&laying.output)
@@ -3488,6 +3500,58 @@ const CARRIED: &str = ".ephor";
 const DOSSIER: &str = "dossier.md";
 const ITEM: &str = "item.json";
 const VALUES: &str = "values.json";
+
+/// The values file a runtime needs to validate a dry run. It lives in a fresh
+/// temporary directory, not beside the plan, and the directory is removed
+/// when the runtime has answered — including when it refused.
+struct StagedValues {
+    dir: PathBuf,
+    path: PathBuf,
+}
+
+impl StagedValues {
+    fn new(content: &str) -> Result<StagedValues> {
+        static NEXT: AtomicU32 = AtomicU32::new(0);
+        let base = std::env::temp_dir();
+        let pid = std::process::id();
+        for _ in 0..64 {
+            let serial = NEXT.fetch_add(1, Ordering::Relaxed);
+            let dir = base.join(format!("ephor-workflow-values-{pid}-{serial}"));
+            match fs::create_dir(&dir) {
+                Ok(()) => {
+                    let staged = StagedValues {
+                        path: dir.join(VALUES),
+                        dir,
+                    };
+                    fs::write(&staged.path, content).map_err(|err| {
+                        EphorError::Command(format!(
+                            "Cannot write temporary workflow values {}: {err}",
+                            staged.path.display()
+                        ))
+                    })?;
+                    return Ok(staged);
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(err) => {
+                    return Err(EphorError::Command(format!(
+                        "Cannot make a temporary place for workflow values in {}: {err}",
+                        base.display()
+                    )))
+                }
+            }
+        }
+        Err(EphorError::Command(format!(
+            "Cannot make a temporary place for workflow values in {}",
+            base.display()
+        )))
+    }
+}
+
+impl Drop for StagedValues {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.dir);
+    }
+}
 
 /// The item as data, as a workflow's own programs can read it — the same
 /// names a shell action gets in its environment (§FS-005-dispatch.8).
