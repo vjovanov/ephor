@@ -961,20 +961,18 @@ impl Session {
                             // starts nothing there.
                             if recipe.autorun {
                                 let project = item.project.clone();
-                                for run in dispatcher.start_due(
+                                match dispatcher.start_due(
                                     chrono::Utc::now(),
                                     std::slice::from_ref(&project),
                                     &[],
                                     None,
                                 ) {
-                                    says = format!("{says} · {}", run.says());
-                                }
-                                // The record of what starting came to is
-                                // ephor's own and is kept; a failure that
-                                // went unwritten would be retried at once
-                                // (§FS-005-dispatch.24).
-                                if let Err(err) = dispatcher.save() {
-                                    says = format!("{says} · {err}");
+                                    Ok(runs) => {
+                                        for run in runs {
+                                            says = format!("{says} · {}", run.says());
+                                        }
+                                    }
+                                    Err(err) => says = format!("{says} · {err}"),
                                 }
                             }
                             self.reload_work();

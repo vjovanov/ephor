@@ -855,13 +855,22 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["root", "plans", "outcome"],
+            "required": ["root", "outcome"],
+            "anyOf": [
+              { "required": ["plans"] },
+              { "required": ["tickets"] }
+            ],
             "properties": {
               "root": { "type": "string" },
               "checkout": { "type": "string", "description": "Where the runtime ran from: the checkout the work is about, not wherever this was typed (FS-005-dispatch.3)." },
               "plans": {
                 "type": "array",
                 "items": { "type": "string" }
+              },
+              "tickets": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "The plan-qualified tickets that made an autorun root due (FS-005-dispatch.24)."
               },
               "hand": { "type": "string", "description": "Who the run was given to, where the tickets agreed on one (FS-005-dispatch.14)." },
               "outcome": {
