@@ -424,6 +424,55 @@ fn a_machine_that_refuses_the_state_leaves_no_workspace() {
     );
 }
 
+/// A template that will not do is refused by name, and nothing is made on the
+/// way to finding out. A name the vocabulary has not got is said as that rather
+/// than as a bad branch, and a rendering git will not take as a branch is
+/// answered here rather than by the checkout, which makes the directories
+/// leading to a workspace before it runs git at all (§FS-005-dispatch.25).
+#[test]
+fn a_template_that_will_not_do_is_refused_by_name_and_makes_nothing() {
+    let world = watching(Some("fix/issue-{number}"), true);
+    let recipe = |id: &str, template: &str| {
+        json!({
+            "id": id,
+            "description": "do the issue",
+            "when": { "kinds": ["issue"] },
+            "branch": template,
+            "brief": "Do {title}."
+        })
+    };
+    world.configure(json!({
+        "projects": { PROJECT: {
+            "providers": [ { "provider": "acmeforge", "user": "you", "repos": ["widget"] } ],
+            "work": { "recipes": [
+                recipe("by-sprint", "fix/{sprint}"),
+                recipe("by-title", "fix/{title}"),
+            ] }
+        } },
+        "work": { "runner": "acme-runtime" }
+    }));
+
+    world
+        .ephor()
+        .args(["work", "dispatch", "--item", ITEM, "--recipe", "by-sprint"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "not a field a branch template may name",
+        ));
+    // The issue's title holds spaces, which git refuses in a branch name.
+    world
+        .ephor()
+        .args(["work", "dispatch", "--item", ITEM, "--recipe", "by-title"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("git will not take"));
+    assert!(
+        !world.forest().join("fix").exists(),
+        "a refused template left directories behind"
+    );
+}
+
 /// A matter that has a branch of its own keeps it: the template applies only
 /// where there is none, so a pull request is placed exactly where it was
 /// before the key existed (§FS-005-dispatch.25).

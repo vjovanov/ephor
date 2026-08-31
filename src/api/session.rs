@@ -1122,6 +1122,7 @@ impl offers::Naming for Filling<'_> {
         self.session.name_the_branches(item, actions);
     }
 }
+
 impl Session {
     /// The two passes [`offers::entries`](crate::api::offers::entries) runs
     /// over every list about a matter, in the one place both surfaces go
