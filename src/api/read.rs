@@ -100,7 +100,7 @@ impl Session {
     pub fn menu(&mut self, subject: &Subject) -> Result<Vec<offers::MenuEntry>, String> {
         let placed = self.place(subject)?;
         let project = subject.project().to_string();
-        let (applicable, has_workflows) = match subject {
+        let (about, applicable, has_workflows) = match subject {
             Subject::Item(item) => {
                 let item = (*item).clone();
                 // The recipes this project offers, so the menu carries the
@@ -121,23 +121,28 @@ impl Session {
                 let has_workflows = self.dispatcher.as_mut().is_some_and(|dispatcher| {
                     !dispatcher.workflows(&item.project).workflows.is_empty()
                 });
-                let mut applicable = self.actions_with(&item, &recipes, &beside);
-                self.name_the_hands(&item, &mut applicable);
-                // And where the workspace would be, for an entry that says
-                // which branch its work belongs on (§FS-005-dispatch.25).
-                self.name_the_branches(&item, &mut applicable);
-                (applicable, has_workflows)
+                let applicable = self.actions_with(&item, &recipes, &beside);
+                (Some(item), applicable, has_workflows)
             }
             // A branch row carries ephor's own offers only: there is no matter
             // here for a source's, a project's or a person's entries to be
             // selected against, and none for a recipe either
             // (§FS-005-dispatch.2).
-            Subject::Branch { branch, .. } => (self.branch_actions(&project, branch), false),
+            Subject::Branch { branch, .. } => (None, self.branch_actions(&project, branch), false),
         };
         let checkout = self.checkouts.get(&project).cloned();
         let can = self.can(&project);
-        let mut entries =
-            offers::entries(&placed.state, &checkout, &can, applicable, has_workflows);
+        // Who and where, filled in by the assembly rather than here: a surface
+        // that had to remember to ask is a surface that can forget
+        // (§REQ-002-parity.3).
+        let mut entries = offers::entries(
+            &placed.state,
+            &checkout,
+            &can,
+            applicable,
+            has_workflows,
+            &mut self.naming(about.as_ref()),
+        );
         self.mark_running(subject, &mut entries);
         Ok(entries)
     }

@@ -1110,7 +1110,12 @@ impl App {
             })
             .collect();
         let can = self.ctx.can(&project);
-        self.menu = Some(menu.rebuilt(entries, &can));
+        // The same matter as the menu behind this screen, so the same naming:
+        // an entry that says which branch its work belongs on is offered here
+        // in the shape it is offered there (§REQ-002-parity.3,
+        // §FS-005-dispatch.25).
+        let item = menu.subject.item().cloned();
+        self.menu = Some(menu.rebuilt(entries, &can, &mut self.ctx.naming(item.as_ref())));
     }
 
     /// A workflow entry of the action menu, laid down (§FS-005-dispatch.19).

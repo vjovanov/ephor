@@ -1072,7 +1072,38 @@ pub fn who_gets_it(choice: &crate::work::runtime::roster::Choice, unbound: Optio
     }
 }
 
+/// The session, standing behind one matter's list: what
+/// [`Session::naming`] hands the assembly so it can fill in the facts an
+/// entry cannot carry (§AR-009-surfaces.1).
+pub struct Filling<'a> {
+    session: &'a mut Session,
+    item: Option<&'a Item>,
+}
+
+impl offers::Naming for Filling<'_> {
+    fn name(&mut self, actions: &mut [ActionConfig]) {
+        let Some(item) = self.item else {
+            return;
+        };
+        self.session.name_the_hands(item, actions);
+        // And where the workspace would be, for an entry that says which
+        // branch its work belongs on (§FS-005-dispatch.25).
+        self.session.name_the_branches(item, actions);
+    }
+}
 impl Session {
+    /// The two passes [`offers::entries`](crate::api::offers::entries) runs
+    /// over every list about a matter, in the one place both surfaces go
+    /// through (§AR-009-surfaces.1). `None` where there is no matter to
+    /// resolve against — a branch row carries ephor's own offers only, and
+    /// neither pass has anything to say about them (§FS-005-dispatch.2).
+    pub fn naming<'a>(&'a mut self, item: Option<&'a Item>) -> Filling<'a> {
+        Filling {
+            session: self,
+            item,
+        }
+    }
+
     /// Who each entry's work would go to, filled in when the list is
     /// built (§FS-005-dispatch.14). Never configuration: nobody writes it,
     /// ephor resolves it so the reader sees it before pressing the key —
@@ -1084,7 +1115,7 @@ impl Session {
     /// Only where the matter has no branch of its own — the forge's answer is
     /// never displaced by a template — and only on an entry that hands work
     /// over, which is the only kind the key is accepted on.
-    pub fn name_the_branches(&mut self, item: &Item, menu: &mut [ActionConfig]) {
+    fn name_the_branches(&mut self, item: &Item, menu: &mut [ActionConfig]) {
         let template_of = |entry: &ActionConfig| match &entry.agent {
             Some(recipe) => recipe.branch.clone(),
             None => entry.workflow.as_ref().and(entry.branch.clone()),
@@ -1115,7 +1146,7 @@ impl Session {
         }
     }
 
-    pub fn name_the_hands(&mut self, item: &Item, menu: &mut [ActionConfig]) {
+    fn name_the_hands(&mut self, item: &Item, menu: &mut [ActionConfig]) {
         if !menu.iter().any(|entry| entry.agent.is_some()) {
             return;
         }
