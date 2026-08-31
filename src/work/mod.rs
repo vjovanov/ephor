@@ -826,13 +826,19 @@ impl Dispatcher {
     /// where the item has work, and the same template `site` resolves at
     /// dispatch otherwise (§FS-006-project-interface.7) — so a surface asking
     /// "who would get this" resolves against the root the dispatch will use.
-    pub fn work_root_of(&mut self, item: &Item) -> Option<PathBuf> {
+    ///
+    /// `branch` is the template carried by the entry that would be dispatched,
+    /// where it carries one: the root is then inside the workspace that
+    /// template names, exactly as [`Dispatcher::site_for`] resolves it. A
+    /// caller with no entry in hand passes `None` and gets the matter's own
+    /// (§FS-005-dispatch.25).
+    pub fn work_root_of(&mut self, item: &Item, branch: Option<&str>) -> Option<PathBuf> {
         if let Some(entry) = self.ledger.entries.get(&item.id) {
             return Some(entry.root.clone());
         }
         let template = self.root_template(&item.project);
         let placement = self.placement(&item.project)?.clone();
-        let checkout = placement.checkout(item);
+        let checkout = crate::branches::placed_through(&placement, item, branch);
         let subject = Subject {
             item,
             checkout: &checkout,
@@ -1085,7 +1091,10 @@ impl Dispatcher {
         let mut checkout = placement.checkout(item);
         // The matter's own branch always wins: a template supplies the branch
         // a matter has none of, and never displaces the one the forge recorded
-        // or the registry matched (§FS-005-dispatch.25).
+        // or the registry matched (§FS-005-dispatch.25). This is
+        // [`crate::branches::placed_through`] with the refusal kept: a surface
+        // asking where the work would go falls back to the matter's own
+        // placement, and the dispatch that would write there refuses instead.
         let mut mint = None;
         if checkout.branch.is_none() {
             if let Some(template) = branch {

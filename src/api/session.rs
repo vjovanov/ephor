@@ -992,8 +992,15 @@ impl Session {
 
     /// Where this matter's work lives: the project's work root, resolved at
     /// the checkout the matter is about (§FS-005-dispatch.4).
-    pub fn work_root(&self, item: &Item) -> Option<std::path::PathBuf> {
-        let checkout = self.checkout(item)?;
+    ///
+    /// `branch` is the template carried by the entry being asked about, where
+    /// it carries one — the work root is then inside the workspace that entry
+    /// names, which is where its dispatch will write (§FS-005-dispatch.25). A
+    /// caller asking about the matter rather than about one entry passes
+    /// `None`.
+    pub fn work_root(&self, item: &Item, branch: Option<&str>) -> Option<std::path::PathBuf> {
+        let placement = self.placements.get(&item.project)?;
+        let checkout = crate::branches::placed_through(placement, item, branch);
         let root = self.root(&item.project)?.to_path_buf();
         let template = crate::work::root_template(
             &self.work_config,
@@ -1010,6 +1017,30 @@ impl Session {
         Some(std::path::PathBuf::from(crate::paths::resolve_path(
             &crate::work::dossier::render(&template, &subject.placeholders()),
         )))
+    }
+
+    /// The work root the picker over one matter's menu reads its roster at
+    /// (§FS-005-dispatch.14). The picker stands over the whole list rather
+    /// than one row, so it is the root every entry that could use it would be
+    /// dispatched into — where they agree, which is every menu whose entries
+    /// say the same thing about the branch their work belongs on. Where they
+    /// do not, the matter's own root answers for all of them rather than one
+    /// entry's answer standing for the rest (§FS-005-dispatch.25). None where
+    /// nothing on the menu hands work over: there is nobody to pick for.
+    pub fn roster_root(
+        &self,
+        item: &Item,
+        entries: &[offers::MenuEntry],
+    ) -> Option<std::path::PathBuf> {
+        let mut wanted = entries
+            .iter()
+            .filter_map(|entry| entry.action.agent.as_ref())
+            .map(|recipe| self.work_root(item, recipe.branch.as_deref()));
+        let first = wanted.next()?;
+        match wanted.all(|root| root == first) {
+            true => first,
+            false => self.work_root(item, None),
+        }
     }
 
     /// Every item of every configured project's cached feed, still visible
@@ -1150,9 +1181,17 @@ impl Session {
         if !menu.iter().any(|entry| entry.agent.is_some()) {
             return;
         }
-        let Some(root) = self.work_root(item) else {
-            return;
-        };
+        // One root per entry, read before the dispatcher is borrowed: an entry
+        // that says which branch its work belongs on is dispatched inside the
+        // workspace it names, and the hand this row shows is the hand that
+        // dispatch would resolve there (§FS-005-dispatch.25).
+        let roots: Vec<Option<std::path::PathBuf>> = menu
+            .iter()
+            .map(|entry| {
+                let recipe = entry.agent.as_ref()?;
+                self.work_root(item, recipe.branch.as_deref())
+            })
+            .collect();
         // With no runner bound there is nobody to ask, and the entry says so
         // in the workable rung's own words rather than naming a hand it does
         // not have (§FS-005-dispatch.14). The ticket is written all the same.
@@ -1165,7 +1204,7 @@ impl Session {
         let Some(dispatcher) = &mut self.dispatcher else {
             return;
         };
-        for entry in menu.iter_mut() {
+        for (entry, root) in menu.iter_mut().zip(roots) {
             let Some(recipe) = &entry.agent else {
                 continue;
             };
@@ -1185,6 +1224,11 @@ impl Session {
                 });
                 continue;
             }
+            // Nowhere to resolve it against is nothing to say about it: the
+            // row carries no hand rather than one read at the wrong root.
+            let Some(root) = root else {
+                continue;
+            };
             let pinned = recipe.hand.clone();
             let choice = dispatcher.hand(&item.project, &recipe.id, None, pinned.as_ref(), &root);
             entry.hand = Some(who_gets_it(&choice, unbound.as_deref()));
