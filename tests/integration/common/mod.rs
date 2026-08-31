@@ -61,17 +61,17 @@ pub fn strip_timestamps(value: &mut Value) {
     }
 }
 
-/// Compare a feed cache against `tests/golden/<name>`, or rewrite it when
-/// `UPDATE_GOLDEN` is set. These goldens are the characterization net for
-/// §RM-001-forge-interface: moving a provider behind the forge interface must
-/// not change any observable field.
+/// Compare a feed cache against `tests/integration/golden/<name>`, or rewrite
+/// it when `UPDATE_GOLDEN` is set. These goldens are the characterization net
+/// for §RM-001-forge-interface: moving a provider behind the forge interface
+/// must not change any observable field.
 pub fn assert_golden(name: &str, cache_path: &Path) {
     let mut cache: Value = serde_json::from_str(&fs::read_to_string(cache_path).unwrap()).unwrap();
     strip_timestamps(&mut cache);
     let actual = serde_json::to_string_pretty(&cache).unwrap() + "\n";
 
     let golden = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/golden")
+        .join("tests/integration/golden")
         .join(name);
     if std::env::var_os("UPDATE_GOLDEN").is_some() {
         fs::create_dir_all(golden.parent().unwrap()).unwrap();

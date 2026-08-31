@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "check_boundary.py"
+SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "check_boundary.py"
 SPEC = importlib.util.spec_from_file_location("check_boundary", SCRIPT_PATH)
 check_boundary = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
