@@ -21,9 +21,11 @@
 fissile_config_version = 1
 
 [scan]
-# Everything this repository writes. `Cargo.lock` is generated, `target/` and
-# `panta/` are gitignored, and `respect_gitignore` covers both.
+# Everything this repository writes, `.agents/` included — the config that sets
+# these budgets is a file like any other. `Cargo.lock` is generated, `target/`
+# and `panta/` are gitignored, and `respect_gitignore` covers both.
 include = [
+  ".agents",
   "src",
   "tests",
   "docs",
@@ -326,7 +328,7 @@ hard_message = "split-spec-hard"
 # reason that is this repository's own rather than a preference: `README.md`
 # line 9 says "**docs/manual.md** is the manual; this page is the tour". A
 # repository that has already declared where its depth lives has no argument for
-# a 519-line tour. The overflow is recorded in
+# a 525-line tour. The overflow is recorded in
 # `docs/file-size-human-exceptions.toml` — the README is not trimmed to fit a
 # number, and the number is not raised to spare the README.
 [[rules]]
@@ -379,7 +381,7 @@ message = "manual-chapter"
 # line budget on one only asks it to cut a release in half. §FS-002-release.1
 # already bounds it the way it can be bounded — each release rotates out to
 # `docs/changelog/<version>.md` when the next ships. What is left is the bytes
-# backstop, at 512 KiB against today's 159 KiB.
+# backstop, at 512 KiB against today's 161 KiB.
 [[rules]]
 id = "changelog"
 include = ["docs/changelog.md", "docs/changelog/**/*.md"]
@@ -419,7 +421,7 @@ count_comment_lines = false
 message = "split-workflow"
 
 # Published schemas and worked examples: content is the artifact, so bytes, and
-# never hand-trimmed. The largest is `assets/ephor-views.schema.json` at 54 KiB
+# never hand-trimmed. The largest is `assets/ephor-views.schema.json` at 55 KiB
 # and `config/ci-green.example.states.yaml` at 32 KiB, so the 64 KiB soft tier
 # is the next doubling of the biggest thing here rather than a number chosen to
 # clear it.
