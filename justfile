@@ -41,6 +41,10 @@ grund:
     grund check
     grund fmt --check
 
+# Hold every file to the budget its reader sets (§FS-012-file-size.3)
+fissile:
+    fissile check
+
 # Run the end-to-end scenarios alone (`just check` runs them too, with
 # everything else — they are ordinary cargo test targets)
 e2e:
@@ -61,7 +65,8 @@ manual-page out="target/manual.html":
     python3 scripts/manual-page.py {{out}}
 
 # Full gate, matching CI: format + build + tests + boundary + parity + grund
-check: format-check build test test-python boundary parity grund
+# + fissile
+check: format-check build test test-python boundary parity grund fissile
 
 # Everything a release verifies, without publishing anything
 pre-release:

@@ -144,6 +144,40 @@ jobs:
           ephor: ./target/debug/ephor
           verbs: style
 
+  # Every file in this tree is measured against a budget set by how it is read
+  # (§FS-012-file-size.3): the rules and the derivation for each limit are in
+  # `.agents/fissile.toml`. The pre-commit hook measures the files a commit
+  # touches; this measures the whole tree, so a file that grew past its budget
+  # on a branch nobody committed through the hook is still caught. One platform,
+  # for the same reason the grund job gives — it measures the repository's
+  # files, not behaviour.
+  fissile:
+    name: fissile check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v5
+        continue-on-error: true
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-fissile-0.8.1
+
+      # Pinned for the reason grund is pinned: a budget only means something
+      # against a fixed measurement, so a version that counted lines differently
+      # would move every limit in the tree with no commit saying it had.
+      - name: Install fissile
+        run: cargo install fissile --version 0.8.1 --locked
+
+      - name: fissile check
+        run: fissile check
+
   # The tree is a grund tree: citations in requirements.md, docs/, and src/ must
   # resolve. One platform — it checks the repository's text, not behaviour.
   grund:
