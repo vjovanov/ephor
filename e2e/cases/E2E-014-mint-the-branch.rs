@@ -576,9 +576,34 @@ fn a_recipe_may_say_the_branch_its_work_belongs_on() {
 /// The menu and every reading of it offer an entry that says which branch its
 /// work belongs on, in the *will check out first* shape — and go on blocking
 /// one that says nothing (§FS-005-dispatch.25, §REQ-002-parity.3).
+///
+/// Whichever home the entry lives in: the one beside the workflow and a recipe
+/// carrying the same template are two entries in one situation, and an entry
+/// that answers differently because its template is written somewhere else is
+/// the parity this rule is about. A template that will not render is refused on
+/// the row rather than on the keystroke (§FS-004-quick-actions.2).
 #[test]
 fn the_offer_follows_the_template_on_both_surfaces() {
     let world = watching(Some("fix/issue-{number}"), true);
+    let recipe = |id: &str, template: &str| {
+        json!({
+            "id": id,
+            "description": "do the issue",
+            "when": { "kinds": ["issue"] },
+            "branch": template,
+            "brief": "Do {title}."
+        })
+    };
+    world.configure(json!({
+        "projects": { PROJECT: {
+            "providers": [ { "provider": "acmeforge", "user": "you", "repos": ["widget"] } ],
+            "work": { "recipes": [
+                recipe("do-issue", "fix/issue-{number}"),
+                recipe("by-sprint", "fix/{sprint}"),
+            ] }
+        } },
+        "work": { "runner": "acme-runtime" }
+    }));
 
     // The prose form, which is what the work screen draws from
     // (§REQ-002-parity.2).
@@ -589,24 +614,47 @@ fn the_offer_follows_the_template_on_both_surfaces() {
         .success()
         .stdout(predicate::str::contains("fix-issue"));
 
-    let said = world
-        .ephor()
-        .args(["work", "offers", "--item", ITEM, "--json"])
-        .assert()
-        .success();
-    let view = json_of(said.get_output());
-    let offer = view["offers"]
-        .as_array()
-        .expect("offers")
-        .iter()
-        .find(|offer| offer["id"] == "fix-issue")
-        .expect("the entry is offered on an issue with no branch");
-    assert_eq!(offer["gate"], json!("needs-checkout"));
-    assert_eq!(offer["branch"], json!("fix/issue-95"));
-    assert_eq!(
-        offer["workspace"],
-        json!(workspace(&world).to_string_lossy())
-    );
+    // Both readings of the one menu, which have nothing of their own to say
+    // about a gate (§REQ-002-parity.3).
+    for reading in [
+        vec!["work", "offers", "--item", ITEM, "--json"],
+        vec!["actions", "--item", ITEM, "--json"],
+    ] {
+        let said = world.ephor().args(&reading).assert().success();
+        let view = json_of(said.get_output());
+        let offer = |id: &str| {
+            view["offers"]
+                .as_array()
+                .expect("offers")
+                .iter()
+                .find(|offer| offer["id"] == id)
+                .unwrap_or_else(|| panic!("'{id}' is offered on an issue with no branch: {view}"))
+                .clone()
+        };
+        // The entry beside the workflow, and the recipe saying the same thing
+        // in its own home: one shape, because it is one situation.
+        for id in ["fix-issue", "do-issue"] {
+            let offer = offer(id);
+            assert_eq!(offer["gate"], json!("needs-checkout"), "{id}: {offer}");
+            assert_eq!(offer["branch"], json!("fix/issue-95"), "{id}: {offer}");
+            assert_eq!(
+                offer["workspace"],
+                json!(workspace(&world).to_string_lossy()),
+                "{id}: {offer}"
+            );
+        }
+        // The template that names no field of a matter: the reason is on the
+        // row, and the key is not advertised on it.
+        let refused = offer("by-sprint");
+        assert_eq!(refused["gate"], json!("blocked"), "{refused}");
+        assert!(
+            refused["refusal"]
+                .as_str()
+                .expect("the reason")
+                .contains("not a field a branch template may name"),
+            "{refused}"
+        );
+    }
 
     // The same work saying only that it edits the change is not on the table:
     // there is no workspace for it and the dispatch refuses it.

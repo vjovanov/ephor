@@ -88,12 +88,20 @@ pub fn add_unclaimed(menu: &mut Vec<ActionConfig>, entries: Vec<ActionConfig>) {
 /// description, and the recipe itself riding along, because what is dispatched
 /// has to be the recipe and not a copy of what the row said about it — the
 /// opening move and the hand it pins are on it.
+///
+/// Which branch its work belongs on is copied onto the row rather than left on
+/// the recipe alone (§FS-005-dispatch.25), the way the entry beside a workflow
+/// carries its own: what gates the row, what annotates it and what a reading
+/// prints all ask [`ActionConfig::branch`], so a recipe whose template lives
+/// somewhere else would be the one entry of the three that answers differently
+/// in the same situation (§REQ-002-parity.3).
 pub fn agent_entry(recipe: &crate::work::recipe::Recipe) -> ActionConfig {
     ActionConfig {
         id: recipe.id.clone(),
         icon: recipe.icon.clone(),
         description: recipe.description.clone(),
         agent: Some(recipe.clone()),
+        branch: recipe.branch.clone(),
         ..ActionConfig::default()
     }
 }
