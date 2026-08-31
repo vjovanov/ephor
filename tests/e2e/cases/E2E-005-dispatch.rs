@@ -450,3 +450,260 @@ fn a_ticket_asked_for_twice_is_taken_back_and_the_plan_keeps_the_record() {
         "Cancelled from ephor; no reason was given."
     );
 }
+
+/// An ordering the reader already made, read from a file (§FS-005-dispatch.26).
+///
+/// Four issues, none needing a checkout or a gate, all matched by the same
+/// trivial recipe — so a fixture ranking's effect on the order dispatch comes
+/// out in is the only thing any of these scenarios is about. Newest first is
+/// today's order among them: `#13`, `#12`, `#11`, `#10`.
+mod ranking {
+    use super::*;
+
+    const RANKED_FORGE: &str = r#"#!/usr/bin/env bash
+set -euo pipefail
+cat > /dev/null
+case "${1:?subcommand}" in
+  capabilities)
+    printf '{"issues":true}'
+    ;;
+  issues)
+    printf '%s' '[
+      { "key": "acme/widget#10", "title": "Alpha", "url": "https://acme.example/issue/10",
+        "updated_at": "2026-07-27T12:00:00Z", "status": "open" },
+      { "key": "acme/widget#11", "title": "Beta", "url": "https://acme.example/issue/11",
+        "updated_at": "2026-07-28T12:00:00Z", "status": "open" },
+      { "key": "acme/widget#12", "title": "Gamma", "url": "https://acme.example/issue/12",
+        "updated_at": "2026-07-29T12:00:00Z", "status": "open" },
+      { "key": "acme/widget#13", "title": "Delta", "url": "https://acme.example/issue/13",
+        "updated_at": "2026-07-30T12:00:00Z", "status": "open" }
+    ]'
+    ;;
+  *)
+    printf '[]'
+    ;;
+esac
+"#;
+
+    /// The trivial recipe every one of the four issues matches: no gate, no
+    /// role, and no checkout, so nothing about *whether* an item is worked
+    /// stands between a fixture ranking and the order it produces.
+    fn trivial_recipe() -> serde_json::Value {
+        json!({
+            "id": "triage",
+            "description": "look at the issue",
+            "when": { "kinds": ["issue"] },
+            "needs_checkout": false,
+            "state": "fix",
+            "brief": "Look at {title}."
+        })
+    }
+
+    fn item(n: u32) -> String {
+        format!("acmeforge:acme/widget#{n}")
+    }
+
+    fn world_with(work: serde_json::Value) -> World {
+        let world = World::new();
+        world.stub("ephor-forge-acmeforge", RANKED_FORGE);
+        let mut config = json!({
+            "projects": { PROJECT: { "providers": [
+                { "provider": "acmeforge", "user": "you", "repos": ["widget"] }
+            ] } },
+        });
+        config["work"] = work;
+        world.configure(config);
+        world.ephor().args(["refresh", PROJECT]).assert().success();
+        world
+    }
+
+    fn world() -> World {
+        world_with(json!({ "recipes": [trivial_recipe()] }))
+    }
+
+    fn dispatch(world: &World, extra: &[&str]) -> serde_json::Value {
+        let mut args = vec!["work", "dispatch", "--dry-run", "--json"];
+        args.extend_from_slice(extra);
+        let output = world.ephor().args(&args).output().expect("dispatch runs");
+        assert!(
+            output.status.success(),
+            "dispatch failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        json_of(&output)
+    }
+
+    fn ids(dispatched: &serde_json::Value) -> Vec<String> {
+        dispatched["items"]
+            .as_array()
+            .expect("items is an array")
+            .iter()
+            .map(|row| row["item"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    fn notes(dispatched: &serde_json::Value) -> Vec<String> {
+        dispatched["notes"]
+            .as_array()
+            .expect("notes is an array")
+            .iter()
+            .map(|note| note.as_str().unwrap().to_string())
+            .collect()
+    }
+
+    /// With no ranking named at all, behaviour is exactly today's: newest
+    /// `updated_at` first, and nothing new said about it.
+    #[test]
+    fn with_no_ranking_and_no_limit_the_order_and_the_reading_are_unchanged() {
+        let world = world();
+        let dispatched = dispatch(&world, &[]);
+        assert_eq!(
+            ids(&dispatched),
+            vec![item(13), item(12), item(11), item(10)]
+        );
+        assert!(notes(&dispatched).is_empty());
+    }
+
+    /// Ranked items come first, in exactly the file's own order; everything
+    /// the file does not name follows, keeping the order it already had.
+    #[test]
+    fn ranked_items_dispatch_first_in_file_order_then_unranked_in_the_old_order() {
+        let world = world();
+        let ranking = world.path().join("ranking.txt");
+        std::fs::write(&ranking, format!("{}\n{}\n", item(10), item(12))).unwrap();
+
+        let dispatched = dispatch(&world, &["--ranking", ranking.to_str().unwrap()]);
+        assert_eq!(
+            ids(&dispatched),
+            vec![item(10), item(12), item(13), item(11)]
+        );
+        let says = notes(&dispatched);
+        assert!(
+            says.iter()
+                .any(|note| note.contains(&ranking.display().to_string())
+                    && note.contains("2 item(s) named")),
+            "{says:?}"
+        );
+    }
+
+    /// An id the file names that matches no item in the feed is skipped and
+    /// named in the reading; the sweep continues over everything else.
+    #[test]
+    fn an_unmatched_id_is_skipped_and_reported_the_sweep_continues() {
+        let world = world();
+        let ranking = world.path().join("ranking.txt");
+        std::fs::write(
+            &ranking,
+            format!("acmeforge:acme/widget#404\n{}\n", item(11)),
+        )
+        .unwrap();
+
+        let dispatched = dispatch(&world, &["--ranking", ranking.to_str().unwrap()]);
+        assert_eq!(
+            ids(&dispatched),
+            vec![item(11), item(13), item(12), item(10)]
+        );
+        let says = notes(&dispatched);
+        assert!(
+            says.iter()
+                .any(|note| note.contains("acmeforge:acme/widget#404")
+                    && note.contains("matches no item")),
+            "{says:?}"
+        );
+    }
+
+    /// A ranking file that is not there falls back to today's order, and the
+    /// reading says so rather than failing.
+    #[test]
+    fn an_absent_ranking_file_falls_back_and_says_so() {
+        let world = world();
+        let missing = world.path().join("nope.txt");
+
+        let dispatched = dispatch(&world, &["--ranking", missing.to_str().unwrap()]);
+        assert_eq!(
+            ids(&dispatched),
+            vec![item(13), item(12), item(11), item(10)]
+        );
+        let says = notes(&dispatched);
+        assert!(
+            says.iter().any(|note| note.contains("is not there")),
+            "{says:?}"
+        );
+    }
+
+    /// An empty ranking file is the same non-error, said in its own words.
+    #[test]
+    fn an_empty_ranking_file_falls_back_and_says_so() {
+        let world = world();
+        let empty = world.path().join("empty.txt");
+        std::fs::write(&empty, "\n\n").unwrap();
+
+        let dispatched = dispatch(&world, &["--ranking", empty.to_str().unwrap()]);
+        assert_eq!(
+            ids(&dispatched),
+            vec![item(13), item(12), item(11), item(10)]
+        );
+        let says = notes(&dispatched);
+        assert!(
+            says.iter().any(|note| note.contains("names nothing")),
+            "{says:?}"
+        );
+    }
+
+    /// `--limit` bounds how many items are dispatched, taken from the top of
+    /// the ranked order — never from what a filter or existing work stepped
+    /// over, because neither of those consumes the bound.
+    #[test]
+    fn limit_bounds_the_dispatched_set_from_the_top_of_the_order() {
+        let world = world();
+        let ranking = world.path().join("ranking.txt");
+        std::fs::write(
+            &ranking,
+            format!("{}\n{}\n{}\n{}\n", item(10), item(11), item(12), item(13)),
+        )
+        .unwrap();
+
+        let dispatched = dispatch(
+            &world,
+            &["--ranking", ranking.to_str().unwrap(), "--limit", "2"],
+        );
+        assert_eq!(dispatched["opened"], 2);
+        assert_eq!(ids(&dispatched), vec![item(10), item(11)]);
+    }
+
+    /// `--limit` with no ranking bounds the same newest-first sweep.
+    #[test]
+    fn limit_bounds_the_sweep_even_with_no_ranking() {
+        let world = world();
+        let dispatched = dispatch(&world, &["--limit", "1"]);
+        assert_eq!(dispatched["opened"], 1);
+        assert_eq!(ids(&dispatched), vec![item(13)]);
+    }
+
+    /// The `work.ranking` config key orders dispatch with no flag at all, and
+    /// `--ranking` displaces it for exactly one run.
+    #[test]
+    fn the_configured_ranking_orders_dispatch_and_the_flag_displaces_it_for_one_run() {
+        let configured = tempfile::tempdir().expect("a temp dir for the configured file");
+        let configured_path = configured.path().join("configured.txt");
+        std::fs::write(&configured_path, format!("{}\n", item(11))).unwrap();
+        let world = world_with(json!({
+            "recipes": [trivial_recipe()],
+            "ranking": configured_path.to_str().unwrap(),
+        }));
+
+        let dispatched = dispatch(&world, &[]);
+        assert_eq!(
+            ids(&dispatched),
+            vec![item(11), item(13), item(12), item(10)]
+        );
+
+        let displaced = world.path().join("displaced.txt");
+        std::fs::write(&displaced, format!("{}\n", item(10))).unwrap();
+        let dispatched = dispatch(&world, &["--ranking", displaced.to_str().unwrap()]);
+        assert_eq!(
+            ids(&dispatched),
+            vec![item(10), item(13), item(12), item(11)]
+        );
+    }
+}
