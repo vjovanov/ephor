@@ -2884,9 +2884,15 @@ in the workspace the project already has and says what it needs of one with
 
 **What it may say.** The same fields a brief takes (§8.2) — `{number}`,
 `{repo}`, `{kind}`, `{title}`, `{ticket}`, … — and never `{branch}`,
-`{workspace}` or `{reply}`, which are what it produces. A template naming one
-of those, or naming a field this item has not got, is refused by name rather
-than rendered into a directory nobody meant.
+`{workspace}` or `{reply}`, which are what it produces. A template that will
+not do is refused by name rather than rendered into a directory nobody meant,
+and the refusal says which of the four things is wrong with it: it names one of
+those three; it names something that is no field of an item at all, and the
+refusal lists the ones it may name; it names a field *this* item has not got,
+so every item missing it would land on one shared branch; or what it renders is
+not a name git will take as a branch. That last one is answered here rather
+than left to the checkout — git's own refusal comes from inside the making, by
+which time the directories leading to the workspace are already there.
 
 **The item's own branch always wins.** A pull request keeps the branch the
 forge recorded and an item the registry matched keeps the branch it matched;
@@ -2900,8 +2906,11 @@ operation `ephor checkout` is (§7.1), with the same directory template, the
 same trees grown from the project's main branch, and the same task store. The
 workspace is made **after every refusal and before anything is written** — the
 hand chosen, the machine vetted, the inputs answered — and **never on
-`--dry-run`**, which makes nothing at all and says the branch, the directory
-and the plan path instead:
+`--dry-run`**. The machine vetted is the one the work root declares where there
+is one, and the one ephor would install where the workspace is not there yet: a
+directory that does not exist declares nothing, and making it in order to read
+its machine back is the leaving-behind this rule is about. A dry run makes
+nothing at all and says the branch, the directory and the plan path instead:
 
 ```console
 $ ephor work lay fix-issue --item acmeforge:acme/widget#95 --dry-run --json
