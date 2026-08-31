@@ -64,9 +64,12 @@ esac
 
 /// A runtime that carries one workflow and renders it where it is pointed —
 /// the same shape as E2E-011's, cut down to what this scenario asks of it.
+/// `$INIT` is what it does when it is asked to make the store: nothing, for
+/// every case but the one that is about it.
 const ACME_RUNTIME: &str = r#"#!/usr/bin/env bash
 set -euo pipefail
 verb="$1"; shift
+$INIT
 
 if [ "$verb" = templates ]; then
   cat <<JSON
@@ -149,6 +152,20 @@ fn project_with_main_checked_out(world: &World) {
     git(&main, &["config", "user.name", "t"]);
 }
 
+/// The runtime stub, pointed at the workflows it carries and given whatever it
+/// does when ephor asks it to make the store.
+fn runtime(workflows: &Path, init: &str) -> String {
+    ACME_RUNTIME
+        .replace("$WORKFLOWS", &workflows.to_string_lossy())
+        .replace("$INIT", init)
+}
+
+/// Where the workflows the runtime carries are written, which is a fact about
+/// the world rather than about the entry beside them.
+fn workflows(world: &World) -> PathBuf {
+    world.path().join("workflows")
+}
+
 /// A world watching the forge, with the runtime bound, the project's branches
 /// one per directory, and an entry beside the workflow that says which branch
 /// the work it lays down belongs on.
@@ -157,7 +174,7 @@ fn watching(branch_template: Option<&str>, branch_root: bool) -> World {
     world.stub("ephor-forge-acmeforge", ACME_FORGE);
     project_with_main_checked_out(&world);
 
-    let workflows = world.path().join("workflows");
+    let workflows = workflows(&world);
     std::fs::create_dir_all(workflows.join("supervised-ticket-fix")).expect("a workflow directory");
     let mut entry = json!({
         "id": "fix-issue",
@@ -179,10 +196,7 @@ fn watching(branch_template: Option<&str>, branch_root: bool) -> World {
         serde_json::to_string_pretty(&entry).expect("an entry"),
     )
     .expect("the entry beside the workflow");
-    world.stub(
-        "acme-runtime",
-        &ACME_RUNTIME.replace("$WORKFLOWS", &workflows.to_string_lossy()),
-    );
+    world.stub("acme-runtime", &runtime(&workflows, ""));
 
     world.configure(json!({
         "projects": { PROJECT: {
@@ -422,6 +436,80 @@ fn a_machine_that_refuses_the_state_leaves_no_workspace() {
         "a refused state left {} behind",
         workspace(&world).display()
     );
+}
+
+/// The one machine ephor cannot read before the mint: a runtime that installs
+/// a machine of its own when it is asked to make the store installs it inside
+/// the workspace that has just been made, and ephor leaves what the runner
+/// left standing (§FS-006-project-interface.7). So this refusal is the one that
+/// outlives the mint — and it says so, naming the workspace, and nothing
+/// further is made behind it (§FS-005-dispatch.25).
+#[test]
+fn a_runner_that_brings_its_own_machine_is_refused_after_the_mint_and_says_so() {
+    let world = watching(Some("fix/issue-{number}"), true);
+    // Asked to make the store, it writes a project of its own — with a machine
+    // that has nothing to do with the one ephor would have installed.
+    world.stub(
+        "acme-runtime",
+        &runtime(
+            &workflows(&world),
+            r#"if [ "$verb" = init ]; then
+  printf '# Panta: runner own\n' > index.panta.md
+  printf 'name: runner-own\nstates:\n  alpha:\n  done:\n    final: true\n' > states.yaml
+  echo Initialized
+  exit 0
+fi"#,
+        ),
+    );
+    world.configure(json!({
+        "projects": { PROJECT: {
+            "providers": [ { "provider": "acmeforge", "user": "you", "repos": ["widget"] } ],
+            "work": { "recipes": [ {
+                "id": "do-issue",
+                "description": "do the issue",
+                "when": { "kinds": ["issue"] },
+                "branch": "fix/issue-{number}",
+                // A state ephor's own machine declares, so the vet before the
+                // mint passes and the refusal can only come from the runner's.
+                "state": "fix",
+                "brief": "Do {title}."
+            } ] }
+        } },
+        "work": { "runner": "acme-runtime" }
+    }));
+
+    let said = world
+        .ephor()
+        .args(["work", "dispatch", "--item", ITEM, "--recipe", "do-issue"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("runner-own"))
+        .stderr(predicate::str::contains("does not declare"));
+    // The workspace outlived the refusal, so the refusal names it rather than
+    // leaving the reader to find it.
+    assert!(workspace(&world).is_dir());
+    let refusal = String::from_utf8_lossy(&said.get_output().stderr).into_owned();
+    assert!(
+        refusal.contains(&workspace(&world).to_string_lossy().to_string()),
+        "the refusal does not name the workspace it left: {refusal}"
+    );
+    assert!(refusal.contains("is still there"), "{refusal}");
+
+    // And nothing further: asking again refuses on the same machine, now the
+    // one the work root that is there declares.
+    let plans = std::fs::read_dir(workspace(&world).join("panta"))
+        .expect("the store")
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.contains("acmeforge"))
+        .count();
+    assert_eq!(plans, 0, "a refused dispatch wrote a plan");
+    world
+        .ephor()
+        .args(["work", "dispatch", "--item", ITEM, "--recipe", "do-issue"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("does not declare"));
 }
 
 /// A template that will not do is refused by name, and nothing is made on the

@@ -1417,7 +1417,23 @@ impl Dispatcher {
         // come with a machine of the runtime's own, which `ensure` leaves
         // standing (§FS-006-project-interface.7), and that is the one the work
         // will actually run under.
-        vet(&root)?;
+        //
+        // Which makes this the one refusal that outlives the mint: the machine
+        // vetted above was the one ephor would have installed, and the runner
+        // installed another inside the workspace this dispatch has just made.
+        // The workspace is named rather than left for the reader to find
+        // (§FS-005-dispatch.25) — and nothing further is made behind it,
+        // because the next dispatch opens this root and refuses on the same
+        // machine before minting anything.
+        vet(&root).map_err(|why| match &site.mint {
+            Some(target) => EphorError::Command(format!(
+                "{why} The workspace {} was made before that machine could be read, and is \
+                 still there; dispatching here again refuses on it without making anything \
+                 further.",
+                target.display()
+            )),
+            None => why,
+        })?;
         let path = root.plan_path(&plan_id);
         let mut brief = dossier::render(&recipe.brief, &site.values);
         // What is handed over is the situation rather than the request to
