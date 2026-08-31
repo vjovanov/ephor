@@ -2161,7 +2161,7 @@ ships, the previous "latest" section moves verbatim to
   the offer is withheld rather than made and left to fail on the keystroke
   ([§FS-004-quick-actions.2](../requirements.md#2-offered-only-where-it-would-work)).
 - **Tests split into an integration home, and e2e moves under `tests/`.**
-  (PR #N) `.agents/grund.toml`'s deprecated `[[kinds]] prefix` key is renamed
+  (PR #18) `.agents/grund.toml`'s deprecated `[[kinds]] prefix` key is renamed
   `kind` throughout — required before grund 0.13.0, which stops loading it —
   and the citable `E2E` kind gives way to two non-citable homes: `e2e` at
   `tests/e2e` (the corpus, moved from `e2e/`) and `integration` at
