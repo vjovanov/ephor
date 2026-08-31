@@ -2483,6 +2483,69 @@ does not allow and the menu has always blocked. This is the two surfaces coming
 to agree ([§REQ-002-parity.2](docs/requirements/REQ-002-parity.md#2-parity-runs-both-ways)), and it is the one thing here that changes for a
 configuration written before it.
 
+### 26. An ordering already made can be read, and a limit bounds what runs
+
+A sweep dispatches every eligible item in one order — today, newest
+`updated_at` first — and that order decides which items get a ticket first.
+Ephor has no opinion of its own about which item matters more: it does not
+compute a rank from labels, from reactions, or from anything else, and it
+does not ask a project to compute one either
+([§1](#1-a-recipe-decides-which-items-deserve-work-and-what-to-ask-for)).
+What it can do is read one a project already wrote.
+
+**The ranking arrives as a file: an ordered list of item ids, one per line,
+most important first.** The id is the one `ephor feed` prints and `--item`
+already takes everywhere else — `github-issues:vjovanov/rhei#95` — never a
+URL, because a matter without one (a project's own task,
+[§FS-006-project-interface.7](requirements.md#7-the-projects-own-tasks-are-read-where-they-live))
+would otherwise be permanently unrankable. Order in the file *is* the rank:
+there are no scores, no bands, and nothing here interprets a tie.
+
+**It is named two ways, the second good for one run.** The `work` block of
+site configuration takes an optional `"ranking": "<path>"`, and
+`ephor work dispatch --ranking <path>` displaces it for that invocation alone
+— the same displacement `--hand` already gives a single dispatch
+([§14](#14-who-does-the-work-is-chosen-and-defaulted-per-project)).
+
+**Ranked items dispatch first, in the file's own order; everything the file
+does not name follows, in the order it already had.** The file orders — it
+never filters. An item the file is silent about is still eligible, still
+offered a recipe, and still dispatched; it merely sorts after every item the
+file did name.
+
+**`--limit N` bounds how many items are dispatched — opened, or would-open
+under `--dry-run` — taken from the top of that order.** It is the reader's
+own number, not the file's: nothing a ranking names causes an item to be
+dispatched that a recipe would not already have matched. A recipe decides
+which items deserve work at all; a rank only orders the work the reader
+already chose to do
+([§1](#1-a-recipe-decides-which-items-deserve-work-and-what-to-ask-for)). An
+item skipped for another reason — it already has work, it fails `--kind` or
+`--updated-within`, no recipe applies — costs nothing against the bound; only
+an item actually dispatched does.
+
+**A file that is absent, empty, or unreadable is not an error.** The sweep
+falls back to the order it always used, and says which of the three happened
+rather than failing silently. With no ranking configured and no `--limit`,
+nothing about the sweep's behaviour or its output changes: this is a
+capability turned on by naming it, not a default anyone pays for unasked.
+
+**An id in the file that matches no eligible item is skipped and named, not
+fatal.** A ranking outliving the matter it names is ordinary — an issue
+closes, a pull request merges — and the sweep continues past it exactly as it
+does past everything else it cannot use.
+
+**The reading says which file it used and how old it is, in prose and in
+`--json` alike**
+([§REQ-002-parity.3](docs/requirements/REQ-002-parity.md#3-every-reading-answers-a-program)),
+so a ranking nobody has refreshed in a while is visible rather than
+mysterious, and every id the file named that matched nothing is said the same
+way.
+
+**The producer of the file is out of scope.** Whatever writes it — a script
+over a label, a person with an editor — is not ephor's concern here, and
+nothing ephor ships makes one.
+
 ### 27. An offer that a selector refused says why
 
 A recipe a selector refused and a recipe nobody wrote are not the same fact,
