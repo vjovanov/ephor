@@ -40,16 +40,19 @@ ships, the previous "latest" section moves verbatim to
   or asks for a ticket, where it would be a second spelling of a fact the
   recipe already carries. `ephor work dispatch` lays the first matching
   entry that said it about a matter no recipe covers and that has no work,
-  in the ranking's order, counted against `--limit`, honest under
+  in the ranking's order — finished work never matches, exactly as it never
+  matches a recipe — counted against `--limit`, honest under
   `--dry-run`, reported as `laid` / `would-lay` rows and a `laid` count in
   prose and `--json` alike; a refusal is named with nothing written, and a
   second sweep does not lay it again. `ephor work run --due` then treats the
   laid plan as ordinary work: its tasks are read wherever the runtime wrote
   them — including the `tasks/*.md` of a plan rendered as a directory — and
-  judged by the state machine in force for that plan rather than the work
-  root's, with capacity ceilings, cross-process reservation, ranking,
-  failed-start back-off and the branch guard applying exactly as they do to a
-  root a recipe wrote. Recipes keep their priority, and an entry that says
+  every surface that reads them judges them by the state machine in force for
+  that plan rather than the work root's: the due sweep, the operations board,
+  and the menu row all call a task its own machine parks *waiting on you*
+  rather than queued. It runs with capacity ceilings, cross-process
+  reservation, ranking, failed-start back-off and the branch guard applying
+  exactly as they do to a root a recipe wrote. Recipes keep their priority, and an entry that says
   nothing behaves exactly as before: a menu row, laid by you and started by
   you. (PR #N)
 

@@ -828,8 +828,10 @@ pub fn board(config: &WorkConfig, roots: &[RootPlans]) -> Board {
         // Read or not is a fact the row carries (§FS-005-dispatch.15): with
         // the machine unreadable, queued and finished are withheld below, and
         // a row that withheld them silently would leave its zero to be read
-        // as nothing done.
-        let machine_unread = match &machine {
+        // as nothing done. Carried only where a plan actually leaned on it —
+        // a floor of plans that are stores of their own is judged whole, and
+        // saying nothing was judged there would be untrue.
+        let unread = match &machine {
             Ok(Some(_)) => None,
             Ok(None) => Some("no states.yaml — nothing judged queued or finished".to_string()),
             Err(_) => {
@@ -837,16 +839,17 @@ pub fn board(config: &WorkConfig, roots: &[RootPlans]) -> Board {
             }
         };
         let machine = machine.ok().flatten();
-        let is_final = |state: Option<&str>| {
+        let mut leaned_on_root = false;
+        let is_final = |judge: Option<&WorkRoot>, state: Option<&str>| {
             state
-                .zip(machine.as_ref())
-                .map(|(state, machine)| machine.is_final(state))
+                .zip(judge)
+                .map(|(state, judge)| judge.is_final(state))
                 .unwrap_or(false)
         };
-        let is_gating = |state: Option<&str>| {
+        let is_gating = |judge: Option<&WorkRoot>, state: Option<&str>| {
             state
-                .zip(machine.as_ref())
-                .map(|(state, machine)| machine.is_gating(state))
+                .zip(judge)
+                .map(|(state, judge)| judge.is_gating(state))
                 .unwrap_or(false)
         };
         // What the witness says, asked the same way whichever of the two it
@@ -861,6 +864,24 @@ pub fn board(config: &WorkConfig, roots: &[RootPlans]) -> Board {
         let mut cancelled = 0;
         let mut known: BTreeSet<(String, String)> = BTreeSet::new();
         for (plan_ref, title, floor_tickets) in &floor {
+            // Which machine answers for this plan's tasks: the one in force
+            // in the plan's own store where the plan is one, because a task's
+            // state means whatever the machine in force for its own store
+            // says it means (§FS-006-project-interface.7,
+            // §FS-005-dispatch.28). A store whose machine cannot be read
+            // judges nothing — falling back on the root's would answer for
+            // this plan with a machine that is about other work
+            // (§FS-005-dispatch.15). The root's own answers for the plans the
+            // root holds directly, as it always did.
+            let own = super::plan::own_store(&plan_ref.path).map(WorkRoot::in_force);
+            let judge: Option<&WorkRoot> = match &own {
+                Some(Ok(store)) => Some(store),
+                Some(Err(_)) => None,
+                None => {
+                    leaned_on_root = true;
+                    machine.as_ref()
+                }
+            };
             for ticket in floor_tickets {
                 known.insert((plan_ref.plan_id.clone(), ticket.id.clone()));
                 // The floor is the plan file; a listing that names this
@@ -870,7 +891,7 @@ pub fn board(config: &WorkConfig, roots: &[RootPlans]) -> Board {
                         Some(row) => (row.state.clone(), row.assignee.clone()),
                         None => (ticket.state.clone(), ticket.assignee.clone()),
                     };
-                if is_final(state.as_deref()) {
+                if is_final(judge, state.as_deref()) {
                     // Over either way; taken back is said apart from finished
                     // (§FS-005-dispatch.16).
                     match state.as_deref() == Some(super::plan::CANCELLED) {
@@ -880,7 +901,7 @@ pub fn board(config: &WorkConfig, roots: &[RootPlans]) -> Board {
                     continue;
                 }
                 let holds = held_now(&plan_ref.plan_id, &ticket.id, state.as_deref());
-                let doing = if is_gating(state.as_deref()) {
+                let doing = if is_gating(judge, state.as_deref()) {
                     // Parked is a flavour of its own, before liveness: the
                     // usual end of the run that parked a ticket is that run
                     // exiting, and the ticket waits on the reader all the
@@ -902,7 +923,7 @@ pub fn board(config: &WorkConfig, roots: &[RootPlans]) -> Board {
                         assignee,
                     }
                 } else if is_live {
-                    if machine.is_none() {
+                    if judge.is_none() {
                         // No machine, no judgment: with finality and gating
                         // unreadable, "queued" and the done count would be
                         // confident guesses — the row says less instead
@@ -1001,7 +1022,7 @@ pub fn board(config: &WorkConfig, roots: &[RootPlans]) -> Board {
                 tickets,
                 done,
                 cancelled,
-                machine_unread,
+                machine_unread: leaned_on_root.then_some(unread).flatten(),
                 plans: group.plans.iter().map(|plan| plan.path.clone()).collect(),
             });
         }

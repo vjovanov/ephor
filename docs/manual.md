@@ -2513,7 +2513,13 @@ never reads *running* under a run that came later. And a work root whose
 dropped still show — the lock, the journal, and the plans carry those on
 their own — but nothing there is called queued or finished on the word of a
 machine that is not there, and the row says so itself: `no states.yaml —
-nothing judged queued or finished`.
+nothing judged queued or finished`. That is the root's own machine, and it
+answers for the plans the root holds directly. A plan that is a **store of its
+own** — one the runtime rendered as a directory, its `states.yaml` beside its
+index, which is what a laid workflow lands as (§8.15.1) — is judged by the
+machine in force *there*, on this board exactly as in `ephor work run --due`:
+a task its own machine parks reads *waiting on you* on both, and neither
+calls it queued.
 
 | Key | Does |
 |---|---|
@@ -2696,7 +2702,11 @@ entry
 
 `ephor work dispatch` then lays it down about every matter it applies to that
 **no recipe covers and that has no work at all**, and `ephor work run --due` —
-which the work-sync timer runs — starts what it laid. Both halves are the same
+which the work-sync timer runs — starts what it laid. The selector is the one
+every entry has (§8.15), so **finished work never matches** here either: a
+merged pull request or a closed issue that Recent still shows for its loose end
+(§6.1) is news, and the sweep lays nothing about it — the key is still yours to
+press. Both halves are the same
 sweep everything else goes through: the ranking orders what is laid (§8.9),
 `--limit` bounds it beside the tickets, `--dry-run` says what it would lay and
 writes nothing, and an entry that cannot be laid — a required input nobody
