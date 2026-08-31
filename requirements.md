@@ -2386,9 +2386,19 @@ already made ([§FS-004-quick-actions.7](#7-a-workspace-that-is-not-there-is-off
 `{repo}`, `{kind}`, `{title}`, `{ticket}`, and the rest of
 [§2](#2-the-ticket-carries-what-ephor-knows-not-a-link-to-it)'s vocabulary —
 and three of them it may not name, because they are what it produces:
-`{branch}`, `{workspace}` and `{reply}`. A template naming one of those is
-refused by name where it is read, rather than rendered into a directory nobody
-meant.
+`{branch}`, `{workspace}` and `{reply}`.
+
+**A template that will not render is refused by name**, where it is read and
+rather than turned into a directory nobody meant, and the refusal says which
+of the four things is wrong with it: it names one of the three fields it
+decides; it names something that is no field of a matter at all, and the
+refusal lists the ones it may name; it names a field this matter has not got,
+so that every matter missing that field would land on one shared branch; or
+what it renders is not a name git will take as a branch. The last of those is
+answered here rather than left to the checkout: git's own refusal arrives from
+inside the making, by which time the directories leading to the workspace are
+there, so a template git will not take is held to that before anything is
+made.
 
 **The matter's own branch always wins.** A pull request keeps the branch the
 forge recorded and a matter the registry placed keeps the branch it matched;
@@ -2420,10 +2430,14 @@ the way a single-checkout project standing on other code already is
 root that is itself the checkout.
 
 **It is made after every refusal and before the first write.** Who does the
-work is chosen, the machine already in force is vetted, the workflow's inputs
-are answered — and only then does the workspace appear, so a refusal still
-leaves nothing behind
+work is chosen, the machine is vetted, the workflow's inputs are answered —
+and only then does the workspace appear, so a refusal still leaves nothing
+behind
 ([§19](#19-a-workflow-the-runtime-offers-is-an-action-and-its-inputs-are-answered-here)).
+The machine vetted is the one in force where the work root is already there,
+and the one ephor would install where it is not: a workspace that does not
+exist declares nothing, and minting one in order to read its machine back is
+the leaving-behind this rule forbids.
 A run asked what it would do makes nothing at all: not the workspace, not the
 work root inside it, not the files a runtime would be shown — those have
 nowhere to go until the workspace exists — and it says the branch and the
@@ -2435,7 +2449,13 @@ words, and nothing is dispatched behind it.
 render with it, the ticket's identifiers carry it
 ([§8](#8-the-ticket-carries-the-item-as-data-not-only-as-prose)), the ledger
 records it, and the work root resolves inside the workspace — so the plan lands
-in the tree the work will edit rather than beside it.
+in the tree the work will edit rather than beside it. A surface asking about
+that work before it is dispatched asks about the same workspace: the hand an
+entry would go to and the roster a picker offers are read against the work root
+the dispatch will use
+([§14](#14-who-does-the-work-is-chosen-and-defaulted-per-project)), which for an
+entry carrying a `branch` is the root inside the workspace that entry names and
+not the project's own.
 
 **Offers follow.** An entry carrying a `branch` is offered on a matter with no
 branch, in the *will check out first* shape rather than blocked as *the
