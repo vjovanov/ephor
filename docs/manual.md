@@ -1566,6 +1566,7 @@ Add your own, or replace a shipped one by reusing its id:
   "work": {
     "root": "{workspace}/panta",       // where plans go
     "states": "~/my/states.yaml",      // a machine of your own, instead of the shipped one
+    "ranking": "~/my/ranking.txt",     // item ids, one per line, most important first (§8.9)
     "recipes": [
       {
         "id": "fix-gate",
@@ -1587,8 +1588,10 @@ Add your own, or replace a shipped one by reusing its id:
 }
 ```
 
-Per project, `projects.<id>.work` takes the same three keys and its recipes are
-appended to the global ones.
+Per project, `projects.<id>.work` takes the same `root`, `states` and
+`recipes` keys, and its recipes are appended to the global ones. `ranking` is
+read only from the site's own `work` block — the sweep it orders already
+spans every configured project.
 
 **`autorun`** is the one field that changes *when* work happens rather than
 what it says. With it, a ticket written from this recipe gets its run without
@@ -2200,7 +2203,8 @@ ephor work ask --item ID --state review "…"                   # start elsewher
 ephor work                                  # = work list
 ephor work list [--project P] [--open] [--json]
 ephor work dispatch [--project P] [--item ID] [--recipe R] [--kind K]
-                    [--again] [--hand H] [--updated-within DAYS] [--dry-run]
+                    [--again] [--hand H] [--updated-within DAYS]
+                    [--ranking PATH] [--limit N] [--dry-run]
 ephor work ask --item ID [WORDS…] [--state S] [--dry-run]
 ephor work sync [--project P] [--dry-run]
 ephor work cancel --item ID TICKET… [--why WORDS] [--dry-run]
@@ -2219,7 +2223,17 @@ ephor work states
   skips items that already have work — naming `--recipe` asks for that work
   specifically and lands as another ticket; `--again` overrides the skip
   entirely. `--hand <hand>[:<effort>]` is your pick of who does it, for this
-  invocation alone (§8.4).
+  invocation alone (§8.4). Eligible items dispatch newest `updated_at` first
+  unless a **ranking** orders them: `work.ranking` (below) or `--ranking PATH`
+  for this run alone names a file of item ids, one per line, most important
+  first — ranked items go first in the file's own order, everything else
+  follows in the order it already had. `--limit N` bounds how many items are
+  actually dispatched (opened, or would-open under `--dry-run`); an item a
+  filter or existing work steps over costs nothing against it. A ranking file
+  that is absent, empty, or unreadable falls back to today's order rather than
+  failing, and the sweep says which of the three happened, along with any id
+  the file named that matched nothing
+  ([§FS-005-dispatch.26](../requirements.md#26-an-ordering-already-made-can-be-read-and-a-limit-bounds-what-runs)).
 - **`run`** groups by work root and names the plans ephor opened, so a runtime
   project you keep in the same checkout for your own work is not swept in. One
   root at a time: tickets in one root are about one checkout, and two agents in

@@ -380,7 +380,7 @@ push, no pull request — and then keeps the ledger.
 ephor work                                  # what has been dispatched, and what it reached
 ephor work dispatch --dry-run               # what would be opened, and where
 ephor work dispatch [--project P] [--recipe R] [--item ID] [--kind pr]
-                    [--updated-within DAYS] [--again]
+                    [--updated-within DAYS] [--again] [--ranking PATH] [--limit N]
 ephor work ask --item ID "…"                # a ticket in your own words
 ephor work sync [--dry-run]                 # reopen work whose item has moved
 ephor work cancel --item ID TICKET… [--why "…"]   # take a ticket back; the plan keeps it
