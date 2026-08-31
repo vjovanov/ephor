@@ -2483,6 +2483,48 @@ does not allow and the menu has always blocked. This is the two surfaces coming
 to agree ([§REQ-002-parity.2](docs/requirements/REQ-002-parity.md#2-parity-runs-both-ways)), and it is the one thing here that changes for a
 configuration written before it.
 
+### 27. An offer that a selector refused says why
+
+A recipe a selector refused and a recipe nobody wrote are not the same fact,
+though an empty offers list has always told them apart with the one sentence
+"nothing matches this matter". The first is something a reader can act on —
+loosen the selector, or learn that the matter simply does not carry the field
+it asked about — and the second is nothing to act on at all.
+
+So **a recipe considered for the matter and refused by its selector is named,
+beside the field that refused it**, in the reading `ephor work offers`
+returns: which of `roles`, `gate`, `needs_response`, or `sources` did not
+hold, and what the matter carried instead of what the selector asked for.
+"Considered" is narrower than every recipe the project has. A recipe whose
+`kinds` refused was never about a matter of this shape at all — a `pr`
+recipe has nothing to say about a task — so it names nothing, the same as a
+recipe nobody wrote; `kinds` is what decides whether a recipe is considered,
+not a reason reported once it is. And `behind` or `behind_upstream` refusing
+alone names nothing either: whether a branch trails is a fact about a
+checkout on this machine, already its own concept on the menu — the rebase
+entries, and the `needs_checkout` gate — and every item with no local
+checkout would otherwise report the same "could not be measured" line,
+which is noise on nearly every reading rather than the one thing worth
+saying. Both forms of the reading carry what is named, in the same words —
+the JSON gains it as an additive field beside `offers`, the prose names it
+under the same "nothing matches this matter" a reader already looks under —
+because neither may know something the other does not
+([§REQ-002-parity.3](docs/requirements/REQ-002-parity.md#3-every-reading-answers-a-program)).
+
+The role-less case is why this exists. A project's own tasks
+([§FS-003-feed-categories.1](requirements.md#1-the-categories)) carry no role
+at all — there is no forge reviewer to be one — and a `roles` selector, being
+non-empty by definition once it is written, matches a role-less item only
+when it is empty
+([§1](#1-a-recipe-decides-which-items-deserve-work-and-what-to-ask-for)).
+That rule does not change here: a `roles: [author]` recipe still refuses
+every task, and correctly. What changes is that the refusal stops being
+silent — a recipe that plainly covered issues and pull requests no longer
+looks, without explanation, like it covers nothing about a project's own
+tasks. This is a reading only: dispatch itself, and what it hands over, are
+unaffected — the exclusion is `ephor work offers`' own diagnosis of one
+matter, not a second thing the selector decides.
+
 ## FS-006-project-interface: a project and ephor meet over one interface, in three homes
 
 ephor requires capabilities of a project, never artifacts in it

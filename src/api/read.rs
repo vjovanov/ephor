@@ -788,6 +788,20 @@ impl Session {
             Ok(offers) => (offers, None),
             Err(refusal) => (Vec::new(), Some(refusal)),
         };
+        // Recipes considered and refused, read the same way `work_offers`
+        // reads what matched (§FS-005-dispatch.27): nothing to say where the
+        // menu itself could not be assembled, the same absence `unavailable`
+        // already names.
+        let excluded = if unavailable.is_none() {
+            let recipes = self
+                .dispatcher
+                .as_ref()
+                .map(|dispatcher| dispatcher.recipes(&item.project))
+                .unwrap_or_default();
+            self.excluded_recipes(item, &recipes)
+        } else {
+            Vec::new()
+        };
         let status = self
             .dispatcher
             .as_ref()
@@ -831,6 +845,7 @@ impl Session {
             refusal,
             unavailable,
             offers,
+            excluded,
             status,
             jobs,
         }

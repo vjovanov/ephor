@@ -1608,13 +1608,19 @@ Finished work never matches.
 
 | Field | Values |
 |---|---|
-| `kinds` | `pr`, `ci`, `issue`, `message`, `status` |
+| `kinds` | `pr`, `ci`, `issue`, `task`, `message`, `status` |
 | `roles` | `author`, `reviewer` — an item whose source reported no role matches only when this is empty |
 | `gate` | `failing` (jobs failed) · `blocked` (the forge refuses) · `red` (either) · `green` · `any` |
 | `needs_response` | `true` / `false` |
 | `sources` | provider names |
 | `behind` | `true` — the branch trails the project's `main_branch` · `false` — level with it |
 | `behind_upstream` | `true` — the branch trails its own **published copy** · `false` — level with it |
+
+A project's own tasks carry no role at all, so a `roles` selector — non-empty
+by definition — excludes every one of them; write a task recipe with `kinds:
+["task"]` and no `roles`. Where a recipe is refused this way, `ephor work
+offers` names it: which field refused, and why, beside the offers it found
+([§FS-005-dispatch.27](../requirements.md#27-an-offer-that-a-selector-refused-says-why)).
 
 `failing` and `blocked` are separate because they ask for different work: jobs
 that failed are something a checkout can fix, while a forge refusing an

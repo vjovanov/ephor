@@ -322,6 +322,13 @@ fn work_offers(config: &StatusConfig, args: &crate::cli::WorkOffersArgs) -> Resu
             println!("      {refusal}");
         }
     }
+    // Recipes considered and refused, in the same words the JSON's `excluded`
+    // carries (§FS-005-dispatch.27, §REQ-002-parity.3): a reading that says
+    // only "nothing matches" cannot tell a matter nothing is configured for
+    // from one a recipe was refused about.
+    for exclusion in &view.excluded {
+        println!("  {} — refused: {}", exclusion.recipe, exclusion.reason);
+    }
     for job in &view.jobs {
         println!("\n{} {}", style.bold("ephor ran"), job.says);
     }
