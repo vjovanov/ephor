@@ -4,7 +4,7 @@
 **Date:** 2026-08-14
 
 ephor needs to know which agent/model combinations exist, so a reader can
-choose one and a project can default one per action (§FS-005-dispatch.14).
+choose one and a project can default one per action ([§FS-005-dispatch.14](../../../requirements.md#14-who-does-the-work-is-chosen-and-defaulted-per-project)).
 Two places could hold that knowledge: ephor's own configuration — a list of
 agents and models in `status.json` — or the binding's, read at the moment of
 asking. This record fixes the second and names what the first would have
@@ -12,7 +12,7 @@ cost.
 
 ## 1. The decision
 
-The roster is enumerated inside the runtime module (§AR-007-runtime.1), from
+The roster is enumerated inside the runtime module ([§AR-007-runtime.1](../../architecture/AR-007-runtime.md#1-what-the-module-owns)), from
 the binding's own merged settings: its built-in agent profiles, the person's
 global settings file, and a work root's project overlay. Each named model
 profile is paired with the agent it declares as its carrier and with each
@@ -25,13 +25,13 @@ cannot be, since models and modes are both per-agent and most of the grid
 would be combinations nobody can prove valid.
 
 Availability is computed where the roster is read — the agent's command is
-looked for on `PATH` or on disk, never spawned to fail (§AR-002-summons.4)
+looked for on `PATH` or on disk, never spawned to fail ([§AR-002-summons.4](../../architecture/AR-002-summons.md#4-refusal-is-computed-not-discovered))
 — so an unavailable hand carries its one-sentence reason from the start.
 What leaves the module is a list of hands: opaque ids with the facts a
 reader needs to choose. The binding's own grammar — the settings files it
 merges, and the `agent[mode]:provider:model` selector its plans carry — is
 parsed and rendered inside the module and nowhere else
-(§REQ-001-boundary.5), so ephor's configuration holds an id a second binding
+([§REQ-001-boundary.5](../../requirements/REQ-001-boundary.md#5-no-product-literal-outside-its-adapter)), so ephor's configuration holds an id a second binding
 could read, not the first binding's syntax.
 
 ## 2. The rejected alternative
@@ -55,7 +55,7 @@ module reads the binding's settings files itself, which makes their
 locations and their merge order — built-ins, then global, then project;
 agent entries replacing wholesale, model entries merging field-wise — part
 of the coupling surface this module maintains, a second file-level contract
-beside the plan language (§DA-001-runtime-bound-default.3). The built-in
+beside the plan language ([§DA-001-runtime-bound-default.3](DA-001-runtime-bound-default.md#3-the-cost)). The built-in
 agent profiles are likewise spelled once inside the module, so a machine
 whose settings add nothing still has a roster; they are a copy of the
 binding's own seed registry and carry the same drift risk in miniature,

@@ -3,27 +3,27 @@
 **Status:** Accepted
 **Date:** 2026-08-21
 
-A workflow the runtime offers is mostly a list of agents (§FS-005-dispatch.19):
+A workflow the runtime offers is mostly a list of agents ([§FS-005-dispatch.19](../../../requirements.md#19-a-workflow-the-runtime-offers-is-an-action-and-its-inputs-are-answered-here)):
 which one reviews, which one adjudicates, which one writes the tests. Each of
 those is an input, and each carries a default its author happened to be running
 — a model name, at an effort, spelled in the binding's own selector grammar.
 When ephor instantiates such a workflow it has to decide whose answer those
-inputs take: the workflow's, or its own (§FS-005-dispatch.14,
-§FS-006-project-interface.9). This record fixes ephor's and names what the
+inputs take: the workflow's, or its own ([§FS-005-dispatch.14](../../../requirements.md#14-who-does-the-work-is-chosen-and-defaulted-per-project),
+[§FS-006-project-interface.9](../../../requirements.md#9-offers-the-projects-actions)). This record fixes ephor's and names what the
 other would have cost.
 
 ## 1. The decision
 
 An input a workflow declares to be an execution target resolves through the
 seven steps like every other hand, and is rendered into the binding's selector
-in the runtime module alone (§AR-007-runtime.1). Which inputs those are is read
+in the runtime module alone ([§AR-007-runtime.1](../../architecture/AR-007-runtime.md#1-what-the-module-owns)). Which inputs those are is read
 from the workflow where its manifest says so, and from the entry that names the
 workflow where it does not — an entry lists them, and listing one is how a
 person says "this input is a hand" about a workflow whose author never marked
 it.
 
 The narrowing binds here exactly as it binds everywhere else
-(§FS-006-project-interface.9): a hand a project does not permit is refused with
+([§FS-006-project-interface.9](../../../requirements.md#9-offers-the-projects-actions)): a hand a project does not permit is refused with
 that reason wherever it was named, and a workflow's own default is a naming. A
 project that narrows the roster and instantiates a workflow whose defaults sit
 outside the narrowing is told so, before anything is written.
@@ -44,7 +44,7 @@ stopped applying. A repository under a policy about which models may read it
 would be observing that policy right up to the keystroke that mattered. And
 the failure is quiet: the reader who narrowed the roster sees a workflow
 instantiate cleanly, and learns which models actually ran it from the other
-side, which is the exact confusion §FS-006-project-interface.9 refuses for
+side, which is the exact confusion [§FS-006-project-interface.9](../../../requirements.md#9-offers-the-projects-actions) refuses for
 configured hands.
 
 ## 3. The cost

@@ -1,7 +1,7 @@
 <!-- BEGIN GRUND MANAGED BLOCK -->
 ## Grounding with grund (v7)
 
-This project uses [`grund`](https://github.com/vjovanov/grund): every spec, goal, decision, and end-to-end test has a stable ID `<KIND>-<NNN>-<slug>[.<section>]` (`KIND ∈ {GRUND, GOAL, FS, REQ, AR, DF, DA, E2E, RM}`), cited with the marker `§` — e.g. `<§>FS-042-user-login.3.1` (the `FS-042-user-login` here is a shape illustration, not a real ID in this repo, hence the `<§>` escape). Type `$$` in a grund-aware editor and it becomes `§`. Bare ID-shaped tokens are ignored — `[reference] strict = true` is set in `grund.toml`, so only `§`-prefixed citations are checked.
+This project uses [`grund`](https://github.com/vjovanov/grund): every spec, goal, decision, and end-to-end test has a stable ID `<KIND>-<NNN>-<slug>[.<section>]` (`KIND ∈ {GRUND, GOAL, FS, REQ, AR, DF, DA, RM}`), cited with the marker `§` — e.g. `<§>FS-042-user-login.3.1` (the `FS-042-user-login` here is a shape illustration, not a real ID in this repo, hence the `<§>` escape). Type `$$` in a grund-aware editor and it becomes `§`. Bare ID-shaped tokens are ignored — `[reference] strict = true` is set in `grund.toml`, so only `§`-prefixed citations are checked.
 
 ### Grounding from a citation
 
@@ -23,7 +23,8 @@ A `§<ID>` is a pointer to a fact, not a file path. Resolve it with `grund` and 
 - [AR](docs/architecture): How: high-level implementation, structure, and design
 - [DF](docs/decisions/functional): Product behavior decisions and tradeoffs
 - [DA](docs/decisions/architectural): Architecture decisions and tradeoffs
-- [E2E](e2e/cases): Executable user scenarios
+- [tests/e2e/](tests/e2e): User scenarios: black-box proof of the spec
+- [tests/integration/](tests/integration): Integration tests: proof that the parts fit as designed
 - [RM](docs/roadmap.md): Planned milestones and sequencing
 
 ### Project namespaces
@@ -43,7 +44,7 @@ Declarations are heading lines `# FS-042-user-login: …` in markdown. In a code
 - **Spec first.** For behavior or design changes, write or update the most-specific spec point before code.
 - **Cite as you write.** Place `§<ID>` at the point a claim or behavior is made — on the doc-comment for a whole behavior, inline beside the clause it enforces.
 - **Marker = live citation.** A `§`-prefixed token resolves and is checked wherever it appears — including inside Markdown backticks. To mention an ID without citing it, write `<§><ID>`, omit the marker, or use a fenced code block.
-- **Inline citation style.** Inline notes: ≤ 1 line preferred, hard cap 25 lines; ≤ 180 columns.
+- **Inline citation style.** Inline notes: ≤ 1 line preferred, hard cap 25 lines; ≤ 180 columns. A note is one comment block: a blank line splits it, an empty comment line does not. Doc-comments (`///`, `//!`, `/** */`, a docstring, a comment right above a definition) are documentation, not notes: they are never measured, so cite in-sentence there.
 - **Always cite the most-specific point.**
 
 ### Citation directions
@@ -54,7 +55,8 @@ Declarations are heading lines `# FS-042-user-login: …` in markdown. In a code
 - **AR** should cite FS or GOAL and REQ.
 - **DF** should cite FS or GOAL and REQ.
 - **DA** should cite AR or FS and REQ.
-- **E2E** must cite FS.
+- **tests/e2e/** must cite FS; avoid citing AR.
+- **tests/integration/** should cite AR.
 - **code** (any file outside a kind home) should cite FS or AR or REQ.
 Unlisted kinds and pairs are fine.
 
