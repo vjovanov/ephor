@@ -21,52 +21,64 @@ number_pattern = "\\d+"
 slug_pattern = "[a-z0-9][a-z0-9-]*"
 
 [[kinds]]
-prefix = "GRUND"
+kind = "GRUND"
 file = "docs/grund.md"
 title = "Why: project motivation"
 
 [[kinds]]
-prefix = "GOAL"
+kind = "GOAL"
 file = "docs/goals.md"
 title = "Where: project direction and outcomes"
 
 [[kinds]]
-prefix = "FS"
+kind = "FS"
 file = "requirements.md"
 title = "What: behavior, requirements, and constraints"
 
 [[kinds]]
-prefix = "REQ"
+kind = "REQ"
 folder = "docs/requirements"
 title = "Laws: standing requirements every change observes"
 
 [[kinds]]
-prefix = "AR"
+kind = "AR"
 folder = "docs/architecture"
 title = "How: high-level implementation, structure, and design"
 
 [[kinds]]
-prefix = "DF"
+kind = "DF"
 folder = "docs/decisions/functional"
 title = "Product behavior decisions and tradeoffs"
 
 [[kinds]]
-prefix = "DA"
+kind = "DA"
 folder = "docs/decisions/architectural"
 title = "Architecture decisions and tradeoffs"
 
+# The two test homes are places, not ID namespaces: a test cites the document
+# whose claim it proves and is never cited back. Each is declared by path in
+# Cargo.toml (subdirectories are not auto-discovered).
 [[kinds]]
-prefix = "E2E"
-folder = "e2e/cases"
-title = "Executable user scenarios"
+kind = "e2e"
+folder = "tests/e2e"
+citable = false
+title = "User scenarios: black-box proof of the spec"
 
 [[kinds]]
-prefix = "RM"
+kind = "integration"
+folder = "tests/integration"
+citable = false
+title = "Integration tests: proof that the parts fit as designed"
+
+[[kinds]]
+kind = "RM"
 file = "docs/roadmap.md"
 title = "Planned milestones and sequencing"
 
 [scan]
-include = ["requirements.md", "docs", "e2e", "src", ".github", "assets"]
+# Every `[[kinds]]` home is walked by construction, so `tests/e2e` and
+# `tests/integration` are not repeated here.
+include = ["requirements.md", "docs", "src", ".github", "assets"]
 exclude = ["target", "node_modules", ".git", "dist", "build", ".venv"]
 extensions = ["md", "rs", "go", "java", "kt", "ts", "tsx", "js", "py", "c", "cpp", "swift", "scala", "rb", "php", "cs", "yml", "yaml"]
 comment_prefixes = ["//", "#", ";", "--", "*", "/*"]
@@ -110,8 +122,15 @@ should = ["FS|GOAL", "REQ"]
 [citations.DA]
 should = ["AR|FS", "REQ"]
 
-[citations.E2E]
-must = ["FS"]                  # a scenario tests a spec
+# A scenario proves the What as a user sees it; one that reads the design is
+# not black-box. `must` reaches every scanned file in the home.
+[citations.e2e]
+must = ["FS"]
+should-not = ["AR"]
+
+# An integration test proves the How: that the parts fit as designed.
+[citations.integration]
+should = ["AR"]
 
 [citations.code]
 should = ["FS|AR|REQ"]
