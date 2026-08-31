@@ -965,6 +965,7 @@ impl Session {
                                     chrono::Utc::now(),
                                     std::slice::from_ref(&project),
                                     &[],
+                                    None,
                                 ) {
                                     says = format!("{says} · {}", run.says());
                                 }

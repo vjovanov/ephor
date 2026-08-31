@@ -2325,6 +2325,36 @@ can be run as often as anything cares to run it and asks nothing about what
 it did last time — a due root gets a run, a live root gets nothing, and
 running the sweep twice in a second is the same as running it once.
 
+**Autorun may be bounded without changing the manual key.** The site's
+`work.max_concurrent` is the aggregate ceiling on live runs across all work
+roots, and `projects.<id>.work.max_concurrent` is an additional ceiling on
+that project's live roots inside the aggregate one. The project number never
+replaces or exceeds the site number. Leaving either out leaves that ceiling
+unlimited; writing `0` admits no new autorun starts under it. These limits
+apply only to this sweep: a run a reader explicitly starts keeps being the
+reader's move. `ephor work run --due --max-concurrent N` replaces the site's
+configured aggregate ceiling for that invocation, including when `N` is
+zero; every project ceiling still applies inside the command-line ceiling.
+
+**Capacity is live work, not attempts.** One root snapshot supplies both the
+due candidates and the live counts. Every already-live root consumes one
+aggregate slot and one slot in each project whose plan it holds, whether or
+not that root is due or selected by a command's `--project`. A successful
+start consumes those same slots only while its runtime lock remains held. A
+start that fails, reports itself finished during the launch handshake, or has
+already released its lock leaves the slot for the next candidate in the same
+sweep. The failed-start back-off still applies independently.
+
+**The highest-ranked due roots get the available slots.** Where
+`work.ranking` names item ids, due roots for those items are considered in the
+file's order before the rest; roots the ranking does not distinguish retain
+the deterministic root-path order the sweep already had. The ranking orders
+and never filters. Every otherwise eligible root not started solely because
+an aggregate or project ceiling is full is returned as one `passed-over`
+outcome with the ceiling as its reason, in prose and `--json`. Passing a root
+over is not a failed launch and does not increase the reading's `failed`
+count.
+
 **The sweep is safe where the key was.** Everything dispatch refuses before
 writing a ticket, starting refuses before running one
 ([§6](#6-dispatch-is-offered-where-it-would-work-and-refuses-where-it-would-not)):
