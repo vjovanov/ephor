@@ -286,8 +286,10 @@ with the reason.
 over* — one carrying `agent` or `workflow`, a project's own offer naming a
 workflow, the entry beside a workflow, or a recipe — may add
 `"branch": "fix/issue-{number}"`. It is a template rendered from the item
-exactly as a brief is (never `{branch}`, `{workspace}` or `{reply}`, which are
-what it produces), and it applies only where the item has no branch of its own
+exactly as a brief is, and refused by name before anything is made — for a
+field it decides (`{branch}`, `{workspace}`, `{reply}`), a name that is no
+field of an item at all, a field this item has not got, or a rendering git
+will not take as a branch. It applies only where the item has no branch of its own
 — a pull request always keeps the branch the forge recorded. Saying it means
 the work needs the checkout, so ephor makes that branch's workspace with the
 same operation `ephor checkout` is — the repositories grown from the project's

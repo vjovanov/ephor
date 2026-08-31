@@ -236,10 +236,17 @@ pub fn minted(
                  follow from it."
             ));
         }
-        if values
-            .get(name.as_str())
-            .is_some_and(|value| value.is_empty())
-        {
+        // A name the vocabulary has not got at all: `render` would leave it
+        // standing and the branch would be refused for holding a brace, which
+        // points at the rendering rather than at the typo (§FS-005-dispatch.25).
+        let Some(value) = values.get(name.as_str()) else {
+            return Err(format!(
+                "the branch template '{template}' names {{{name}}}, which is not a field a branch \
+                 template may name; it may name: {}.",
+                nameable(&values).join(", ")
+            ));
+        };
+        if value.is_empty() {
             return Err(format!(
                 "the branch template '{template}' names {{{name}}}, and {} has none — every \
                  matter missing it would land on one branch.",
@@ -253,6 +260,12 @@ pub fn minted(
     if !crate::forest::is_branch_name(&branch) {
         return Err(format!(
             "the branch template '{template}' rendered '{branch}', which is not a branch name."
+        ));
+    }
+    if let Some(why) = why_git_refuses(&branch) {
+        return Err(format!(
+            "the branch template '{template}' rendered '{branch}', which git will not take as a \
+             branch name: {why}."
         ));
     }
     let target = placement.workspace_for(&branch).ok_or_else(|| {
@@ -273,6 +286,64 @@ pub fn minted(
         branch: Some(branch),
         state,
     })
+}
+
+/// The fields a branch template may name, spelled as it would name them: every
+/// placeholder a matter carries but the three the template decides
+/// (§FS-005-dispatch.25). What a refusal offers instead of the name it refused.
+fn nameable(values: &std::collections::BTreeMap<&'static str, String>) -> Vec<String> {
+    values
+        .keys()
+        .filter(|name| !DECIDED.contains(name))
+        .map(|name| format!("{{{name}}}"))
+        .collect()
+}
+
+/// Why git will not take `branch` as a branch name, as a clause a refusal can
+/// carry — None where it will (§FS-005-dispatch.25). These are the rules
+/// `git check-ref-format --branch` applies, asked here rather than left to the
+/// checkout: git's own answer comes from inside the making, by which time the
+/// directories leading to the workspace are already there, so an author's bad
+/// template would be reported and still leave part of a tree behind.
+fn why_git_refuses(branch: &str) -> Option<String> {
+    /// What git refuses anywhere in a ref, beyond the control characters.
+    const FORBIDDEN: [char; 9] = [' ', '~', '^', ':', '?', '*', '[', '\\', '\u{7f}'];
+    if branch.is_empty() {
+        return Some("it is empty".to_string());
+    }
+    if branch == "HEAD" {
+        return Some("'HEAD' is not a branch name".to_string());
+    }
+    if branch.starts_with('-') {
+        return Some("it begins with '-'".to_string());
+    }
+    if branch.ends_with('.') {
+        return Some("it ends with '.'".to_string());
+    }
+    if branch.contains("..") {
+        return Some("it holds '..'".to_string());
+    }
+    if branch.contains("@{") {
+        return Some("it holds '@{'".to_string());
+    }
+    if let Some(bad) = branch
+        .chars()
+        .find(|held| FORBIDDEN.contains(held) || held.is_ascii_control())
+    {
+        return Some(format!("it holds {bad:?}"));
+    }
+    for part in branch.split('/') {
+        if part.is_empty() {
+            return Some("one of its path components is empty".to_string());
+        }
+        if part.starts_with('.') {
+            return Some(format!("its component '{part}' begins with '.'"));
+        }
+        if part.ends_with(".lock") {
+            return Some(format!("its component '{part}' ends with '.lock'"));
+        }
+    }
+    None
 }
 
 /// Where an entry's work resolves, with no refusal to answer for: the matter's
@@ -1136,9 +1207,82 @@ mod tests {
         // A field the matter has not got. This issue carries no ticket key.
         let why = minted(&placement, &issue, "fix/{ticket}").unwrap_err();
         assert!(why.contains("{ticket}"), "{why}");
-        // And one nobody has heard of, which renders as itself.
+        // And one nobody has heard of: not a bad branch, a name that is no
+        // field of a matter — said as that, with the ones it may name.
         let why = minted(&placement, &issue, "fix/{sprint}").unwrap_err();
-        assert!(why.contains("not a branch name"), "{why}");
+        assert!(
+            why.contains("not a field a branch template may name"),
+            "{why}"
+        );
+        assert!(why.contains("{number}") && why.contains("{repo}"), "{why}");
+        // And never as one of the three it decides, which have their own
+        // refusal above.
+        assert!(!why.contains("{workspace}"), "{why}");
+    }
+
+    /// A template that renders a name git will not take is refused by name
+    /// too, before anything is made: git's own answer comes from inside the
+    /// making, and by then the directories leading to the workspace are there
+    /// (§FS-005-dispatch.25).
+    #[test]
+    fn a_template_rendering_what_git_refuses_is_refused_before_anything_is_made() {
+        let tmp = tempfile::tempdir().unwrap();
+        let placement = placement(tmp.path(), Some("{project_root}/{branch}"));
+        let issue = issue();
+
+        // The issue's title, which holds spaces and a '#'.
+        let why = minted(&placement, &issue, "fix/{title}").unwrap_err();
+        assert!(why.contains("git will not take"), "{why}");
+        assert!(!tmp.path().join("fix").exists(), "nothing was made");
+    }
+
+    /// The rules are git's own, not ephor's: every name here is what
+    /// `git check-ref-format --branch` answers for it, so a template git would
+    /// take is never refused early and one it would not is refused by name
+    /// (§FS-005-dispatch.25).
+    #[test]
+    fn a_rendered_branch_is_held_to_what_git_takes() {
+        for name in [
+            "fix/issue-95",
+            "issue-95",
+            "fix/x.lockx",
+            "fix/x#y",
+            "fix/ünïcode",
+            "fix/x./y",
+            "fix/HEAD",
+            "HEAD/x",
+            "fix/x.y",
+            "@fix",
+            "fix@",
+        ] {
+            assert_eq!(why_git_refuses(name), None, "git takes '{name}'");
+        }
+        for name in [
+            "",
+            "fix/",
+            "/fix",
+            "fix//issue",
+            ".hidden/x",
+            "fix/.hidden",
+            "fix/x.lock",
+            "x.lock/y",
+            "fix/x..y",
+            "fix/x@{1}",
+            "-fix",
+            "fix.",
+            "fix/x~y",
+            "fix/x^y",
+            "fix/x:y",
+            "fix/x?y",
+            "fix/x*y",
+            "fix/x[y",
+            "fix/x\\y",
+            "fix/x y",
+            "fix/issue-95/",
+            "HEAD",
+        ] {
+            assert!(why_git_refuses(name).is_some(), "git refuses '{name}'");
+        }
     }
 
     /// Nothing is minted into a root that is itself the checkout: a project
