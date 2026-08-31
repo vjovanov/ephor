@@ -51,7 +51,11 @@ ships, the previous "latest" section moves verbatim to
   inputs answered, so a refusal still leaves nothing behind. The machine vetted
   is the one in force where the work root is already there and the one ephor
   would install where it is not, since a workspace minted in order to read its
-  machine back is the thing left behind. A dry run makes
+  machine back is the thing left behind. One case escapes that, and says so: a
+  runtime that installs a machine of its own when it is asked to make the store
+  installs it inside the workspace just made, so a refusal on it outlives the
+  mint — and it names the workspace it left, and nothing further is made behind
+  it. A dry run makes
   nothing at all, including the work root and the files the runtime would be
   shown, and names the branch and the directory it would have made instead.
   Nothing is written to the registry and nothing is pushed; a project with no
