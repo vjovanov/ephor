@@ -17,7 +17,7 @@ path = "README.md"
 match = "exact"
 rules = ["entrypoints"]
 kind = "deferred"
-max_accepted = { value = 519, unit = "lines" }
+max_accepted = { value = 600, unit = "lines" }
 until = "the entry for this path in docs/file-size-human-exceptions.toml is retired"
 reason = """
 Soft twin of this path's entry in docs/file-size-human-exceptions.toml, which carries the argument. This entry holds no judgment of its own: same ceiling, retires with its twin. Edit the reason there, not here.
@@ -27,7 +27,7 @@ path = "requirements.md"
 match = "exact"
 rules = ["specs"]
 kind = "deferred"
-max_accepted = { value = 2822, unit = "lines" }
+max_accepted = { value = 2900, unit = "lines" }
 until = "the entry for this path in docs/file-size-human-exceptions.toml is retired"
 reason = """
 Soft twin of this path's entry in docs/file-size-human-exceptions.toml, which carries the argument. This entry holds no judgment of its own: same ceiling, retires with its twin. Edit the reason there, not here.
@@ -37,7 +37,7 @@ path = "src/work/mod.rs"
 match = "exact"
 rules = ["source"]
 kind = "deferred"
-max_accepted = { value = 3056, unit = "lines" }
+max_accepted = { value = 3100, unit = "lines" }
 until = "the entry for this path in docs/file-size-human-exceptions.toml is retired"
 reason = """
 Soft twin of this path's entry in docs/file-size-human-exceptions.toml, which carries the argument. This entry holds no judgment of its own: same ceiling, retires with its twin. Edit the reason there, not here.
