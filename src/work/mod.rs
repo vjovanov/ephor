@@ -539,8 +539,13 @@ impl WorkAt<'_> {
         let mut waiting: Option<WorkGoing> = None;
         let mut running: Option<WorkGoing> = None;
         let mut queued = false;
-        let mut consider = |plan_id: &str, path: &std::path::Path, ticket: &plan::PlanTicket| {
-            let Some(machine) = self.machine.as_ref() else {
+        // `judge` is the machine that answers for the plan the ticket is in,
+        // never assumed to be the root's (§FS-005-dispatch.28).
+        let mut consider = |judge: Option<&WorkRoot>,
+                            plan_id: &str,
+                            path: &std::path::Path,
+                            ticket: &plan::PlanTicket| {
+            let Some(machine) = judge else {
                 // With no machine nothing here is judged over and nothing is
                 // judged a question: the ticket is open work, and whether a run
                 // holds it is still the journal's to say.
@@ -587,7 +592,14 @@ impl WorkAt<'_> {
             if let Some(plan) = self.plan.as_ref() {
                 for ticket in plan.tickets() {
                     if mine.contains(ticket.id.as_str()) {
-                        consider(&self.entry.plan_id, &self.entry.plan, &ticket);
+                        // The matter's own plan is one the root holds
+                        // directly: the root's machine answers for it.
+                        consider(
+                            self.machine.as_ref(),
+                            &self.entry.plan_id,
+                            &self.entry.plan,
+                            &ticket,
+                        );
                     }
                 }
             }
@@ -611,8 +623,21 @@ impl WorkAt<'_> {
             let Ok(Some(plan)) = Plan::read(&laid.path) else {
                 continue;
             };
+            // A plan a workflow laid down is a store of its own, and its
+            // tasks mean what the machine in force there says they mean
+            // (§FS-005-dispatch.28, §FS-006-project-interface.7) — the board
+            // reads it the same way, and one row must not disagree with the
+            // screen it was narrowed from (§AR-009-surfaces.1). With that
+            // machine unreadable nothing there is judged, rather than judged
+            // by a machine that answers for other work.
+            let own = plan::own_store(&laid.path).map(WorkRoot::in_force);
+            let judge: Option<&WorkRoot> = match &own {
+                Some(Ok(store)) => Some(store),
+                Some(Err(_)) => None,
+                None => self.machine.as_ref(),
+            };
             for ticket in plan.tickets() {
-                consider(&laid.plan_id, &laid.path, &ticket);
+                consider(judge, &laid.plan_id, &laid.path, &ticket);
             }
         }
         waiting.or(running).or_else(|| {
@@ -1649,7 +1674,16 @@ impl Dispatcher {
     /// The workflow entries offered on one matter, in that same order
     /// (§FS-005-dispatch.19) — the selector, in the language every other
     /// entry is selected by.
+    ///
+    /// Finished work is never among them, exactly as it is never among a
+    /// recipe's offers ([`recipe::Recipe::matches`]) and never on the menu
+    /// (§FS-005-dispatch.6): a merged pull request with a red gate stays in
+    /// the feed as news, and handing news to an agent is asking it to invent
+    /// something to do.
     pub fn workflow_offers(&mut self, item: &Item) -> Vec<ActionConfig> {
+        if item.is_finished() {
+            return Vec::new();
+        }
         let facts = self.facts(item);
         let mut entries = self.workflow_actions(&item.project);
         entries.retain(|entry| entry.matches(item, &facts));
@@ -2295,20 +2329,20 @@ pub fn due_among(
             if asked.is_empty() {
                 continue;
             }
-            // A plan a workflow laid down runs under the machine in force
-            // beside it, not the root's: a task's state means whatever the
+            // A plan that is a store of its own runs under the machine in
+            // force there, not the root's: a task's state means whatever the
             // machine in force for its own store says it means
-            // (§FS-006-project-interface.7). With none to be read there,
-            // nothing in that plan can be judged runnable, and the honest
-            // move is to start nothing rather than to fall back on a machine
-            // that answers for other work (§FS-005-dispatch.15). The root's
-            // own answers for the plans the root holds directly, as it always
+            // (§FS-006-project-interface.7) — which is a plan a workflow laid
+            // down, and the same question the board asks of the same plan
+            // (§AR-009-surfaces.1). With none to be read there, nothing in
+            // that plan can be judged runnable, and the honest move is to
+            // start nothing rather than to fall back on a machine that
+            // answers for other work (§FS-005-dispatch.15). The root's own
+            // answers for the plans the root holds directly, as it always
             // did.
-            let own = match laid {
-                Some(_) => match plan_ref.path.parent().map(WorkRoot::in_force) {
-                    Some(Ok(root)) => Some(root),
-                    _ => continue,
-                },
+            let own = match runtime::plan::own_store(&plan_ref.path).map(WorkRoot::in_force) {
+                Some(Ok(store)) => Some(store),
+                Some(Err(_)) => continue,
                 None => None,
             };
             let judge = own.as_ref().unwrap_or(&machine);

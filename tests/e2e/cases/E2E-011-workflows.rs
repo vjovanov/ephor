@@ -600,6 +600,32 @@ case "${1:?subcommand}" in
 esac
 "#;
 
+    /// One issue that is over, and still in the feed: closed with the answer
+    /// it was owed never given, which is the loose end that keeps finished
+    /// work under Recent (§FS-003-feed-categories.2). Its timestamp is made
+    /// at the moment it is asked for, because the recency window is measured
+    /// against now and a fixture date would age out of it.
+    const CLOSED_ISSUE_FORGE: &str = r#"#!/usr/bin/env bash
+set -euo pipefail
+cat > /dev/null
+case "${1:?subcommand}" in
+  capabilities)
+    printf '{"issues":true}'
+    ;;
+  issues)
+    printf '[
+      { "key": "acme/widget#20", "title": "Closed with the last word theirs",
+        "url": "https://acme.example/issue/20",
+        "updated_at": "%s", "status": "closed", "role": "reviewer",
+        "messages": [ { "author": "nadia", "text": "and?", "mine": false } ] }
+    ]' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    ;;
+  *)
+    printf '[]'
+    ;;
+esac
+"#;
+
     /// The half of the runtime this scenario needs to lay: its own listing,
     /// and an `instantiate` that renders the workspace shape — an index, a
     /// state machine of its own, and the tasks in files beside them.
@@ -673,9 +699,9 @@ exit 1
     /// workflow. `runner` names the stub deliberately: whether a runtime can
     /// detach is asked once per runner name and remembered, so a case about
     /// laying and a case about starting must not share one.
-    fn world(runner: &str, script: &str, autorun: bool) -> World {
+    fn world_of(forge: &str, runner: &str, script: &str, autorun: bool) -> World {
         let world = World::new();
-        world.stub("ephor-forge-acmeforge", ISSUE_FORGE);
+        world.stub("ephor-forge-acmeforge", forge);
         let workflows = world.path().join("workflows");
         std::fs::create_dir_all(workflows.join("supervised-fix")).expect("a workflow directory");
         std::fs::write(
@@ -711,6 +737,10 @@ exit 1
         }));
         world.ephor().args(["refresh", PROJECT]).assert().success();
         world
+    }
+
+    fn world(runner: &str, script: &str, autorun: bool) -> World {
+        world_of(ISSUE_FORGE, runner, script, autorun)
     }
 
     fn laying_world(autorun: bool) -> World {
@@ -790,6 +820,45 @@ exit 1
         assert!(plan_of(&world, 13).join("index.rhei.md").is_file());
     }
 
+    /// Finished work is never dispatched (§FS-005-dispatch.6), and a workflow
+    /// entry that asked to run itself is dispatch: an issue that is closed
+    /// but still under Recent — the answer it was owed was never given, which
+    /// is the loose end keeping it in the feed the sweep reads — is news, and
+    /// laying a plan about it would ask an agent to invent something to do.
+    /// The menu withholds the entry on such a matter already; the sweep, the
+    /// loop's first unattended act, must withhold it too.
+    #[test]
+    fn a_finished_matter_is_never_laid_by_the_sweep() {
+        let world = world_of(CLOSED_ISSUE_FORGE, "acme-closed", RENDERS, true);
+
+        // The matter really is in front of the sweep: closed, and in the feed
+        // for its loose end. A test where it had aged out would prove nothing.
+        let listed = world
+            .ephor()
+            .args(["feed", "--json"])
+            .output()
+            .expect("feed runs");
+        let listed = json_of(&listed);
+        let shown: Vec<&str> = listed
+            .as_array()
+            .expect("the feed is a list of items")
+            .iter()
+            .filter_map(|item| item["id"].as_str())
+            .collect();
+        assert!(
+            shown.contains(&"acmeforge:acme/widget#20"),
+            "the closed issue is still under Recent: {listed}"
+        );
+
+        let swept = dispatch(&world, &[]);
+        assert_eq!(swept["laid"], 0, "{swept}");
+        assert_eq!(swept["refused"], 0, "{swept}");
+        assert!(swept["items"].as_array().unwrap().is_empty(), "{swept}");
+        assert!(!work_root(&world)
+            .join("acmeforge-acme-widget-20-fix-issue")
+            .exists());
+    }
+
     /// Recipes keep their priority (§FS-005-dispatch.28): a matter a recipe
     /// covers gets the ticket it always got, and the entry gets its turn only
     /// where nothing else applies. A reader who wants the workflow instead
@@ -818,6 +887,84 @@ exit 1
         assert_eq!(swept["opened"], 1, "{swept}");
         assert_eq!(swept["items"][0]["recipe"], json!("triage"));
         assert!(!plan_of(&world, 13).exists());
+    }
+
+    /// A laid plan is a store of its own, and its tasks mean what the machine
+    /// **beside that plan** says they mean — on every surface that reads the
+    /// floor, not only the due sweep (§FS-005-dispatch.28,
+    /// §FS-006-project-interface.7). The root's machine has no word for a
+    /// state the workflow's own machine parks work in, and reaching for it
+    /// anyway calls a parked task *queued* — the one word
+    /// §FS-005-dispatch.15 forbids, because it promises a turn that never
+    /// comes. So the board and the menu row must say the same thing the due
+    /// sweep says (§AR-009-surfaces.1).
+    #[test]
+    fn a_laid_plans_task_is_judged_by_the_machine_beside_that_plan() {
+        let world = laying_world(true);
+        let swept = dispatch(&world, &["--item", "acmeforge:acme/widget#13"]);
+        assert_eq!(swept["laid"], 1, "{swept}");
+        let plan = plan_of(&world, 13);
+
+        // The workflow parks its task on a question, in a state of its own
+        // machine's — the root's machine has no `waiting` at all.
+        std::fs::write(
+            plan.join("states.yaml"),
+            concat!(
+                "name: supervised-fix\n",
+                "states:\n",
+                "  implementing:\n    agent: x\n",
+                "  waiting:\n    gating: true\n",
+                "  done:\n    final: true\n",
+            ),
+        )
+        .expect("the workflow's own machine");
+        std::fs::write(
+            plan.join("tasks/01-fix.md"),
+            "### Task fix: fix the ticket\n**State:** waiting\n\nwork\n",
+        )
+        .expect("the parked task");
+
+        // A run is live on the root, which is what makes the wrong machine's
+        // answer *queued* rather than nothing at all.
+        let lock = work_root(&world).join(".rhei/run.lock");
+        std::fs::create_dir_all(lock.parent().expect("a parent")).expect("the lock directory");
+        std::fs::write(&lock, "").expect("the lock file");
+        let holder = std::fs::File::open(&lock).expect("the lock file");
+        holder.lock().expect("the run lock");
+
+        let board = world
+            .ephor()
+            .args(["operations", "--json"])
+            .output()
+            .expect("operations runs");
+        let board = json_of(&board);
+        let row = board["operations"]
+            .as_array()
+            .expect("an operation per root")
+            .iter()
+            .flat_map(|op| op["tickets"].as_array().cloned().unwrap_or_default())
+            .find(|ticket| ticket["id"] == "acmeforge-acme-widget-13-fix-issue.fix")
+            .unwrap_or_else(|| panic!("the laid plan's task has a row: {board}"));
+        assert_eq!(row["state"], "waiting", "{row}");
+        assert_eq!(row["doing"], "waiting", "{row}");
+        assert_eq!(row["says"], "waiting on you", "{row}");
+
+        // And the menu row about the same matter, which is the board's
+        // reading narrowed to one row rather than a second reading.
+        let view = world
+            .ephor()
+            .args(["actions", "--item", "acmeforge:acme/widget#13", "--json"])
+            .output()
+            .expect("actions runs");
+        let view = json_of(&view);
+        let offer = view["offers"]
+            .as_array()
+            .expect("a menu")
+            .iter()
+            .find(|offer| offer["id"] == "fix-issue")
+            .unwrap_or_else(|| panic!("the entry is on the menu: {view}"));
+        assert_eq!(offer["running"]["kind"], "waiting", "{offer}");
+        drop(holder);
     }
 
     /// A sweep asked what it would do makes nothing at all: not the plan, not

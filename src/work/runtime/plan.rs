@@ -760,17 +760,28 @@ fn id_segment(segment: &str) -> bool {
     }
 }
 
-/// The lines of a document that are not inside a fenced block.
+/// The store a plan's own tasks live in, where that is not the work root:
+/// the directory a plan rendered as a directory keeps its index in
+/// (§FS-005-dispatch.28). None for a plan the root holds directly — a
+/// `*.rhei.md` file beside the root's own machine — whose store is the root.
+///
+/// Two things follow from the shape and both are read here: where its tasks
+/// are, and which machine says what their states mean
+/// (§FS-006-project-interface.7). So the shape is recognized in this one
+/// place and every surface that reads a floor asks it (§AR-007-runtime.1).
+pub fn own_store(plan: &Path) -> Option<&Path> {
+    match plan.file_name().and_then(|name| name.to_str()) {
+        Some(INDEX) => plan.parent(),
+        _ => None,
+    }
+}
+
 /// The task files of a plan rendered as a directory: the direct children of
 /// the `tasks/` directory beside its index, in name order, read as they
 /// stand (§FS-005-dispatch.28). Empty for a plan written as one file, which
-/// is every plan ephor writes itself — the shape is recognized here and
-/// nowhere else (§AR-007-runtime.1).
+/// is every plan ephor writes itself.
 fn task_files(plan: &Path) -> Vec<String> {
-    if plan.file_name().and_then(|name| name.to_str()) != Some(INDEX) {
-        return Vec::new();
-    }
-    let Some(dir) = plan.parent() else {
+    let Some(dir) = own_store(plan) else {
         return Vec::new();
     };
     let Ok(entries) = fs::read_dir(dir.join(TASKS_DIR)) else {
@@ -857,6 +868,7 @@ fn tickets_in(text: &str) -> Vec<PlanTicket> {
     tickets
 }
 
+/// The lines of a document that are not inside a fenced block.
 fn unfenced(text: &str) -> impl Iterator<Item = &str> {
     let mut fence: Option<String> = None;
     text.lines().filter(move |line| {

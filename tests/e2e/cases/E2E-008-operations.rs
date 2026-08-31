@@ -613,6 +613,135 @@ fn a_directory_workspaces_tasks_are_on_the_floor_and_a_run_holding_one_shows() {
     drop(holder);
 }
 
+/// A plan that is a **store of its own** — the shape a laid workflow lands
+/// as — is judged by the machine beside it and never by the root's
+/// (§FS-005-dispatch.28, §FS-006-project-interface.7): a task's state means
+/// whatever the machine in force for its own store says it means, and the
+/// board is one of the surfaces that has to mean it (§AR-009-surfaces.1).
+///
+/// So the root here declares no machine at all and nothing is guessed at:
+/// the plan's own says which of its states is a question for a person and
+/// which is over, both words the root could never have supplied — and the
+/// row does not claim nothing was judged, because everything on this floor
+/// was.
+#[test]
+fn a_plan_that_is_a_store_of_its_own_is_judged_by_the_machine_beside_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("work");
+    // No `states.yaml` in the root: whatever judges this floor comes from
+    // beside the plan.
+    write(
+        &root.join("widget-42/states.yaml"),
+        concat!(
+            "name: supervised-fix\n",
+            "states:\n",
+            "  implementing:\n    agent: x\n",
+            "  waiting:\n    gating: true\n",
+            "  shipped:\n    final: true\n",
+        ),
+    );
+    write(
+        &root.join("widget-42/index.rhei.md"),
+        "# Rhei: acme/widget#42\n**States:** supervised-fix\n",
+    );
+    write(
+        &root.join("widget-42/tasks/001-fix.md"),
+        "### Task fix: fix the ticket\n**State:** waiting\n\nwork\n",
+    );
+    write(
+        &root.join("widget-42/tasks/002-ship.md"),
+        "### Task ship: ship it\n**State:** shipped\n\nwork\n",
+    );
+    let group = RootPlans {
+        root: root.clone(),
+        plans: vec![PlanRef {
+            project: "widget".to_string(),
+            plan_id: "widget-42".to_string(),
+            path: root.join("widget-42/index.rhei.md"),
+            item: Some("forge:widget/42".to_string()),
+            title: "Widen the retry window".to_string(),
+        }],
+    };
+    let holder = hold_lock(&root);
+
+    let board = watch::board(&floor_config(), std::slice::from_ref(&group));
+    let op = &board.operations[0];
+    assert!(op.live);
+    // Parked on a question, not queued: `queued` would promise a turn that
+    // never comes, and it is the answer the root's absent machine would have
+    // produced under a live run (§FS-005-dispatch.15).
+    assert_eq!(op.tickets.len(), 1);
+    assert_eq!(op.tickets[0].ticket, "fix");
+    assert_eq!(op.tickets[0].doing, Doing::Waiting);
+    // Finality is that machine's word too.
+    assert_eq!(op.done, 1);
+    // And nothing leaned on the root's machine, so the row must not say
+    // nothing was judged for want of one.
+    assert_eq!(op.machine_unread, None);
+    drop(holder);
+}
+
+/// A held task the floor cannot see still shows through the runner's own
+/// listing (§FS-005-dispatch.15): the listing sharpens the floor, and a run
+/// working a ticket the plan read yields nothing for is exactly what
+/// sharpening is for. Here the plan writes a heading whose dotted id does
+/// not match its depth — content, by the runtime's own grammar — while the
+/// runtime lists it and the journal says it is the one being held.
+#[test]
+fn a_held_ticket_the_floor_cannot_see_shows_through_the_listing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("work");
+    let group = work_root(&root, false);
+    let plan = root.join("widget-42.rhei.md");
+    let text = fs::read_to_string(&plan).unwrap();
+    write(
+        &plan,
+        &text.replacen(
+            "work\n\n### Task answer-1",
+            "work\n\n#### Task scratch-1: a heading the grammar reads as content\n             **State:** fix\n\nwork\n\n### Task answer-1",
+            1,
+        ),
+    );
+    // The floor really cannot see it: `####` is depth two, and `scratch-1`
+    // is one segment.
+    let read = Plan::read(&plan).unwrap().unwrap();
+    assert!(
+        !read.tickets().iter().any(|ticket| ticket.id == "scratch-1"),
+        "the plan grammar yields it after all: {:?}",
+        read.tickets()
+            .iter()
+            .map(|t| t.id.clone())
+            .collect::<Vec<_>>()
+    );
+
+    let holder = hold_lock(&root);
+    write(
+        &root.join("runtime/transitions.log"),
+        "2026-08-14T10:00:00Z  widget-42.scratch-1  start@fix  runtime/logs/task-scratch-1-fix.log\n",
+    );
+    write(&root.join("runtime/logs/task-scratch-1-fix.log"), "at it\n");
+    let (bound, _) = fake_runner(
+        tmp.path(),
+        r#"[{"id":"widget-42.scratch-1","state":"fix"}]"#,
+    );
+
+    let board = watch::board(&bound, std::slice::from_ref(&group));
+    let op = &board.operations[0];
+    let held = op
+        .tickets
+        .iter()
+        .find(|ticket| ticket.ticket == "scratch-1")
+        .unwrap_or_else(|| panic!("the held ticket has a row: {:?}", op.tickets));
+    assert_eq!(held.doing, Doing::Running);
+    assert_eq!(held.plan_id, "widget-42");
+    // Sharpening, not replacing: the floor's own tickets keep their rows.
+    assert!(op
+        .tickets
+        .iter()
+        .any(|ticket| ticket.ticket == "fix-gate-1"));
+    drop(holder);
+}
+
 /// A root whose own state machine cannot be read carries the fact on its
 /// operation (§FS-005-dispatch.15): running still shows — the lock and the
 /// journal prove it — but nothing is counted finished, and the row says the
