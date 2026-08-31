@@ -14,6 +14,15 @@ fissile_exceptions_version = 2
 # measurement found, and every one of them has a seam available. None is
 # indivisible.
 #
+# Every ceiling here is quantized to the 100-line `[exceptions.bump]` step
+# rather than pinned to what the file measured on the day it was written. That
+# is `fissile`'s default and it is the right one twice over: a round number
+# reads as a decision instead of as an accident of the calendar, and a ceiling
+# equal to today's measurement turns every unrelated commit on `main` into a
+# broken gate on every open branch. This was learned the direct way — the first
+# push of this change pinned them exactly and CI failed on a merge with a `main`
+# that had grown two of these files.
+#
 # They were written by the change that introduced the budget, with
 # `fissile exception add --force`. `fissile` refuses `--severity hard` outside a
 # terminal precisely so that a hard entry is somebody's decision; `--force` is
@@ -24,27 +33,27 @@ path = "README.md"
 match = "exact"
 rules = ["entrypoints"]
 kind = "deferred"
-max_accepted = { value = 519, unit = "lines" }
+max_accepted = { value = 600, unit = "lines" }
 until = "the Status feed and Work sections are cut to their tour, with the reference they duplicate left to docs/manual.md"
 reason = """
-README.md line 9 says it itself: "docs/manual.md is the manual; this page is the tour". Two of its sections are not a tour. `## Status feed` and `## Work: handing an item to an agent runtime` are 192 non-blank lines each, 384 of this file's 519, and both are reference — provider tables, configuration keys, recipe fields — that docs/manual.md already carries in chapters 4 to 6 and chapter 8. Everything else here is 135 lines and is a tour. Missing boundary: nothing has to be built — the destination already exists and line 9 already names it. What is missing is the cut, which is an editorial change rather than a design one, and that is why this is deferred rather than structural. It is not taken in this commit because trimming the front door of the repository inside the change that first measures it would put an editorial judgment where a mechanical one is being reviewed, and the two should be reviewable apart.
+README.md line 9 says it itself: "docs/manual.md is the manual; this page is the tour". Two of its sections are not a tour. `## Status feed` and `## Work: handing an item to an agent runtime` are 192 and 198 non-blank lines, 390 of this file's 525, and both are reference — provider tables, configuration keys, recipe fields — that docs/manual.md already carries in chapters 4 to 6 and chapter 8. Everything else here is 135 lines and is a tour. Missing boundary: nothing has to be built — the destination already exists and line 9 already names it. What is missing is the cut, which is an editorial change rather than a design one, and that is why this is deferred rather than structural. It is not taken in this commit because trimming the front door of the repository inside the change that first measures it would put an editorial judgment where a mechanical one is being reviewed, and the two should be reviewable apart.
 """
 [[exceptions]]
 path = "requirements.md"
 match = "exact"
 rules = ["specs"]
 kind = "deferred"
-max_accepted = { value = 2822, unit = "lines" }
+max_accepted = { value = 2900, unit = "lines" }
 until = "the FS home becomes a folder in .agents/grund.toml and each declaration moves to its own document"
 reason = """
-Eleven §FS declarations in one file, of which §FS-005-dispatch is about 1560 lines — 57% of the document on its own. The other four kind homes in this tree are already folders: .agents/grund.toml gives AR, REQ, DF and DA a `folder`, and only FS a `file`. Missing boundary: that same folder for FS. The move is mechanical and the citations survive it, because a § names an ID and not a path — grund resolves the ID wherever the declaration lives, and `grund fmt --write` rewrites the rendered links. It is not taken here because moving every spec declaration in the repository is a change that has to be reviewed as itself, not as a rider on the commit that first measured the file.
+Twelve §FS declarations in one file, of which §FS-005-dispatch is 1423 lines — half the document on its own. The other four kind homes in this tree are already folders: .agents/grund.toml gives AR, REQ, DF and DA a `folder`, and only FS a `file`. Missing boundary: that same folder for FS. The move is mechanical and the citations survive it, because a § names an ID and not a path — grund resolves the ID wherever the declaration lives, and `grund fmt --write` rewrites the rendered links. It is not taken here because moving every spec declaration in the repository is a change that has to be reviewed as itself, not as a rider on the commit that first measured the file.
 """
 [[exceptions]]
 path = "src/work/mod.rs"
 match = "exact"
 rules = ["source"]
 kind = "deferred"
-max_accepted = { value = 3056, unit = "lines" }
+max_accepted = { value = 3100, unit = "lines" }
 until = "the value types move to a sibling src/work/status.rs and the placement family to src/work/site.rs, leaving mod.rs as the dispatcher"
 reason = """
 Three things in one file with no boundary between them. First the vocabulary: Outcome, TicketStatus, Cancelled, WorkStatus, Tone, WorkLine, WorkGoing, WorkAt and Due are the types every surface reads a ticket's state through, and they are defined in the same file as the engine that produces them. Second, placement: site, site_for, mint, opening, pin, root_template and states_yaml decide and prepare the checkout a ticket lands in, a job with its own types and its own failure modes. Third, dispatch itself: dispatch, hand, run_hand, lay, ask, sync, cancel. A further 906 lines are the inline #[cfg(test)] mod tests, which is why the file measures 3056 while the implementation is 2150. Missing boundary: the vocabulary as a module of its own, and placement as a second. src/work/ already holds commands.rs, dossier.rs, ledger.rs, recipe.rs, workflow.rs and runtime/, so each move costs one mod line and whatever pub(crate) the moved items need.

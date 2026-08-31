@@ -144,7 +144,7 @@ If a section genuinely has to greet a first-time reader here, that is an argumen
 id = "manual-chapter"
 text = """
 The manual has outgrown one document. It is deliberately one — `scripts/manual-page.py` renders it as a single standalone page, and its own docstring says so — so the move is not to cut it at a heading but to notice which chapter has become a document of its own and give it one, linked from the Contents.
-The measurement to make first is per chapter, not per file: `## 8. Work` is already 1246 of these lines, 45% of the manual on its own, and it is the reason this rule exists.
+The measurement to make first is per chapter, not per file: `## 8. Work` is already 1251 of these lines, 45% of the manual on its own, and it is the reason this rule exists.
 fissile exception add <path> --severity soft --rule {rule}
 """
 
@@ -205,7 +205,7 @@ soft = 262144
 hard = 524288
 message = "large-file-default"
 
-# `src/` is 92 files and 46,710 non-blank non-comment lines, of which 15,771
+# `src/` is 92 files and 46,879 non-blank non-comment lines, of which 15,794
 # (34%) are inline `#[cfg(test)] mod tests`: this repository keeps unit tests in
 # the file they test. So grund's implementation-only 350/500 is not the
 # comparable number here — the comparable number is grund's implementation
@@ -213,7 +213,7 @@ message = "large-file-default"
 # hard, for the same material.
 #
 # 800 is therefore the soft tier, and it lands where this tree's own p95 of
-# implementation-minus-tests does (908) — two derivations, one number. 19 of 92
+# implementation-minus-tests does (908) — two derivations, one number. 20 of 92
 # files are over it and each is real debt this rule now names.
 #
 # The hard tier is 2000, not 1200: it is the ceiling `rhei`'s
@@ -278,7 +278,7 @@ message = "split-python-tests"
 # times the p95 of the spec trees in this set; this tree's own p95 outside
 # `requirements.md` is 150. 2000 hard is the ceiling `rhei`'s
 # §AR-source-file-size.1 declares, and here it is doing real work:
-# `requirements.md` is 2822 lines holding eleven `§FS` declarations in one file,
+# `requirements.md` is 2860 lines holding twelve `§FS` declarations in one file,
 # which is a document that has stopped being one. It is recorded in
 # `docs/file-size-human-exceptions.toml` with the split it is owed.
 #
@@ -355,13 +355,13 @@ hard_message = "split-entrypoint-hard"
 # therefore 2000, the spec rule's *ceiling*: the point at which a document that
 # cannot be addressed piecewise has to justify still being one document.
 #
-# It is over that today, at 2792, and is deliberately left over it. The manual
+# It is over that today, at 2797, and is deliberately left over it. The manual
 # has twelve chapters with a median of about 100 non-blank lines and one, "8.
-# Work", of 1246 — 45% of the file on its own. That is a document in hiding, and
+# Work", of 1251 — 45% of the file on its own. That is a document in hiding, and
 # a standing soft finding is the honest way to say so; silencing it with an
 # exception would file the argument away instead of making it.
 #
-# 3200 is where it blocks: 2792 plus 390, the largest chapter that is not
+# 3200 is where it blocks: 2797 plus 390, the largest chapter that is not
 # chapter 8, rounded up. One more genuine chapter of growth fits; a second
 # chapter 8 cannot appear without a decision.
 [[rules]]
