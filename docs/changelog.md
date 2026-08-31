@@ -62,7 +62,7 @@ ships, the previous "latest" section moves verbatim to
   behaviour and output are exactly today's.
 
 - **Every file is measured against a budget set by how it is read**
-  ([§FS-012-file-size](../requirements.md#fs-012-file-size-every-file-is-measured-against-a-budget-set-by-how-it-is-read), PR #N). `.agents/fissile.toml` gives this tree its first
+  ([§FS-012-file-size](../requirements.md#fs-012-file-size-every-file-is-measured-against-a-budget-set-by-how-it-is-read), PR #23). `.agents/fissile.toml` gives this tree its first
   file-size budgets and `fissile check` enforces them, in the pre-commit hook
   against the files a commit touches, in `just check`, and in a `fissile` job in
   CI against the whole tree. The budget follows the reader rather than the file
