@@ -612,6 +612,30 @@ esac
         );
     }
 
+    /// A ranking file naming the same id twice ranks it once, not twice, and
+    /// never reports the repeated line as matching nothing.
+    #[test]
+    fn a_duplicated_id_is_ranked_once_and_never_reported_unmatched() {
+        let world = world();
+        let ranking = world.path().join("ranking.txt");
+        std::fs::write(
+            &ranking,
+            format!("{}\n{}\n{}\n", item(10), item(10), item(12)),
+        )
+        .unwrap();
+
+        let dispatched = dispatch(&world, &["--ranking", ranking.to_str().unwrap()]);
+        assert_eq!(
+            ids(&dispatched),
+            vec![item(10), item(12), item(13), item(11)]
+        );
+        let says = notes(&dispatched);
+        assert!(
+            !says.iter().any(|note| note.contains("matches no item")),
+            "{says:?}"
+        );
+    }
+
     /// A ranking file that is not there falls back to today's order, and the
     /// reading says so rather than failing.
     #[test]
@@ -678,6 +702,36 @@ esac
         let dispatched = dispatch(&world, &["--limit", "1"]);
         assert_eq!(dispatched["opened"], 1);
         assert_eq!(ids(&dispatched), vec![item(13)]);
+    }
+
+    /// `--limit 0` does not block an explicit `--item` request: naming one
+    /// matter is not the sweep the bound bounds.
+    #[test]
+    fn limit_zero_does_not_block_an_explicit_item_request() {
+        let world = world();
+        let dispatched = dispatch(&world, &["--item", &item(11), "--limit", "0"]);
+        assert_eq!(dispatched["opened"], 1);
+        assert_eq!(ids(&dispatched), vec![item(11)]);
+    }
+
+    /// A ranking path that cannot be read as a file — a directory, here —
+    /// falls back to today's order, and the reading says so.
+    #[test]
+    fn an_unreadable_ranking_path_falls_back_and_says_so() {
+        let world = world();
+        let directory = world.path().join("ranking-dir");
+        std::fs::create_dir(&directory).unwrap();
+
+        let dispatched = dispatch(&world, &["--ranking", directory.to_str().unwrap()]);
+        assert_eq!(
+            ids(&dispatched),
+            vec![item(13), item(12), item(11), item(10)]
+        );
+        let says = notes(&dispatched);
+        assert!(
+            says.iter().any(|note| note.contains("could not be read")),
+            "{says:?}"
+        );
     }
 
     /// The `work.ranking` config key orders dispatch with no flag at all, and

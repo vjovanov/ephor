@@ -414,8 +414,10 @@ fn dispatch_work(config: &StatusConfig, args: &crate::cli::WorkDispatchArgs) -> 
     for item in &items {
         // The bound is on what actually gets dispatched — opened, or
         // would-open under `--dry-run` — never on what a filter or an
-        // already-open ticket steps over (§FS-005-dispatch.26).
-        if args.limit.is_some_and(|limit| opened >= limit) {
+        // already-open ticket steps over (§FS-005-dispatch.26). `--item`
+        // names one matter, not the sweep the bound bounds, so it is exempt
+        // exactly as `--updated-within` already is below.
+        if args.limit.is_some_and(|limit| opened >= limit) && args.item.is_none() {
             break;
         }
         if let Some(id) = &args.item {
