@@ -32,7 +32,7 @@ ships, the previous "latest" section moves verbatim to
 
 - **Dispatch reads an ordering already made, and a limit bounds what runs**
   ([§FS-005-dispatch.26](../requirements.md#26-an-ordering-already-made-can-be-read-and-a-limit-bounds-what-runs),
-  PR #N). Ephor does not compute a rank — it reads one a project already
+  PR #24). Ephor does not compute a rank — it reads one a project already
   wrote: an optional `"ranking": "<path>"` in the `work` block of site
   configuration, or `--ranking <path>` on `ephor work dispatch` displacing it
   for one run, names a file of item ids, one per line, most important first.
