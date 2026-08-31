@@ -387,6 +387,43 @@ fn a_refusal_after_the_template_resolved_leaves_no_workspace() {
     );
 }
 
+/// The machine refuses on the same side of the mint as the hand. A recipe
+/// naming a state the machine does not declare is refused before the workspace
+/// is made — the machine ephor would install is read without installing it,
+/// because a workspace minted in order to read a machine back is the very
+/// thing left behind (§FS-005-dispatch.25).
+#[test]
+fn a_machine_that_refuses_the_state_leaves_no_workspace() {
+    let world = watching(Some("fix/issue-{number}"), true);
+    world.configure(json!({
+        "projects": { PROJECT: {
+            "providers": [ { "provider": "acmeforge", "user": "you", "repos": ["widget"] } ],
+            "work": { "recipes": [ {
+                "id": "do-issue",
+                "description": "do the issue",
+                "when": { "kinds": ["issue"] },
+                "branch": "fix/issue-{number}",
+                "state": "nope",
+                "brief": "Do {title}."
+            } ] }
+        } },
+        "work": { "runner": "acme-runtime" }
+    }));
+
+    world
+        .ephor()
+        .args(["work", "dispatch", "--item", ITEM, "--recipe", "do-issue"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("does not declare"));
+    // Not the workspace, and not the directories on the way to it.
+    assert!(
+        !world.forest().join("fix").exists(),
+        "a refused state left {} behind",
+        workspace(&world).display()
+    );
+}
+
 /// A matter that has a branch of its own keeps it: the template applies only
 /// where there is none, so a pull request is placed exactly where it was
 /// before the key existed (§FS-005-dispatch.25).
