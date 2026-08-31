@@ -357,9 +357,37 @@ fn kind_filter(kind: &Option<String>) -> Result<Option<ItemKind>> {
     }
 }
 
+/// Reorders `items` by the ranking file this dispatch is bound to — the one
+/// `--ranking` names, or else the one configured, and unchanged where neither
+/// names one (§FS-005-dispatch.26). What the file said, or why it could not
+/// be used, and every id it named that matched nothing, are said once each
+/// the way every other fact this sweep learns is (§FS-006-project-interface.9)
+/// — in prose and in `--json` alike, since both read `dispatcher.notes()`.
+fn order_by_ranking(
+    dispatcher: &mut Dispatcher,
+    config: &StatusConfig,
+    args: &crate::cli::WorkDispatchArgs,
+    items: Vec<Item>,
+) -> Vec<Item> {
+    let Some(path) = args.ranking.clone().or_else(|| config.work.ranking.clone()) else {
+        return items;
+    };
+    let reading = crate::work::ranking::read(&crate::paths::resolve_path(&path));
+    dispatcher.note_once(&reading.says());
+    let (ordered, unmatched) =
+        crate::work::ranking::order(items, &reading.order, |item| item.id.as_str());
+    for id in unmatched {
+        dispatcher.note_once(&format!(
+            "ranking names '{id}', which matches no item in the feed — skipped"
+        ));
+    }
+    ordered
+}
+
 fn dispatch_work(config: &StatusConfig, args: &crate::cli::WorkDispatchArgs) -> Result<ExitCode> {
     let mut dispatcher = Dispatcher::load(config)?;
     let items = selected_items(config, &args.project)?;
+    let items = order_by_ranking(&mut dispatcher, config, args, items);
     let kind = kind_filter(&args.kind)?;
     // Who does it, for this dispatch alone — the first of the seven steps
     // (§FS-005-dispatch.14), in the same grammar the tables write. Parsed
@@ -384,6 +412,12 @@ fn dispatch_work(config: &StatusConfig, args: &crate::cli::WorkDispatchArgs) -> 
     let mut settled = 0usize;
     let mut asked_for_one = false;
     for item in &items {
+        // The bound is on what actually gets dispatched — opened, or
+        // would-open under `--dry-run` — never on what a filter or an
+        // already-open ticket steps over (§FS-005-dispatch.26).
+        if args.limit.is_some_and(|limit| opened >= limit) {
+            break;
+        }
         if let Some(id) = &args.item {
             if &item.id != id {
                 continue;

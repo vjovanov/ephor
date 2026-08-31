@@ -41,6 +41,11 @@ pub struct WorkConfig {
     /// table displaces.
     #[serde(default)]
     pub hands: BTreeMap<String, HandPin>,
+    /// A file naming which items `ephor work dispatch` opens first: one item
+    /// id per line, most important first. `--ranking <path>` displaces it for
+    /// one run (§FS-005-dispatch.26).
+    #[serde(default)]
+    pub ranking: Option<String>,
 }
 
 impl Default for WorkConfig {
@@ -51,6 +56,7 @@ impl Default for WorkConfig {
             runner: None,
             recipes: Vec::new(),
             hands: BTreeMap::new(),
+            ranking: None,
         }
     }
 }

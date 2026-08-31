@@ -292,6 +292,18 @@ pub struct WorkDispatchArgs {
     #[arg(long, value_name = "DAYS")]
     pub updated_within: Option<i64>,
 
+    /// Order this sweep by this ranking file instead of the configured one,
+    /// for this dispatch alone: one item id per line, most important first
+    /// (§FS-005-dispatch.26).
+    #[arg(long, value_name = "PATH")]
+    pub ranking: Option<String>,
+
+    /// Dispatch at most this many items (opened, or would-open under
+    /// `--dry-run`). Items skipped for another reason do not count against it
+    /// (§FS-005-dispatch.26).
+    #[arg(long, value_name = "N")]
+    pub limit: Option<usize>,
+
     /// Report what would be opened without writing anything.
     #[arg(long)]
     pub dry_run: bool,
