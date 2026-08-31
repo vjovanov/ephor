@@ -16,6 +16,7 @@ pub mod runtime;
 pub mod workflow;
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
 use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
@@ -2146,6 +2147,7 @@ pub fn due_among(
         };
         let mut plans: Vec<String> = Vec::new();
         let mut tickets: Vec<String> = Vec::new();
+        let mut items: Vec<String> = Vec::new();
         for plan_ref in &group.plans {
             let Some(asked) = autoruns.get(&plan_ref.project) else {
                 continue;
@@ -2181,6 +2183,11 @@ pub fn due_among(
                 }
                 if !plans.contains(&plan_ref.plan_id) {
                     plans.push(plan_ref.plan_id.clone());
+                }
+                if let Some(item) = &plan_ref.item {
+                    if !items.contains(item) {
+                        items.push(item.clone());
+                    }
                 }
                 tickets.push(format!("{}.{}", plan_ref.plan_id, ticket.id));
             }
@@ -2227,19 +2234,16 @@ pub fn due_among(
             checkout,
             plans,
             tickets,
-            item: group
-                .plans
-                .iter()
-                .find_map(|plan| plan.item.clone())
-                .or_else(|| {
-                    known.and_then(|entry| {
-                        ledger
-                            .entries
-                            .iter()
-                            .find(|(_, candidate)| candidate.root == entry.root)
-                            .map(|(id, _)| id.clone())
-                    })
-                }),
+            item: items.first().cloned().or_else(|| {
+                known.and_then(|entry| {
+                    ledger
+                        .entries
+                        .iter()
+                        .find(|(_, candidate)| candidate.root == entry.root)
+                        .map(|(id, _)| id.clone())
+                })
+            }),
+            items,
         });
     }
     due
@@ -2249,7 +2253,58 @@ pub fn due_among(
 /// existing deterministic order. A root with no matter id is necessarily in
 /// the latter group (§FS-005-dispatch.24, §FS-005-dispatch.26).
 fn rank_due(due: Vec<Due>, ranked_ids: &[String]) -> Vec<Due> {
-    ranking::order(due, ranked_ids, |root| root.item.as_deref().unwrap_or("")).0
+    let ranks: BTreeMap<&str, usize> = ranked_ids
+        .iter()
+        .enumerate()
+        .rev()
+        .map(|(rank, id)| (id.as_str(), rank))
+        .collect();
+    let mut due = due;
+    due.sort_by(|left, right| {
+        let rank = |root: &Due| {
+            root.items
+                .iter()
+                .filter_map(|item| ranks.get(item.as_str()).copied())
+                .min()
+        };
+        rank(left)
+            .unwrap_or(usize::MAX)
+            .cmp(&rank(right).unwrap_or(usize::MAX))
+            .then_with(|| left.root.cmp(&right.root))
+    });
+    due
+}
+
+/// Serialize autorun capacity decisions across every ephor process using this
+/// site's state directory. The operating system releases the lock if a sweep
+/// exits, so no reservation can outlive the process that made it.
+fn autorun_lock() -> Result<fs::File> {
+    let state = crate::paths::state_dir();
+    fs::create_dir_all(&state).map_err(|err| {
+        EphorError::Command(format!(
+            "Cannot create the autorun state directory {}: {err}",
+            state.display()
+        ))
+    })?;
+    let path = state.join("work.autorun.lock");
+    let lock = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(&path)
+        .map_err(|err| {
+            EphorError::Command(format!(
+                "Cannot open the autorun capacity lock {}: {err}",
+                path.display()
+            ))
+        })?;
+    lock.lock().map_err(|err| {
+        EphorError::Command(format!(
+            "Cannot take the autorun capacity lock {}: {err}",
+            path.display()
+        ))
+    })?;
+    Ok(lock)
 }
 
 impl Dispatcher {
@@ -2269,13 +2324,19 @@ impl Dispatcher {
         projects: &[String],
         runner_args: &[String],
         max_concurrent: Option<usize>,
-    ) -> Vec<Launched> {
+    ) -> Result<Vec<Launched>> {
         // The runtime is a rung like any other capacity, and with nothing
         // bound there is no run to start (§AR-005-capabilities.2).
         if runtime::refusal(&self.global).is_some() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
         let detaches = runtime::can_detach(&self.global);
+        // Everything after this point is one site-wide reservation: reload
+        // the record another sweep may just have changed, take one fresh root
+        // and liveness snapshot, decide capacity, and keep the lock until the
+        // launches and their failed-start back-off are committed.
+        let _autorun = autorun_lock()?;
+        self.ledger = ledger::load()?;
         let roots = self.work_roots();
         let live = LiveRuns::read(&self.global, &roots);
         let global_limit = max_concurrent.or(self.global.max_concurrent);
@@ -2285,7 +2346,8 @@ impl Dispatcher {
             .filter_map(|(project, work)| work.max_concurrent.map(|limit| (project.clone(), limit)))
             .collect();
         let mut capacity = Capacity::new(global_limit, project_limits, live);
-        self.due_in(&roots, now)
+        let launched = self
+            .due_in(&roots, now)
             .into_iter()
             .filter(|root| {
                 projects.is_empty()
@@ -2348,7 +2410,9 @@ impl Dispatcher {
                     }
                 }
             })
-            .collect()
+            .collect();
+        ledger::store(&self.ledger)?;
+        Ok(launched)
     }
 
     /// Remember that starting a run on this root did not work, so the next
@@ -2403,6 +2467,10 @@ pub struct Due {
     /// The tickets themselves, plan-qualified: what the line saying a run
     /// started names as the reason.
     pub tickets: Vec<String>,
+    /// Every matter whose due tickets contribute to this root. Ranking uses
+    /// the best configured position among them; plans with no due ticket do
+    /// not get to rank the root.
+    items: Vec<String>,
     /// The matter this root's work is about, where the ledger knows one —
     /// where a failure's news lands (§FS-005-dispatch.24).
     pub item: Option<String>,
@@ -3932,6 +4000,7 @@ echo "Task $stem.$task transitioned: '$from' → '$to'"
             plans: vec![id.to_string()],
             tickets: vec![format!("{id}.fix-1")],
             item: Some(id.to_string()),
+            items: vec![id.to_string()],
         }
     }
 
@@ -4012,6 +4081,47 @@ echo "Task $stem.$task transitioned: '$from' → '$to'"
                 .collect::<Vec<_>>(),
             ["third", "first", "second"]
         );
+    }
+
+    #[test]
+    fn review_repro_shared_root_ranks_by_the_due_item() {
+        let tmp = tempfile::tempdir().unwrap();
+        let shared_root = tmp.path().join("a-shared/panta");
+        let mut shared = due_root(&shared_root, &ticket_at("review-1", "fix"));
+        shared.plans[0].item = Some("unranked".to_string());
+        let high_plan = shared_root.join("high.rhei.md");
+        fs::write(
+            &high_plan,
+            format!(
+                "# Rhei: high\n**States:** m\n\n## Tasks\n\n{}",
+                ticket_at("fix-gate-1", "fix")
+            ),
+        )
+        .unwrap();
+        shared.plans.push(runtime::watch::PlanRef {
+            project: "widget".to_string(),
+            plan_id: "high".to_string(),
+            path: high_plan,
+            item: Some("highest".to_string()),
+            title: "Highest ranked".to_string(),
+        });
+        let mut other = due_root(
+            &tmp.path().join("b-other/panta"),
+            &ticket_at("fix-gate-1", "fix"),
+        );
+        other.plans[0].item = Some("second".to_string());
+
+        let due = due_among(
+            &work_config(),
+            &[shared, other],
+            &asking(&["fix-gate"]),
+            &empty_ledger(),
+            Utc::now(),
+        );
+        let ranked = rank_due(due, &["highest".to_string(), "second".to_string()]);
+        assert_eq!(ranked[0].root, shared_root);
+        assert_eq!(ranked[0].item.as_deref(), Some("highest"));
+        assert_eq!(ranked[0].tickets, vec!["high.fix-gate-1".to_string()]);
     }
 
     /// The plain case: an open ticket from a recipe that asked to run itself,

@@ -1385,13 +1385,10 @@ fn run_work(config: &StatusConfig, args: &crate::cli::WorkRunArgs) -> Result<Exi
 /// per run so the reader who asked for a ticket learns that it also began —
 /// and, where it could not begin, why.
 fn started(dispatcher: &mut Dispatcher, projects: &[String], json: bool) -> Result<()> {
-    let launched = dispatcher.start_due(Utc::now(), projects, &[], None);
+    let launched = dispatcher.start_due(Utc::now(), projects, &[], None)?;
     if launched.is_empty() {
         return Ok(());
     }
-    // The record of what starting came to is ephor's own, and is kept whether
-    // it worked or not (§FS-005-dispatch.4, §FS-005-dispatch.24).
-    dispatcher.save()?;
     for run in &launched {
         match (json, run.failed.is_some()) {
             // Under `--json` the reading is alone on standard output
@@ -1423,11 +1420,7 @@ fn swept(
         &args.project,
         &args.runner_args,
         args.max_concurrent,
-    );
-    // What the sweep learned about its own attempts, kept for the next one.
-    // Only ephor's record of ephor's own act is written; no work state is
-    // touched, and none ever is (§FS-005-dispatch.4).
-    dispatcher.save()?;
+    )?;
     let failed = launched.iter().filter(|run| run.failed.is_some()).count();
     if args.json {
         let rows: Vec<serde_json::Value> = launched

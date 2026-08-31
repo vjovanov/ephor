@@ -1463,6 +1463,187 @@ fn capacity_runner(tmp: &Path, log: &Path) {
     );
 }
 
+/// A detached runner whose help probes rendezvous before either command can
+/// take the autorun reservation. Once released, a launch holds its root long
+/// enough for the other command's authoritative snapshot to see it.
+fn overlapping_capacity_runner(tmp: &Path, log: &Path) {
+    let rendezvous = tmp.join("autorun-rendezvous");
+    fs::create_dir_all(&rendezvous).unwrap();
+    fs::create_dir_all(tmp.join("fakebin")).unwrap();
+    make_executable(
+        &tmp.join("fakebin/rhei"),
+        &format!(
+            "#!/usr/bin/env bash\n\
+             case \"$*\" in\n\
+             *--help*)\n\
+               touch {rendezvous}/$$\n\
+               for _ in {{1..500}}; do\n\
+                 [[ $(find {rendezvous} -type f | wc -l) -ge 2 ]] && break\n\
+                 sleep 0.01\n\
+               done\n\
+               printf 'Options:\\n      --headless  detach it\\n'\n\
+               exit 0 ;;\n\
+             *--headless*)\n\
+               printf '%s\\n' \"$*\" >> {log}\n\
+               root=\"$4\"\n\
+               mkdir -p \"$root/.rhei\"\n\
+               flock \"$root/.rhei/run.lock\" sleep 20 >/dev/null 2>&1 &\n\
+               for _ in {{1..100}}; do\n\
+                 flock -n \"$root/.rhei/run.lock\" -c true >/dev/null 2>&1 || break\n\
+                 sleep 0.01\n\
+               done\n\
+               printf '{{\"id\":\"live\",\"status\":\"running\",\"exit_code\":null}}\\n'\n\
+               exit 0 ;;\n\
+             *) exit 0 ;;\n\
+             esac\n",
+            rendezvous = rendezvous.to_string_lossy(),
+            log = log.to_string_lossy(),
+        ),
+    );
+}
+
+/// §FS-005-dispatch.24: filtered sweeps in separate processes reserve the
+/// shared aggregate slot before either starts a root.
+#[test]
+fn review_repro_concurrent_sweeps_share_the_global_ceiling() {
+    let tmp = tempdir();
+    fixture(
+        tmp.path(),
+        json!({
+            "max_concurrent": 0,
+            "recipes": [{
+                "id": "fix-gate",
+                "icon": "🔧",
+                "description": "fix the red gate",
+                "brief": "fix {title}",
+                "autorun": true,
+                "when": { "kinds": ["pr"], "gate": "red" }
+            }]
+        }),
+    );
+    let log = tmp.path().join("runner.log");
+    detaching_runner(tmp.path(), &log);
+    ephor(tmp.path())
+        .args(["refresh", "demo"])
+        .assert()
+        .success();
+    ephor(tmp.path())
+        .args(["work", "dispatch"])
+        .assert()
+        .success();
+    let config_path = tmp.path().join("status.json");
+    let mut config: Value =
+        serde_json::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
+    config["work"]["max_concurrent"] = json!(1);
+    fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap()).unwrap();
+    let other_item = "github-prs:acme/widget#other";
+    duplicate_work_root(tmp.path(), other_item, "other");
+    let ledger_path = tmp.path().join("state/ephor/work.json");
+    let mut ledger: Value =
+        serde_json::from_str(&fs::read_to_string(&ledger_path).unwrap()).unwrap();
+    ledger["entries"][other_item]["project"] = json!("other");
+    fs::write(&ledger_path, serde_json::to_string_pretty(&ledger).unwrap()).unwrap();
+    overlapping_capacity_runner(tmp.path(), &log);
+
+    let mut demo = ephor(tmp.path());
+    demo.args(["work", "run", "--due", "--project", "demo", "--json"]);
+    let demo = std::thread::spawn(move || demo.output().unwrap());
+    let mut other = ephor(tmp.path());
+    other.args(["work", "run", "--due", "--project", "other", "--json"]);
+    let other = std::thread::spawn(move || other.output().unwrap());
+    let demo = demo.join().unwrap();
+    let other = other.join().unwrap();
+    assert!(
+        demo.status.success(),
+        "{}",
+        String::from_utf8_lossy(&demo.stderr)
+    );
+    assert!(
+        other.status.success(),
+        "{}",
+        String::from_utf8_lossy(&other.stderr)
+    );
+    let readings: [Value; 2] = [
+        serde_json::from_slice(&demo.stdout).unwrap(),
+        serde_json::from_slice(&other.stdout).unwrap(),
+    ];
+    let outcomes: Vec<&str> = readings
+        .iter()
+        .flat_map(|reading| reading["runs"].as_array().unwrap())
+        .filter_map(|run| run["outcome"].as_str())
+        .collect();
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|outcome| **outcome == "started")
+            .count(),
+        1,
+        "only one filtered sweep may consume the shared slot: {readings:?}"
+    );
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|outcome| **outcome == "passed-over")
+            .count(),
+        1,
+        "the other eligible root is reported without failing: {readings:?}"
+    );
+    assert_eq!(starts(&log), 1, "only one launcher was invoked");
+
+    let roots = [
+        tmp.path().join("demo/panta"),
+        tmp.path().join("other/panta"),
+    ];
+    let live = roots
+        .iter()
+        .filter(|root| {
+            fs::File::open(root.join(".rhei/run.lock")).is_ok_and(|lock| {
+                matches!(lock.try_lock_shared(), Err(fs::TryLockError::WouldBlock))
+            })
+        })
+        .count();
+    assert_eq!(live, 1, "global cap=1 must leave at most one live root");
+}
+
+#[test]
+fn review_repro_due_rows_hold_to_the_published_schema() {
+    let tmp = tempdir();
+    fixture(
+        tmp.path(),
+        json!({
+            "max_concurrent": 0,
+            "recipes": [{
+                "id": "fix-gate",
+                "icon": "🔧",
+                "description": "fix the red gate",
+                "brief": "fix {title}",
+                "autorun": true,
+                "when": { "kinds": ["pr"], "gate": "red" }
+            }]
+        }),
+    );
+    let log = tmp.path().join("runner.log");
+    detaching_runner(tmp.path(), &log);
+    ephor(tmp.path())
+        .args(["refresh", "demo"])
+        .assert()
+        .success();
+    ephor(tmp.path())
+        .args(["work", "dispatch"])
+        .assert()
+        .success();
+
+    let output = ephor(tmp.path())
+        .args(["work", "run", "--due", "--json"])
+        .output()
+        .unwrap();
+    let reading: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(reading["runs"][0]["outcome"], "passed-over", "{reading}");
+    assert_eq!(reading["failed"], 0, "{reading}");
+    let problems = ephor::api::schema::holds("work-run", &reading);
+    assert!(problems.is_empty(), "{problems:?}\n{reading}");
+}
+
 /// §FS-005-dispatch.24: capacity is a ceiling on live roots, selected in
 /// configured rank order. Existing live work consumes it, a completed start
 /// returns it, and roots omitted only for capacity are non-failing results.
@@ -1519,6 +1700,10 @@ fn the_autorun_sweep_caps_live_roots_and_reports_every_capacity_pass_over() {
         .output()
         .unwrap();
     let full: Value = serde_json::from_slice(&full.stdout).unwrap();
+    assert!(
+        ephor::api::schema::holds("work-run", &full).is_empty(),
+        "capacity rows must hold to the published work-run shape: {full}"
+    );
     assert_eq!(full["failed"], 0, "{full}");
     assert_eq!(full["runs"].as_array().unwrap().len(), 2, "{full}");
     assert!(full["runs"]
