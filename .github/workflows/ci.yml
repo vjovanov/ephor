@@ -63,7 +63,7 @@ jobs:
         run: python scripts/check_changelog_pr_entry.py --pr-number "${{ github.event.pull_request.number }}"
 
       - name: python tests
-        run: python -m unittest discover -s tests -p 'test_*.py'
+        run: python -m unittest discover -s tests/integration -p 'test_*.py'
 
       - name: cargo build
         run: cargo build --all-targets --locked
@@ -162,7 +162,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: ${{ runner.os }}-cargo-grund-0.9.0
+          key: ${{ runner.os }}-cargo-grund-0.12.3
 
       # Pinned, and the pin is part of the tree's meaning: the version decides
       # which `grund init` block the entrypoints may carry, so a checkout whose
@@ -170,7 +170,7 @@ jobs:
       # without bumping this is a gate that fails on the documentation rather
       # than on anything a change did.
       - name: Install grund
-        run: cargo install grund --version 0.9.0 --locked
+        run: cargo install grund --version 0.12.3 --locked
 
       - name: grund check
         run: grund check

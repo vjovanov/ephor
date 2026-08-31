@@ -12,7 +12,7 @@ test:
 
 # Run the changelog-script tests
 test-python:
-    python3 -m unittest discover -s tests -p 'test_*.py'
+    python3 -m unittest discover -s tests/integration -p 'test_*.py'
 
 # Build with warnings as errors, as CI does
 build:
@@ -47,7 +47,7 @@ e2e:
     #!/usr/bin/env bash
     set -euo pipefail
     targets=()
-    for case in e2e/cases/E2E-*.rs; do
+    for case in tests/e2e/cases/E2E-*.rs; do
         targets+=(--test "$(basename "$case" .rs | tr 'A-Z-' 'a-z_')")
     done
     cargo test --locked "${targets[@]}"

@@ -82,7 +82,7 @@ jobs:
           # changed. Pure-docs runs and workflow tweaks do not move the
           # published binary or the crates.io package.
           substantive="$(git diff --name-only "$tag"..HEAD \
-            | grep -Ev '^(docs/|\.github/|\.agents/|e2e/)' \
+            | grep -Ev '^(docs/|\.github/|\.agents/|tests/e2e/)' \
             | grep -Ev '\.md$' \
             | grep -Ev '^(LICENSE|AGENTS\.md|CLAUDE\.md)$' \
             || true)"
