@@ -1,0 +1,54 @@
+fissile_exceptions_version = 2
+# Soft-severity file-size exceptions (§FS-012-file-size.4). An agent may add an
+# entry here on its own; a hard entry is a human's, and lives in
+# `docs/file-size-human-exceptions.toml`.
+#
+# Entries here are *soft twins*. A file past its hard budget is past its soft one
+# too, and a `deferred` hard entry silences only the tier it was written for, so
+# such a file needs an entry in each registry or the soft finding stands beside
+# the accepted hard one and says nothing new. The argument for a twin lives once,
+# in the human registry; the twin points at it the way fissile identifies any
+# entry — by registry and path, both already on the lines above. Copying the
+# prose would give one file two arguments that can silently disagree.
+#
+# An entry that is not a twin carries its own reason, in full.
+[[exceptions]]
+path = "README.md"
+match = "exact"
+rules = ["entrypoints"]
+kind = "deferred"
+max_accepted = { value = 519, unit = "lines" }
+until = "the entry for this path in docs/file-size-human-exceptions.toml is retired"
+reason = """
+Soft twin of this path's entry in docs/file-size-human-exceptions.toml, which carries the argument. This entry holds no judgment of its own: same ceiling, retires with its twin. Edit the reason there, not here.
+"""
+[[exceptions]]
+path = "requirements.md"
+match = "exact"
+rules = ["specs"]
+kind = "deferred"
+max_accepted = { value = 2822, unit = "lines" }
+until = "the entry for this path in docs/file-size-human-exceptions.toml is retired"
+reason = """
+Soft twin of this path's entry in docs/file-size-human-exceptions.toml, which carries the argument. This entry holds no judgment of its own: same ceiling, retires with its twin. Edit the reason there, not here.
+"""
+[[exceptions]]
+path = "src/work/mod.rs"
+match = "exact"
+rules = ["source"]
+kind = "deferred"
+max_accepted = { value = 3056, unit = "lines" }
+until = "the entry for this path in docs/file-size-human-exceptions.toml is retired"
+reason = """
+Soft twin of this path's entry in docs/file-size-human-exceptions.toml, which carries the argument. This entry holds no judgment of its own: same ceiling, retires with its twin. Edit the reason there, not here.
+"""
+[[exceptions]]
+path = "src/feed/tui/mod.rs"
+match = "exact"
+rules = ["source"]
+kind = "deferred"
+max_accepted = { value = 2400, unit = "lines" }
+until = "the entry for this path in docs/file-size-human-exceptions.toml is retired"
+reason = """
+Soft twin of this path's entry in docs/file-size-human-exceptions.toml, which carries the argument. This entry holds no judgment of its own: same ceiling, retires with its twin. Edit the reason there, not here.
+"""

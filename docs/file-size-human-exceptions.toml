@@ -1,0 +1,61 @@
+fissile_exceptions_version = 2
+# Hard-severity file-size exceptions (§FS-012-file-size.4), each a human's to
+# add. An entry is identified by this registry and its `path`, which is why it
+# carries no name of its own.
+#
+# `--kind` says what the reason has to establish, and an entry is refused if it
+# establishes neither: **structural**, that splitting is illegal, naming the
+# constraint; or **deferred**, that a boundary is missing, naming the boundary
+# and the condition that retires the entry. Describing the file does not count —
+# "it is long" is the finding, not the argument.
+#
+# All four entries below are `deferred`, and that is the state of this tree
+# rather than a coincidence: these are the files this repository's first
+# measurement found, and every one of them has a seam available. None is
+# indivisible.
+#
+# They were written by the change that introduced the budget, with
+# `fissile exception add --force`. `fissile` refuses `--severity hard` outside a
+# terminal precisely so that a hard entry is somebody's decision; `--force` is
+# how a scripted change asks for that decision rather than granting itself one,
+# and the pull request that added this file is where it was made.
+[[exceptions]]
+path = "README.md"
+match = "exact"
+rules = ["entrypoints"]
+kind = "deferred"
+max_accepted = { value = 519, unit = "lines" }
+until = "the Status feed and Work sections are cut to their tour, with the reference they duplicate left to docs/manual.md"
+reason = """
+README.md line 9 says it itself: "docs/manual.md is the manual; this page is the tour". Two of its sections are not a tour. `## Status feed` and `## Work: handing an item to an agent runtime` are 192 non-blank lines each, 384 of this file's 519, and both are reference — provider tables, configuration keys, recipe fields — that docs/manual.md already carries in chapters 4 to 6 and chapter 8. Everything else here is 135 lines and is a tour. Missing boundary: nothing has to be built — the destination already exists and line 9 already names it. What is missing is the cut, which is an editorial change rather than a design one, and that is why this is deferred rather than structural. It is not taken in this commit because trimming the front door of the repository inside the change that first measures it would put an editorial judgment where a mechanical one is being reviewed, and the two should be reviewable apart.
+"""
+[[exceptions]]
+path = "requirements.md"
+match = "exact"
+rules = ["specs"]
+kind = "deferred"
+max_accepted = { value = 2822, unit = "lines" }
+until = "the FS home becomes a folder in .agents/grund.toml and each declaration moves to its own document"
+reason = """
+Eleven §FS declarations in one file, of which §FS-005-dispatch is about 1560 lines — 57% of the document on its own. The other four kind homes in this tree are already folders: .agents/grund.toml gives AR, REQ, DF and DA a `folder`, and only FS a `file`. Missing boundary: that same folder for FS. The move is mechanical and the citations survive it, because a § names an ID and not a path — grund resolves the ID wherever the declaration lives, and `grund fmt --write` rewrites the rendered links. It is not taken here because moving every spec declaration in the repository is a change that has to be reviewed as itself, not as a rider on the commit that first measured the file.
+"""
+[[exceptions]]
+path = "src/work/mod.rs"
+match = "exact"
+rules = ["source"]
+kind = "deferred"
+max_accepted = { value = 3056, unit = "lines" }
+until = "the value types move to a sibling src/work/status.rs and the placement family to src/work/site.rs, leaving mod.rs as the dispatcher"
+reason = """
+Three things in one file with no boundary between them. First the vocabulary: Outcome, TicketStatus, Cancelled, WorkStatus, Tone, WorkLine, WorkGoing, WorkAt and Due are the types every surface reads a ticket's state through, and they are defined in the same file as the engine that produces them. Second, placement: site, site_for, mint, opening, pin, root_template and states_yaml decide and prepare the checkout a ticket lands in, a job with its own types and its own failure modes. Third, dispatch itself: dispatch, hand, run_hand, lay, ask, sync, cancel. A further 906 lines are the inline #[cfg(test)] mod tests, which is why the file measures 3056 while the implementation is 2150. Missing boundary: the vocabulary as a module of its own, and placement as a second. src/work/ already holds commands.rs, dossier.rs, ledger.rs, recipe.rs, workflow.rs and runtime/, so each move costs one mod line and whatever pub(crate) the moved items need.
+"""
+[[exceptions]]
+path = "src/feed/tui/mod.rs"
+match = "exact"
+rules = ["source"]
+kind = "deferred"
+max_accepted = { value = 2400, unit = "lines" }
+until = "the hand-over family moves into impl App blocks in the sibling modules that already render those screens"
+reason = """
+The per-screen state and rendering have already left: actions.rs, answers.rs, gate.rs, navigator.rs, operations.rs, prompt.rs, thread.rs and work.rs are all siblings. What is left in impl App is three families sharing &mut self. The event loop and key dispatch — event_loop, apply, submit, tick, draw — genuinely belong together and must not be broken apart. Refresh and lifecycle — load, reload_feeds, reload_work, start_refresh, collect_refresh, absorb, pulse_jobs, reload_operations — are a second. The third is the largest and is the one that does not belong here: about two dozen methods from open_work through read_log that carry out what a work or action key does. Their screens already have modules; only their behaviour is still here, because those modules were written as renderers. Missing boundary: in Rust an inherent impl is a crate-wide thing rather than a module-wide one, so work.rs, actions.rs and answers.rs can each carry their own impl App block and the family moves with no visibility change at all. 854 of the 2400 lines are the inline mod tests, which move with the methods they cover.
+"""

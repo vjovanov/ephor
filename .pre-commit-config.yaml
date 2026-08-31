@@ -72,6 +72,22 @@ repos:
         pass_filenames: false
         always_run: true
         stages: [pre-commit]
+      # `fissile check` holds every file to the budget its reader sets
+      # (§FS-012-file-size.3): the rules and their derivations are in
+      # `.agents/fissile.toml`. Like `grund`, this calls an installed binary
+      # rather than `cargo run` — it is a third-party tool, not this
+      # repository's own (cargo install fissile --version 0.8.1). Soft overflows
+      # warn and exit 0; the only way past a hard one is a reviewed entry in
+      # `docs/file-size-human-exceptions.toml`. `pass_filenames` is true so the
+      # hook measures exactly the files the commit touches, and
+      # `pre-commit run --all-files` measures the whole tree, which is what the
+      # `fissile` job in CI runs.
+      - id: fissile-check
+        name: fissile (file size budgets)
+        entry: fissile check
+        language: system
+        pass_filenames: true
+        stages: [pre-commit]
       # §FS-001-forge-interface.5. Runs against staged content, so a private
       # word is caught before the commit exists rather than before a push. The
       # word list is local and gitignored — see the script — so this hook is a
