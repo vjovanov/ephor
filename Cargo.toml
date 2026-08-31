@@ -10,7 +10,7 @@ homepage = "https://github.com/vjovanov/ephor"
 # one person's registry or feed configuration, and none of the inherited
 # documentation set. `scripts/check-no-site-specific.sh` enforces it before a
 # release uploads anything; this keeps it out of the tarball meanwhile.
-exclude = ["docs/", "ai/", "e2e/", "systemd/", ".github/", "scripts/", "tests/golden/"]
+exclude = ["docs/", "ai/", "tests/e2e/", "systemd/", ".github/", "scripts/", "tests/integration/golden/"]
 
 [lib]
 name = "ephor"
@@ -20,66 +20,106 @@ path = "src/lib.rs"
 name = "ephor"
 path = "src/main.rs"
 
-# The end-to-end scenarios (§E2E, `e2e/cases`). They are declared by path
-# because a scenario lives with its grund declaration in the kind home rather
-# than in `tests/`; cargo drops a target whose path is excluded from the
-# package, so the published crate carries neither the cases nor a dangling
-# reference to them.
+# The two test homes (`tests/e2e`, `tests/integration`) are declared by path
+# because Cargo does not auto-discover tests in a subdirectory of `tests/`, and
+# because a target whose path is excluded from the package is dropped rather
+# than published as a dangling reference — `tests/e2e/` and
+# `tests/integration/golden/` are both in `exclude` above.
 [[test]]
 name = "e2e_001_forge_extension"
-path = "e2e/cases/E2E-001-forge-extension.rs"
+path = "tests/e2e/cases/E2E-001-forge-extension.rs"
 
 [[test]]
 name = "e2e_002_check_verbs"
-path = "e2e/cases/E2E-002-check-verbs.rs"
+path = "tests/e2e/cases/E2E-002-check-verbs.rs"
 
 [[test]]
 name = "e2e_003_gate_verbs"
-path = "e2e/cases/E2E-003-gate-verbs.rs"
+path = "tests/e2e/cases/E2E-003-gate-verbs.rs"
 
 [[test]]
 name = "e2e_004_ticket_store"
-path = "e2e/cases/E2E-004-ticket-store.rs"
+path = "tests/e2e/cases/E2E-004-ticket-store.rs"
 
 [[test]]
 name = "e2e_005_dispatch"
-path = "e2e/cases/E2E-005-dispatch.rs"
+path = "tests/e2e/cases/E2E-005-dispatch.rs"
 
 [[test]]
 name = "e2e_006_offers"
-path = "e2e/cases/E2E-006-offers.rs"
+path = "tests/e2e/cases/E2E-006-offers.rs"
 
 [[test]]
 name = "e2e_012_command_line_parity"
-path = "e2e/cases/E2E-012-command-line-parity.rs"
+path = "tests/e2e/cases/E2E-012-command-line-parity.rs"
 
 [[test]]
 name = "e2e_008_operations"
-path = "e2e/cases/E2E-008-operations.rs"
+path = "tests/e2e/cases/E2E-008-operations.rs"
 
 [[test]]
 name = "e2e_007_rebase_onto_the_published_copy"
-path = "e2e/cases/E2E-007-rebase-onto-the-published-copy.rs"
+path = "tests/e2e/cases/E2E-007-rebase-onto-the-published-copy.rs"
 
 [[test]]
 name = "e2e_009_jobs"
-path = "e2e/cases/E2E-009-jobs.rs"
+path = "tests/e2e/cases/E2E-009-jobs.rs"
 
 [[test]]
 name = "e2e_010_restart"
-path = "e2e/cases/E2E-010-restart.rs"
+path = "tests/e2e/cases/E2E-010-restart.rs"
 
 [[test]]
 name = "e2e_011_workflows"
-path = "e2e/cases/E2E-011-workflows.rs"
+path = "tests/e2e/cases/E2E-011-workflows.rs"
 
 [[test]]
 name = "e2e_013_what_is_going"
-path = "e2e/cases/E2E-013-what-is-going.rs"
+path = "tests/e2e/cases/E2E-013-what-is-going.rs"
 
 [[test]]
 name = "e2e_014_mint_the_branch"
-path = "e2e/cases/E2E-014-mint-the-branch.rs"
+path = "tests/e2e/cases/E2E-014-mint-the-branch.rs"
+
+[[test]]
+name = "agents_test"
+path = "tests/integration/agents_test.rs"
+
+[[test]]
+name = "checkout_test"
+path = "tests/integration/checkout_test.rs"
+
+[[test]]
+name = "check_test"
+path = "tests/integration/check_test.rs"
+
+[[test]]
+name = "doctor_test"
+path = "tests/integration/doctor_test.rs"
+
+[[test]]
+name = "feed_test"
+path = "tests/integration/feed_test.rs"
+
+[[test]]
+name = "forge_extension_test"
+path = "tests/integration/forge_extension_test.rs"
+
+[[test]]
+name = "rebase_test"
+path = "tests/integration/rebase_test.rs"
+
+[[test]]
+name = "registry_test"
+path = "tests/integration/registry_test.rs"
+
+[[test]]
+name = "update_test"
+path = "tests/integration/update_test.rs"
+
+[[test]]
+name = "work_test"
+path = "tests/integration/work_test.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
