@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 
-SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "prepare_changelog_release.py"
+SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "prepare_changelog_release.py"
 SPEC = importlib.util.spec_from_file_location("prepare_changelog_release", SCRIPT_PATH)
 prepare_changelog_release = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None

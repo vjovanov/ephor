@@ -5,11 +5,14 @@ project — a forge nobody built in, a repository checking itself, a plan
 directory full of tickets — run against the real binary in a world built for it
 and thrown away afterwards.
 
-Each case is a file under `cases/`, and each file **is** the `E2E-NNN-…`
-declaration in the grund tree: the module doc-comment states the scenario and
-cites the `§FS` point it holds ephor to (`grund list --kind E2E`). A case that
-cites nothing is a test; a case that cites its spec point is a scenario, and the
-spec point can be traced to it with `grund refs`.
+This is the home of the non-citable `e2e` kind: a case is exercised by being
+run, not navigated to, so no file here carries an ID. `[citations.e2e]` in
+`.agents/grund.toml` says the home must cite `FS` and should not cite `AR` —
+every case still opens with the module doc-comment naming the scenario and the
+`§FS` point it holds ephor to, the way `E2E-001-forge-extension.rs` names
+`ephor`'s one provider interface ([§FS-001-forge-interface.2](../../requirements.md#2-two-transports-one-interface)). A case that cites
+nothing is a test; a case that cites its spec point is a scenario, and the spec
+point can be traced back to it with `grund refs`.
 
 ## Running them
 
@@ -41,8 +44,8 @@ declaration, rather than pretending a surface exists.
 
 ## Adding one
 
-1. Write `cases/E2E-NNN-<slug>.rs`, opening with the declaration and its `§FS`
-   citation.
+1. Write `cases/E2E-NNN-<slug>.rs`, opening with a doc-comment naming the
+   scenario and citing its `§FS` point.
 2. Add the matching `[[test]]` entry to `Cargo.toml` (`name` is the file name,
    lowercased, dashes as underscores).
-3. `just check` — `grund check` holds the new declaration to the E2E→FS rule.
+3. `just check` — `grund check` holds this home to the `e2e` → `FS` rule.
