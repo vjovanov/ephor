@@ -350,7 +350,7 @@ fn kind_filter(kind: &Option<String>) -> Result<Option<ItemKind>> {
     match kind {
         Some(kind) => Ok(Some(ItemKind::parse(kind).ok_or_else(|| {
             registry_error(format!(
-                "Unknown kind '{kind}' (pr|ci|issue|message|status)."
+                "Unknown kind '{kind}' (pr|ci|issue|task|message|status)."
             ))
         })?)),
         None => Ok(None),

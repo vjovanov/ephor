@@ -314,7 +314,7 @@ pub fn feed(args: &FeedArgs) -> Result<ExitCode> {
     let kind_filter = match &args.kind {
         Some(kind) => Some(ItemKind::parse(kind).ok_or_else(|| {
             registry_error(format!(
-                "Unknown kind '{kind}' (pr|ci|issue|message|status)."
+                "Unknown kind '{kind}' (pr|ci|issue|task|message|status)."
             ))
         })?),
         None => None,
@@ -659,7 +659,7 @@ pub fn mark_read(args: &MarkReadArgs, all: bool) -> Result<ExitCode> {
     let kind_filter = match &args.kind {
         Some(kind) => Some(ItemKind::parse(kind).ok_or_else(|| {
             registry_error(format!(
-                "Unknown kind '{kind}' (pr|ci|issue|message|status)."
+                "Unknown kind '{kind}' (pr|ci|issue|task|message|status)."
             ))
         })?),
         None => None,
