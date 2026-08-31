@@ -1385,16 +1385,29 @@ impl Dispatcher {
             });
         }
 
+        // The machine answers before the workspace is made, not after. Where
+        // the work root is already there it is the machine that root declares;
+        // where a `branch` template would mint the workspace there is no root
+        // to open — the directory does not exist yet — so what is vetted is
+        // the machine `ensure` installs below. Either way the refusal lands on
+        // the same side of the mint as the hand and the inputs
+        // (§FS-005-dispatch.25).
+        match WorkRoot::open(&site.dir)? {
+            Some(existing) => vet(&existing)?,
+            None => vet(&WorkRoot::proposed(&site.dir, &states)?)?,
+        }
+
         // The workspace a `branch` template named, made now: after the hand,
         // the machine and the opening move have all had their chance to refuse,
         // and before the work root below is the first thing written
         // (§FS-005-dispatch.25).
         self.mint(item, &site)?;
 
-        if let Some(existing) = WorkRoot::open(&site.dir)? {
-            vet(&existing)?;
-        }
         let root = WorkRoot::ensure(&site.dir, &states)?;
+        // Read back rather than assumed: a workspace the mint just made can
+        // come with a machine of the runtime's own, which `ensure` leaves
+        // standing (§FS-006-project-interface.7), and that is the one the work
+        // will actually run under.
         vet(&root)?;
         let path = root.plan_path(&plan_id);
         let mut brief = dossier::render(&recipe.brief, &site.values);

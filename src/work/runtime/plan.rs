@@ -171,6 +171,16 @@ impl WorkRoot {
         }
     }
 
+    /// The machine a work root that is not there yet would run under: the
+    /// `states_yaml` [`ensure`](Self::ensure) would install into it. Nothing
+    /// is read and nothing is written, which is the point — a caller that has
+    /// to refuse before it makes the directory cannot ask
+    /// [`open`](Self::open), because there is nothing there to open yet
+    /// (§FS-005-dispatch.25).
+    pub fn proposed(dir: &Path, states_yaml: &str) -> Result<WorkRoot> {
+        Self::from_states(dir, states_yaml, "the state machine ephor would install")
+    }
+
     fn read_root(dir: &Path, states: &Path) -> Result<WorkRoot> {
         let text = read(states)?;
         Self::from_states(dir, &text, &states.display().to_string())
