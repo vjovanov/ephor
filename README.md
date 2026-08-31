@@ -27,8 +27,9 @@ action menu for when watching is not enough.
   printable with `ephor schema`: the registry, a project's `ephor.json`, the
   answer envelope, and the forge interface
   ([§FS-006-project-interface.11](requirements.md#11-the-interface-is-versioned))
-- `e2e/cases/` — one executable scenario per seam, each citing the `§FS` point
-  it holds ephor to
+- `tests/e2e/cases/` — one executable scenario per seam, each citing the `§FS`
+  point it holds ephor to
+- `tests/integration/` — cross-part Rust tests and Python repo-hygiene tests
 - `ai/skills/` — canonical agent skills (`track-project`); `ai/link-global-skills.sh` links them into `~/.claude/skills` etc.
 - `systemd/` — user units for periodic feed refresh and work sync
 - `docs/manual.md` — **the manual**: every command, key, and configuration
@@ -595,6 +596,6 @@ and runs nothing — spawning agents stays a thing you ask for.
 just check     # the CI gate: fmt --check, build -D warnings, cargo + python
                # tests, the boundary check, grund
 just test      # the Rust suite alone
-just e2e       # the end-to-end scenarios alone (e2e/cases)
+just e2e       # the end-to-end scenarios alone (tests/e2e/cases)
 just lint      # clippy -D warnings, deliberately not part of the gate
 ```
