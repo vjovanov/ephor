@@ -1,11 +1,11 @@
 # REQ-001-boundary: every capacity ephor lacks crosses a seam, and the seam has one anatomy
 
-ephor observes and summons; it never governs (§GRUND-001-overseer). Every
+ephor observes and summons; it never governs ([§GRUND-001-overseer](../grund.md#grund-001-overseer-one-watch-over-every-project-and-none-of-the-governing)). Every
 capacity it does not embody — a forge's answers, a project's checks, a gate's
 restart, a runtime's execution — is reached across a **seam**, and every seam
 is built the same way. This law is what keeps ephor publishable, keeps every
 watched project clean, and keeps every default replaceable
-(§GOAL-005-costless). It binds every feature, every adapter, and every future
+([§GOAL-005-costless](../goals.md#goal-005-costless-watching-costs-the-watched-nothing)). It binds every feature, every adapter, and every future
 seam; work near an edge cites it.
 
 ## 1. The anatomy
@@ -62,4 +62,4 @@ The name of a forge, vendor CLI, runtime, or task store appears only in
 its own adapter, in shipped assets and examples, and in documentation —
 never in core source. This is checked mechanically, not observed as a
 convention: the check fails the build, the same way the site-word check
-guards §FS-001-forge-interface.5.
+guards [§FS-001-forge-interface.5](../../requirements.md#5-no-site-specific-data-in-the-repository).

@@ -4,11 +4,11 @@
 **Date:** 2026-08-22
 
 A run of the runtime starts detached and is watched by attaching
-(§FS-005-dispatch.20); a program an entry *is* may run beside ephor rather
-than in its place (§FS-005-dispatch.22). Both need a terminal that is not
+([§FS-005-dispatch.20](../../../requirements.md#20-a-run-of-the-runtime-starts-beneath-the-screen-and-is-watched-by-attaching)); a program an entry *is* may run beside ephor rather
+than in its place ([§FS-005-dispatch.22](../../../requirements.md#22-a-window-of-the-readers-own-where-one-is-bound)). Both need a terminal that is not
 the one ephor is drawing in, and where that terminal comes from is a choice
 ephor cannot make for the reader. This record fixes it as a seam
-(§AR-002-summons.6) and names what the alternatives would have cost.
+([§AR-002-summons.6](../../architecture/AR-002-summons.md#6-windowed-the-readers-own-window)) and names what the alternatives would have cost.
 
 ## 1. The decision
 
@@ -24,14 +24,14 @@ forward" is a different command in every one of them and the handle `open`
 printed is whatever that product calls a window.
 
 The fallback is the terminal ephor is in, handed over as every interactive
-summons always was (§AR-002-summons.2). It is the floor because it needs
+summons always was ([§AR-002-summons.2](../../architecture/AR-002-summons.md#2-the-invocation)). It is the floor because it needs
 nothing: no multiplexer, no remote control, no configuration, and no
 platform. An environment ephor does not recognize gets the floor and a line
 saying so, not a guess.
 
-A windowed program is recorded as a job (§AR-002-summons.5) because the
+A windowed program is recorded as a job ([§AR-002-summons.5](../../architecture/AR-002-summons.md#5-detached-the-job)) because the
 thing the menu needs — is it still going, and how do I get to it
-(§FS-005-dispatch.21) — is exactly what a job already answers, and the only
+([§FS-005-dispatch.21](../../../requirements.md#21-what-is-already-going-is-shown-where-it-could-be-started-again)) — is exactly what a job already answers, and the only
 change is that the inspection is a handle rather than a log. Attaching to a
 run is windowed the same way but is *not* a job: the run is the operation,
 and a surface on it is not a second one.
@@ -46,9 +46,9 @@ detaching. It stays as the degrade rule, not as the design.
 
 **One multiplexer, assumed.** The shape every hand-rolled script takes:
 `tmux new-window` and be done. It is one person's environment compiled in
-(§REQ-001-boundary.2), it is wrong for a reader in a terminal with its own
+([§REQ-001-boundary.2](../../requirements/REQ-001-boundary.md#2-three-homes-one-resolution-order)), it is wrong for a reader in a terminal with its own
 windows, and "is tmux there" answered by spawning it is discovery by failure
-(§AR-002-summons.4).
+([§AR-002-summons.4](../../architecture/AR-002-summons.md#4-refusal-is-computed-not-discovered)).
 
 **A second screen inside ephor.** Splitting ephor's own terminal and running
 the program — the runtime's attach surface, the agent — in one half. It

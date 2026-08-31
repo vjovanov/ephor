@@ -715,7 +715,7 @@ who can be asked (rhei)
 ephor never builds that list itself. Which models an agent can carry, and
 which efforts it declares, are the runtime's knowledge, so a cross-product
 ephor assembled would be mostly combinations it could not know were invalid
-([§DA-004-roster-is-asked-not-configured](decisions/architectural/DA-004-roster-is-asked-not-configured.md)).
+([§DA-004-roster-is-asked-not-configured](decisions/architectural/DA-004-roster-is-asked-not-configured.md#da-004-roster-is-asked-not-configured-the-roster-is-asked-of-the-binding-never-kept-by-ephor)).
 An entry whose binary is missing is listed with that reason rather than
 dropped, and with no runtime bound the section says so in the workable rung's
 own words. `--json` carries the same two halves as `{ "projects": …,
@@ -943,7 +943,7 @@ work gathered under it: check it out — with `ephor checkout` or by hand — an
 the next read picks it up, named for the directory it sits in. A branch the row
 names keeps the row's word on it (its ticket, whether it is `active`); a branch
 only the disk knows is shown as inactive and cannot widen what the project
-claims as its own (§FS-008-attribution.2).
+claims as its own ([§FS-008-attribution.2](../requirements.md#2-two-stages-one-engine)).
 
 ### 6.1 The categories
 
@@ -2133,7 +2133,7 @@ tells you what it answered. It never rewrites a `**State:**` line by hand,
 because the plan language reserves a ticket's state to the runtime's verbs
 once the ticket is written (the compare-and-swap, the artifact checks, the
 callbacks, the audit trail;
-[§DA-005-cancel-is-the-runtimes-move](decisions/architectural/DA-005-cancel-is-the-runtimes-move.md)).
+[§DA-005-cancel-is-the-runtimes-move](decisions/architectural/DA-005-cancel-is-the-runtimes-move.md#da-005-cancel-is-the-runtimes-move-cancelling-a-ticket-asks-the-runtime-and-never-rewrites-the-state-line)).
 So with no runtime bound `c` is not offered and says why, exactly as `R` does;
 the plan stays hand-editable for anyone who wants to make the move themselves.
 
@@ -3143,7 +3143,7 @@ ephor tui                                                 # alias: inbox
 ```
 
 Every one of these takes `--json` and prints the same answer as JSON
-([§REQ-002-parity](../docs/requirements/REQ-002-parity.md),
+([§REQ-002-parity](requirements/REQ-002-parity.md#req-002-parity-every-ability-is-reachable-without-the-screen-and-every-answer-has-a-machine-form),
 [§11.4](#114-the-machine-form)). The two exceptions are the two that are not
 readings: `schema` prints a published JSON document already, and `tui` is the
 interface itself.
@@ -3195,7 +3195,7 @@ A checkout is enough for those three, which is why CI can run them
 
 Nothing lives behind the screen alone. Every ability the inbox offers is also
 a command, and every command that prints a reading takes `--json`
-([§REQ-002-parity](requirements/REQ-002-parity.md)) — which is what makes ephor
+([§REQ-002-parity](requirements/REQ-002-parity.md#req-002-parity-every-ability-is-reachable-without-the-screen-and-every-answer-has-a-machine-form)) — which is what makes ephor
 usable by the runtime it hands work to.
 
 | The key | The command |
@@ -3319,7 +3319,7 @@ declared `outputs:` on every transition out of it, the edge into `cancelled`
 included, so a ticket parked in a state whose artifacts were never written
 cannot be moved through the verb until the runtime exempts cancellation the
 way it exempts its own failure routes. ephor does not edit around it
-([§DA-005-cancel-is-the-runtimes-move](decisions/architectural/DA-005-cancel-is-the-runtimes-move.md));
+([§DA-005-cancel-is-the-runtimes-move](decisions/architectural/DA-005-cancel-is-the-runtimes-move.md#da-005-cancel-is-the-runtimes-move-cancelling-a-ticket-asks-the-runtime-and-never-rewrites-the-state-line));
 the plan is yours to hand-edit if you must.
 
 **An agent never runs.** ephor writes tickets; the runtime runs them.

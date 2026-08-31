@@ -1,11 +1,11 @@
 # AR-004-forest: git is the substrate, and a project is a forest folded over
 
 Git is assumed; no other version control exists for ephor — a git forest on
-disk is the one thing a project is required to *be* (§REQ-001-boundary.3).
+disk is the one thing a project is required to *be* ([§REQ-001-boundary.3](../requirements/REQ-001-boundary.md#3-requirements-on-a-project-are-capabilities-never-artifacts)).
 A project's place is a **Forest**: an ordered set of repositories
 `{ name, path, remote, main, role }` under a root — the GraalVM shape (a
 thin workspace repository composing ce and ee) is the general case, a
-single repository a forest of one (§FS-006-project-interface.1). The layout
+single repository a forest of one ([§FS-006-project-interface.1](../../requirements.md#1-the-three-homes)). The layout
 comes from the registry row, with the manifest's `forest` adopted where the
 row does not override.
 
@@ -19,21 +19,21 @@ aggregated and reported per repository — never silently collapsed:
 - **standing** — where each repo's checked-out branch is published and how
   far `HEAD` sits from that copy, one `for-each-ref` per repo answering
   ref, upstream and ahead/behind at once; the published copy is resolved by
-  §DA-003-upstream-is-the-published-copy, the branch is `HEAD`'s and never
+  [§DA-003-upstream-is-the-published-copy](../decisions/architectural/DA-003-upstream-is-the-published-copy.md#da-003-upstream-is-the-published-copy-a-branchs-upstream-is-its-published-copy-not-its-tracking-config), the branch is `HEAD`'s and never
   the workspace directory's name, and a branch never pushed is an answer,
   not an error;
 - **rebase** — fetch and replay each repo, nothing stashed, a conflict
-  stopping that repo and reported as it (§FS-004-quick-actions.6); what it
+  stopping that repo and reported as it ([§FS-004-quick-actions.6](../../requirements.md#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase)); what it
   replays onto is one base for the whole forest, or each repo's own
   published copy — a different ref per repo, with one that has published
   nothing reported as such rather than refused
-  (§FS-004-quick-actions.8);
+  ([§FS-004-quick-actions.8](../../requirements.md#8-a-branch-that-trails-its-own-published-copy-is-offered-the-rebase-onto-it));
 - **checkout** — a working tree per repo under the workspace directory,
   branch where the forge has it, grown from main where not
-  (§FS-004-quick-actions.7);
+  ([§FS-004-quick-actions.7](../../requirements.md#7-a-workspace-that-is-not-there-is-offered-the-checkout));
 - **land** — push each repository of the workspace;
 - **gate counts** — the per-repository breakdown a gate event carries
-  (§FS-006-project-interface.6).
+  ([§FS-006-project-interface.6](../../requirements.md#6-the-gate-is-the-projects-in-three-verbs)).
 
 A repository the layout declares and the disk has not got is **named by every
 fold and fails one**. Named, because the alternative is the collapse this
@@ -48,7 +48,7 @@ as after. It is a fact about the checkout, not an outcome of the run.
 
 `checkout` is where it does fail, and that is the same rule rather than an
 exception: there, a declared repository that is not on disk is exactly the
-outcome the command was asked to change (§FS-004-quick-actions.7), so its exit
+outcome the command was asked to change ([§FS-004-quick-actions.7](../../requirements.md#7-a-workspace-that-is-not-there-is-offered-the-checkout)), so its exit
 code is the one that answers *is this workspace whole* — which is also what
 gives a caller a way to ask at all. So `ephor checkout` on a workspace that
 already exists folds over the layout instead of stopping at the directory: it
@@ -60,7 +60,7 @@ behaves this way: a repository the layout marks `required` and the disk has not
 got is an error there.
 
 The ethic that a partial answer must never be reported as success
-(§FS-001-forge-interface.6) is not weakened by this. That rule is about an
+([§FS-001-forge-interface.6](../../requirements.md#6-a-source-that-did-not-answer-says-so-and-says-which-kind-of-not)) is not weakened by this. That rule is about an
 answer that cannot show its own gap — an empty feed section is indistinguishable
 from a source that was never read, so only the exit code can carry it. This gap
 is in the answer, by name, per repository, every time it is folded over.
@@ -80,15 +80,15 @@ the declaration only says where to look.
 
 `workspace(project, branch)` — the row's template applied to the branch —
 is one function with one answer, used by the tree's grouping, the summons
-executor's place resolution (§AR-002-summons.1), dispatch's plan placement
-(§FS-005-dispatch.3), and the checkout offer. Two resolvers would
+executor's place resolution ([§AR-002-summons.1](AR-002-summons.md#1-resolving-the-place)), dispatch's plan placement
+([§FS-005-dispatch.3](../../requirements.md#3-one-rhei-per-item-one-ticket-per-dispatch)), and the checkout offer. Two resolvers would
 eventually disagree about where a branch lives, and everything above them
 assumes they cannot.
 
 It runs backwards too, and that is what fills the branch table
 ([§2](#2-probes-not-declarations)): the template split at `{branch}` gives a
 prefix and a suffix, and a directory under the workspace base that sits
-between them names a branch (§FS-008-attribution.2). So the branches ephor
+between them names a branch ([§FS-008-attribution.2](../../requirements.md#2-two-stages-one-engine)). So the branches ephor
 places items under are the row's, then every workspace found on disk that the
 row does not already name. Naming a discovered branch by its directory rather
 than by its checkout's `HEAD` is what keeps the one answer one: read `HEAD`

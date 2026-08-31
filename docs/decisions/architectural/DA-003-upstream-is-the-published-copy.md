@@ -7,7 +7,7 @@ The upstream of a branch, as ephor means it, is the branch's **published
 copy**: the remote ref holding what was last pushed of it. It is resolved per
 repository from that repository's own `HEAD` — never from the workspace
 directory's name, because a repository need not be on the branch its
-directory is named for (§AR-004-forest.1) — and in this order:
+directory is named for ([§AR-004-forest.1](../../architecture/AR-004-forest.md#1-folds)) — and in this order:
 
 1. `@{upstream}` where git records one **and it does not name this
    repository's base**;
@@ -25,11 +25,11 @@ where a branch was **cut**, not where it is published: a branch started from
 on the `~/c/g` root repository that is exactly the answer `@{upstream}`
 gives. Read at face value, "rebase onto upstream" would silently duplicate
 the rebase onto the project's main branch sitting next to it in the menu
-(§FS-004-quick-actions.6): two entries, one operation, and no way for the
+([§FS-004-quick-actions.6](../../../requirements.md#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase)): two entries, one operation, and no way for the
 reader to tell which fact either acted on. The exclusion in step 1 is the
 whole decision — tracking config that names this repository's base is a
 record of where the branch came from, and where a branch came from is what
-the base fold already measures (§AR-004-forest.1).
+the base fold already measures ([§AR-004-forest.1](../../architecture/AR-004-forest.md#1-folds)).
 
 ## 2. Why the ref is resolved here rather than left to git
 
@@ -39,7 +39,7 @@ worktree-grown workspace (`ce` and `ee` in
 `~/c/g/vj/GR-73955-condition-errors` are the shape). Step 2 recovers the
 published copy those repositories actually have, from the remote-tracking
 refs git already keeps, so the fact is measurable exactly where git's own
-shorthand gives up. A fact that can be probed is probed (§AR-004-forest.2);
+shorthand gives up. A fact that can be probed is probed ([§AR-004-forest.2](../../architecture/AR-004-forest.md#2-probes-not-declarations));
 the tracking config is one witness, not the authority.
 
 ## 3. The cost

@@ -4,7 +4,7 @@
 **Date:** 2026-08-15
 
 A ticket that should not go on is cancelled by moving it into the machine's
-abandonment state (§FS-005-dispatch.16). Two hands could make that move:
+abandonment state ([§FS-005-dispatch.16](../../../requirements.md#16-work-that-should-not-go-on-is-cancelled-and-the-plan-says-so)). Two hands could make that move:
 ephor's own — the ticket is a heading and a `**State:**` line ephor wrote,
 in a file ephor already appends to and whose dossier it already rewrites —
 or the runtime's, through its own transition verb, run as a captured
@@ -14,11 +14,11 @@ cost.
 ## 1. The decision
 
 Cancelling is a transition, and the transition is asked of the bound
-runner in its own words: the runtime module (§AR-007-runtime.1) composes
+runner in its own words: the runtime module ([§AR-007-runtime.1](../../architecture/AR-007-runtime.md#1-what-the-module-owns)) composes
 the runner's transition command — the plan, the ticket, the state it is
 expected to be in, the abandonment state, and the reader's reason as the
 ticket's result — and runs it captured, from the work root, with a short
-timeout (§AR-002-summons). What the runner answers is what the reader is
+timeout ([§AR-002-summons](../../architecture/AR-002-summons.md#ar-002-summons-one-executor-runs-everything-ephor-asks-of-the-world)). What the runner answers is what the reader is
 told: the ticket cancelled, or the runner's own refusal, its first lines
 lifted from the captured output because that is where the runner puts them.
 The name of the abandonment state is the plan language's, spelled once in
@@ -26,8 +26,8 @@ the runtime module beside the plan flag and the agent flags, and above the
 module a surface asks only whether the machine in force declares one.
 
 Before the runner is asked, ephor refuses on what it can see for itself
-(§FS-005-dispatch.16): a ticket a live run holds, read from the lock and
-the journal exactly as the board reads them (§FS-005-dispatch.15); a
+([§FS-005-dispatch.16](../../../requirements.md#16-work-that-should-not-go-on-is-cancelled-and-the-plan-says-so)): a ticket a live run holds, read from the lock and
+the journal exactly as the board reads them ([§FS-005-dispatch.15](../../../requirements.md#15-every-operation-is-visible-in-one-place)); a
 ticket already in a final state; a machine that declares no abandonment
 state at all. Each is one sentence, and none touches the plan.
 
@@ -44,7 +44,7 @@ artifact checks, the callbacks a machine may hang on leaving a state, the
 counted-visit metadata, and the result and audit trail a terminal move
 writes. A plan that has been cancelled by hand looks finished to every
 reader and is vouched for by none — a watch that has quietly become the
-thing it reports on (§FS-005-dispatch.4). And the concurrency the lock
+thing it reports on ([§FS-005-dispatch.4](../../../requirements.md#4-the-ledger-is-ephors-record-and-never-the-truth-about-the-work)). And the concurrency the lock
 would buy is only half of it: the runtime persists by writing beside the
 plan and renaming over it, so a lock taken on the file a moment before the
 rename guards the wrong inode.
