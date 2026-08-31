@@ -1567,6 +1567,7 @@ Add your own, or replace a shipped one by reusing its id:
     "root": "{workspace}/panta",       // where plans go
     "states": "~/my/states.yaml",      // a machine of your own, instead of the shipped one
     "ranking": "~/my/ranking.txt",     // item ids, one per line, most important first (§8.9)
+    "max_concurrent": 4,                // aggregate autorun ceiling; omitted is unlimited
     "recipes": [
       {
         "id": "fix-gate",
@@ -1588,10 +1589,11 @@ Add your own, or replace a shipped one by reusing its id:
 }
 ```
 
-Per project, `projects.<id>.work` takes the same `root`, `states` and
-`recipes` keys, and its recipes are appended to the global ones. `ranking` is
-read only from the site's own `work` block — the sweep it orders already
-spans every configured project.
+Per project, `projects.<id>.work` takes the same `root`, `states`, `recipes`
+and `max_concurrent` keys, and its recipes are appended to the global ones.
+A project concurrency ceiling is additional to the site's aggregate ceiling,
+not a replacement for it. `ranking` is read only from the site's own `work`
+block — the sweep it orders already spans every configured project.
 
 **`autorun`** is the one field that changes *when* work happens rather than
 what it says. With it, a ticket written from this recipe gets its run without
@@ -2208,7 +2210,7 @@ ephor work dispatch [--project P] [--item ID] [--recipe R] [--kind K]
 ephor work ask --item ID [WORDS…] [--state S] [--dry-run]
 ephor work sync [--project P] [--dry-run]
 ephor work cancel --item ID TICKET… [--why WORDS] [--dry-run]
-ephor work run [--project P] [--item ID] [--due] [--watch] [-- RHEI_ARGS…]
+ephor work run [--project P] [--item ID] [--due [--max-concurrent N]] [--watch] [-- RHEI_ARGS…]
 ephor work workflows [--project P] [WORKFLOW] [--json]
 ephor work lay ENTRY --item ID [--set INPUT=VALUE]… [--hand H] [--dry-run]
 ephor work forget [--item ID | --done | --missing]
@@ -2255,7 +2257,18 @@ ephor work states
   cannot become a spawn loop. Where the runner has no detached shape the sweep
   starts nothing and says so: a run nobody asked for must not take a terminal.
   Nothing is due unless a recipe asked for it — silence still means you press
-  the key.
+  the key. `work.max_concurrent` bounds live roots across the whole site;
+  `projects.<id>.work.max_concurrent` adds a ceiling inside that aggregate.
+  Omitted ceilings are unlimited and zero starts no new runs. On this command,
+  `--max-concurrent N` replaces the configured aggregate ceiling for this one
+  sweep while project ceilings remain in force. Already-live roots consume
+  capacity, including roots outside a `--project` filter. New starts consume a
+  slot only while their runtime lock remains held, so a refused or immediately
+  completed start leaves room for the next root. Candidates follow
+  `work.ranking`, with every unranked root retaining the previous deterministic
+  order. An eligible root omitted only because a ceiling is full is printed as
+  `passed-over` with the reason (also under `--json`) and does not increase
+  `failed`.
 - **`workflows`** and **`lay`** are the runtime's own workflows, offered as
   actions (§8.15). `lay` writes a plan of its own beside the matter's and runs
   nothing; `--dry-run` shows what would answer every input first. Where the

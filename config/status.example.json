@@ -26,6 +26,7 @@
   ],
   "work": {
     "root": "{workspace}/panta",
+    "max_concurrent": 4,
     "recipes": [
       {
         "id": "fix-gate",
@@ -46,6 +47,7 @@
         "command": "git worktree add \"$EPHOR_WORKSPACE\" \"$EPHOR_BRANCH\""
       },
       "work": {
+        "max_concurrent": 2,
         "recipes": [
           {
             "id": "bench",

@@ -2060,6 +2060,14 @@ impl Dispatcher {
     /// is tried again.
     pub fn due(&mut self, now: DateTime<Utc>) -> Vec<Due> {
         let roots = self.work_roots();
+        self.due_in(&roots, now)
+    }
+
+    /// Due roots from one discovered-root snapshot. `start_due` also derives
+    /// its live counts from this same snapshot, so discovery cannot disagree
+    /// with capacity accounting halfway through a sweep
+    /// (§FS-005-dispatch.24).
+    fn due_in(&self, roots: &[runtime::watch::RootPlans], now: DateTime<Utc>) -> Vec<Due> {
         // Which recipes asked to run themselves, per project. Resolved once
         // per project: the tables behind it are the same for every root of
         // one of them.
@@ -2078,7 +2086,12 @@ impl Dispatcher {
                 (project, asked)
             })
             .collect();
-        due_among(&self.global, &roots, &autoruns, &self.ledger, now)
+        let mut due = due_among(&self.global, roots, &autoruns, &self.ledger, now);
+        if let Some(path) = self.global.ranking.as_deref() {
+            let reading = ranking::read(&crate::paths::resolve_path(path));
+            due = rank_due(due, &reading.order);
+        }
+        due
     }
 }
 
@@ -2203,20 +2216,40 @@ pub fn due_among(
                 .first()
                 .map(|plan| plan.project.clone())
                 .unwrap_or_default(),
+            projects: group
+                .plans
+                .iter()
+                .map(|plan| plan.project.clone())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect(),
             root: group.root.clone(),
             checkout,
             plans,
             tickets,
-            item: known.and_then(|entry| {
-                ledger
-                    .entries
-                    .iter()
-                    .find(|(_, candidate)| candidate.root == entry.root)
-                    .map(|(id, _)| id.clone())
-            }),
+            item: group
+                .plans
+                .iter()
+                .find_map(|plan| plan.item.clone())
+                .or_else(|| {
+                    known.and_then(|entry| {
+                        ledger
+                            .entries
+                            .iter()
+                            .find(|(_, candidate)| candidate.root == entry.root)
+                            .map(|(id, _)| id.clone())
+                    })
+                }),
         });
     }
     due
+}
+
+/// Ranked roots first, then every root the file did not distinguish in its
+/// existing deterministic order. A root with no matter id is necessarily in
+/// the latter group (§FS-005-dispatch.24, §FS-005-dispatch.26).
+fn rank_due(due: Vec<Due>, ranked_ids: &[String]) -> Vec<Due> {
+    ranking::order(due, ranked_ids, |root| root.item.as_deref().unwrap_or("")).0
 }
 
 impl Dispatcher {
@@ -2235,6 +2268,7 @@ impl Dispatcher {
         now: DateTime<Utc>,
         projects: &[String],
         runner_args: &[String],
+        max_concurrent: Option<usize>,
     ) -> Vec<Launched> {
         // The runtime is a rung like any other capacity, and with nothing
         // bound there is no run to start (§AR-005-capabilities.2).
@@ -2242,10 +2276,28 @@ impl Dispatcher {
             return Vec::new();
         }
         let detaches = runtime::can_detach(&self.global);
-        self.due(now)
+        let roots = self.work_roots();
+        let live = LiveRuns::read(&self.global, &roots);
+        let global_limit = max_concurrent.or(self.global.max_concurrent);
+        let project_limits = self
+            .projects
+            .iter()
+            .filter_map(|(project, work)| work.max_concurrent.map(|limit| (project.clone(), limit)))
+            .collect();
+        let mut capacity = Capacity::new(global_limit, project_limits, live);
+        self.due_in(&roots, now)
             .into_iter()
-            .filter(|root| projects.is_empty() || projects.contains(&root.project))
+            .filter(|root| {
+                projects.is_empty()
+                    || root
+                        .projects
+                        .iter()
+                        .any(|project| projects.contains(project))
+            })
             .map(|root| {
+                if let Some(why) = capacity.refusal(&root.projects) {
+                    return Launched::passed_over(&root, why);
+                }
                 if !detaches {
                     return Launched::refused(
                         &root,
@@ -2276,6 +2328,13 @@ impl Dispatcher {
                 ) {
                     Ok(started) => {
                         self.start_worked(&root.root);
+                        // The descriptor can already say the run is over, and
+                        // a run that died just after publishing it has already
+                        // released the lock. Neither occupies a slot needed by
+                        // the next ranked root (§FS-005-dispatch.24).
+                        let remains_live =
+                            !started.finished && runtime::watch::live(&self.global, &root.root);
+                        capacity.started(&root.projects, remains_live);
                         Launched {
                             id: started.id,
                             finished: started.finished,
@@ -2331,6 +2390,9 @@ impl Dispatcher {
 #[derive(Debug, Clone)]
 pub struct Due {
     pub project: String,
+    /// Every project with a plan on this root. Usually one; all of them count
+    /// when a deliberately shared root is live.
+    projects: Vec<String>,
     pub root: PathBuf,
     /// The checkout the run is made from.
     pub checkout: PathBuf,
@@ -2364,6 +2426,9 @@ pub struct Launched {
     pub finished: bool,
     /// Why no run was started, where none was.
     pub failed: Option<String>,
+    /// Why an otherwise eligible root was omitted solely for lack of sweep
+    /// capacity. This is a successful, non-launch outcome, not a failure.
+    pub passed_over: Option<String>,
 }
 
 impl Launched {
@@ -2376,6 +2441,7 @@ impl Launched {
             id: None,
             finished: false,
             failed: None,
+            passed_over: None,
         }
     }
 
@@ -2386,25 +2452,131 @@ impl Launched {
         }
     }
 
+    fn passed_over(due: &Due, why: String) -> Launched {
+        Launched {
+            passed_over: Some(why),
+            ..Launched::of(due)
+        }
+    }
+
     /// The one line this is worth: what started, or what stopped it. The
     /// same sentence wherever it is said, so a command and a screen never
     /// phrase one situation two ways (§AR-009-surfaces.1).
     pub fn says(&self) -> String {
-        match (&self.failed, &self.id, self.finished) {
+        match (&self.failed, &self.passed_over, &self.id, self.finished) {
             (Some(why), ..) => format!("⚠ no run started on {}: {why}", self.root.display()),
-            (None, Some(id), false) => format!("▶ run {id} started"),
-            (None, Some(id), true) => format!("✓ run {id} finished already"),
-            (None, None, false) => "▶ run started".to_string(),
-            (None, None, true) => "✓ the run finished already".to_string(),
+            (None, Some(why), ..) => {
+                format!("↷ {} passed over: {why}", self.root.display())
+            }
+            (None, None, Some(id), false) => format!("▶ run {id} started"),
+            (None, None, Some(id), true) => format!("✓ run {id} finished already"),
+            (None, None, None, false) => "▶ run started".to_string(),
+            (None, None, None, true) => "✓ the run finished already".to_string(),
         }
     }
 
     /// What a reading calls this (§REQ-002-parity.3).
     pub fn outcome(&self) -> &'static str {
-        match (&self.failed, self.finished) {
-            (Some(_), _) => "failed",
-            (None, true) => "done",
-            (None, false) => "started",
+        match (&self.failed, &self.passed_over, self.finished) {
+            (Some(_), ..) => "failed",
+            (None, Some(_), _) => "passed-over",
+            (None, None, true) => "done",
+            (None, None, false) => "started",
+        }
+    }
+
+    pub fn reason(&self) -> Option<&str> {
+        self.passed_over.as_deref()
+    }
+}
+
+/// Live roots at the beginning of a sweep, counted once from the same root
+/// snapshot that supplies due candidates (§FS-005-dispatch.24).
+#[derive(Debug, Default)]
+struct LiveRuns {
+    global: usize,
+    projects: BTreeMap<String, usize>,
+}
+
+impl LiveRuns {
+    fn read(global: &WorkConfig, roots: &[runtime::watch::RootPlans]) -> LiveRuns {
+        let mut live = LiveRuns::default();
+        for root in roots {
+            if !runtime::watch::live(global, &root.root) {
+                continue;
+            }
+            live.global += 1;
+            let projects: BTreeSet<&str> = root
+                .plans
+                .iter()
+                .map(|plan| plan.project.as_str())
+                .collect();
+            for project in projects {
+                *live.projects.entry(project.to_string()).or_default() += 1;
+            }
+        }
+        live
+    }
+}
+
+/// Remaining aggregate and per-project slots. Missing ceilings stay missing:
+/// omission is unlimited, while `Some(0)` is deliberately no capacity.
+#[derive(Debug)]
+struct Capacity {
+    global_limit: Option<usize>,
+    global_live: usize,
+    project_limits: BTreeMap<String, usize>,
+    project_live: BTreeMap<String, usize>,
+}
+
+impl Capacity {
+    fn new(
+        global_limit: Option<usize>,
+        project_limits: BTreeMap<String, usize>,
+        live: LiveRuns,
+    ) -> Capacity {
+        Capacity {
+            global_limit,
+            global_live: live.global,
+            project_limits,
+            project_live: live.projects,
+        }
+    }
+
+    fn refusal(&self, projects: &[String]) -> Option<String> {
+        if self
+            .global_limit
+            .is_some_and(|limit| self.global_live >= limit)
+        {
+            let limit = self.global_limit.expect("checked");
+            return Some(format!(
+                "global work.max_concurrent {limit} is full ({} live run(s))",
+                self.global_live
+            ));
+        }
+        for project in projects {
+            if self
+                .project_limits
+                .get(project)
+                .is_some_and(|limit| self.project_live.get(project).copied().unwrap_or(0) >= *limit)
+            {
+                let limit = self.project_limits[project];
+                let count = self.project_live.get(project).copied().unwrap_or(0);
+                return Some(format!(
+                    "projects.{project}.work.max_concurrent {limit} is full ({count} live run(s))"
+                ));
+            }
+        }
+        None
+    }
+
+    fn started(&mut self, projects: &[String], remains_live: bool) {
+        if !remains_live {
+            return;
+        }
+        self.global_live += 1;
+        for project in projects {
+            *self.project_live.entry(project.clone()).or_default() += 1;
         }
     }
 }
@@ -3749,6 +3921,97 @@ echo "Task $stem.$task transitioned: '$from' → '$to'"
             entries: BTreeMap::new(),
             starts: BTreeMap::new(),
         }
+    }
+
+    fn candidate(id: &str, project: &str) -> Due {
+        Due {
+            project: project.to_string(),
+            projects: vec![project.to_string()],
+            root: PathBuf::from(format!("/{id}")),
+            checkout: PathBuf::from("/"),
+            plans: vec![id.to_string()],
+            tickets: vec![format!("{id}.fix-1")],
+            item: Some(id.to_string()),
+        }
+    }
+
+    #[test]
+    fn zero_pauses_autorun_and_omission_is_unlimited() {
+        let unlimited = Capacity::new(None, BTreeMap::new(), LiveRuns::default());
+        assert!(unlimited.refusal(&["widget".to_string()]).is_none());
+
+        let paused = Capacity::new(Some(0), BTreeMap::new(), LiveRuns::default());
+        assert!(paused
+            .refusal(&["widget".to_string()])
+            .is_some_and(|why| why.contains("global work.max_concurrent 0")));
+    }
+
+    #[test]
+    fn a_project_ceiling_is_additional_to_the_aggregate_ceiling() {
+        let live = LiveRuns {
+            global: 1,
+            projects: BTreeMap::from([("widget".to_string(), 1)]),
+        };
+        let capacity = Capacity::new(Some(3), BTreeMap::from([("widget".to_string(), 1)]), live);
+        assert!(capacity
+            .refusal(&["widget".to_string()])
+            .is_some_and(|why| why.contains("projects.widget.work.max_concurrent 1")));
+        assert!(capacity.refusal(&["another".to_string()]).is_none());
+    }
+
+    #[test]
+    fn failed_and_immediately_finished_starts_leave_the_slot_available() {
+        let mut capacity = Capacity::new(Some(1), BTreeMap::new(), LiveRuns::default());
+        // A failed start never calls `started`; an immediately finished or
+        // already-dead start records `false`. Neither consumes the slot.
+        let projects = ["widget".to_string()];
+        assert!(capacity.refusal(&projects).is_none());
+        capacity.started(&projects, false);
+        assert!(capacity.refusal(&projects).is_none());
+        capacity.started(&projects, true);
+        assert!(capacity.refusal(&projects).is_some());
+    }
+
+    #[test]
+    fn existing_live_roots_consume_global_and_project_capacity() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut widget = due_root(
+            &tmp.path().join("widget/panta"),
+            &ticket_at("fix-gate-1", "collect"),
+        );
+        widget.plans[0].project = "widget".to_string();
+        let mut other = due_root(
+            &tmp.path().join("other/panta"),
+            &ticket_at("fix-gate-1", "collect"),
+        );
+        other.plans[0].project = "other".to_string();
+        fs::create_dir_all(widget.root.join(".rhei")).unwrap();
+        fs::write(widget.root.join(".rhei/run.lock"), "").unwrap();
+        let holder = fs::File::open(widget.root.join(".rhei/run.lock")).unwrap();
+        holder.lock().unwrap();
+
+        let live = LiveRuns::read(&work_config(), &[widget, other]);
+        assert_eq!(live.global, 1);
+        assert_eq!(live.projects.get("widget"), Some(&1));
+        assert_eq!(live.projects.get("other"), None);
+        drop(holder);
+    }
+
+    #[test]
+    fn due_roots_follow_the_ranking_and_keep_prior_order_after_it() {
+        let due = vec![
+            candidate("first", "widget"),
+            candidate("second", "widget"),
+            candidate("third", "widget"),
+        ];
+        let ranked = rank_due(due, &["third".to_string()]);
+        assert_eq!(
+            ranked
+                .iter()
+                .map(|root| root.item.as_deref().unwrap())
+                .collect::<Vec<_>>(),
+            ["third", "first", "second"]
+        );
     }
 
     /// The plain case: an open ticket from a recipe that asked to run itself,

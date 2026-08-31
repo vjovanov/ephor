@@ -46,6 +46,10 @@ pub struct WorkConfig {
     /// one run (§FS-005-dispatch.26).
     #[serde(default)]
     pub ranking: Option<String>,
+    /// The most autorun roots that may be live across the site. Omitted is
+    /// unlimited; zero pauses new autorun starts (§FS-005-dispatch.24).
+    #[serde(default)]
+    pub max_concurrent: Option<usize>,
 }
 
 impl Default for WorkConfig {
@@ -57,6 +61,7 @@ impl Default for WorkConfig {
             recipes: Vec::new(),
             hands: BTreeMap::new(),
             ranking: None,
+            max_concurrent: None,
         }
     }
 }
@@ -85,6 +90,11 @@ pub struct ProjectWorkConfig {
     /// repository under a policy about which models may see its code needs.
     #[serde(default)]
     pub permitted_hands: Vec<String>,
+    /// This project's ceiling inside the site's aggregate autorun ceiling.
+    /// Omitted leaves only the aggregate ceiling in force
+    /// (§FS-005-dispatch.24).
+    #[serde(default)]
+    pub max_concurrent: Option<usize>,
 }
 
 /// The key a hands table answers every unnamed action with
@@ -1096,6 +1106,21 @@ mod tests {
         // The replacement's own selector applies — no gate condition now.
         let plain = item(ItemKind::Pr, None);
         assert!(ids(&resolved, &plain).contains(&"fix-gate".to_string()));
+    }
+
+    #[test]
+    fn autorun_concurrency_caps_parse_globally_and_per_project() {
+        let site: WorkConfig = serde_json::from_value(json!({ "max_concurrent": 3 })).unwrap();
+        let project: ProjectWorkConfig =
+            serde_json::from_value(json!({ "max_concurrent": 0 })).unwrap();
+        assert_eq!(site.max_concurrent, Some(3));
+        assert_eq!(project.max_concurrent, Some(0));
+        assert_eq!(WorkConfig::default().max_concurrent, None);
+        assert_eq!(ProjectWorkConfig::default().max_concurrent, None);
+        assert!(serde_json::from_value::<WorkConfig>(json!({ "max_concurrant": 1 })).is_err());
+        assert!(
+            serde_json::from_value::<ProjectWorkConfig>(json!({ "max_concurrant": 1 })).is_err()
+        );
     }
 
     /// The table a project writes to say who does what

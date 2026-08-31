@@ -1402,6 +1402,212 @@ fn starts(log: &Path) -> usize {
         .count()
 }
 
+/// Copy the dispatched fixture's plan and ledger entry onto another checkout,
+/// producing another independently lockable due root without inventing a
+/// second dispatch implementation inside the test.
+fn duplicate_work_root(tmp: &Path, item: &str, checkout_name: &str) {
+    let ledger_path = tmp.join("state/ephor/work.json");
+    let mut ledger: Value =
+        serde_json::from_str(&fs::read_to_string(&ledger_path).unwrap()).unwrap();
+    let original = ledger["entries"]["github-prs:acme/widget#42"].clone();
+    let source_root = tmp.join("demo/panta");
+    let checkout = tmp.join(checkout_name);
+    let root = checkout.join("panta");
+    fs::create_dir_all(&root).unwrap();
+    fs::copy(source_root.join("states.yaml"), root.join("states.yaml")).unwrap();
+    let plan_id = format!("github-prs-acme-widget-{checkout_name}");
+    let plan = root.join(format!("{plan_id}.rhei.md"));
+    fs::copy(source_root.join("github-prs-acme-widget-42.rhei.md"), &plan).unwrap();
+
+    let mut copied = original;
+    copied["root"] = json!(root);
+    copied["checkout"] = json!(checkout);
+    copied["branch"] = Value::Null;
+    copied["plan_id"] = json!(plan_id);
+    copied["plan"] = json!(plan);
+    ledger["entries"][item] = copied;
+    fs::write(&ledger_path, serde_json::to_string_pretty(&ledger).unwrap()).unwrap();
+}
+
+/// A detached runner whose `second` root finishes inside the handshake and
+/// whose other roots hold their runtime lock long enough for the sweep to
+/// account for them. Its child redirects the inherited pipes so the launcher
+/// itself can return immediately, as a real detached launcher does.
+fn capacity_runner(tmp: &Path, log: &Path) {
+    fs::create_dir_all(tmp.join("fakebin")).unwrap();
+    make_executable(
+        &tmp.join("fakebin/rhei"),
+        &format!(
+            "#!/usr/bin/env bash\n\
+             case \"$*\" in\n\
+             *--help*) printf 'Options:\\n      --headless  detach it\\n'; exit 0 ;;\n\
+             *--headless*)\n\
+               printf '%s\\n' \"$*\" >> {log}\n\
+               root=\"$4\"\n\
+               if [[ \"$root\" == *second* ]]; then\n\
+                 printf '{{\"id\":\"finished\",\"status\":\"finished\",\"exit_code\":0}}\\n'\n\
+                 exit 0\n\
+               fi\n\
+               mkdir -p \"$root/.rhei\"\n\
+               flock \"$root/.rhei/run.lock\" sleep 20 >/dev/null 2>&1 &\n\
+               for _ in {{1..100}}; do\n\
+                 flock -n \"$root/.rhei/run.lock\" -c true >/dev/null 2>&1 || break\n\
+                 sleep 0.01\n\
+               done\n\
+               printf '{{\"id\":\"live\",\"status\":\"running\",\"exit_code\":null}}\\n'\n\
+               exit 0 ;;\n\
+             *) exit 0 ;;\n\
+             esac\n",
+            log = log.to_string_lossy(),
+        ),
+    );
+}
+
+/// §FS-005-dispatch.24: capacity is a ceiling on live roots, selected in
+/// configured rank order. Existing live work consumes it, a completed start
+/// returns it, and roots omitted only for capacity are non-failing results.
+#[test]
+fn the_autorun_sweep_caps_live_roots_and_reports_every_capacity_pass_over() {
+    let tmp = tempdir();
+    let ranking = tmp.path().join("ranking.txt");
+    fs::write(
+        &ranking,
+        "github-prs:acme/widget#second\ngithub-prs:acme/widget#42\n",
+    )
+    .unwrap();
+    fixture(
+        tmp.path(),
+        json!({
+            "max_concurrent": 0,
+            "ranking": ranking,
+            "recipes": [{
+                "id": "fix-gate",
+                "icon": "🔧",
+                "description": "fix the red gate",
+                "brief": "fix {title}",
+                "autorun": true,
+                "when": { "kinds": ["pr"], "gate": "red" }
+            }]
+        }),
+    );
+    let log = tmp.path().join("runner.log");
+    capacity_runner(tmp.path(), &log);
+    ephor(tmp.path())
+        .args(["refresh", "demo"])
+        .assert()
+        .success();
+
+    // The configured zero lets dispatch write the ticket but starts nothing.
+    ephor(tmp.path())
+        .args(["work", "dispatch"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("passed over"));
+    assert_eq!(starts(&log), 0);
+    duplicate_work_root(tmp.path(), "github-prs:acme/widget#second", "demo-second");
+    duplicate_work_root(tmp.path(), "github-prs:acme/widget#third", "demo-third");
+
+    // An existing live root fills the CLI's one aggregate slot even though
+    // that root is itself excluded by the one-live-run-per-root guarantee.
+    let held_root = tmp.path().join("demo-third/panta");
+    fs::create_dir_all(held_root.join(".rhei")).unwrap();
+    fs::write(held_root.join(".rhei/run.lock"), "").unwrap();
+    let holder = fs::File::open(held_root.join(".rhei/run.lock")).unwrap();
+    holder.lock().unwrap();
+    let full = ephor(tmp.path())
+        .args(["work", "run", "--due", "--max-concurrent", "1", "--json"])
+        .output()
+        .unwrap();
+    let full: Value = serde_json::from_slice(&full.stdout).unwrap();
+    assert_eq!(full["failed"], 0, "{full}");
+    assert_eq!(full["runs"].as_array().unwrap().len(), 2, "{full}");
+    assert!(full["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|run| run["outcome"] == "passed-over"));
+    assert_eq!(starts(&log), 0);
+    drop(holder);
+
+    // The flag overrides configured zero. Ranking tries `second` first; it
+    // finishes immediately and returns the slot, the original root stays
+    // live, and the remaining root is explicitly passed over.
+    let swept = ephor(tmp.path())
+        .args(["work", "run", "--due", "--max-concurrent", "1", "--json"])
+        .output()
+        .unwrap();
+    let swept: Value = serde_json::from_slice(&swept.stdout).unwrap();
+    assert_eq!(swept["failed"], 0, "{swept}");
+    let runs = swept["runs"].as_array().unwrap();
+    assert_eq!(runs.len(), 3, "{swept}");
+    assert_eq!(runs[0]["item"], "github-prs:acme/widget#second");
+    assert_eq!(runs[0]["outcome"], "done");
+    assert_eq!(runs[1]["item"], "github-prs:acme/widget#42");
+    assert_eq!(runs[1]["outcome"], "started");
+    assert_eq!(runs[2]["item"], "github-prs:acme/widget#third");
+    assert_eq!(runs[2]["outcome"], "passed-over");
+    assert!(runs[2]["reason"]
+        .as_str()
+        .unwrap()
+        .contains("global work.max_concurrent 1"));
+    assert_eq!(starts(&log), 2);
+
+    // Prose carries the same non-failing outcome, and configured zero is
+    // still in force on the next invocation because the flag was one-sweep.
+    ephor(tmp.path())
+        .args(["work", "run", "--due"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("passed over"));
+}
+
+#[test]
+fn a_project_autorun_ceiling_remains_inside_the_cli_aggregate_override() {
+    let tmp = tempdir();
+    fixture(
+        tmp.path(),
+        json!({
+            "max_concurrent": 1,
+            "recipes": [{
+                "id": "fix-gate",
+                "icon": "🔧",
+                "description": "fix the red gate",
+                "brief": "fix {title}",
+                "autorun": true,
+                "when": { "kinds": ["pr"], "gate": "red" }
+            }]
+        }),
+    );
+    let config_path = tmp.path().join("status.json");
+    let mut config: Value =
+        serde_json::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
+    config["projects"]["demo"]["work"] = json!({ "max_concurrent": 0 });
+    fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap()).unwrap();
+    let log = tmp.path().join("runner.log");
+    detaching_runner(tmp.path(), &log);
+    ephor(tmp.path())
+        .args(["refresh", "demo"])
+        .assert()
+        .success();
+    ephor(tmp.path())
+        .args(["work", "dispatch"])
+        .assert()
+        .success();
+
+    let output = ephor(tmp.path())
+        .args(["work", "run", "--due", "--max-concurrent", "3", "--json"])
+        .output()
+        .unwrap();
+    let reading: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(reading["failed"], 0, "{reading}");
+    assert_eq!(reading["runs"][0]["outcome"], "passed-over", "{reading}");
+    assert!(reading["runs"][0]["reason"]
+        .as_str()
+        .unwrap()
+        .contains("projects.demo.work.max_concurrent 0"));
+    assert_eq!(starts(&log), 0, "the project ceiling remains in force");
+}
+
 /// Work nobody has to start starts itself (§FS-005-dispatch.24).
 ///
 /// A recipe that says `autorun` gets its run in the same breath as its ticket

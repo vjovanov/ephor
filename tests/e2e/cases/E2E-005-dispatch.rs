@@ -148,6 +148,54 @@ fn plan_path(world: &World) -> std::path::PathBuf {
     world.forest().join("panta").join(format!("{PLAN}.rhei.md"))
 }
 
+/// Autorun is safe to leave enabled because a zero ceiling writes the work
+/// but starts none of it, and the due command publishes that decision as a
+/// successful machine-readable outcome (§FS-005-dispatch.24).
+#[test]
+fn an_autorun_ceiling_of_zero_passes_due_work_over_without_failing_the_sweep() {
+    let world = watching();
+    world.stub("acme-runtime", ACME_RUNTIME);
+    world.configure(json!({
+        "projects": { PROJECT: { "providers": [
+            { "provider": "acmeforge", "user": "you", "repos": ["app"] }
+        ] } },
+        "work": {
+            "runner": "acme-runtime",
+            "max_concurrent": 0,
+            "recipes": [{
+                "id": "fix-gate",
+                "icon": "🛠",
+                "description": "fix the red gate",
+                "state": "fix",
+                "needs_checkout": true,
+                "autorun": true,
+                "when": { "kinds": ["pr"], "roles": ["author"], "gate": "failing" },
+                "brief": "Fix the gate on {title}."
+            }]
+        }
+    }));
+
+    world
+        .ephor()
+        .args(["work", "dispatch"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("passed over"));
+    let output = world
+        .ephor()
+        .args(["work", "run", "--due", "--max-concurrent", "0", "--json"])
+        .output()
+        .expect("the capped sweep runs");
+    assert!(output.status.success());
+    let reading = json_of(&output);
+    assert_eq!(reading["failed"], 0, "{reading}");
+    assert_eq!(reading["runs"][0]["outcome"], "passed-over", "{reading}");
+    assert!(reading["runs"][0]["reason"]
+        .as_str()
+        .unwrap()
+        .contains("global work.max_concurrent 0"));
+}
+
 /// Tickets are written whether or not anything can run them, and the run says
 /// so in the one sentence the whole of ephor refuses with
 /// (§AR-005-capabilities.2).

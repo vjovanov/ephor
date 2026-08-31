@@ -443,6 +443,12 @@ pub struct WorkRunArgs {
     #[arg(long)]
     pub due: bool,
 
+    /// Override the site's aggregate autorun ceiling for this due sweep.
+    /// Project ceilings still apply inside it. Zero starts no new runs
+    /// (§FS-005-dispatch.24).
+    #[arg(long, value_name = "N", requires = "due")]
+    pub max_concurrent: Option<usize>,
+
     /// Keep the terminal and watch the run, as this command always did
     /// (§FS-011-command-line.8). Without it the run starts detached and this
     /// prints the id it was given — which is also what a runner that cannot
