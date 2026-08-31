@@ -7,8 +7,9 @@ Two checks, both over the Rust sources git tracks under ``src/``:
    CLI, runtime, or task store appears only in its own adapter. The law
    permits it in shipped assets, in examples, and in documentation, so this
    check reads only ``src/``, skips comments, and skips ``#[cfg(test)]``
-   bodies: a doc-comment that spells ``gh:acme/widget#42`` is documenting the
-   grammar, and a fixture that builds a ``github-prs`` row is an example.
+   bodies -- inline, or a whole ``<name>_tests.rs`` sibling one of them has
+   moved to: a doc-comment that spells ``gh:acme/widget#42`` is documenting
+   the grammar, and a fixture that builds a ``github-prs`` row is an example.
 
 2. **The core layer is IO-free.** Core is the innermost layer of
    §AR-001-layers.1: it depends on nothing above it and touches no filesystem,
@@ -206,6 +207,9 @@ def read_rust(path: str) -> list[Line]:
     `#[cfg(test)]` bodies are examples, which it permits too. Strings are kept
     -- a product name in one is code -- but the braces inside them are not
     counted as scope, which is what makes the test-body tracking trustworthy.
+
+    A `<name>_tests.rs` file is a test body in its entirety, so it is marked
+    by name rather than by tracking braces -- see `is_out_of_line_tests`.
     """
     with open(path, encoding="utf-8") as handle:
         text = handle.read()
@@ -305,7 +309,11 @@ def read_rust(path: str) -> list[Line]:
     if kept or not out:
         flush()
 
-    mark_test_bodies(out)
+    if is_out_of_line_tests(path):
+        for line in out:
+            line.in_test = True
+    else:
+        mark_test_bodies(out)
     raw_lines = text.split("\n")
     for line in out:
         if line.number <= len(raw_lines):
@@ -322,6 +330,21 @@ def is_char_literal(text: str, index: int) -> bool:
     if text[index + 1 : index + 2] == "\\":
         return True
     return text[index + 2 : index + 3] == "'"
+
+
+def is_out_of_line_tests(path: str) -> bool:
+    """Whether the whole file is one module's test body, moved to a sibling.
+
+    A source file that outgrows its size budget moves its inline
+    `#[cfg(test)] mod tests` whole to `<name>_tests.rs` and attaches it with
+    `#[cfg(test)] #[path = "<name>_tests.rs"] mod tests;` -- the first seam
+    `.agents/fissile.toml` names for an oversized source file. The
+    `#[cfg(test)]` then sits on the attachment in the parent, so the file
+    carries no marker of its own and `mark_test_bodies` would read its
+    fixtures as production code. The name is what says it, and every line of
+    such a file is a test body.
+    """
+    return path.endswith("_tests.rs")
 
 
 def mark_test_bodies(lines: list[Line]) -> None:
