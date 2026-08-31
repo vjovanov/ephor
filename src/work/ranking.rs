@@ -116,7 +116,9 @@ fn parse(text: &str) -> Vec<String> {
 /// Ranked items first, in `ranked_ids`' own order, then everything else
 /// keeping the order it already had. The ranking orders; it never filters
 /// — every input item is still in the output, just possibly moved forward.
-/// The second return value is every id in `ranked_ids` that matched nothing.
+/// A repeated id is silently idempotent: the first occurrence wins and later
+/// ones neither move the item again nor count as unmatched. The second
+/// return value is every id in `ranked_ids` that matched nothing.
 pub fn order<T>(
     items: Vec<T>,
     ranked_ids: &[String],
@@ -128,7 +130,11 @@ pub fn order<T>(
     let mut pool: Vec<Option<T>> = items.into_iter().map(Some).collect();
     let mut ranked = Vec::with_capacity(pool.len());
     let mut unmatched = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     for wanted in ranked_ids {
+        if !seen.insert(wanted.as_str()) {
+            continue;
+        }
         let found = pool
             .iter_mut()
             .find(|slot| slot.as_ref().is_some_and(|item| id_of(item) == wanted));
@@ -184,6 +190,17 @@ mod tests {
     }
 
     #[test]
+    fn an_unreadable_path_falls_back_and_says_so() {
+        // A directory has metadata but cannot be read as a file — the third
+        // of the three fallback kinds, and portable unlike permission bits.
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let reading = read(dir.path());
+        assert!(reading.order.is_empty());
+        assert!(matches!(reading.fallback, Some(Fallback::Unreadable(_))));
+        assert!(reading.says().contains("could not be read"));
+    }
+
+    #[test]
     fn a_populated_file_is_read_in_order_with_an_age() {
         let dir = tempfile::tempdir().expect("a temp dir");
         let path = dir.path().join("ranking.txt");
@@ -211,6 +228,15 @@ mod tests {
         let (ordered, unmatched) = order(items, &ranked_ids, |item| item);
         assert_eq!(ordered, vec!["b", "a"]);
         assert_eq!(unmatched, vec!["z".to_string()]);
+    }
+
+    #[test]
+    fn a_duplicated_id_is_ranked_once_and_never_reported_unmatched() {
+        let items = vec!["a", "b", "c"];
+        let ranked_ids = vec!["b".to_string(), "b".to_string(), "a".to_string()];
+        let (ordered, unmatched) = order(items, &ranked_ids, |item| item);
+        assert_eq!(ordered, vec!["b", "a", "c"]);
+        assert!(unmatched.is_empty());
     }
 
     #[test]

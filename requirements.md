@@ -2522,7 +2522,10 @@ already chose to do
 ([§1](#1-a-recipe-decides-which-items-deserve-work-and-what-to-ask-for)). An
 item skipped for another reason — it already has work, it fails `--kind` or
 `--updated-within`, no recipe applies — costs nothing against the bound; only
-an item actually dispatched does.
+an item actually dispatched does. An item whose deterministic opening move
+finishes with nothing to hand over
+([§12](#12-work-an-algorithm-can-finish-does-not-start-with-a-model)) opened
+nothing either, and for the same reason costs nothing against the bound.
 
 **A file that is absent, empty, or unreadable is not an error.** The sweep
 falls back to the order it always used, and says which of the three happened
@@ -2531,9 +2534,12 @@ nothing about the sweep's behaviour or its output changes: this is a
 capability turned on by naming it, not a default anyone pays for unasked.
 
 **An id in the file that matches no eligible item is skipped and named, not
-fatal.** A ranking outliving the matter it names is ordinary — an issue
-closes, a pull request merges — and the sweep continues past it exactly as it
-does past everything else it cannot use.
+fatal.** Eligible here means the sweep's own project and recency-filtered
+set — after `--project` and the feed's own recency window, before `--kind`,
+`--item`, or `--updated-within` narrow it further — so an id excluded only by
+one of those still matches. A ranking outliving the matter it names is
+ordinary — an issue closes, a pull request merges — and the sweep continues
+past it exactly as it does past everything else it cannot use.
 
 **The reading says which file it used and how old it is, in prose and in
 `--json` alike**
