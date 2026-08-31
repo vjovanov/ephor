@@ -212,6 +212,22 @@ fn work_root(world: &World) -> std::path::PathBuf {
     world.forest().join("panta")
 }
 
+fn assert_dry_run_left_destination_untouched(world: &World) {
+    let root = work_root(world);
+    for path in [
+        root.clone(),
+        root.join("index.panta.md"),
+        root.join(".gitignore"),
+        root.join("states.yaml"),
+        root.join(".ephor/acmeforge-app-101-review-change/dossier.md"),
+        root.join(".ephor/acmeforge-app-101-review-change/item.json"),
+        root.join(".ephor/acmeforge-app-101-review-change/values.json"),
+        root.join("acmeforge-app-101-review-change"),
+    ] {
+        assert!(!path.exists(), "dry run created {}", path.display());
+    }
+}
+
 /// What the runtime offers is asked of the runtime, and what it says is what
 /// the listing shows — including which workflows already have an entry beside
 /// them (§FS-005-dispatch.19).
@@ -337,22 +353,30 @@ fn a_workflow_is_laid_down_beside_the_matters_own_plan() {
     // the published schema rather than merely named by it, because a declared
     // shape nobody checks is a declaration and §REQ-002-parity.4 promises a
     // contract.
-    shaped(
-        "work-lay",
-        &world
-            .ephor()
-            .args([
-                "work",
-                "lay",
-                "review-change",
-                "--item",
-                "acmeforge:app/101",
-                "--dry-run",
-                "--json",
-            ])
-            .output()
-            .expect("the dry run"),
+    let json_dry_run = world
+        .ephor()
+        .args([
+            "work",
+            "lay",
+            "review-change",
+            "--item",
+            "acmeforge:app/101",
+            "--dry-run",
+            "--json",
+        ])
+        .output()
+        .expect("the dry run");
+    let view = shaped("work-lay", &json_dry_run);
+    assert_eq!(view["dry_run"], json!(true));
+    assert!(
+        view["report"]
+            .as_str()
+            .expect("the runtime report")
+            .contains("would render changeset-review"),
+        "{}",
+        view["report"]
     );
+    assert_dry_run_left_destination_untouched(&world);
     world
         .ephor()
         .args([
@@ -370,10 +394,9 @@ fn a_workflow_is_laid_down_beside_the_matters_own_plan() {
         .stdout(predicate::str::contains("(the entry)"))
         // The hand answers the target input, not the workflow's own default.
         .stdout(predicate::str::contains("claude-code[high]:anthropic:opus"))
-        .stdout(predicate::str::contains("(the hand)"));
-    assert!(!work_root(&world)
-        .join("acmeforge-app-101-review-change")
-        .exists());
+        .stdout(predicate::str::contains("(the hand)"))
+        .stdout(predicate::str::contains("would render changeset-review"));
+    assert_dry_run_left_destination_untouched(&world);
 
     world
         .ephor()
