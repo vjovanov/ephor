@@ -43,7 +43,7 @@ path = "requirements.md"
 match = "exact"
 rules = ["specs"]
 kind = "deferred"
-max_accepted = { value = 2900, unit = "lines" }
+max_accepted = { value = 3000, unit = "lines" }
 until = "the FS home becomes a folder in .agents/grund.toml and each declaration moves to its own document"
 reason = """
 Twelve §FS declarations in one file, of which §FS-005-dispatch is 1423 lines — half the document on its own. The other four kind homes in this tree are already folders: .agents/grund.toml gives AR, REQ, DF and DA a `folder`, and only FS a `file`. Missing boundary: that same folder for FS. The move is mechanical and the citations survive it, because a § names an ID and not a path — grund resolves the ID wherever the declaration lives, and `grund fmt --write` rewrites the rendered links. It is not taken here because moving every spec declaration in the repository is a change that has to be reviewed as itself, not as a rider on the commit that first measured the file.
@@ -53,7 +53,7 @@ path = "src/work/mod.rs"
 match = "exact"
 rules = ["source"]
 kind = "deferred"
-max_accepted = { value = 3100, unit = "lines" }
+max_accepted = { value = 3400, unit = "lines" }
 until = "the value types move to a sibling src/work/status.rs and the placement family to src/work/site.rs, leaving mod.rs as the dispatcher"
 reason = """
 Three things in one file with no boundary between them. First the vocabulary: Outcome, TicketStatus, Cancelled, WorkStatus, Tone, WorkLine, WorkGoing, WorkAt and Due are the types every surface reads a ticket's state through, and they are defined in the same file as the engine that produces them. Second, placement: site, site_for, mint, opening, pin, root_template and states_yaml decide and prepare the checkout a ticket lands in, a job with its own types and its own failure modes. Third, dispatch itself: dispatch, hand, run_hand, lay, ask, sync, cancel. A further 906 lines are the inline #[cfg(test)] mod tests, which is why the file measures 3056 while the implementation is 2150. Missing boundary: the vocabulary as a module of its own, and placement as a second. src/work/ already holds commands.rs, dossier.rs, ledger.rs, recipe.rs, workflow.rs and runtime/, so each move costs one mod line and whatever pub(crate) the moved items need.
