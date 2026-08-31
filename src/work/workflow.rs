@@ -57,6 +57,11 @@ pub struct Beside {
     pub inputs: BTreeMap<String, Value>,
     #[serde(default)]
     pub hands: Vec<String>,
+    /// This work needs nobody to start it (§FS-005-dispatch.28) — the same
+    /// key the other two homes carry, so a workflow that travels with its
+    /// entry travels with that too.
+    #[serde(default)]
+    pub autorun: bool,
 }
 
 impl Beside {
@@ -78,6 +83,7 @@ impl Beside {
                 name: workflow.id.clone(),
                 inputs: self.inputs.clone(),
                 hands: self.hands.clone(),
+                autorun: self.autorun,
             }),
             hand: None,
             cwd: None,
@@ -423,6 +429,23 @@ mod tests {
         }
     }
 
+    /// The entry written beside a workflow says `autorun` the way the other
+    /// two homes do, so a workflow that travels with its entry travels with
+    /// that too (§FS-005-dispatch.28).
+    #[test]
+    fn an_entry_beside_a_workflow_may_ask_to_run_itself() {
+        let flow = workflow(Vec::new());
+        let asked: Beside = serde_json::from_str(
+            r#"{ "id": "fix-issue", "autorun": true, "when": { "kinds": ["issue"] } }"#,
+        )
+        .unwrap();
+        assert!(asked.action(&flow).workflow.unwrap().autorun);
+
+        // Silence is the key here as everywhere.
+        let quiet: Beside = serde_json::from_str(r#"{ "id": "fix-issue" }"#).unwrap();
+        assert!(!quiet.action(&flow).workflow.unwrap().autorun);
+    }
+
     #[test]
     fn the_entry_answers_with_the_matters_fields() {
         let flow = workflow(vec![input("change_ref", Kind::Text, true, false)]);
@@ -433,6 +456,7 @@ mod tests {
                 Value::String("{repo}#{number}".to_string()),
             )]),
             hands: Vec::new(),
+            autorun: false,
         };
         let out = answer(&flow, &ask, &BTreeMap::new(), &matter(), None, &roster);
         assert_eq!(
@@ -457,6 +481,7 @@ mod tests {
                 Value::String("{branch}".to_string()),
             )]),
             hands: Vec::new(),
+            autorun: false,
         };
         let typed = BTreeMap::from([("change_ref".to_string(), "HEAD~3..HEAD".to_string())]);
         let out = answer(&flow, &ask, &typed, &matter(), None, &roster);
@@ -481,6 +506,7 @@ mod tests {
             name: flow.id.clone(),
             inputs: BTreeMap::new(),
             hands: Vec::new(),
+            autorun: false,
         };
         let typed = BTreeMap::from([(
             "review_targets".to_string(),
@@ -586,6 +612,7 @@ mod tests {
                 ]),
             )]),
             hands: Vec::new(),
+            autorun: false,
         };
         let out = answer(&flow, &ask, &BTreeMap::new(), &matter(), None, &roster);
         assert_eq!(
@@ -607,6 +634,7 @@ mod tests {
                 Value::String("luna".to_string()),
             )]),
             hands: vec!["smart_target".to_string()],
+            autorun: false,
         };
         let out = answer(&flow, &ask, &BTreeMap::new(), &matter(), None, &roster);
         assert_eq!(
@@ -625,6 +653,7 @@ mod tests {
                 Value::String("walled".to_string()),
             )]),
             hands: Vec::new(),
+            autorun: false,
         };
         let out = answer(&flow, &ask, &BTreeMap::new(), &matter(), None, &roster);
         assert_eq!(out.refusals.len(), 1);
@@ -642,6 +671,7 @@ mod tests {
                 Value::String("nobody".to_string()),
             )]),
             hands: Vec::new(),
+            autorun: false,
         };
         let out = answer(&flow, &ask, &BTreeMap::new(), &matter(), None, &roster);
         assert_eq!(out.refusals.len(), 1);
@@ -695,6 +725,7 @@ mod tests {
                 serde_json::json!([{ "id": "a", "stance": "review {branch}" }]),
             )]),
             hands: Vec::new(),
+            autorun: false,
         };
         let out = answer(&flow, &ask, &BTreeMap::new(), &matter(), None, &roster);
         assert_eq!(

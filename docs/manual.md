@@ -1603,10 +1603,11 @@ elsewhere
 ([§FS-005-dispatch.24](../requirements.md#24-work-nobody-has-to-start-starts-itself)).
 The deliberate act moves one step earlier and is made once, when you adopt the
 recipe. Leaving it out is the default and means what it always did: the run is
-yours to start. It is per recipe and nowhere else — trusting the gate-fixer to
-start itself says nothing about the rest of the menu — and every refusal
-dispatch makes still applies, including refusing to run in a working tree
-standing on another branch.
+yours to start. It is said on the thing that hands work over and nowhere else
+— a recipe, or an entry that lays a workflow down (§8.15.1) — because trusting
+the gate-fixer to start itself says nothing about the rest of the menu, and
+every refusal dispatch makes still applies, including refusing to run in a
+working tree standing on another branch.
 
 **The selector.** Every field that is set must hold; an empty one asks nothing.
 Finished work never matches.
@@ -2250,14 +2251,16 @@ ephor work states
   It reads the world rather than the ledger — every work root, the plans in
   it, the machine's own words about their states, and the runtime's lock — and
   starts a detached run on each root holding an open, unclaimed, unparked
-  ticket from a recipe that said `"autorun": true`. A root a run already holds
+  ticket from a recipe that said `"autorun": true` — or a plan a workflow
+  entry that said it laid down, whose tasks are read where the runtime wrote
+  them and judged by the machine beside them (§8.15.1). A root a run already holds
   gets nothing, so the sweep is safe to run as often as you like and starts one
   run however many times you invoke it. A root whose start failed rests before
   it is tried again, longer each consecutive time, so a runner that refuses
   cannot become a spawn loop. Where the runner has no detached shape the sweep
   starts nothing and says so: a run nobody asked for must not take a terminal.
-  Nothing is due unless a recipe asked for it — silence still means you press
-  the key. `work.max_concurrent` bounds live roots across the whole site;
+  Nothing is due unless a recipe or a laying entry asked for it — silence
+  still means you press the key. `work.max_concurrent` bounds live roots across the whole site;
   `projects.<id>.work.max_concurrent` adds a ceiling inside that aggregate.
   Omitted ceilings are unlimited and zero starts no new runs. On this command,
   `--max-concurrent N` replaces the configured aggregate ceiling for this one
@@ -2672,6 +2675,48 @@ keeps with the project's offers, one you keep with your own — the provenance
 the menu already orders by. Wherever it lives, the entry may also say
 `"branch"`: which branch the work it lays down belongs on, for a matter that
 has none of its own (§8.18).
+
+**`"autorun": true` makes it work nobody has to be present for** (§8.15.1).
+
+#### 8.15.1 A workflow nobody has to lay down, or start
+
+An entry may say `"autorun": true` beside its `when`, in any of the three
+homes, and it means on a workflow what it means on a recipe (§8.3): the
+deliberate act moves one step earlier and is made once, when you adopt the
+entry
+([§FS-005-dispatch.28](../requirements.md#28-a-workflow-entry-can-ask-for-the-same-thing-a-recipe-can)).
+
+```json
+{ "id": "fix-task", "icon": "⛬", "description": "fix this task end to end",
+  "workflow": "supervised-ticket-fix",
+  "autorun": true,
+  "when": { "kinds": ["task"] },
+  "inputs": { "ticket": "{title}" } }
+```
+
+`ephor work dispatch` then lays it down about every matter it applies to that
+**no recipe covers and that has no work at all**, and `ephor work run --due` —
+which the work-sync timer runs — starts what it laid. Both halves are the same
+sweep everything else goes through: the ranking orders what is laid (§8.9),
+`--limit` bounds it beside the tickets, `--dry-run` says what it would lay and
+writes nothing, and an entry that cannot be laid — a required input nobody
+answered, a hand a narrowing refuses — is reported as a refusal with nothing
+written and the sweep goes on.
+
+**Recipes keep their priority.** A matter a recipe covers gets the ticket it
+always got; the entry gets its turn where nothing else applies. So an entry
+about issues you opened is preempted by the shipped `implement` recipe (§8.3)
+— if the workflow is what you want there, replace that recipe by writing one
+under the same id, which is how recipes have always been overridden.
+
+**A matter that already has work is left alone**, `--again` included: a second
+plan about one matter is something `ephor work lay` is asked for, never
+something a sweep decides. The record of the laying is what says so, and it is
+also what the due sweep reads to know which entry asked — a plan you laid by
+hand, or one that was simply found in a work root, is still yours to start.
+
+Say nothing and nothing changes: the entry is a menu row, laid by you and
+started by you.
 
 **Answering the inputs.** Five steps, each displacing the ones after it:
 

@@ -218,6 +218,11 @@ pub struct WorkflowAsk {
     /// manifest does not say so — listing one is how a person says "this
     /// input is a hand" (§DA-006-hands-fill-a-workflows-targets).
     pub hands: Vec<String>,
+    /// This work needs nobody to start it (§FS-005-dispatch.28). The sweep
+    /// lays the entry down about a matter no recipe covers, and the sweep
+    /// after that starts what it laid — the same thing `autorun` means on a
+    /// recipe, said on the thing that hands the work over.
+    pub autorun: bool,
 }
 
 /// The parse of an entry, before the one rule that cannot be expressed in the
@@ -241,6 +246,11 @@ struct RawAction {
     inputs: BTreeMap<String, serde_json::Value>,
     #[serde(default)]
     hands: Vec<String>,
+    /// Written flat beside `workflow`, as `inputs` and `hands` are: a
+    /// workflow entry has no block of its own to say it in
+    /// (§FS-005-dispatch.28).
+    #[serde(default)]
+    autorun: bool,
     #[serde(default)]
     cwd: Option<String>,
     #[serde(default)]
@@ -329,12 +339,32 @@ impl TryFrom<RawAction> for ActionConfig {
                  both"
             ));
         }
+        // Nothing but a workflow entry says this out here
+        // (§FS-005-dispatch.28). An entry that runs a command has no work to
+        // start, and one that asks for a ticket says it inside the recipe it
+        // already is — two spellings of one fact would drift, and the one
+        // written here would be the one silently unused.
+        if raw.autorun && raw.workflow.is_none() {
+            return Err(format!(
+                "action {named} says 'autorun' and {}: work nobody has to start is said on the \
+                 thing that hands it over — {}",
+                match raw.agent.is_some() {
+                    true => "asks somebody for a ticket",
+                    false => "runs a command here",
+                },
+                match raw.agent.is_some() {
+                    true => "say it inside 'agent', where a recipe says it",
+                    false => "a command runs here and there is no run to start",
+                }
+            ));
+        }
         let ask = raw.agent;
         let command = raw.command.unwrap_or_default();
         let workflow = raw.workflow.map(|name| WorkflowAsk {
             name,
             inputs: raw.inputs,
             hands: raw.hands,
+            autorun: raw.autorun,
         });
         // The id is the ticket's name and the key a hands table answers by
         // (§FS-006-project-interface.9), so work that asks for a hand has to
@@ -695,6 +725,48 @@ mod tests {
         .unwrap_err()
         .to_string();
         assert!(refused.contains("runs a command"), "{refused}");
+    }
+
+    /// A workflow entry may say that what it lays down needs nobody to start
+    /// it, and nothing else may (§FS-005-dispatch.28): a command has no run
+    /// to start, and a recipe already says it inside `agent`, where two
+    /// spellings of one fact would drift.
+    #[test]
+    fn autorun_is_a_workflow_entrys_to_say_and_refused_on_the_others() {
+        let entry: ActionConfig = serde_json::from_value(serde_json::json!({
+            "id": "fix-issue", "icon": "⛬", "description": "fix it",
+            "workflow": "supervised-ticket-fix", "autorun": true,
+            "when": { "kinds": ["issue"] },
+            "inputs": { "ticket": "{repo}#{number}" }
+        }))
+        .unwrap();
+        let ask = entry.workflow.as_ref().expect("it lays a workflow down");
+        assert!(ask.autorun);
+        assert_eq!(ask.name, "supervised-ticket-fix");
+
+        // Silence is the key, exactly as it is on a recipe.
+        let quiet: ActionConfig = serde_json::from_value(serde_json::json!({
+            "id": "fix-issue", "icon": "⛬", "description": "fix it",
+            "workflow": "supervised-ticket-fix"
+        }))
+        .unwrap();
+        assert!(!quiet.workflow.unwrap().autorun);
+
+        let on_command = serde_json::from_value::<ActionConfig>(serde_json::json!({
+            "id": "gate", "icon": "🧪", "description": "gate",
+            "command": "just gate", "autorun": true
+        }))
+        .unwrap_err()
+        .to_string();
+        assert!(on_command.contains("runs a command here"), "{on_command}");
+
+        let on_agent = serde_json::from_value::<ActionConfig>(serde_json::json!({
+            "id": "changelog", "icon": "✎", "description": "d",
+            "agent": { "brief": "b" }, "autorun": true
+        }))
+        .unwrap_err()
+        .to_string();
+        assert!(on_agent.contains("inside 'agent'"), "{on_agent}");
     }
 }
 

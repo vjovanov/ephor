@@ -52,6 +52,16 @@ const MANIFEST: &str = "index.panta.md";
 /// What a plan file is called: `<plan id>` and this.
 pub(super) const PLAN_SUFFIX: &str = ".rhei.md";
 
+/// The one plan file of a plan rendered as a directory: the index that names
+/// it. Part of the coupling, and so part of this module
+/// (§REQ-001-boundary.5).
+const INDEX: &str = "index.rhei.md";
+
+/// Where such a plan keeps its tasks: one file per task beside the index,
+/// each written in the same header grammar a task inside a plan file is
+/// (§FS-005-dispatch.28).
+const TASKS_DIR: &str = "tasks";
+
 /// The rule that makes a work root invisible to the repository it sits in
 /// (§FS-006-project-interface.7). Ephor's promise, kept whatever else is in
 /// that file.
@@ -310,7 +320,7 @@ pub fn plans_in(dir: &Path) -> Vec<FoundPlan> {
                     path: entry.path(),
                 });
             }
-            let index = entry.path().join(format!("index{PLAN_SUFFIX}"));
+            let index = entry.path().join(INDEX);
             index.is_file().then(|| FoundPlan {
                 plan_id: name,
                 path: index,
@@ -466,6 +476,13 @@ impl PlanTicket {
 pub struct Plan {
     pub path: PathBuf,
     text: String,
+    /// A plan rendered as a directory keeps its tasks in files beside its
+    /// index, and those are as much this plan's tasks as one written into it
+    /// (§FS-005-dispatch.28). Read when the plan is, so
+    /// [`tickets`](Plan::tickets) answers for the whole plan whichever shape
+    /// the runtime gave it. Empty for a plan written as one file — and for
+    /// every plan ephor writes itself, which is always one.
+    parts: Vec<String>,
 }
 
 impl Plan {
@@ -476,6 +493,7 @@ impl Plan {
         Ok(Some(Plan {
             path: path.to_path_buf(),
             text: read(path)?,
+            parts: task_files(path),
         }))
     }
 
@@ -492,6 +510,7 @@ impl Plan {
         Plan {
             path: path.to_path_buf(),
             text,
+            parts: Vec::new(),
         }
     }
 
@@ -523,67 +542,9 @@ impl Plan {
     /// is exactly as far as the runtime reads them, so a dossier or a report
     /// quoted into a body cannot pin a ticket it merely mentions.
     pub fn tickets(&self) -> Vec<PlanTicket> {
-        let mut tickets: Vec<PlanTicket> = Vec::new();
-        let mut in_header = false;
-        for line in unfenced(&self.text) {
-            let trimmed = line.trim();
-            if trimmed.starts_with("###") {
-                match ticket_heading(trimmed) {
-                    Some((id, title)) => {
-                        tickets.push(PlanTicket {
-                            id,
-                            title,
-                            state: None,
-                            assignee: None,
-                            pinned: None,
-                            prior: Vec::new(),
-                        });
-                        in_header = true;
-                    }
-                    // A heading that is not a ticket is content, and content
-                    // closes the header block it lands in.
-                    None => in_header = false,
-                }
-                continue;
-            }
-            if !in_header {
-                continue;
-            }
-            if trimmed.is_empty() {
-                continue;
-            }
-            let Some(last) = tickets.last_mut() else {
-                in_header = false;
-                continue;
-            };
-            if let Some(state) = trimmed.strip_prefix("**State:**") {
-                if last.state.is_none() {
-                    last.state = Some(state.trim().to_string());
-                }
-            } else if let Some(assignee) = trimmed.strip_prefix("**Assignee:**") {
-                let assignee = assignee.trim();
-                if last.assignee.is_none() && !assignee.is_empty() {
-                    last.assignee = Some(assignee.to_string());
-                }
-            } else if let Some(prior) = trimmed.strip_prefix("**Prior:**") {
-                if last.prior.is_empty() {
-                    last.prior = prior_ids(prior);
-                }
-            } else if let Some(value) = trimmed.strip_prefix("**Target:**") {
-                // The full line makes the ticket its own authority on who
-                // runs it, whatever else it carries (§FS-005-dispatch.14).
-                if !value.trim().is_empty() {
-                    last.pinned = Some(Pin::Target);
-                }
-            } else if let Some(value) = trimmed.strip_prefix("**Model:**") {
-                if !value.trim().is_empty() && last.pinned.is_none() {
-                    last.pinned = Some(Pin::Model);
-                }
-            } else if !(trimmed.starts_with("**") && trimmed.contains(":**")) {
-                // The first content line ends the header; any other
-                // `**Field:**` line keeps it open, as the runtime reads it.
-                in_header = false;
-            }
+        let mut tickets = tickets_in(&self.text);
+        for part in &self.parts {
+            tickets.extend(tickets_in(part));
         }
         tickets
     }
@@ -800,6 +761,102 @@ fn id_segment(segment: &str) -> bool {
 }
 
 /// The lines of a document that are not inside a fenced block.
+/// The task files of a plan rendered as a directory: the direct children of
+/// the `tasks/` directory beside its index, in name order, read as they
+/// stand (§FS-005-dispatch.28). Empty for a plan written as one file, which
+/// is every plan ephor writes itself — the shape is recognized here and
+/// nowhere else (§AR-007-runtime.1).
+fn task_files(plan: &Path) -> Vec<String> {
+    if plan.file_name().and_then(|name| name.to_str()) != Some(INDEX) {
+        return Vec::new();
+    }
+    let Some(dir) = plan.parent() else {
+        return Vec::new();
+    };
+    let Ok(entries) = fs::read_dir(dir.join(TASKS_DIR)) else {
+        return Vec::new();
+    };
+    let mut files: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file() && path.extension().is_some_and(|ext| ext == "md"))
+        .collect();
+    files.sort();
+    files
+        .iter()
+        .filter_map(|path| fs::read_to_string(path).ok())
+        .collect()
+}
+
+/// Every ticket one plan file holds, in the order it was written. The
+/// grammar is the runtime's and is spelled here alone (§AR-007-runtime.1),
+/// so a plan's index and each of its task files are read the same way.
+fn tickets_in(text: &str) -> Vec<PlanTicket> {
+    let mut tickets: Vec<PlanTicket> = Vec::new();
+    let mut in_header = false;
+    for line in unfenced(text) {
+        let trimmed = line.trim();
+        if trimmed.starts_with("###") {
+            match ticket_heading(trimmed) {
+                Some((id, title)) => {
+                    tickets.push(PlanTicket {
+                        id,
+                        title,
+                        state: None,
+                        assignee: None,
+                        pinned: None,
+                        prior: Vec::new(),
+                    });
+                    in_header = true;
+                }
+                // A heading that is not a ticket is content, and content
+                // closes the header block it lands in.
+                None => in_header = false,
+            }
+            continue;
+        }
+        if !in_header {
+            continue;
+        }
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Some(last) = tickets.last_mut() else {
+            in_header = false;
+            continue;
+        };
+        if let Some(state) = trimmed.strip_prefix("**State:**") {
+            if last.state.is_none() {
+                last.state = Some(state.trim().to_string());
+            }
+        } else if let Some(assignee) = trimmed.strip_prefix("**Assignee:**") {
+            let assignee = assignee.trim();
+            if last.assignee.is_none() && !assignee.is_empty() {
+                last.assignee = Some(assignee.to_string());
+            }
+        } else if let Some(prior) = trimmed.strip_prefix("**Prior:**") {
+            if last.prior.is_empty() {
+                last.prior = prior_ids(prior);
+            }
+        } else if let Some(value) = trimmed.strip_prefix("**Target:**") {
+            // The full line makes the ticket its own authority on who
+            // runs it, whatever else it carries (§FS-005-dispatch.14).
+            if !value.trim().is_empty() {
+                last.pinned = Some(Pin::Target);
+            }
+        } else if let Some(value) = trimmed.strip_prefix("**Model:**") {
+            if !value.trim().is_empty() && last.pinned.is_none() {
+                last.pinned = Some(Pin::Model);
+            }
+        } else if !(trimmed.starts_with("**") && trimmed.contains(":**")) {
+            // The first content line ends the header; any other
+            // `**Field:**` line keeps it open, as the runtime reads it.
+            in_header = false;
+        }
+    }
+    tickets
+}
+
 fn unfenced(text: &str) -> impl Iterator<Item = &str> {
     let mut fence: Option<String> = None;
     text.lines().filter(move |line| {

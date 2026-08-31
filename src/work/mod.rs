@@ -677,6 +677,13 @@ pub struct Dispatcher {
     /// What the runtime offers, per place asked — a sweep asks the same
     /// handful of roots over and over (§FS-005-dispatch.19).
     workflows: BTreeMap<PathBuf, runtime::workflow::Offered>,
+    /// The person's own entries, and the ones they wrote for one project:
+    /// two of the three homes a workflow entry may live in
+    /// (§FS-005-dispatch.19). Kept because a sweep has to find the entry
+    /// that asked to run itself without a menu being open
+    /// (§FS-005-dispatch.28).
+    actions: Vec<ActionConfig>,
+    project_actions: BTreeMap<String, Vec<ActionConfig>>,
     /// What the reader should know about the hands this dispatcher resolved,
     /// each said once (§FS-006-project-interface.9).
     notes: Vec<String>,
@@ -697,6 +704,12 @@ impl Dispatcher {
             behind: BTreeMap::new(),
             rosters: BTreeMap::new(),
             workflows: BTreeMap::new(),
+            actions: config.actions.clone(),
+            project_actions: config
+                .projects
+                .iter()
+                .map(|(id, project)| (id.clone(), project.actions.clone()))
+                .collect(),
             notes: Vec::new(),
             ledger: ledger::load()?,
         })
@@ -1582,7 +1595,80 @@ impl Dispatcher {
         entries
     }
 
-    /// Everything one workflow entry would write, with nothing written yet    /// Everything one workflow entry would write, with nothing written yet
+    /// Every workflow entry this project has, in the menu's own provenance
+    /// order (§FS-005-dispatch.19): what travels with the workflow, then the
+    /// project's own, then the person's, an entry a narrower home repeats
+    /// replacing the one it displaces.
+    ///
+    /// The same assembly the menu makes, and deliberately the same one: a
+    /// sweep that ranked the three homes differently from the screen would
+    /// lay down an entry the reader never saw offered (§AR-009-surfaces.1).
+    /// What it leaves out is the menu's gating — which is a question about a
+    /// keystroke, and a sweep answers it by laying the entry down and
+    /// reporting the refusal (§FS-005-dispatch.28).
+    pub fn workflow_actions(&mut self, project: &str) -> Vec<ActionConfig> {
+        let beside = self.workflow_entries(project);
+        let from = |want: runtime::workflow::Source| -> Vec<ActionConfig> {
+            beside
+                .iter()
+                .filter(|(source, _)| *source == want)
+                .map(|(_, entry)| entry.clone())
+                .collect()
+        };
+        let offers: Vec<ActionConfig> = self
+            .placement(project)
+            .and_then(Placement::manifest)
+            .map(|manifest| {
+                manifest
+                    .offers
+                    .iter()
+                    .map(crate::manifest::Offer::action)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let configured: Vec<ActionConfig> = self
+            .actions
+            .iter()
+            .chain(
+                self.project_actions
+                    .get(project)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default(),
+            )
+            .cloned()
+            .collect();
+        let mut entries = crate::api::offers::merge(vec![
+            from(runtime::workflow::Source::Runtime),
+            [offers, from(runtime::workflow::Source::Project)].concat(),
+            [configured, from(runtime::workflow::Source::Person)].concat(),
+        ]);
+        entries.retain(|entry| entry.workflow.is_some());
+        entries
+    }
+
+    /// The workflow entries offered on one matter, in that same order
+    /// (§FS-005-dispatch.19) — the selector, in the language every other
+    /// entry is selected by.
+    pub fn workflow_offers(&mut self, item: &Item) -> Vec<ActionConfig> {
+        let facts = self.facts(item);
+        let mut entries = self.workflow_actions(&item.project);
+        entries.retain(|entry| entry.matches(item, &facts));
+        entries
+    }
+
+    /// The ids of this project's workflow entries that asked to run
+    /// themselves (§FS-005-dispatch.28). What the due sweep matches a laid
+    /// plan's laying entry against: silence is the key, so an id that is not
+    /// here is nobody's to start.
+    pub fn autorun_workflows(&mut self, project: &str) -> BTreeSet<String> {
+        self.workflow_actions(project)
+            .into_iter()
+            .filter(|entry| entry.workflow.as_ref().is_some_and(|ask| ask.autorun))
+            .map(|entry| entry.id)
+            .collect()
+    }
+
+    /// Everything one workflow entry would write, with nothing written yet
     /// (§FS-005-dispatch.19): which workflow, every input answered and where
     /// its answer came from, and the plan it would lay down. A refusal here
     /// leaves nothing behind, which is the point of resolving before writing.
@@ -1744,16 +1830,8 @@ impl Dispatcher {
     /// the board where every other operation is run
     /// ([§FS-005-dispatch.7](crate)).
     pub fn lay(&mut self, item: &Item, laying: &Laying, dry_run: bool) -> Result<Laid> {
-        if !laying.answered.refusals.is_empty() {
-            return Err(EphorError::Command(laying.answered.refusals.join("; ")));
-        }
-        if !laying.answered.missing.is_empty() {
-            return Err(EphorError::Command(format!(
-                "'{}' cannot be laid down: nothing answers {}. Answer them with --set \
-                 <input>=<value>, or say them in the entry.",
-                laying.entry,
-                laying.answered.missing.join(", ")
-            )));
+        if let Some(why) = laying.refusal() {
+            return Err(EphorError::Command(why));
         }
         // A run asked what it would do makes nothing at all. Where the
         // workspace itself is not there yet, that has to include the work root
@@ -2068,26 +2146,58 @@ impl Dispatcher {
     /// its live counts from this same snapshot, so discovery cannot disagree
     /// with capacity accounting halfway through a sweep
     /// (§FS-005-dispatch.24).
-    fn due_in(&self, roots: &[runtime::watch::RootPlans], now: DateTime<Utc>) -> Vec<Due> {
+    fn due_in(&mut self, roots: &[runtime::watch::RootPlans], now: DateTime<Utc>) -> Vec<Due> {
+        let projects: BTreeSet<String> = roots
+            .iter()
+            .flat_map(|group| group.plans.iter().map(|plan| plan.project.clone()))
+            .collect();
         // Which recipes asked to run themselves, per project. Resolved once
         // per project: the tables behind it are the same for every root of
         // one of them.
-        let autoruns: BTreeMap<String, BTreeSet<String>> = roots
+        let autoruns: BTreeMap<String, BTreeSet<String>> = projects
             .iter()
-            .flat_map(|group| group.plans.iter().map(|plan| plan.project.clone()))
-            .collect::<BTreeSet<String>>()
-            .into_iter()
             .map(|project| {
                 let asked = self
-                    .recipes(&project)
+                    .recipes(project)
                     .into_iter()
                     .filter(|recipe| recipe.autorun)
                     .map(|recipe| recipe.id)
                     .collect();
+                (project.clone(), asked)
+            })
+            .collect();
+        // And which workflow entries did (§FS-005-dispatch.28). Only for a
+        // project whose record holds a laying: one of the three homes is
+        // beside the workflow itself, so resolving this asks the runtime what
+        // it offers — a summons per project, and a sweep on a site that has
+        // never laid a workflow has no laid plan for an entry to answer for.
+        let laying: BTreeSet<&str> = self
+            .ledger
+            .entries
+            .values()
+            .filter(|entry| entry.dispatches.iter().any(Dispatch::is_workflow))
+            .map(|entry| entry.project.as_str())
+            .collect();
+        let asking: Vec<String> = projects
+            .iter()
+            .filter(|project| laying.contains(project.as_str()))
+            .cloned()
+            .collect();
+        let workflow_autoruns: BTreeMap<String, BTreeSet<String>> = asking
+            .into_iter()
+            .map(|project| {
+                let asked = self.autorun_workflows(&project);
                 (project, asked)
             })
             .collect();
-        let mut due = due_among(&self.global, roots, &autoruns, &self.ledger, now);
+        let mut due = due_among(
+            &self.global,
+            roots,
+            &autoruns,
+            &workflow_autoruns,
+            &self.ledger,
+            now,
+        );
         if let Some(path) = self.global.ranking.as_deref() {
             let reading = ranking::read(&crate::paths::resolve_path(path));
             due = rank_due(due, &reading.order);
@@ -2104,6 +2214,7 @@ pub fn due_among(
     global: &WorkConfig,
     roots: &[runtime::watch::RootPlans],
     autoruns: &BTreeMap<String, BTreeSet<String>>,
+    workflow_autoruns: &BTreeMap<String, BTreeSet<String>>,
     ledger: &Ledger,
     now: DateTime<Utc>,
 ) -> Vec<Due> {
@@ -2121,6 +2232,28 @@ pub fn due_among(
             })
         })
         .collect();
+    // And which entry laid each plan a workflow wrote (§FS-005-dispatch.28).
+    // The record is the only thing that knows: the plan is the runtime's and
+    // says nothing about who asked for it
+    // (§FS-005-dispatch.4). Keyed by the plan itself, because the ledger
+    // names the directory the runtime was pointed at and what landed inside
+    // it is the runtime's answer (§AR-007-runtime.1).
+    let laid_by: BTreeMap<PathBuf, String> = ledger
+        .entries
+        .values()
+        .flat_map(|entry| {
+            entry
+                .dispatches
+                .iter()
+                .filter(|dispatch| dispatch.is_workflow())
+                .filter_map(move |dispatch| {
+                    let plan_id = dispatch.plan.as_deref()?;
+                    let found = runtime::workflow::laid(&entry.root.join(plan_id))?;
+                    Some((canonical(&found.path), dispatch.recipe.clone()))
+                })
+        })
+        .collect();
+    let nothing: BTreeSet<String> = BTreeSet::new();
     let mut due = Vec::new();
     for group in roots {
         // A root a run already holds is left alone: the live run reaches
@@ -2149,12 +2282,36 @@ pub fn due_among(
         let mut tickets: Vec<String> = Vec::new();
         let mut items: Vec<String> = Vec::new();
         for plan_ref in &group.plans {
-            let Some(asked) = autoruns.get(&plan_ref.project) else {
-                continue;
-            };
+            // Which entry laid this plan down, where a workflow did — and so
+            // which set of "asked to run itself" answers for what is inside
+            // it (§FS-005-dispatch.28). A plan the record knows nothing
+            // about asked for nothing, and is nobody's to start.
+            let laid = laid_by.get(&canonical(&plan_ref.path)).map(String::as_str);
+            let asked = match laid {
+                Some(_) => workflow_autoruns.get(&plan_ref.project),
+                None => autoruns.get(&plan_ref.project),
+            }
+            .unwrap_or(&nothing);
             if asked.is_empty() {
                 continue;
             }
+            // A plan a workflow laid down runs under the machine in force
+            // beside it, not the root's: a task's state means whatever the
+            // machine in force for its own store says it means
+            // (§FS-006-project-interface.7). With none to be read there,
+            // nothing in that plan can be judged runnable, and the honest
+            // move is to start nothing rather than to fall back on a machine
+            // that answers for other work (§FS-005-dispatch.15). The root's
+            // own answers for the plans the root holds directly, as it always
+            // did.
+            let own = match laid {
+                Some(_) => match plan_ref.path.parent().map(WorkRoot::in_force) {
+                    Some(Ok(root)) => Some(root),
+                    _ => continue,
+                },
+                None => None,
+            };
+            let judge = own.as_ref().unwrap_or(&machine);
             let Ok(Some(plan)) = Plan::read(&plan_ref.path) else {
                 continue;
             };
@@ -2163,22 +2320,28 @@ pub fn due_among(
                 // Over, waiting on a person, or somebody's to move: none
                 // of them is work a run would advance
                 // (§FS-005-dispatch.24, §FS-005-dispatch.15).
-                if state.map(|state| machine.is_final(state)).unwrap_or(true)
-                    || state.map(|state| machine.is_gating(state)).unwrap_or(false)
+                if state.map(|state| judge.is_final(state)).unwrap_or(true)
+                    || state.map(|state| judge.is_gating(state)).unwrap_or(false)
                     || ticket.assignee.is_some()
                 {
                     continue;
                 }
-                // The ledger says which recipe ephor wrote a ticket from;
-                // for one a hand appended, the id says it, because ids
-                // are `<recipe>-<n>` by construction. Either way the
-                // recipe is a fact about the ticket
+                // What asked for this work. For a plan a workflow laid down
+                // it is the entry that laid it, and it answers for every
+                // task in the plan — the tasks are the workflow's, not
+                // ephor's, and no id of theirs names a recipe
+                // (§FS-005-dispatch.28). Otherwise the ledger says which
+                // recipe ephor wrote a ticket from; for one a hand appended,
+                // the id says it, because ids are `<recipe>-<n>` by
+                // construction. Either way it is a fact about the ticket
                 // (§FS-005-dispatch.24).
-                let recipe = dispatched
-                    .get(&(group.root.clone(), ticket.id.clone()))
-                    .map(String::as_str)
-                    .or_else(|| recipe_of_ticket(&ticket.id));
-                if !recipe.is_some_and(|recipe| asked.contains(recipe)) {
+                let asked_for = laid.or_else(|| {
+                    dispatched
+                        .get(&(group.root.clone(), ticket.id.clone()))
+                        .map(String::as_str)
+                        .or_else(|| recipe_of_ticket(&ticket.id))
+                });
+                if !asked_for.is_some_and(|what| asked.contains(what)) {
                     continue;
                 }
                 if !plans.contains(&plan_ref.plan_id) {
@@ -2655,6 +2818,14 @@ fn root_key(root: &std::path::Path) -> String {
     root.to_string_lossy().into_owned()
 }
 
+/// One path, resolved to the file it names — the spelling a caller happened
+/// to use is not the identity of a directory or a plan. A path that cannot
+/// be resolved is its own answer: something that is not there yet is still
+/// only equal to itself.
+fn canonical(path: &std::path::Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
 /// The checkout a work root belongs to, where nothing in the ledger says: the
 /// directory holding it, which is what a work root's own template renders
 /// under.
@@ -3003,8 +3174,7 @@ pub fn enumerate_roots(
     // spelling: a workspace template that symlinks back to the checkout
     // renders the same root under two names, and the runtime's lock is on
     // the directory, so two groups here would be one operation shown twice.
-    let canon =
-        |path: &std::path::Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let canon = canonical;
     let mut groups: BTreeMap<PathBuf, RootPlans> = BTreeMap::new();
     for (item_id, entry) in &ledger.entries {
         let root = canon(&entry.root);
@@ -3234,7 +3404,26 @@ impl Laying {
 
     /// Whether this can be laid down as it stands.
     pub fn ready(&self) -> bool {
-        self.answered.missing.is_empty() && self.answered.refusals.is_empty()
+        self.refusal().is_none()
+    }
+
+    /// Why it cannot, where it cannot (§FS-005-dispatch.19). Asked before
+    /// anything is written — and asked on its own by a sweep's dry run,
+    /// which writes nothing at all and must still refuse everything the real
+    /// laying would (§FS-005-dispatch.28).
+    pub fn refusal(&self) -> Option<String> {
+        if !self.answered.refusals.is_empty() {
+            return Some(self.answered.refusals.join("; "));
+        }
+        if !self.answered.missing.is_empty() {
+            return Some(format!(
+                "'{}' cannot be laid down: nothing answers {}. Answer them with --set \
+                 <input>=<value>, or say them in the entry.",
+                self.entry,
+                self.answered.missing.join(", ")
+            ));
+        }
+        None
     }
 }
 
@@ -3975,6 +4164,12 @@ echo "Task $stem.$task transitioned: '$from' → '$to'"
         )])
     }
 
+    /// The same, for the workflow entries that asked to run themselves
+    /// (§FS-005-dispatch.28).
+    fn laying(entries: &[&str]) -> BTreeMap<String, BTreeSet<String>> {
+        asking(entries)
+    }
+
     /// A runner every machine has, so nothing here is refused for want of one.
     fn work_config() -> WorkConfig {
         WorkConfig {
@@ -4115,6 +4310,7 @@ echo "Task $stem.$task transitioned: '$from' → '$to'"
             &work_config(),
             &[shared, other],
             &asking(&["fix-gate"]),
+            &laying(&[]),
             &empty_ledger(),
             Utc::now(),
         );
@@ -4136,6 +4332,7 @@ echo "Task $stem.$task transitioned: '$from' → '$to'"
             &work_config(),
             std::slice::from_ref(&group),
             &asking(&["fix-gate"]),
+            &laying(&[]),
             &empty_ledger(),
             Utc::now(),
         );
@@ -4159,6 +4356,7 @@ echo "Task $stem.$task transitioned: '$from' → '$to'"
             &work_config(),
             std::slice::from_ref(&group),
             &asking(&["fix-gate"]),
+            &laying(&[]),
             &empty_ledger(),
             Utc::now(),
         )
@@ -4185,6 +4383,7 @@ echo "Task $stem.$task transitioned: '$from' → '$to'"
             &work_config(),
             std::slice::from_ref(&group),
             &asking(&["fix-gate"]),
+            &laying(&[]),
             &empty_ledger(),
             Utc::now(),
         )
@@ -4209,6 +4408,7 @@ echo "Task $stem.$task transitioned: '$from' → '$to'"
                 &work_config(),
                 std::slice::from_ref(&group),
                 &asking(&["fix-gate"]),
+                &laying(&[]),
                 &empty_ledger(),
                 Utc::now(),
             )
@@ -4236,6 +4436,7 @@ echo "Task $stem.$task transitioned: '$from' → '$to'"
                 &work_config(),
                 std::slice::from_ref(&group),
                 &asking(&["fix-gate"]),
+                &laying(&[]),
                 &empty_ledger(),
                 Utc::now(),
             )
@@ -4257,6 +4458,7 @@ echo "Task $stem.$task transitioned: '$from' → '$to'"
             &work_config(),
             std::slice::from_ref(&group),
             &asking(&["fix-gate"]),
+            &laying(&[]),
             &empty_ledger(),
             Utc::now(),
         )
@@ -4286,6 +4488,7 @@ echo "Task $stem.$task transitioned: '$from' → '$to'"
                 &work_config(),
                 std::slice::from_ref(&group),
                 &asking(&["fix-gate"]),
+                &laying(&[]),
                 ledger,
                 at,
             )
@@ -4320,6 +4523,7 @@ echo "Task $stem.$task transitioned: '$from' → '$to'"
             &work_config(),
             std::slice::from_ref(&group),
             &asking(&["fix-gate"]),
+            &laying(&[]),
             &empty_ledger(),
             Utc::now(),
         );
@@ -4371,6 +4575,7 @@ echo "Task $stem.$task transitioned: '$from' → '$to'"
                 &work_config(),
                 std::slice::from_ref(&group),
                 &asking(&["fix-gate"]),
+                &laying(&[]),
                 ledger,
                 Utc::now(),
             )
@@ -4419,6 +4624,7 @@ echo "Task $stem.$task transitioned: '$from' → '$to'"
                 &work_config(),
                 std::slice::from_ref(&group),
                 &asking(&["fix-gate"]),
+                &laying(&[]),
                 &ledger,
                 Utc::now(),
             )
@@ -4463,10 +4669,280 @@ echo "Task $stem.$task transitioned: '$from' → '$to'"
             &work_config(),
             std::slice::from_ref(&group),
             &asking(&["fix-gate"]),
+            &laying(&[]),
             &ledger,
             Utc::now(),
         )
         .is_empty());
+    }
+
+    /// A work root holding a plan a workflow laid down: the directory
+    /// workspace the runtime rendered — an index that names no task, a
+    /// machine of its own, and the tasks in files beside it — plus the
+    /// ledger's record of which entry laid it (§FS-005-dispatch.28).
+    ///
+    /// The plan's own machine deliberately disagrees with the root's: `open`
+    /// runs and `fix` is over here, where the root's `m` has neither — so a
+    /// judgment made against the wrong one cannot pass by accident.
+    fn laid_root(root: &Path, entry: &str, tasks: &[&str]) -> runtime::watch::RootPlans {
+        let group = due_root(root, &ticket_at("fix-gate-1", "done"));
+        let plan_id = format!("forge-widget-42-{entry}");
+        let dir = root.join(&plan_id);
+        fs::create_dir_all(dir.join("tasks")).unwrap();
+        fs::write(dir.join("index.rhei.md"), "# Rhei: fix it\n**States:** w\n").unwrap();
+        fs::write(
+            dir.join("states.yaml"),
+            concat!(
+                "name: w\n",
+                "states:\n",
+                "  open:\n    agent: x\n",
+                "  done:\n    agent: x\n",
+                "  asking:\n    gating: true\n",
+                "  fix:\n    final: true\n",
+            ),
+        )
+        .unwrap();
+        for (n, task) in tasks.iter().enumerate() {
+            fs::write(dir.join("tasks").join(format!("{n:02}-task.md")), task).unwrap();
+        }
+        runtime::watch::RootPlans {
+            root: group.root,
+            plans: vec![runtime::watch::PlanRef {
+                project: "widget".to_string(),
+                plan_id,
+                path: dir.join("index.rhei.md"),
+                item: Some("forge:widget/42".to_string()),
+                title: "Widen the retry window".to_string(),
+            }],
+        }
+    }
+
+    /// The ledger as it stands after one entry laid one workflow down
+    /// (§FS-005-dispatch.19).
+    fn laid_ledger(root: &Path, entry: &str) -> Ledger {
+        let mut ledger = empty_ledger();
+        ledger.entries.insert(
+            "forge:widget/42".to_string(),
+            Entry {
+                project: "widget".to_string(),
+                title: "t".to_string(),
+                url: None,
+                root: root.to_path_buf(),
+                checkout: root.parent().unwrap().to_path_buf(),
+                branch: None,
+                plan_id: "widget-42".to_string(),
+                plan: root.join("widget-42.rhei.md"),
+                dispatches: vec![ledger::Dispatch {
+                    ticket: String::new(),
+                    recipe: entry.to_string(),
+                    at: Utc::now(),
+                    plan: Some(format!("forge-widget-42-{entry}")),
+                    snapshot: Default::default(),
+                }],
+            },
+        );
+        ledger
+    }
+
+    /// A plan a workflow laid down is due exactly as a ticket is, and by the
+    /// same silence: the entry that laid it is what asked, its tasks live in
+    /// files beside its index, and only an entry that said `autorun` makes
+    /// the root due (§FS-005-dispatch.28).
+    #[test]
+    fn a_laid_workflows_tasks_make_its_root_due_when_the_entry_asked() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("panta");
+        let group = laid_root(&root, "fix-issue", &[&ticket_at("ticket", "open")]);
+        let ledger = laid_ledger(&root, "fix-issue");
+        let sweep = |workflows: BTreeMap<String, BTreeSet<String>>| {
+            due_among(
+                &work_config(),
+                std::slice::from_ref(&group),
+                &asking(&[]),
+                &workflows,
+                &ledger,
+                Utc::now(),
+            )
+        };
+        let due = sweep(laying(&["fix-issue"]));
+        assert_eq!(due.len(), 1);
+        assert_eq!(due[0].root, root);
+        assert_eq!(due[0].plans, vec!["forge-widget-42-fix-issue".to_string()]);
+        assert_eq!(
+            due[0].tickets,
+            vec!["forge-widget-42-fix-issue.ticket".to_string()]
+        );
+        assert_eq!(due[0].item.as_deref(), Some("forge:widget/42"));
+
+        // Silence means the key: an entry that said nothing lays a plan
+        // nobody but the reader starts.
+        assert!(sweep(laying(&[])).is_empty());
+        // And the entry that laid it is the one that has to have asked —
+        // another entry asking says nothing about this plan.
+        assert!(sweep(laying(&["review-change"])).is_empty());
+    }
+
+    /// A task's state means whatever the machine in force for its own store
+    /// says it means (§FS-006-project-interface.7): the laid plan's own
+    /// `states.yaml` answers for its tasks, never the work root's
+    /// (§FS-005-dispatch.28).
+    #[test]
+    fn a_laid_workflows_tasks_are_judged_by_the_plans_own_machine() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("panta");
+        // `done` is final in the root's machine and ordinary work in the
+        // plan's own, so judging it by the root's would start nothing.
+        let group = laid_root(&root, "fix-issue", &[&ticket_at("ticket", "done")]);
+        let ledger = laid_ledger(&root, "fix-issue");
+        let sweep = || {
+            due_among(
+                &work_config(),
+                std::slice::from_ref(&group),
+                &asking(&[]),
+                &laying(&["fix-issue"]),
+                &ledger,
+                Utc::now(),
+            )
+        };
+        assert_eq!(sweep().len(), 1, "the plan's own machine says it is open");
+
+        // And the other way: `fix` runs under the root's machine and is over
+        // under the plan's, so nothing is due.
+        fs::write(
+            root.join("forge-widget-42-fix-issue/tasks/00-task.md"),
+            ticket_at("ticket", "fix"),
+        )
+        .unwrap();
+        assert!(sweep().is_empty(), "the plan's own machine says it is over");
+    }
+
+    /// What a run would not advance is not what makes a laid plan's root due
+    /// either: work that is over, work parked on a question, and work
+    /// somebody has claimed (§FS-005-dispatch.28, §FS-005-dispatch.24).
+    #[test]
+    fn finished_parked_and_claimed_tasks_of_a_laid_workflow_make_nothing_due() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("panta");
+        let group = laid_root(
+            &root,
+            "fix-issue",
+            &[
+                &ticket_at("over", "fix"),
+                &ticket_at("waiting", "asking"),
+                "### Task claimed: do it\n**State:** open\n**Assignee:** luna\n\nwork\n\n",
+            ],
+        );
+        let ledger = laid_ledger(&root, "fix-issue");
+        assert!(due_among(
+            &work_config(),
+            std::slice::from_ref(&group),
+            &asking(&[]),
+            &laying(&["fix-issue"]),
+            &ledger,
+            Utc::now(),
+        )
+        .is_empty());
+    }
+
+    /// The tasks are in the files beside the index, and nowhere else: an
+    /// index alone names no task, so a plan whose tasks cannot be read makes
+    /// nothing due rather than guessing (§FS-005-dispatch.28).
+    #[test]
+    fn a_laid_workflow_with_no_task_files_makes_nothing_due() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("panta");
+        let group = laid_root(&root, "fix-issue", &[]);
+        let ledger = laid_ledger(&root, "fix-issue");
+        assert!(due_among(
+            &work_config(),
+            std::slice::from_ref(&group),
+            &asking(&[]),
+            &laying(&["fix-issue"]),
+            &ledger,
+            Utc::now(),
+        )
+        .is_empty());
+    }
+
+    /// Finality and gating for a laid plan's tasks are its own machine's
+    /// words, and with none to be read there nothing is judged runnable
+    /// (§FS-005-dispatch.28, §FS-005-dispatch.15): the root's machine answers
+    /// for other work and must not stand in for it.
+    #[test]
+    fn a_laid_workflow_whose_machine_cannot_be_read_starts_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("panta");
+        let group = laid_root(&root, "fix-issue", &[&ticket_at("ticket", "open")]);
+        // A states document that names no machine: the root's own would call
+        // `open` runnable, and that answer is not this plan's.
+        fs::write(
+            root.join("forge-widget-42-fix-issue/states.yaml"),
+            "states:\n  open:\n",
+        )
+        .unwrap();
+        assert!(due_among(
+            &work_config(),
+            std::slice::from_ref(&group),
+            &asking(&[]),
+            &laying(&["fix-issue"]),
+            &laid_ledger(&root, "fix-issue"),
+            Utc::now(),
+        )
+        .is_empty());
+    }
+
+    /// A plan the record says nothing about asked for nothing
+    /// (§FS-005-dispatch.28): one a reader laid by hand, or one enumeration
+    /// simply found in the root, is the reader's to start — and its tasks
+    /// carry no recipe id for the ticket rule to fall back on either.
+    #[test]
+    fn a_plan_nothing_in_the_ledger_laid_is_nobodys_to_start() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("panta");
+        let group = laid_root(&root, "fix-issue", &[&ticket_at("ticket", "open")]);
+        assert!(due_among(
+            &work_config(),
+            std::slice::from_ref(&group),
+            &asking(&["fix-issue"]),
+            &laying(&["fix-issue"]),
+            &empty_ledger(),
+            Utc::now(),
+        )
+        .is_empty());
+    }
+
+    /// A root a workflow laid into flows through the same sweep as one a
+    /// recipe wrote: the ranking orders the two together, and capacity
+    /// counts them the same way (§FS-005-dispatch.28, §FS-005-dispatch.26).
+    #[test]
+    fn a_workflow_root_ranks_and_is_capped_beside_a_recipe_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let workflow_root = tmp.path().join("a-workflow/panta");
+        let workflow = laid_root(&workflow_root, "fix-issue", &[&ticket_at("ticket", "open")]);
+        let mut recipe = due_root(
+            &tmp.path().join("b-recipe/panta"),
+            &ticket_at("fix-gate-1", "collect"),
+        );
+        recipe.plans[0].item = Some("forge:widget/7".to_string());
+
+        let due = due_among(
+            &work_config(),
+            &[workflow, recipe],
+            &asking(&["fix-gate"]),
+            &laying(&["fix-issue"]),
+            &laid_ledger(&workflow_root, "fix-issue"),
+            Utc::now(),
+        );
+        assert_eq!(due.len(), 2, "both roots are due");
+        let ranked = rank_due(due, &["forge:widget/7".to_string()]);
+        assert_eq!(ranked[0].item.as_deref(), Some("forge:widget/7"));
+        assert_eq!(ranked[1].item.as_deref(), Some("forge:widget/42"));
+        // And the ceiling reaches the workflow root exactly as it reaches the
+        // other one: one aggregate slot, taken by whichever ranks first.
+        let mut capacity = Capacity::new(Some(1), BTreeMap::new(), LiveRuns::default());
+        assert!(capacity.refusal(&ranked[0].projects).is_none());
+        capacity.started(&ranked[0].projects, true);
+        assert!(capacity.refusal(&ranked[1].projects).is_some());
     }
 
     /// The back-off's own arithmetic: it doubles, and it stops growing

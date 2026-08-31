@@ -404,6 +404,12 @@ fn dispatch_work(config: &StatusConfig, args: &crate::cli::WorkDispatchArgs) -> 
     let now = Utc::now();
     let mut opened = 0usize;
     let mut refused = 0usize;
+    // Plans a workflow entry that asked to run itself laid down, where no
+    // recipe covered the matter (§FS-005-dispatch.28). Counted apart from
+    // the tickets because a plan of its own is not a ticket
+    // (§FS-005-dispatch.3) — and counted against `--limit` beside them,
+    // because both are the sweep handing work over (§FS-005-dispatch.26).
+    let mut laid = 0usize;
     // What each item came to, kept as it goes so the machine form is the same
     // sweep the prose describes (§FS-011-command-line.7).
     let mut landed: Vec<serde_json::Value> = Vec::new();
@@ -417,7 +423,7 @@ fn dispatch_work(config: &StatusConfig, args: &crate::cli::WorkDispatchArgs) -> 
         // already-open ticket steps over (§FS-005-dispatch.26). `--item`
         // names one matter, not the sweep the bound bounds, so it is exempt
         // exactly as `--updated-within` already is below.
-        if args.limit.is_some_and(|limit| opened >= limit) && args.item.is_none() {
+        if args.limit.is_some_and(|limit| opened + laid >= limit) && args.item.is_none() {
             break;
         }
         if let Some(id) = &args.item {
@@ -445,7 +451,26 @@ fn dispatch_work(config: &StatusConfig, args: &crate::cli::WorkDispatchArgs) -> 
             // and one item wants one piece of work.
             None => offers.first().cloned(),
         };
+        let has_work = dispatcher.ledger.entries.contains_key(&item.id);
         let Some(recipe) = recipe else {
+            // No recipe covers this matter. A workflow entry that asked to
+            // run itself lays its plan down instead — and only where nothing
+            // is under way about the matter already, because a second plan
+            // about one matter is `ephor work lay`'s to be asked for
+            // (§FS-005-dispatch.28). Naming a recipe asked for that recipe
+            // and not for this.
+            if args.recipe.is_none() && !has_work {
+                lay_autorun(
+                    &mut dispatcher,
+                    item,
+                    picked.as_ref(),
+                    args,
+                    &style,
+                    &mut laid,
+                    &mut refused,
+                    &mut landed,
+                );
+            }
             continue;
         };
         // A sweep leaves work already under way alone — `sync` is what reopens
@@ -462,7 +487,6 @@ fn dispatch_work(config: &StatusConfig, args: &crate::cli::WorkDispatchArgs) -> 
                     .any(|dispatch| dispatch.recipe == recipe.id)
             })
             .unwrap_or(false);
-        let has_work = dispatcher.ledger.entries.contains_key(&item.id);
         if !args.again && (already || (has_work && args.recipe.is_none())) {
             if asked_for_one {
                 // The same fact in both forms, never one of them
@@ -579,6 +603,7 @@ fn dispatch_work(config: &StatusConfig, args: &crate::cli::WorkDispatchArgs) -> 
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
                 "opened": opened,
+                "laid": laid,
                 "settled": settled,
                 "refused": refused,
                 "dry_run": args.dry_run,
@@ -587,17 +612,28 @@ fn dispatch_work(config: &StatusConfig, args: &crate::cli::WorkDispatchArgs) -> 
             }))
             .unwrap_or_else(|_| "null".to_string())
         );
-        if asked_for_one && opened == 0 && settled == 0 {
+        if asked_for_one && opened == 0 && settled == 0 && laid == 0 {
             return Ok(ExitCode::from(1));
         }
         return Ok(ExitCode::SUCCESS);
     }
     println!(
-        "\n{opened} ticket(s){}{}{}",
+        "\n{opened} ticket(s){}{}{}{}",
         if args.dry_run {
             " would be opened"
         } else {
             " opened"
+        },
+        if laid > 0 {
+            format!(
+                ", {laid} plan(s) {}",
+                match args.dry_run {
+                    true => "would be laid down",
+                    false => "laid down",
+                }
+            )
+        } else {
+            String::new()
         },
         if settled > 0 {
             format!(", {settled} item(s) finished without one")
@@ -613,11 +649,117 @@ fn dispatch_work(config: &StatusConfig, args: &crate::cli::WorkDispatchArgs) -> 
     // Asking for exactly one item and being refused is a failure; a sweep that
     // steps over what it cannot reach is not. An item the deterministic move
     // finished is not a refusal — it is the work being over
-    // (§FS-005-dispatch.12).
-    if asked_for_one && opened == 0 && settled == 0 {
+    // (§FS-005-dispatch.12) — and a workflow laid down about it is the work
+    // being handed over (§FS-005-dispatch.28).
+    if asked_for_one && opened == 0 && settled == 0 && laid == 0 {
         return Ok(ExitCode::from(1));
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Lay the first workflow entry that both applies to this matter and asked to
+/// run itself, where one does (§FS-005-dispatch.28).
+///
+/// Reported exactly as a dispatch is: what landed in prose and in the
+/// reading's rows alike, and a refusal — an input nobody answered, a hand a
+/// narrowing will not permit, a branch that is not checked out — named with
+/// nothing written and the sweep going on to the next matter
+/// (§FS-005-dispatch.19, §REQ-002-parity.3).
+#[allow(clippy::too_many_arguments)]
+fn lay_autorun(
+    dispatcher: &mut Dispatcher,
+    item: &Item,
+    picked: Option<&crate::work::recipe::HandPin>,
+    args: &crate::cli::WorkDispatchArgs,
+    style: &Style,
+    laid: &mut usize,
+    refused: &mut usize,
+    landed: &mut Vec<serde_json::Value>,
+) {
+    let Some(entry) = dispatcher
+        .workflow_offers(item)
+        .into_iter()
+        .find(|entry| entry.workflow.as_ref().is_some_and(|ask| ask.autorun))
+    else {
+        return;
+    };
+    match laying_for(dispatcher, item, &entry, picked, args.dry_run) {
+        Ok(landing) => {
+            *laid += 1;
+            landed.push(serde_json::json!({
+                "item": item.id,
+                "title": item.title,
+                "entry": entry.id,
+                "workflow": landing.workflow,
+                "outcome": if args.dry_run { "would-lay" } else { "laid" },
+                "plan": landing.plan,
+                "says": landing.says,
+            }));
+            if !args.json {
+                println!(
+                    "{} {}\n  {}",
+                    if args.dry_run { "would lay" } else { "laid" },
+                    title(&item.title),
+                    style.dim(&landing.says)
+                );
+            }
+        }
+        Err(err) => {
+            *refused += 1;
+            landed.push(serde_json::json!({
+                "item": item.id,
+                "title": item.title,
+                "entry": entry.id,
+                "outcome": "refused",
+                "says": err.to_string(),
+            }));
+            eprintln!("note: {}: {err}", item.id);
+        }
+    }
+}
+
+/// What one laying came to, in the words both forms of the reading use.
+struct Landing {
+    workflow: String,
+    plan: std::path::PathBuf,
+    says: String,
+}
+
+/// Resolve one entry about one matter, and write it unless this is a dry run
+/// (§FS-005-dispatch.28). A dry run resolves everything — every input, the
+/// hand, the workspace — and writes nothing at all, which is what
+/// [§FS-005-dispatch.26](crate) promises of a sweep asked what it would do:
+/// the files a real laying puts beside the plan are a real laying's.
+fn laying_for(
+    dispatcher: &mut Dispatcher,
+    item: &Item,
+    entry: &crate::feed::config::ActionConfig,
+    picked: Option<&crate::work::recipe::HandPin>,
+    dry_run: bool,
+) -> Result<Landing> {
+    let laying = dispatcher.laying(item, entry, &BTreeMap::new(), picked)?;
+    let workflow = laying.workflow.id.clone();
+    let plan = laying.root().join(&laying.plan_id);
+    if dry_run {
+        if let Some(why) = laying.refusal() {
+            return Err(EphorError::Command(why));
+        }
+        return Ok(Landing {
+            says: format!(
+                "would lay {workflow} down as {} in {}",
+                laying.plan_id,
+                laying.root().display()
+            ),
+            workflow,
+            plan,
+        });
+    }
+    let done = dispatcher.lay(item, &laying, false)?;
+    Ok(Landing {
+        says: done.outcome.describe(),
+        workflow,
+        plan,
+    })
 }
 
 /// `ephor work ask` — one item, whatever the reader wants done to it

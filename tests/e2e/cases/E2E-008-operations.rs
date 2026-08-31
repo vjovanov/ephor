@@ -542,13 +542,13 @@ fn a_parked_subtask_keeps_its_row_on_an_idle_root() {
     assert_eq!(op.tickets[0].doing, Doing::Waiting);
 }
 
-/// A run holding a ticket the plan floor cannot see still shows as running:
-/// a directory workspace keeps its tasks in `tasks/*.md`, which the floor's
-/// single-file read never opens — the runner's own listing names every task
-/// wherever it lives, and the journal says which one the run holds
+/// A plan rendered as a directory keeps its tasks in `tasks/*.md`, and they
+/// are as much that plan's tasks as one written into its index
+/// (§FS-005-dispatch.28) — so the floor reads them, and a run holding one
+/// shows as running like any other, the journal naming which one it holds
 /// (§FS-005-dispatch.15).
 #[test]
-fn a_ticket_the_floor_cannot_see_shows_through_the_listing() {
+fn a_directory_workspaces_tasks_are_on_the_floor_and_a_run_holding_one_shows() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("work");
     write(
@@ -560,8 +560,8 @@ fn a_ticket_the_floor_cannot_see_shows_through_the_listing() {
             "  done:\n    final: true\n",
         ),
     );
-    // The workspace shape: an index the floor reads and finds no tickets in,
-    // and a task file only the runtime's own reading reaches.
+    // The workspace shape: an index that names no task, and the task in a
+    // file beside it, which is where this plan's tasks live.
     write(
         &root.join("widget-42/index.rhei.md"),
         "# Rhei: acme/widget#42\n**States:** m\n",
@@ -590,9 +590,16 @@ fn a_ticket_the_floor_cannot_see_shows_through_the_listing() {
         r#"[{"id":"widget-42.fix-gate-1","state":"fix"}]"#,
     );
 
-    // The floor alone sees nothing in the index.
+    // The floor reads the plan whole: the index names no task, and the task
+    // file beside it names the one there is.
     let plan = Plan::read(&group.plans[0].path).unwrap().unwrap();
-    assert!(plan.tickets().is_empty());
+    assert_eq!(
+        plan.tickets()
+            .iter()
+            .map(|ticket| ticket.id.as_str())
+            .collect::<Vec<_>>(),
+        ["fix-gate-1"]
+    );
 
     let board = watch::board(&bound, std::slice::from_ref(&group));
     let op = &board.operations[0];
