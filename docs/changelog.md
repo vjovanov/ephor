@@ -39,7 +39,7 @@ ships, the previous "latest" section moves verbatim to
   while retaining project ceilings. Existing live roots consume capacity,
   failed or already-finished launches leave room for the next ranked root,
   and eligible roots omitted only because capacity is full are reported as
-  non-failing `passed-over` outcomes in prose and JSON. (PR #TBD)
+  non-failing `passed-over` outcomes in prose and JSON. (PR #25)
 
 - **Dispatch reads an ordering already made, and a limit bounds what runs**
   ([§FS-005-dispatch.26](../requirements.md#26-an-ordering-already-made-can-be-read-and-a-limit-bounds-what-runs),
