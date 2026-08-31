@@ -58,7 +58,7 @@ ships, the previous "latest" section moves verbatim to
   reservation, ranking, failed-start back-off and the branch guard applying
   exactly as they do to a root a recipe wrote. Recipes keep their priority, and an entry that says
   nothing behaves exactly as before: a menu row, laid by you and started by
-  you. (PR #N)
+  you. (PR #28)
 
 - **Autorun sweeps can cap live work globally and per project**
   ([§FS-005-dispatch.24](../requirements.md#24-work-nobody-has-to-start-starts-itself)).
