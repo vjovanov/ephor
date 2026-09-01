@@ -1801,6 +1801,8 @@ impl Dispatcher {
                 ),
             })
         })?;
+        crate::work::workflow::validate_file_values(&workflow, file_values)
+            .map_err(EphorError::Command)?;
         let site = self.site_for(item, entry.requires_checkout, entry.branch.as_deref())?;
         // Where the plan goes: named after the matter and the entry, and
         // named apart from what an earlier run of the same entry left, since
@@ -1937,6 +1939,32 @@ impl Dispatcher {
         if let Some(why) = laying.refusal() {
             return Err(EphorError::Command(why));
         }
+        if laying.preflight_runtime && (!dry_run || laying.site.mint.is_some()) {
+            // Values-file inputs are validated against the binding before a
+            // real destination is created or a missing-workspace dry run
+            // promises one. Staged carried files keep both paths atomic
+            // (§FS-005-dispatch.19).
+            let destination = carried(&laying.site.dir, &laying.plan_id);
+            let staged = StagedWorkflow::new(
+                &laying.answered.values,
+                &destination,
+                &format!("# {}\n\n{}", item.title, laying.site.dossier),
+                &identifiers(&laying.site.metadata),
+            )?;
+            let runtime_at = match laying.site.checkout.workspace.is_dir() {
+                true => &laying.site.checkout.workspace,
+                false => &laying.site.runtime_root,
+            };
+            runtime::workflow::lay(
+                &self.global,
+                runtime_at,
+                &laying.workflow,
+                &staged.values,
+                &laying.output,
+                true,
+            )
+            .map_err(|err| staged.restore_destination_error(err, &destination))?;
+        }
         // A run asked what it would do makes nothing at all. Where the
         // workspace itself is not there yet, that has to include the work root
         // and the files the runtime would be shown: they have nowhere to go
@@ -1964,32 +1992,6 @@ impl Dispatcher {
         let states = self.states_yaml(&item.project)?;
         let values_json = serde_json::to_string_pretty(&laying.answered.values)
             .unwrap_or_else(|_| "{}".to_string());
-        if laying.preflight_runtime && !dry_run {
-            // A values-file laying is validated against the binding before
-            // ephor creates its destination. The staged paths have equivalent
-            // carried files, so a runtime refusal cannot leave a partial work
-            // root behind (§FS-005-dispatch.19).
-            let destination = carried(&laying.site.dir, &laying.plan_id);
-            let staged = StagedWorkflow::new(
-                &laying.answered.values,
-                &destination,
-                &format!("# {}\n\n{}", item.title, laying.site.dossier),
-                &identifiers(&laying.site.metadata),
-            )?;
-            let runtime_at = match laying.site.checkout.workspace.is_dir() {
-                true => &laying.site.checkout.workspace,
-                false => &laying.site.runtime_root,
-            };
-            runtime::workflow::lay(
-                &self.global,
-                runtime_at,
-                &laying.workflow,
-                &staged.values,
-                &laying.output,
-                true,
-            )
-            .map_err(|err| staged.restore_destination_error(err, &destination))?;
-        }
         if dry_run {
             // The runtime validates the resolved inputs even when it is only
             // reporting what it would render. Its values and carried files
