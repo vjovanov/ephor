@@ -972,9 +972,12 @@ replacement, an issue with no branch on a project that has
 `branch_root_template` is dispatched inside the deterministically minted
 `fix/issue-<number>` workspace; on a project without branch workspaces it is
 refused by name with the configuration needed to proceed. An issue or pull
-request that already has a forge or registry branch keeps that branch, and a
-configured recipe named `implement` replaces this default with its own branch
-semantics.
+request that already has a forge branch, or a registry branch of its own —
+never the project's configured main branch, which is the trunk every
+workspace is grown from and not a matter's own
+([§25](#25-work-about-a-matter-with-no-branch-can-mint-the-branch-it-needs))
+— keeps that branch, and a configured recipe named `implement` replaces this
+default with its own branch semantics.
 
 **A recipe is an action.** The recipes and the quick actions are one menu, not
 two lists behind two keys: *what can I do about this row* has one answer, and
@@ -2455,13 +2458,20 @@ inside the making, by which time the directories leading to the workspace are
 there, so a template git will not take is held to that before anything is
 made.
 
-**The matter's own branch always wins.** A pull request keeps the branch the
-forge recorded and a matter the registry placed keeps the branch it matched;
-the template applies only where the matter has no branch at all. Rendering it
-*is* the resolution, and nothing is written down: a second dispatch about the
-same matter renders the same name, resolves the same workspace, and lands
-beside the first, and a workspace that is already on disk is worked in as it
-stands.
+**The matter's own branch always wins — but the project's main branch is
+never a matter's own.** A pull request keeps the branch the forge recorded
+and a matter the registry placed keeps the branch it matched; the template
+applies only where the matter has no branch at all. The project's configured
+`main_branch` is the trunk every workspace is grown from, not a branch any
+issue or pull request owns, so a registry match to it counts as no branch
+here: the template mints exactly as it would for a matter matched to
+nothing, and the refusal below fires the same way where none applies. A
+forge-recorded branch that happens to equal `main_branch` is the forge's own
+fact and keeps winning — only the registry-matched arm is carved out.
+Rendering it *is* the resolution, and nothing is written down: a second
+dispatch about the same matter renders the same name, resolves the same
+workspace, and lands beside the first, and a workspace that is already on
+disk is worked in as it stands.
 
 **Saying it means the work needs the checkout.** An entry carrying a `branch`
 is work about a change and belongs inside that change's own workspace;
@@ -2537,6 +2547,13 @@ which [§6](#6-dispatch-is-offered-where-it-would-work-and-refuses-where-it-woul
 does not allow and the menu has always blocked. This is the two surfaces coming
 to agree ([§REQ-002-parity.2](docs/requirements/REQ-002-parity.md#2-parity-runs-both-ways)), and it is the one thing here that changes for a
 configuration written before it.
+
+**The same refusal covers a matter matched only to the main branch.** Since
+that match counts as no branch above, work that edits the change is refused
+exactly as it is for a matter truly unmatched — but the refusal names the
+main branch it declined rather than calling the matter's branch unknown, so
+the reader is told what was passed over rather than only that nothing was
+found.
 
 ### 26. An ordering already made can be read, and a limit bounds what runs
 
