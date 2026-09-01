@@ -1916,7 +1916,9 @@ impl Dispatcher {
                 &staged.values,
                 &laying.output,
                 true,
-            )?;
+            )
+            .map(|report| staged.restore_destination_paths(&report, &destination))
+            .map_err(|err| staged.restore_destination_error(err, &destination))?;
             return Ok(Laid {
                 outcome: Outcome::Laid {
                     plan: laying.output.clone(),
@@ -3577,6 +3579,36 @@ impl StagedWorkflow {
             "Cannot make a temporary place for workflow values in {}",
             base.display()
         )))
+    }
+
+    /// Runtime validation reads temporary files, but its account is public.
+    /// Restore only the three exact paths ephor substituted before returning
+    /// that account, so reports and refusals keep the destination semantics.
+    fn restore_destination_paths(&self, text: &str, destination: &std::path::Path) -> String {
+        [
+            (&self.values, destination.join(VALUES)),
+            (&self.dossier, destination.join(DOSSIER)),
+            (&self.item, destination.join(ITEM)),
+        ]
+        .into_iter()
+        .fold(text.to_string(), |text, (staged, destination)| {
+            text.replace(&for_shell(staged), &for_shell(&destination))
+        })
+    }
+
+    fn restore_destination_error(
+        &self,
+        error: EphorError,
+        destination: &std::path::Path,
+    ) -> EphorError {
+        match error {
+            EphorError::Registry(message) => {
+                EphorError::Registry(self.restore_destination_paths(&message, destination))
+            }
+            EphorError::Command(message) => {
+                EphorError::Command(self.restore_destination_paths(&message, destination))
+            }
+        }
     }
 }
 

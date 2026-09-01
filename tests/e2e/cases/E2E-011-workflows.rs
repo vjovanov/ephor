@@ -135,13 +135,17 @@ if [ "$verb" = instantiate ]; then
     if [ -n "$dry" ]; then
       printf '%s\n' "$values" >> "$STAGING_LOG"
       if [ "${REFUSE_STAGED:-}" = yes ]; then
-        echo "× carried files refused" >&2
+        echo "× carried files refused: values=$values dossier=$dossier_path item=$item_path" >&2
         exit 1
       fi
     fi
   fi
   if [ -n "$dry" ]; then
-    echo "would render $(basename "$ref") into $output"
+    if [ "$(basename "$ref")" = changeset-review ]; then
+      echo "would render $(basename "$ref") into $output values=$values dossier=$dossier_path item=$item_path"
+    else
+      echo "would render $(basename "$ref") into $output"
+    fi
     exit 0
   fi
   mkdir -p "$output/tasks"
@@ -249,6 +253,25 @@ fn assert_dry_run_left_destination_untouched(world: &World) {
     ] {
         assert!(!path.exists(), "dry run created {}", path.display());
     }
+}
+
+fn assert_destination_carried_paths(world: &World, text: &str) {
+    let carried = work_root(world).join(".ephor/acmeforge-app-101-review-change");
+    for (label, file) in [
+        ("values", "values.json"),
+        ("dossier", "dossier.md"),
+        ("item", "item.json"),
+    ] {
+        let expected = carried.join(file).to_string_lossy().replace('\\', "/");
+        assert!(
+            text.contains(&format!("{label}={expected}")),
+            "public runtime text does not name destination {label}: {text}"
+        );
+    }
+    assert!(
+        !text.contains("ephor-workflow-values-"),
+        "ephemeral paths escaped into public runtime text: {text}"
+    );
 }
 
 /// What the runtime offers is asked of the runtime, and what it says is what
@@ -399,6 +422,7 @@ fn a_workflow_is_laid_down_beside_the_matters_own_plan() {
         "{}",
         view["report"]
     );
+    assert_destination_carried_paths(&world, view["report"].as_str().expect("the runtime report"));
     for (input, file) in [("dossier_path", "dossier.md"), ("item_path", "item.json")] {
         let shown = view["answers"]
             .as_array()
@@ -418,7 +442,7 @@ fn a_workflow_is_laid_down_beside_the_matters_own_plan() {
         "ephemeral paths are not public answers"
     );
     assert_dry_run_left_destination_untouched(&world);
-    world
+    let prose_dry_run = world
         .ephor()
         .args([
             "work",
@@ -437,6 +461,10 @@ fn a_workflow_is_laid_down_beside_the_matters_own_plan() {
         .stdout(predicate::str::contains("claude-code[high]:anthropic:opus"))
         .stdout(predicate::str::contains("(the hand)"))
         .stdout(predicate::str::contains("would render changeset-review"));
+    assert_destination_carried_paths(
+        &world,
+        &String::from_utf8_lossy(&prose_dry_run.get_output().stdout),
+    );
     assert_dry_run_left_destination_untouched(&world);
 
     world
@@ -578,13 +606,17 @@ fn a_workflow_dry_run_stages_and_cleans_carried_files() {
     assert_staging_removed(&first[0]);
     assert_dry_run_left_destination_untouched(&world);
 
-    world
+    let refused = world
         .ephor()
         .env("REFUSE_STAGED", "yes")
         .args(dry_run)
         .assert()
         .failure()
         .stderr(predicate::str::contains("carried files refused"));
+    assert_destination_carried_paths(
+        &world,
+        &String::from_utf8_lossy(&refused.get_output().stderr),
+    );
     let all = staged_values(&world);
     assert_eq!(all.len(), 2, "runtime saw both staging sets: {all:?}");
     assert_ne!(first[0], all[1], "dry runs do not reuse a staging path");
