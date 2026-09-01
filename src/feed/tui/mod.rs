@@ -1135,7 +1135,7 @@ impl App {
 
     /// Lay one workflow down about one item (§FS-005-dispatch.19). What a
     /// key press does here is open the screen its inputs are answered on:
-    /// every input the workflow declares, with the answer the five steps
+    /// every input the workflow declares, with the answer the six steps
     /// reached and where it came from, and none of it written until the
     /// reader says so ([§FS-005-dispatch.7](crate)).
     fn lay_workflow(
@@ -1149,7 +1149,14 @@ impl App {
             self.message = "Work needs the registry, which could not be read".to_string();
             return Ok(());
         };
-        let laying = match dispatcher.laying(item, entry, &typed, picked.as_ref()) {
+        let laying = match dispatcher.laying(
+            item,
+            entry,
+            &typed,
+            &serde_json::Map::new(),
+            false,
+            picked.as_ref(),
+        ) {
             Ok(laying) => laying,
             Err(err) => {
                 self.message = err.to_string();
@@ -1206,7 +1213,14 @@ impl App {
         let typed = screen.typed.clone();
         let picked = screen.picked.clone();
         let dispatcher = self.ctx.dispatcher.as_mut()?;
-        match dispatcher.laying(&item, &entry, &typed, picked.as_ref()) {
+        match dispatcher.laying(
+            &item,
+            &entry,
+            &typed,
+            &serde_json::Map::new(),
+            false,
+            picked.as_ref(),
+        ) {
             Ok(laying) => Some(laying),
             Err(err) => {
                 self.message = err.to_string();

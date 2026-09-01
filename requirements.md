@@ -1923,13 +1923,27 @@ behind one entry that opens the list of them, where it is picked, answered, and
 run once. What was answered there can be kept as an entry, which is how a
 workflow becomes an action without anybody opening a configuration file first.
 
-**The inputs are answered in five steps**, each displacing the ones after it:
-what the reader answered for this instantiation alone; what the entry says;
-what ephor answers for an input about who does the work; the workflow's own
-default; and, where an input is required and still unanswered, the reader —
-asked, or refused by name where nobody is there to ask. The order is
+**The inputs are answered in six steps**, each displacing the ones after it:
+what the reader answered explicitly for this instantiation alone; what the
+reader supplied in the values files for this instantiation; what the entry
+says; what ephor answers for an input about who does the work; the workflow's
+own default; and, where an input is required and still unanswered, the reader
+— asked, or refused by name where nobody is there to ask. Explicit `--set`
+answers therefore displace values-file answers, and both displace the entry,
+hand, and workflow defaults. The order is
 [§14](#14-who-does-the-work-is-chosen-and-defaulted-per-project)'s, deliberately,
 so that one resolution order covers everything a dispatch has to settle.
+
+The command-line laying surface accepts repeatable `--values <file>` options.
+Each named file is a YAML or JSON mapping, read relative to the directory from
+which the command was invoked, and mappings are merged left to right: a later
+file replaces an earlier value for the same input. Arrays, records, numbers,
+and flags remain their structured types; they are not flattened into words.
+Values supplied this way are reader answers and appear as such in the human
+and JSON answer accounts, distinct from an explicit `--set` answer. A value
+for an input naming who does the work still resolves as a hand id through
+ephor's roster, narrowing, and permitted-hand checks; a values file never
+provides a way around that policy.
 
 What the entry says is data, not prose: a string is rendered with the item's
 fields where it names them, exactly as a brief is
@@ -2034,6 +2048,14 @@ it is, in the binding's own account of it beside ephor's own account of every
 input it answered and where the answer came from. A workflow that fails to be
 written leaves nothing behind, so the board is never given half of one to
 report on, and the refusal read back is the binding's own.
+
+**A values-file refusal leaves no partial laying.** A missing, unreadable,
+malformed, or non-mapping values file is reported before a plan or workspace
+is written. The same is true when the runtime rejects the effective values:
+ephor validates them before creating the destination and reports the runtime's
+refusal without leaving a partial workflow workspace. With no `--values`, the
+existing laying behavior is unchanged, including a dry run's guarantee that
+nothing is written.
 
 **What comes back is what the plan says, and no more.** A ticket ephor wrote
 carries the shape a verdict and a proposed answer are read out of

@@ -912,7 +912,7 @@
             "properties": {
               "input": { "type": "string" },
               "shown": { "type": "string", "description": "The value, as it would be shown. Empty where the input takes no printable one." },
-              "from": { "type": "string", "description": "Who answered it: the entry, the reader, the workflow's own default." }
+              "from": { "type": "string", "description": "Who answered it: you, a values file, the entry, the hand, or the workflow's own default." }
             }
           }
         },

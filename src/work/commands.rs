@@ -737,7 +737,14 @@ fn laying_for(
     picked: Option<&crate::work::recipe::HandPin>,
     dry_run: bool,
 ) -> Result<Landing> {
-    let laying = dispatcher.laying(item, entry, &BTreeMap::new(), picked)?;
+    let laying = dispatcher.laying(
+        item,
+        entry,
+        &BTreeMap::new(),
+        &serde_json::Map::new(),
+        false,
+        picked,
+    )?;
     let workflow = laying.workflow.id.clone();
     let plan = laying.root().join(&laying.plan_id);
     if dry_run {
@@ -987,7 +994,15 @@ fn lay_workflow(config: &StatusConfig, args: &crate::cli::WorkLayArgs) -> Result
         .transpose()
         .map_err(EphorError::Command)?;
     let entry = workflow_entry(&mut dispatcher, config, &item, &args.entry)?;
-    let laying = dispatcher.laying(&item, &entry, &typed, picked.as_ref())?;
+    let file_values = workflow_values(&args.values)?;
+    let laying = dispatcher.laying(
+        &item,
+        &entry,
+        &typed,
+        &file_values,
+        !args.values.is_empty(),
+        picked.as_ref(),
+    )?;
     let style = Style::detect();
     if !args.json {
         println!(
@@ -1071,6 +1086,59 @@ fn typed_inputs(set: &[String]) -> Result<std::collections::BTreeMap<String, Str
                 .ok_or_else(|| EphorError::Command(format!("'{pair}' is not <input>=<value>.")))
         })
         .collect()
+}
+
+/// Load the reader's workflow values in command-line order. The runtime's
+/// values-file format is a mapping, and keeping the JSON values intact here
+/// lets the answer account and the runtime see the same lists, records,
+/// numbers, and flags (§FS-005-dispatch.19).
+fn workflow_values(files: &[String]) -> Result<serde_json::Map<String, serde_json::Value>> {
+    let mut merged = serde_json::Map::new();
+    for name in files {
+        let path = workflow_values_path(name)?;
+        let text = std::fs::read_to_string(&path).map_err(|err| {
+            EphorError::Command(format!(
+                "Cannot read workflow values file '{}': {err}",
+                path.display()
+            ))
+        })?;
+        let yaml: serde_yaml::Value = serde_yaml::from_str(&text).map_err(|err| {
+            EphorError::Command(format!(
+                "Cannot parse workflow values file '{}': {err}",
+                path.display()
+            ))
+        })?;
+        let value = serde_json::to_value(yaml).map_err(|err| {
+            EphorError::Command(format!(
+                "Cannot read workflow values file '{}': {err}",
+                path.display()
+            ))
+        })?;
+        let serde_json::Value::Object(fields) = value else {
+            return Err(EphorError::Command(format!(
+                "Workflow values file '{}' must contain a mapping at its root.",
+                path.display()
+            )));
+        };
+        merged.extend(fields);
+    }
+    Ok(merged)
+}
+
+/// Resolve a values file relative to the directory where ephor was invoked,
+/// not the project's checkout or the process's later runtime directory.
+fn workflow_values_path(name: &str) -> Result<std::path::PathBuf> {
+    let path = std::path::PathBuf::from(crate::paths::expand_user_vars(name));
+    if path.is_absolute() {
+        return Ok(path);
+    }
+    std::env::current_dir()
+        .map(|dir| dir.join(path))
+        .map_err(|err| {
+            EphorError::Command(format!(
+                "Cannot resolve workflow values file '{name}': {err}"
+            ))
+        })
 }
 
 /// The entry named on the command line: one written beside a workflow, one

@@ -6,12 +6,13 @@
 //! entry names it, what its inputs are answered with, and where each answer
 //! came from, so a reader sees that before anything is written.
 //!
-//! Five steps per input, each displacing the ones after it: what the reader
-//! answered for this instantiation alone, what the entry says, what ephor
-//! answers for an input that names who does the work, the workflow's own
-//! default, and — where an input is required and still unanswered — the
-//! reader, asked or refused by name. The order is §FS-005-dispatch.14's,
-//! deliberately, so one resolution order covers everything a dispatch settles.
+//! Six steps per input, each displacing the ones after it: what the reader
+//! answered explicitly for this instantiation alone, what the reader supplied
+//! in values files, what the entry says, what ephor answers for an input that
+//! names who does the work, the workflow's own default, and — where an input
+//! is required and still unanswered — the reader, asked or refused by name.
+//! The order is §FS-005-dispatch.14's, deliberately, so one resolution order
+//! covers everything a dispatch settles.
 
 use std::collections::BTreeMap;
 
@@ -126,6 +127,8 @@ pub fn beside(workflow: &Workflow) -> Result<Option<ActionConfig>, String> {
 pub enum From {
     /// The reader, for this instantiation alone.
     Reader,
+    /// A values file the reader supplied for this instantiation alone.
+    Values,
     /// The entry that names the workflow.
     Entry,
     /// ephor's answer for an input that names who does the work
@@ -141,6 +144,7 @@ impl From {
     pub fn label(self) -> &'static str {
         match self {
             From::Reader => "you",
+            From::Values => "a values file",
             From::Entry => "the entry",
             From::Hand => "the hand",
             From::Default => "the workflow",
@@ -190,11 +194,12 @@ pub type Rendering<'a> = &'a dyn Fn(&str) -> Result<Option<String>, String>;
 
 /// Answer every input of `workflow` (§FS-005-dispatch.19).
 ///
-/// `typed` is what the reader said for this instantiation alone, by input
-/// name. `ask` is the entry. `values` are the matter's fields, for the
-/// placeholders a string answer may name. `hand` renders the hand this entry
-/// resolved to, and `named` renders one the entry named by id — both are the
-/// runtime's rendering, passed in because it lives in the adapter alone.
+/// `typed` is what the reader said explicitly for this instantiation alone, by
+/// input name. `file_values` are the merged values files the reader supplied.
+/// `ask` is the entry. `values` are the matter's fields, for the placeholders
+/// a string answer may name. `hand` renders the hand this entry resolved to,
+/// and `named` renders one the entry named by id — both are the runtime's
+/// rendering, passed in because it lives in the adapter alone.
 pub fn answer(
     workflow: &Workflow,
     ask: &WorkflowAsk,
@@ -203,16 +208,38 @@ pub fn answer(
     hand: Option<&str>,
     named: Rendering<'_>,
 ) -> Answered {
+    answer_with_values(
+        workflow,
+        ask,
+        typed,
+        &serde_json::Map::new(),
+        values,
+        hand,
+        named,
+    )
+}
+
+/// Answer every input, including values loaded from the reader's files.
+pub fn answer_with_values(
+    workflow: &Workflow,
+    ask: &WorkflowAsk,
+    typed: &BTreeMap<String, String>,
+    file_values: &serde_json::Map<String, Value>,
+    values: &BTreeMap<&'static str, String>,
+    hand: Option<&str>,
+    named: Rendering<'_>,
+) -> Answered {
     let mut out = Answered::default();
     for input in &workflow.inputs {
         let is_hand = input.hand || ask.hands.iter().any(|name| *name == input.name);
-        let (value, from) = match answer_one(input, is_hand, ask, typed, values, hand, named) {
-            Ok(answered) => answered,
-            Err(refusal) => {
-                out.refusals.push(refusal);
-                continue;
-            }
-        };
+        let (value, from) =
+            match answer_one(input, is_hand, ask, typed, file_values, values, hand, named) {
+                Ok(answered) => answered,
+                Err(refusal) => {
+                    out.refusals.push(refusal);
+                    continue;
+                }
+            };
         let shown = match &value {
             Some(value) => shown(value),
             None => match &input.default {
@@ -235,13 +262,14 @@ pub fn answer(
     out
 }
 
-/// One input's five steps.
+/// One input's six steps.
 #[allow(clippy::too_many_arguments)]
 fn answer_one(
     input: &Input,
     is_hand: bool,
     ask: &WorkflowAsk,
     typed: &BTreeMap<String, String>,
+    file_values: &serde_json::Map<String, Value>,
     values: &BTreeMap<&'static str, String>,
     hand: Option<&str>,
     named: Rendering<'_>,
@@ -260,14 +288,22 @@ fn answer_one(
             false => Ok((Some(said), From::Reader)),
         };
     }
-    // 2. What the entry says.
+    // 2. What the reader supplied in a values file. Explicit `--set` above
+    //    deliberately wins over this mapping.
+    if let Some(file_value) = file_values.get(&input.name) {
+        return match is_hand {
+            true => Ok((Some(hands(file_value, input, named)?), From::Values)),
+            false => Ok((Some(fill(file_value, values)), From::Values)),
+        };
+    }
+    // 3. What the entry says.
     if let Some(written) = ask.inputs.get(&input.name) {
         return match is_hand {
             true => Ok((Some(hands(written, input, named)?), From::Entry)),
             false => Ok((Some(fill(written, values)), From::Entry)),
         };
     }
-    // 3. ephor's answer for who does the work — the hand this entry resolved
+    // 4. ephor's answer for who does the work — the hand this entry resolved
     //    to, in the binding's own spelling.
     if is_hand {
         if let Some(hand) = hand {
@@ -281,11 +317,11 @@ fn answer_one(
             ));
         }
     }
-    // 4. The workflow's own default, left where it is.
+    // 5. The workflow's own default, left where it is.
     if input.default.is_some() || !input.required {
         return Ok((None, From::Default));
     }
-    // 5. Nobody.
+    // 6. Nobody.
     Ok((None, From::Nobody))
 }
 
@@ -493,6 +529,90 @@ mod tests {
             out.answer("change_ref").expect("answered").from,
             From::Reader
         );
+    }
+
+    /// Values files are reader answers below explicit `--set`, above the
+    /// entry, and retain their structured types while matter placeholders and
+    /// execution-target policy are still applied.
+    #[test]
+    fn values_files_are_structured_reader_answers_with_set_precedence() {
+        let flow = workflow(vec![
+            input("change_ref", Kind::Text, true, false),
+            input("review_focus", Kind::List, false, false),
+            input("settings", Kind::Record, false, false),
+            input("smart_target", Kind::Text, false, true),
+        ]);
+        let ask = WorkflowAsk {
+            name: flow.id.clone(),
+            inputs: BTreeMap::from([(
+                "change_ref".to_string(),
+                Value::String("entry-ref".to_string()),
+            )]),
+            hands: Vec::new(),
+            autorun: false,
+        };
+        let file_values = serde_json::Map::from_iter([
+            (
+                "change_ref".to_string(),
+                Value::String("file-ref".to_string()),
+            ),
+            (
+                "review_focus".to_string(),
+                serde_json::json!(["{repo}", {"field": "{number}"}]),
+            ),
+            (
+                "settings".to_string(),
+                serde_json::json!({"enabled": true, "limit": 3}),
+            ),
+            (
+                "smart_target".to_string(),
+                Value::String("luna".to_string()),
+            ),
+        ]);
+        let typed = BTreeMap::from([("change_ref".to_string(), "set-ref".to_string())]);
+        let out = answer_with_values(&flow, &ask, &typed, &file_values, &matter(), None, &roster);
+
+        assert_eq!(out.values["change_ref"], Value::String("set-ref".into()));
+        assert_eq!(out.answer("change_ref").unwrap().from, From::Reader);
+        assert_eq!(
+            out.values["review_focus"],
+            serde_json::json!(["acme/widget", {"field": "42"}])
+        );
+        assert_eq!(out.answer("review_focus").unwrap().from, From::Values);
+        assert_eq!(
+            out.values["settings"],
+            serde_json::json!({"enabled": true, "limit": 3})
+        );
+        assert_eq!(out.answer("settings").unwrap().from, From::Values);
+        assert_eq!(
+            out.values["smart_target"],
+            Value::String("claude-code[high]:anthropic:opus".into())
+        );
+        assert_eq!(out.answer("smart_target").unwrap().from, From::Values);
+    }
+
+    #[test]
+    fn a_values_file_cannot_bypass_execution_target_policy() {
+        let flow = workflow(vec![input("smart_target", Kind::Text, false, true)]);
+        let ask = WorkflowAsk {
+            name: flow.id.clone(),
+            ..WorkflowAsk::default()
+        };
+        let file_values = serde_json::Map::from_iter([(
+            "smart_target".to_string(),
+            Value::String("walled".to_string()),
+        )]);
+        let out = answer_with_values(
+            &flow,
+            &ask,
+            &BTreeMap::new(),
+            &file_values,
+            &matter(),
+            None,
+            &roster,
+        );
+        assert_eq!(out.values.get("smart_target"), None);
+        assert!(out.refusals[0].contains("not permitted"));
     }
 
     /// An input wanting several hands is answered with several, said on one

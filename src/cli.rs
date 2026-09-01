@@ -344,6 +344,11 @@ pub struct WorkLayArgs {
     #[arg(long = "set", value_name = "INPUT=VALUE")]
     pub set: Vec<String>,
 
+    /// Load workflow input values from a YAML or JSON mapping. Repeatable;
+    /// later files override earlier files, while `--set` wins over all files.
+    #[arg(long, value_name = "FILE")]
+    pub values: Vec<String>,
+
     /// Who does it, for this instantiation alone: a hand id from the roster,
     /// optionally at an effort (`<hand>[:<effort>]`).
     #[arg(long)]
@@ -1074,4 +1079,33 @@ pub struct ReplyArgs {
     /// before letting the move happen.
     #[arg(long)]
     pub json: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn work_lay_accepts_repeatable_values_files() {
+        let cli = Cli::try_parse_from([
+            "ephor",
+            "work",
+            "lay",
+            "review-change",
+            "--item",
+            "github:repo/1",
+            "--values",
+            "base.yaml",
+            "--values",
+            "local.json",
+        ])
+        .expect("the public command accepts values files");
+        let Command::Work(WorkArgs {
+            command: Some(WorkCommand::Lay(args)),
+        }) = cli.command
+        else {
+            panic!("expected work lay");
+        };
+        assert_eq!(args.values, ["base.yaml", "local.json"]);
+    }
 }

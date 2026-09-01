@@ -1758,6 +1758,8 @@ impl Dispatcher {
         item: &Item,
         entry: &ActionConfig,
         typed: &BTreeMap<String, String>,
+        file_values: &serde_json::Map<String, Value>,
+        values_file_supplied: bool,
         picked: Option<&recipe::HandPin>,
     ) -> Result<Laying> {
         let ask = entry.workflow.clone().ok_or_else(|| {
@@ -1813,11 +1815,12 @@ impl Dispatcher {
             self.note_once(note);
         }
         let hand = choice.pin().0;
-        let named = self.named_hands(item, entry, &ask, &workflow, typed, &site.dir);
-        let answered = crate::work::workflow::answer(
+        let named = self.named_hands(item, entry, &ask, &workflow, typed, file_values, &site.dir);
+        let answered = crate::work::workflow::answer_with_values(
             &workflow,
             &ask,
             typed,
+            file_values,
             &values,
             hand.as_deref(),
             &|name: &str| {
@@ -1833,6 +1836,7 @@ impl Dispatcher {
             answered,
             plan_id,
             output,
+            preflight_runtime: values_file_supplied,
             site,
         })
     }
@@ -1849,6 +1853,7 @@ impl Dispatcher {
         ask: &crate::feed::config::WorkflowAsk,
         workflow: &runtime::workflow::Workflow,
         typed: &BTreeMap<String, String>,
+        file_values: &serde_json::Map<String, Value>,
         root: &std::path::Path,
     ) -> BTreeMap<String, std::result::Result<Option<String>, String>> {
         let is_hand = |name: &str| {
@@ -1860,7 +1865,12 @@ impl Dispatcher {
         };
         let mut names: Vec<String> = Vec::new();
         for (input, value) in &ask.inputs {
-            if is_hand(input) {
+            if is_hand(input) && !typed.contains_key(input) && !file_values.contains_key(input) {
+                collect_names(value, &mut names);
+            }
+        }
+        for (input, value) in file_values {
+            if is_hand(input) && !typed.contains_key(input) {
                 collect_names(value, &mut names);
             }
         }
@@ -1941,6 +1951,28 @@ impl Dispatcher {
         let states = self.states_yaml(&item.project)?;
         let values_json = serde_json::to_string_pretty(&laying.answered.values)
             .unwrap_or_else(|_| "{}".to_string());
+        if laying.preflight_runtime && !dry_run {
+            // A values-file laying is validated against the binding before
+            // ephor creates its destination. The staged paths have equivalent
+            // carried files, so a runtime refusal cannot leave a partial work
+            // root behind (§FS-005-dispatch.19).
+            let destination = carried(&laying.site.dir, &laying.plan_id);
+            let staged = StagedWorkflow::new(
+                &laying.answered.values,
+                &destination,
+                &format!("# {}\n\n{}", item.title, laying.site.dossier),
+                &identifiers(&laying.site.metadata),
+            )?;
+            runtime::workflow::lay(
+                &self.global,
+                &laying.site.checkout.workspace,
+                &laying.workflow,
+                &staged.values,
+                &laying.output,
+                true,
+            )
+            .map_err(|err| staged.restore_destination_error(err, &destination))?;
+        }
         if dry_run {
             // The runtime validates the resolved inputs even when it is only
             // reporting what it would render. Its values and carried files
@@ -3501,6 +3533,9 @@ pub struct Laying {
     pub plan_id: String,
     /// Where it goes, under the item's own work root.
     pub output: PathBuf,
+    /// Values files require a runtime validation pass before destination
+    /// creation, so a rejected input cannot leave a partial workspace.
+    preflight_runtime: bool,
     site: Site,
 }
 
@@ -3526,7 +3561,7 @@ impl Laying {
         if !self.answered.missing.is_empty() {
             return Some(format!(
                 "'{}' cannot be laid down: nothing answers {}. Answer them with --set \
-                 <input>=<value>, or say them in the entry.",
+                 <input>=<value> or --values <file>, or say them in the entry.",
                 self.entry,
                 self.answered.missing.join(", ")
             ));

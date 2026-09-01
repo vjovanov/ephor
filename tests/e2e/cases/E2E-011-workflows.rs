@@ -84,6 +84,10 @@ if [ "$verb" = templates ]; then
         "type": "string", "required": false,
         "default": "someone-elses-model", "validate": null },
       { "name": "review_focus", "description": "Focus areas.",
+        "type": "array", "required": false, "default": [], "validate": null },
+      { "name": "ci_commands", "description": "Project CI commands.",
+        "type": "array", "required": false, "default": [], "validate": null },
+      { "name": "conventions", "description": "Project conventions.",
         "type": "array", "required": false, "default": [], "validate": null }
     ] },
   { "name": "venue-intake", "version": "1.0.0", "source": "user",
@@ -125,6 +129,10 @@ if [ "$verb" = instantiate ]; then
   done
   if [ "$(basename "$ref")" = changeset-review ] && ! grep -q '"change_ref"' "$values"; then
     echo "× no change_ref in $values" >&2
+    exit 1
+  fi
+  if grep -q '"reject"' "$values"; then
+    echo "× runtime rejected workflow values" >&2
     exit 1
   fi
   if [ "$(basename "$ref")" = changeset-review ]; then
@@ -354,6 +362,149 @@ fn the_listing_alone_says_which_inputs_name_who_does_the_work() {
             "claude-code[high]:anthropic:opus",
             "claude-code[high]:openai:gpt"
         ])
+    );
+}
+
+/// Explicit values files are merged in invocation order, while `--set` wins;
+/// the answer account and the runtime's values file receive the same
+/// structured project inputs (§FS-005-dispatch.19).
+#[test]
+fn values_files_are_merged_and_carried_to_the_runtime() {
+    let world = watching();
+    std::fs::write(
+        world.path().join("base-values.yaml"),
+        "ci_commands:\n  - cargo test --workspace\nconventions:\n  - rebase-only\nreview_focus:\n  - base\n",
+    )
+    .expect("the base values file");
+    std::fs::write(
+        world.path().join("project-values.json"),
+        r#"{
+          "ci_commands": ["cargo test --workspace", "python -m unittest"],
+          "conventions": ["changelog-pr"],
+          "review_focus": ["overlay"]
+        }"#,
+    )
+    .expect("the project values file");
+
+    let args = [
+        "work",
+        "lay",
+        "review-change",
+        "--item",
+        "acmeforge:app/101",
+        "--values",
+        "base-values.yaml",
+        "--values",
+        "project-values.json",
+        "--set",
+        r#"review_focus=["explicit"]"#,
+    ];
+    let dry = world
+        .ephor()
+        .current_dir(world.path())
+        .args([args.as_slice(), &["--dry-run", "--json"]].concat())
+        .output()
+        .expect("the values-file dry run");
+    assert!(
+        dry.status.success(),
+        "{}",
+        String::from_utf8_lossy(&dry.stderr)
+    );
+    let view = shaped("work-lay", &dry);
+    let answer = |input: &str| {
+        view["answers"]
+            .as_array()
+            .expect("answers")
+            .iter()
+            .find(|answer| answer["input"] == input)
+            .unwrap_or_else(|| panic!("no answer for {input}: {view}"))
+    };
+    assert_eq!(answer("ci_commands")["from"], json!("a values file"));
+    assert_eq!(
+        answer("ci_commands")["shown"],
+        json!("[\"cargo test --workspace\",\"python -m unittest\"]")
+    );
+    assert_eq!(answer("conventions")["shown"], json!("[\"changelog-pr\"]"));
+    assert_eq!(answer("conventions")["from"], json!("a values file"));
+    assert_eq!(answer("review_focus")["shown"], json!("[\"explicit\"]"));
+    assert_eq!(answer("review_focus")["from"], json!("you"));
+    assert_dry_run_left_destination_untouched(&world);
+
+    let laid = world
+        .ephor()
+        .current_dir(world.path())
+        .args(args)
+        .assert()
+        .success();
+    assert!(
+        String::from_utf8_lossy(&laid.get_output().stdout).contains("laying"),
+        "{}",
+        String::from_utf8_lossy(&laid.get_output().stdout)
+    );
+    let given = read_json(
+        &work_root(&world)
+            .join("acmeforge-app-101-review-change")
+            .join("values-as-given.json"),
+    );
+    assert_eq!(
+        given["ci_commands"],
+        json!(["cargo test --workspace", "python -m unittest"])
+    );
+    assert_eq!(given["conventions"], json!(["changelog-pr"]));
+    assert_eq!(given["review_focus"], json!(["explicit"]));
+}
+
+/// Values input is parsed and runtime-validated before a real destination is
+/// created, including the runtime's own refusal path (§FS-005-dispatch.19).
+#[test]
+fn invalid_values_files_leave_no_workflow_workspace() {
+    let world = watching();
+    std::fs::write(world.path().join("malformed.yaml"), "[\n").expect("malformed values");
+    std::fs::write(world.path().join("not-a-map.yaml"), "- one\n- two\n")
+        .expect("non-mapping values");
+    std::fs::write(
+        world.path().join("rejected.yaml"),
+        "ci_commands:\n  - reject\n",
+    )
+    .expect("runtime-rejected values");
+
+    for file in ["missing.yaml", "malformed.yaml", "not-a-map.yaml"] {
+        world
+            .ephor()
+            .current_dir(world.path())
+            .args([
+                "work",
+                "lay",
+                "review-change",
+                "--item",
+                "acmeforge:app/101",
+                "--values",
+                file,
+            ])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("values file"));
+        assert!(!work_root(&world).exists(), "{file} left a work root");
+    }
+
+    world
+        .ephor()
+        .current_dir(world.path())
+        .args([
+            "work",
+            "lay",
+            "review-change",
+            "--item",
+            "acmeforge:app/101",
+            "--values",
+            "rejected.yaml",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("runtime rejected workflow values"));
+    assert!(
+        !work_root(&world).exists(),
+        "runtime refusal left a work root"
     );
 }
 
