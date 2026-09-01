@@ -441,6 +441,13 @@ fn values_files_are_merged_and_carried_to_the_runtime() {
         "{}",
         String::from_utf8_lossy(&laid.get_output().stdout)
     );
+    assert!(
+        String::from_utf8_lossy(&laid.get_output().stdout).contains(
+            "ci_commands  [\"cargo test --workspace\",\"python -m unittest\"]  (a values file)"
+        ),
+        "{}",
+        String::from_utf8_lossy(&laid.get_output().stdout)
+    );
     let given = read_json(
         &work_root(&world)
             .join("acmeforge-app-101-review-change")
