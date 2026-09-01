@@ -966,6 +966,16 @@ a problem ephor already recognizes should not need to be described to it
 before anything can be done about it. Configuration adds recipes, and a
 configured recipe that reuses a shipped one's name replaces it.
 
+The shipped `implement` recipe is the exception to the otherwise branch-neutral
+defaults: it carries `"branch": "fix/issue-{number}"`. With no configured
+replacement, an issue with no branch on a project that has
+`branch_root_template` is dispatched inside the deterministically minted
+`fix/issue-<number>` workspace; on a project without branch workspaces it is
+refused by name with the configuration needed to proceed. An issue or pull
+request that already has a forge or registry branch keeps that branch, and a
+configured recipe named `implement` replaces this default with its own branch
+semantics.
+
 **A recipe is an action.** The recipes and the quick actions are one menu, not
 two lists behind two keys: *what can I do about this row* has one answer, and
 which half of it the reader sees does not depend on which key they happened to
@@ -2418,6 +2428,14 @@ a workflow, the entry beside a workflow, and a recipe
 one that runs a command here: those say what they need on disk with
 `requires_checkout`, and the workspace they need is one somebody else has
 already made ([§FS-004-quick-actions.7](requirements.md#7-a-workspace-that-is-not-there-is-offered-the-checkout)).
+
+The shipped `implement` recipe (§1) carries this template by default. Therefore
+an unconfigured dispatch for a branch-less issue mints `fix/issue-<number>` and
+writes its plan inside that workspace when the project has
+`branch_root_template`; without that registry field it refuses by name and
+explains the configuration required, leaving no work root or partial workspace.
+An existing matter branch still wins, and a configured `implement` recipe still
+replaces the shipped recipe and chooses its own branch behavior.
 
 **The template is rendered like a brief**, from the same fields — `{number}`,
 `{repo}`, `{kind}`, `{title}`, `{ticket}`, and the rest of
