@@ -46,7 +46,10 @@ case "${1:?subcommand}" in
         "updated_at": "2026-07-30T12:00:00Z", "status": "open" },
       { "key": "acme/widget#96", "title": "Document the main workflow",
         "url": "https://acme.example/issue/96",
-        "updated_at": "2026-07-30T12:00:00Z", "status": "open" }
+        "updated_at": "2026-07-30T12:00:00Z", "status": "open",
+        "messages": [
+          { "author": "Ada", "text": "which of the two orders is it?",
+            "when": "2026-07-30T11:00:00Z", "mine": false } ] }
     ]'
     ;;
   pull-requests)
@@ -221,7 +224,10 @@ const ITEM: &str = "acmeforge:acme/widget#95";
 /// An issue whose title carries the word `main` — the one piece of evidence
 /// that attributes it to the project's configured main branch by registry
 /// match, the shape this project's `main` checkout is discovered under
-/// (§FS-005-dispatch.25).
+/// (§FS-005-dispatch.25). It is waiting on an answer too, so the work that
+/// only reads it — the shipped `answer` recipe, which needs no checkout and
+/// carries no branch template — applies to the same matter the template
+/// mints a branch for.
 const MAIN_ITEM: &str = "acmeforge:acme/widget#96";
 
 /// Where the workspace the template names belongs, and the plan inside it.
@@ -999,6 +1005,93 @@ fn a_freehand_command_about_the_main_attributed_matter_runs_in_the_main_checkout
     let recorded =
         std::fs::read_to_string(main.join("freehand.txt")).expect("the freehand command ran");
     assert_eq!(recorded.trim(), main.to_string_lossy());
+}
+
+/// Laying a plan is a write, and a write is placed: work that only *reads*
+/// the main-attributed matter runs in the main checkout — that is where the
+/// code is — and still lays its ticket beside the project, never inside the
+/// trunk every workspace is grown from. The shipped `answer` recipe is that
+/// work: it needs no checkout and carries no branch template, so nothing
+/// mints and nothing is refused, and the work root is the only question left
+/// (§FS-005-dispatch.25, review round 2's R2-01 — the misplacement
+/// `vjovanov/ephor#37` reported, reached through a recipe that edits
+/// nothing).
+#[test]
+fn work_that_only_reads_the_main_attributed_matter_is_laid_outside_the_main_checkout() {
+    let world = watching(None, true);
+    // Beside the project, exactly where a matter with no branch at all lands.
+    let root = world.forest().join("panta");
+    let plan = root.join("acmeforge-acme-widget-96.rhei.md");
+
+    // Asked what it would do, it names that plan and makes none of it — so
+    // what the reader is shown before dispatching is where the dispatch
+    // writes.
+    world
+        .ephor()
+        .args([
+            "work",
+            "dispatch",
+            "--item",
+            MAIN_ITEM,
+            "--recipe",
+            "answer",
+            "--dry-run",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            plan.to_string_lossy().into_owned(),
+        ));
+    assert!(!root.exists(), "a dry run made {}", root.display());
+
+    world
+        .ephor()
+        .args([
+            "work", "dispatch", "--item", MAIN_ITEM, "--recipe", "answer",
+        ])
+        .assert()
+        .success();
+
+    assert!(
+        plan.is_file(),
+        "the plan is not at the project's own work root"
+    );
+    assert!(
+        !world.forest().join("main/panta").exists(),
+        "the plan was laid inside the main checkout"
+    );
+
+    let ledger = read_json(&world.path().join("state/ephor/work.json"));
+    let entry = &ledger["entries"][MAIN_ITEM];
+    assert_eq!(entry["root"], json!(root.to_string_lossy()), "{entry}");
+    assert_eq!(entry["plan"], json!(plan.to_string_lossy()), "{entry}");
+    // And the reading itself is unmoved: the work runs where the matter's
+    // code lives right now, which is the other half of the same rule.
+    assert_eq!(
+        entry["checkout"],
+        json!(world.forest().join("main").to_string_lossy()),
+        "{entry}"
+    );
+    assert_eq!(entry["branch"], json!("main"), "{entry}");
+
+    // And the work is found there afterwards, plan and all: what was laid is
+    // what the watch reads back (§FS-005-dispatch.15).
+    let rows = json_of(
+        world
+            .ephor()
+            .args(["work", "list", "--json"])
+            .assert()
+            .success()
+            .get_output(),
+    );
+    let laid = rows
+        .as_array()
+        .expect("the work")
+        .iter()
+        .find(|row| row["item"] == json!(MAIN_ITEM))
+        .unwrap_or_else(|| panic!("the dispatched matter is not in the work: {rows}"));
+    assert_eq!(laid["plan"], json!(plan.to_string_lossy()), "{laid}");
+    assert_eq!(laid["missing"], json!(false), "{laid}");
 }
 
 /// `ephor actions --json` cannot show a main-attributed matter as both

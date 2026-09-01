@@ -182,9 +182,12 @@ ships, the previous "latest" section moves verbatim to
   matter is now placed exactly as a branch-less one is: a `branch` template
   mints its own workspace and the offer follows on both surfaces, and work
   that edits the change with no template is refused — naming the main branch
-  it declined rather than calling the matter unmatched. A forge-recorded
-  branch that happens to equal `main_branch` is the forge's own fact and
-  keeps winning.
+  it declined rather than calling the matter unmatched. Work that only reads
+  the change — a reply, a review, anything needing no checkout — still runs
+  where the matter's code is, the main checkout included, and lays its ticket
+  beside the project all the same: laying a plan is a write, and every write
+  is placed. A forge-recorded branch that happens to equal `main_branch` is
+  the forge's own fact and keeps winning.
 
 - **The shipped `implement` recipe isolates branch-less issue work**
   ([§FS-005-dispatch.1](../requirements.md#1-a-recipe-decides-which-items-deserve-work-and-what-to-ask-for),
