@@ -1110,6 +1110,14 @@ impl Dispatcher {
     /// with no branch of its own, and saying it means the work needs the
     /// checkout — so it decides where the work goes without resolving anything
     /// the matter already answered.
+    ///
+    /// Two answers come out of it, because it is asked two questions
+    /// (§FS-005-dispatch.25): [`Site::checkout`] is where the work *runs* —
+    /// where the matter's code lives right now, the project's main branch
+    /// included — and [`Site::dir`] is the work root it *writes*, which
+    /// resolves through the matter's own placement, where the main branch is
+    /// never a matter's own. They differ on exactly one matter: one the
+    /// registry matched to the main branch and nothing else.
     fn site_for(
         &mut self,
         item: &Item,
@@ -1237,7 +1245,21 @@ impl Dispatcher {
             root: &placement.root,
         };
         let mut values = subject.placeholders();
-        let dir = crate::paths::resolve_path(&dossier::render(&template, &values));
+        // Laying the plan is a write, and a write resolves through the
+        // matter's own placement, never the main branch it only matched
+        // (§FS-005-dispatch.25). Work that edits the change resolved that way
+        // above and runs there too; work that only reads it runs in the
+        // checkout above — where the code is — and still lays its plan beside
+        // the project rather than inside the trunk every workspace is grown
+        // from. Asked of [`crate::branches::placed_through`], so the root this
+        // dispatch writes is the one [`Dispatcher::work_root_of`] previewed.
+        let placed = crate::branches::placed_through(&placement, item, branch);
+        let laid = Subject {
+            item,
+            checkout: &placed,
+            root: &placement.root,
+        };
+        let dir = crate::paths::resolve_path(&dossier::render(&template, &laid.placeholders()));
         // Where a proposed reply belongs, named absolutely: the runtime runs
         // from the checkout, not from the work root, so a brief that asks for
         // a file has to say which one (§FS-005-dispatch.13).
@@ -3698,12 +3720,19 @@ fn collect_names(value: &Value, out: &mut Vec<String>) {
 
 /// Where one item's work goes, and what the ticket will say.
 struct Site {
+    /// The work root this dispatch writes the plan into: resolved through the
+    /// matter's own placement, so it is never inside the project's main
+    /// checkout for a matter that merely matched the main branch
+    /// (§FS-005-dispatch.25).
     dir: PathBuf,
     dossier: String,
     /// The item as data, for the state machine's programs
     /// (§FS-005-dispatch.8).
     metadata: Vec<(&'static str, String)>,
     values: BTreeMap<&'static str, String>,
+    /// Where the work runs, and what the ticket is told about where it is:
+    /// where the matter's code lives right now, the main branch included
+    /// (§FS-005-dispatch.25).
     #[allow(dead_code)] // kept for callers that report where work landed
     checkout: crate::branches::Checkout,
     /// The branch workspace this dispatch has to make before it writes
