@@ -583,9 +583,10 @@ pub fn shipped() -> Vec<Recipe> {
         state: default_state(),
         when,
         needs_checkout,
-        // What ships is about a matter the forge already put on a branch, or
-        // about no branch at all: a template naming one is a thing a project
-        // says about its own work (§FS-005-dispatch.25).
+        // Most shipped recipes either use the matter's own branch or do work
+        // that does not edit a checkout. A recipe that creates code for a
+        // branch-less matter opts into branch minting below
+        // (§FS-005-dispatch.25).
         branch: None,
         // Silence means the key: what ships is started by the reader, and
         // saying otherwise is a thing configuration does (§FS-005-dispatch.24).
@@ -598,6 +599,31 @@ pub fn shipped() -> Vec<Recipe> {
         hand: None,
         target: None,
         model: None,
+    };
+    let implement = {
+        let mut recipe = recipe(
+            "implement",
+            "🧩",
+            "do the work in this issue",
+            // An issue's implementation work needs an isolated branch. The
+            // template activates checkout creation for branch-less issues;
+            // an existing matter branch still wins.
+            false,
+            Selector {
+                kinds: vec!["issue".to_string()],
+                roles: vec!["author".to_string()],
+                ..Selector::default()
+            },
+            "{title} is an issue of mine.\n\n\
+             The issue and its comments are above. Work out what is actually being\n\
+             asked for — an issue is a description of a problem, not a\n\
+             specification — and do the smallest thing that answers it, with a test\n\
+             where the project tests that kind of change.\n\n\
+             Where the issue is under-specified in a way that changes what the code\n\
+             should do, do not guess: write the question in the report and stop.",
+        );
+        recipe.branch = Some("fix/issue-{number}".to_string());
+        recipe
     };
     vec![
         recipe(
@@ -674,25 +700,7 @@ pub fn shipped() -> Vec<Recipe> {
              what is wrong, and what would be right. Say plainly which points would\n\
              block a merge and which are opinions. Do not post anything.",
         ),
-        recipe(
-            "implement",
-            "🧩",
-            "do the work in this issue",
-            // An issue has no branch of its own yet; it starts from the project.
-            false,
-            Selector {
-                kinds: vec!["issue".to_string()],
-                roles: vec!["author".to_string()],
-                ..Selector::default()
-            },
-            "{title} is an issue of mine.\n\n\
-             The issue and its comments are above. Work out what is actually being\n\
-             asked for — an issue is a description of a problem, not a\n\
-             specification — and do the smallest thing that answers it, with a test\n\
-             where the project tests that kind of change.\n\n\
-             Where the issue is under-specified in a way that changes what the code\n\
-             should do, do not guess: write the question in the report and stop.",
-        ),
+        implement,
         Recipe {
             // The replay itself is ephor's, made before this ticket exists
             // (§FS-005-dispatch.12): a clean rebase is a done thing and never
@@ -1093,6 +1101,8 @@ mod tests {
     fn configuration_adds_recipes_and_replaces_a_shipped_one_by_id() {
         let configured: Vec<Recipe> = serde_json::from_value(json!([
             { "id": "fix-gate", "description": "our own gate fix", "brief": "do it our way" },
+            { "id": "implement", "description": "our own implementation", "brief": "do it our way",
+              "branch": "work/issue-{number}" },
             { "id": "bench", "description": "run the benchmarks", "brief": "bench {title}",
               "when": { "kinds": ["pr"] }, "state": "fix" }
         ]))
@@ -1100,12 +1110,26 @@ mod tests {
         let resolved = resolve(&configured, &[]);
         let fix = resolved.iter().find(|r| r.id == "fix-gate").unwrap();
         assert_eq!(fix.description, "our own gate fix");
+        let implement = resolved.iter().find(|r| r.id == "implement").unwrap();
+        assert_eq!(implement.branch.as_deref(), Some("work/issue-{number}"));
         // Replacing keeps the position; the new one lands at the end.
         assert_eq!(resolved.len(), shipped().len() + 1);
         assert_eq!(resolved.last().unwrap().id, "bench");
         // The replacement's own selector applies — no gate condition now.
         let plain = item(ItemKind::Pr, None);
         assert!(ids(&resolved, &plain).contains(&"fix-gate".to_string()));
+
+        let shipped = shipped();
+        let shipped_implement = shipped.iter().find(|r| r.id == "implement").unwrap();
+        assert_eq!(
+            shipped_implement.branch.as_deref(),
+            Some("fix/issue-{number}")
+        );
+        assert!(!shipped_implement.autorun);
+        assert!(shipped
+            .iter()
+            .filter(|recipe| recipe.id != "implement")
+            .all(|recipe| recipe.branch.is_none()));
     }
 
     #[test]

@@ -336,6 +336,90 @@ fn the_dispatch_makes_the_workspace_and_lays_the_plan_inside_it() {
     assert_eq!(laid.len(), 2, "two runs are two records: {laid:?}");
 }
 
+/// The shipped implement recipe opts into the same branch-resolution path as
+/// a configured entry, without any configured recipes. Its branch, checkout,
+/// dossier and ledger all agree on the isolated workspace
+/// (§FS-005-dispatch.1, §FS-005-dispatch.25).
+#[test]
+fn the_shipped_implement_recipe_mints_the_issue_workspace() {
+    let world = watching(Some("fix/issue-{number}"), true);
+
+    world
+        .ephor()
+        .args(["work", "dispatch", "--item", ITEM, "--recipe", "implement"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("fix/issue-95"));
+
+    let workspace = workspace(&world);
+    let plan = workspace
+        .join("panta")
+        .join("acmeforge-acme-widget-95.rhei.md");
+    assert!(workspace.join(".git").exists(), "no working tree");
+    assert!(plan.is_file(), "the shipped recipe wrote no plan");
+    assert!(!world
+        .forest()
+        .join("panta")
+        .join("acmeforge-acme-widget-95.rhei.md")
+        .exists());
+
+    let written = std::fs::read_to_string(&plan).expect("the plan");
+    assert!(written.contains("- **branch**"), "{written}");
+    assert!(written.contains("fix/issue-95"), "{written}");
+    assert!(written.contains("- **checkout**"), "{written}");
+    assert!(
+        written.contains(&workspace.to_string_lossy().to_string()),
+        "{written}"
+    );
+
+    let ledger = read_json(&world.path().join("state/ephor/work.json"));
+    let entry = &ledger["entries"][ITEM];
+    assert_eq!(entry["branch"], json!("fix/issue-95"));
+    assert_eq!(entry["checkout"], json!(workspace.to_string_lossy()));
+    assert_eq!(
+        entry["root"],
+        json!(workspace.join("panta").to_string_lossy())
+    );
+
+    let view = json_of(
+        world
+            .ephor()
+            .args(["work", "offers", "--item", ITEM, "--json"])
+            .assert()
+            .success()
+            .get_output(),
+    );
+    let offer = view["offers"]
+        .as_array()
+        .expect("offers")
+        .iter()
+        .find(|offer| offer["id"] == "implement")
+        .expect("the shipped implement offer");
+    assert_eq!(offer["branch"], json!("fix/issue-95"));
+    assert_eq!(offer["workspace"], json!(workspace.to_string_lossy()));
+    assert_eq!(
+        view["status"]["checkout"],
+        json!(workspace.to_string_lossy())
+    );
+}
+
+/// The shipped default still refuses explicitly when a project cannot make
+/// branch workspaces; it does not fall back to writing the issue at the root.
+#[test]
+fn the_shipped_implement_recipe_refuses_without_branch_workspaces() {
+    let world = watching(Some("fix/issue-{number}"), false);
+
+    world
+        .ephor()
+        .args(["work", "dispatch", "--item", ITEM, "--recipe", "implement"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("branch_root_template"));
+
+    assert!(!world.forest().join("panta").exists());
+    assert!(!world.forest().join("fix").exists());
+}
+
 /// Without a template there is no branch for work that edits the change to be
 /// done on, and the command line refuses by name rather than writing the work
 /// at the project root — which is what the menu has always done
