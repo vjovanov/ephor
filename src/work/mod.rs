@@ -1274,6 +1274,7 @@ impl Dispatcher {
             dossier: subject.dossier(),
             metadata: subject.metadata(),
             values,
+            runtime_root: placement.root.clone(),
             checkout: checkout.clone(),
             mint,
         })
@@ -1975,9 +1976,13 @@ impl Dispatcher {
                 &format!("# {}\n\n{}", item.title, laying.site.dossier),
                 &identifiers(&laying.site.metadata),
             )?;
+            let runtime_at = match laying.site.checkout.workspace.is_dir() {
+                true => &laying.site.checkout.workspace,
+                false => &laying.site.runtime_root,
+            };
             runtime::workflow::lay(
                 &self.global,
-                &laying.site.checkout.workspace,
+                runtime_at,
                 &laying.workflow,
                 &staged.values,
                 &laying.output,
@@ -3777,6 +3782,9 @@ struct Site {
     /// (§FS-005-dispatch.8).
     metadata: Vec<(&'static str, String)>,
     values: BTreeMap<&'static str, String>,
+    /// An existing project root for preflight when a branch workspace is
+    /// still to be minted. The real render uses `checkout.workspace`.
+    runtime_root: PathBuf,
     /// Where the work runs, and what the ticket is told about where it is:
     /// where the matter's code lives right now, the main branch included
     /// (§FS-005-dispatch.25).
