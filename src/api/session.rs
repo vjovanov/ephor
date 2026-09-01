@@ -1215,9 +1215,10 @@ impl Session {
         let Some(placement) = self.placements.get(&item.project).cloned() else {
             return;
         };
-        // A matter the registry or the forge already put on a branch resolves
-        // through that branch, and a template has nothing to add.
-        if placement.branch_name(item).is_some() {
+        // A matter the registry or the forge already put on a branch of its
+        // own resolves through that branch, and a template has nothing to
+        // add — the project's main branch never counts (§FS-005-dispatch.25).
+        if placement.own_branch(item).is_some() {
             return;
         }
         for entry in menu.iter_mut() {
