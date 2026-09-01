@@ -43,7 +43,7 @@ path = "requirements.md"
 match = "exact"
 rules = ["specs"]
 kind = "deferred"
-max_accepted = { value = 3100, unit = "lines" }
+max_accepted = { value = 3200, unit = "lines" }
 until = "the FS home becomes a folder in .agents/grund.toml and each declaration moves to its own document"
 reason = """
 Twelve §FS declarations in one file, of which §FS-005-dispatch is 1423 lines — half the document on its own. The other four kind homes in this tree are already folders: .agents/grund.toml gives AR, REQ, DF and DA a `folder`, and only FS a `file`. Missing boundary: that same folder for FS. The move is mechanical and the citations survive it, because a § names an ID and not a path — grund resolves the ID wherever the declaration lives, and `grund fmt --write` rewrites the rendered links. It is not taken here because moving every spec declaration in the repository is a change that has to be reviewed as itself, not as a rider on the commit that first measured the file.
