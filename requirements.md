@@ -2465,7 +2465,11 @@ applies only where the matter has no branch at all. The project's configured
 `main_branch` is the trunk every workspace is grown from, not a branch any
 issue or pull request owns, so a registry match to it counts as no branch
 here: the template mints exactly as it would for a matter matched to
-nothing, and the refusal below fires the same way where none applies. A
+nothing, and the refusal below fires the same way where none applies. "Here"
+is the placement decision alone: work that reads the change rather than
+editing it, and anything a reading shows about the matter's own branch and
+checkout, keep answering from the registry match itself, main branch
+included — nothing there is deciding where to place an edit. A
 forge-recorded branch that happens to equal `main_branch` is the forge's own
 fact and keeps winning — only the registry-matched arm is carved out.
 Rendering it *is* the resolution, and nothing is written down: a second

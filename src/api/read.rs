@@ -95,10 +95,30 @@ impl Session {
         }
     }
 
+    /// The workspace state a subject's menu entries with no `branch`
+    /// template of their own are gated on: the branch a matter owns for
+    /// placement, never the project's configured main branch
+    /// (§FS-005-dispatch.25). Distinct from [`Session::place`]'s read
+    /// resolution — a main-attributed matter shows its real checkout there
+    /// for display, but owns no branch to edit through here, so an entry
+    /// that needs the checkout without a template of its own is gated as
+    /// though the matter had none. `fallback` is `place`'s answer, reused
+    /// for a branch row, which has no matter to ask this question about.
+    fn gate_state(&self, subject: &Subject, fallback: &WorkspaceState) -> WorkspaceState {
+        match subject {
+            Subject::Item(item) => self
+                .placement(&item.project)
+                .map(|placement| placement.own_checkout(item).state)
+                .unwrap_or_else(|| fallback.clone()),
+            Subject::Branch { .. } => fallback.clone(),
+        }
+    }
+
     /// The entries a subject carries, assembled and gated
     /// (§FS-011-command-line.1). The one list both surfaces show.
     pub fn menu(&mut self, subject: &Subject) -> Result<Vec<offers::MenuEntry>, String> {
         let placed = self.place(subject)?;
+        let gate_state = self.gate_state(subject, &placed.state);
         let project = subject.project().to_string();
         let (about, applicable, has_workflows) = match subject {
             Subject::Item(item) => {
@@ -136,7 +156,7 @@ impl Session {
         // that had to remember to ask is a surface that can forget
         // (§REQ-002-parity.3).
         let mut entries = offers::entries(
-            &placed.state,
+            &gate_state,
             &checkout,
             &can,
             applicable,

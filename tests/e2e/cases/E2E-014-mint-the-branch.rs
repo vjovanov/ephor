@@ -971,3 +971,79 @@ fn an_issue_matched_only_to_the_main_branch_and_no_template_is_refused_by_name()
     assert!(!world.forest().join("panta").exists());
     assert!(!world.forest().join("fix").exists());
 }
+
+/// A freehand command about the main-attributed matter needs no branch of
+/// its own — it edits nothing — so it never asks the placement question the
+/// carve-out answers, and keeps resolving in the main checkout exactly as it
+/// did before this project's `main` branch was excluded from placement
+/// (§FS-005-dispatch.25, review round 1's R1-01: this used to land in the
+/// bare forest root instead).
+#[test]
+fn a_freehand_command_about_the_main_attributed_matter_runs_in_the_main_checkout() {
+    let world = watching(None, true);
+
+    world
+        .ephor()
+        .args([
+            "actions",
+            "run",
+            "--item",
+            MAIN_ITEM,
+            "--command",
+            "pwd > freehand.txt",
+        ])
+        .assert()
+        .success();
+
+    let main = world.forest().join("main");
+    let recorded =
+        std::fs::read_to_string(main.join("freehand.txt")).expect("the freehand command ran");
+    assert_eq!(recorded.trim(), main.to_string_lossy());
+}
+
+/// `ephor actions --json` cannot show a main-attributed matter as both
+/// `"unmatched"` and on branch `"main"` in the same answer. The top-level
+/// reading describes where the matter's code lives right now — the main
+/// checkout, ready — while an entry carrying no branch template of its own
+/// still gates on the placement question, and is blocked exactly as it
+/// would be for a matter with no branch at all: the top-level reading
+/// showing a real checkout is not the entry owning one to edit through
+/// (§FS-005-dispatch.25, review round 1's R1-02).
+#[test]
+fn actions_json_agrees_with_itself_about_the_main_attributed_matter() {
+    let world = watching(None, true);
+
+    let view = json_of(
+        world
+            .ephor()
+            .args(["actions", "--item", MAIN_ITEM, "--json"])
+            .assert()
+            .success()
+            .get_output(),
+    );
+
+    assert_eq!(view["workspace_state"], json!("ready"), "{view}");
+    assert_eq!(view["branch"], json!("main"), "{view}");
+    assert_eq!(
+        view["workspace"],
+        json!(world.forest().join("main").to_string_lossy()),
+        "{view}"
+    );
+
+    let offer = view["offers"]
+        .as_array()
+        .expect("offers")
+        .iter()
+        .find(|offer| offer["id"] == "fix-issue")
+        .unwrap_or_else(|| {
+            panic!("'fix-issue' is not offered on the main-attributed issue: {view}")
+        });
+    // R1-03 (the menu's generic wording for this case) is not this ticket's
+    // fix — only that the gate itself still blocks, exactly as it does for a
+    // matter with no branch at all.
+    assert_eq!(offer["gate"], json!("blocked"), "{offer}");
+    assert!(
+        offer["refusal"].as_str().is_some_and(|why| !why.is_empty()),
+        "{offer}"
+    );
+}

@@ -358,7 +358,7 @@ fn why_git_refuses(branch: &str) -> Option<String> {
 /// the entry as [`crate::feed::config::Minted::Refused`], which blocks it — and
 /// not by moving the work somewhere else.
 pub fn placed_through(placement: &Placement, item: &Item, branch: Option<&str>) -> Checkout {
-    let here = placement.checkout(item);
+    let here = placement.own_checkout(item);
     if here.branch.is_some() {
         return here;
     }
@@ -396,8 +396,11 @@ pub struct Checkout {
     /// agree with where the work will actually be (§FS-005-dispatch.25).
     pub workspace: PathBuf,
     /// The branch name — the provider-recorded one, or the matched registry
-    /// branch's, except the project's configured main branch, a registry
-    /// match to which is not a branch the matter owns (§FS-005-dispatch.25).
+    /// branch's. From [`Placement::checkout`] this includes the project's
+    /// main branch, because it answers where the matter's code lives right
+    /// now; from [`Placement::own_checkout`] it does not, because that
+    /// answers which branch the matter owns for placement
+    /// (§FS-005-dispatch.25).
     pub branch: Option<String>,
     /// The registry branch the item matched, and its ticket key.
     pub ticket: Option<String>,
@@ -812,12 +815,32 @@ impl Placement {
     }
 
     /// The item's branch name: what the provider recorded (ground truth), or
-    /// the matched registry branch's — except the project's main branch,
-    /// which a registry match keeps only by resemblance and which no matter
-    /// owns (§FS-005-dispatch.25). The forge-recorded branch is untouched
-    /// even where it happens to equal the main branch: that is the forge's
-    /// own fact, not a resemblance to argue with.
+    /// the matched registry branch's — the project's main branch included,
+    /// because this answers where the matter's code lives right now, not
+    /// which branch it owns for placement. [`Placement::own_branch`] answers
+    /// that question instead (§FS-005-dispatch.25).
     pub fn branch_name(&self, item: &Item) -> Option<String> {
+        item.raw
+            .get("branch")
+            .and_then(Value::as_str)
+            .filter(|name| !name.is_empty())
+            .map(String::from)
+            .or_else(|| self.matched(item).map(|branch| branch.branch.clone()))
+    }
+
+    /// The branch this matter owns for placement: what the provider
+    /// recorded (ground truth), or the matched registry branch's — except
+    /// the project's main branch, which a registry match keeps only by
+    /// resemblance and which no matter owns (§FS-005-dispatch.25). The
+    /// forge-recorded branch is untouched even where it happens to equal the
+    /// main branch: that is the forge's own fact, not a resemblance to argue
+    /// with.
+    ///
+    /// This decides whether a `branch` template applies and whether editing
+    /// work is refused — [`Placement::branch_name`] answers the different
+    /// question of where the matter's code lives right now, main branch
+    /// included, for read-only resolution and display.
+    pub fn own_branch(&self, item: &Item) -> Option<String> {
         item.raw
             .get("branch")
             .and_then(Value::as_str)
@@ -830,8 +853,22 @@ impl Placement {
             })
     }
 
+    /// Where an item's code lives right now: the checkout its branch name
+    /// resolves to, main branch included (§FS-005-dispatch.25). What
+    /// read-only resolution and display use; [`Placement::own_checkout`]
+    /// answers the placement question instead.
     pub fn checkout(&self, item: &Item) -> Checkout {
-        let branch = self.branch_name(item);
+        self.checkout_of(item, self.branch_name(item))
+    }
+
+    /// Where an item's work belongs for placement: the checkout of the
+    /// branch it owns, main branch excluded (§FS-005-dispatch.25). What the
+    /// mint gate, the editing refusal, and the offers surface use.
+    pub fn own_checkout(&self, item: &Item) -> Checkout {
+        self.checkout_of(item, self.own_branch(item))
+    }
+
+    fn checkout_of(&self, item: &Item, branch: Option<String>) -> Checkout {
         let ticket = self
             .matched(item)
             .and_then(|matched| matched.ticket.clone())
@@ -1113,7 +1150,9 @@ mod tests {
     /// A registry match to the project's configured main branch is not the
     /// matter's own: it is the trunk every workspace is grown from, so it
     /// yields no placement branch and the matter resolves as unmatched, the
-    /// same as one with no branch at all (§FS-005-dispatch.25).
+    /// same as one with no branch at all — but it is still where the
+    /// matter's code lives right now, so the read resolution keeps it
+    /// (§FS-005-dispatch.25).
     #[test]
     fn a_registry_match_to_the_main_branch_is_not_the_matters_own() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1128,11 +1167,17 @@ mod tests {
 
         let matter = item("Document the main workflow", json!({}));
         assert!(placement.is_main_branch("main"));
-        assert_eq!(placement.branch_name(&matter), None);
 
-        let checkout = placement.checkout(&matter);
-        assert!(checkout.branch.is_none());
-        assert!(matches!(checkout.state, WorkspaceState::Unmatched));
+        // Read resolution: main branch included, because this is where the
+        // matter's code lives right now.
+        assert_eq!(placement.branch_name(&matter), Some("main".to_string()));
+
+        // Placement: main branch excluded, because it is not the matter's
+        // own — it resolves as unmatched, the same as no branch at all.
+        assert_eq!(placement.own_branch(&matter), None);
+        let owned = placement.own_checkout(&matter);
+        assert!(owned.branch.is_none());
+        assert!(matches!(owned.state, WorkspaceState::Unmatched));
     }
 
     /// The forge's own record of a pull request's branch keeps winning even
@@ -1152,6 +1197,7 @@ mod tests {
 
         let matter = item("A pull request from main", json!({ "branch": "main" }));
         assert_eq!(placement.branch_name(&matter), Some("main".to_string()));
+        assert_eq!(placement.own_branch(&matter), Some("main".to_string()));
     }
 
     #[test]

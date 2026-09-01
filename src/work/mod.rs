@@ -1126,31 +1126,40 @@ impl Dispatcher {
                     .unwrap_or_else(|| format!("{} cannot be placed", item.project)),
             )
         })?;
-        // The workspace where the matter resolves, and the forest root where
-        // none does (§FS-005-dispatch.13, §AR-004-forest.1) — which is what
-        // lets work about a conversation run without the checkout-able rung
-        // (§FS-006-project-interface.10).
+        // Where the matter's code lives right now, main branch included, and
+        // the forest root where nothing resolves (§FS-005-dispatch.13,
+        // §AR-004-forest.1) — which is what lets work about a conversation
+        // run without the checkout-able rung (§FS-006-project-interface.10).
+        // This is the read resolution: work that only reads the change (no
+        // branch template, no needs_checkout) runs here unchanged, whether
+        // or not the matter merely resembles the main branch by word match.
         let mut checkout = placement.checkout(item);
-        // The matter's own branch always wins: a template supplies the branch
-        // a matter has none of, and never displaces the one the forge recorded
-        // or the registry matched (§FS-005-dispatch.25). This is
-        // [`crate::branches::placed_through`] with the refusal kept: a surface
-        // asking where the work would go falls back to the matter's own
-        // placement, and the dispatch that would write there refuses instead.
-        let mut mint = None;
-        if checkout.branch.is_none() {
-            if let Some(template) = branch {
-                checkout = crate::branches::minted(&placement, item, template)
-                    .map_err(EphorError::Command)?;
-                if let WorkspaceState::Missing(target) = &checkout.state {
-                    mint = Some(target.clone());
-                }
-            }
-        }
         // Saying which branch the work belongs on says that it needs the
         // checkout: the template is about where the change will be edited
         // (§FS-005-dispatch.25).
         let needs_checkout = needs_checkout || branch.is_some();
+        // The matter's own branch always wins — but the project's main
+        // branch is never a matter's own (§FS-005-dispatch.25). Only work
+        // that edits the change asks this: a template supplies the branch a
+        // matter has none of, and never displaces the one the forge recorded
+        // or the registry matched; with no template, editing work has
+        // nowhere to go. This is [`crate::branches::placed_through`] with
+        // the refusal kept: a surface asking where the work would go falls
+        // back to the matter's own placement, and the dispatch that would
+        // write there refuses instead.
+        let mut mint = None;
+        if needs_checkout && placement.own_branch(item).is_none() {
+            match branch {
+                Some(template) => {
+                    checkout = crate::branches::minted(&placement, item, template)
+                        .map_err(EphorError::Command)?;
+                    if let WorkspaceState::Missing(target) = &checkout.state {
+                        mint = Some(target.clone());
+                    }
+                }
+                None => checkout = placement.own_checkout(item),
+            }
+        }
         // Only for work that edits the change. A review or a reply runs in
         // the project's own checkout and fetches what it needs.
         if needs_checkout {
