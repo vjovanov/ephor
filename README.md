@@ -464,6 +464,14 @@ pull request you are reviewing), `implement` (an issue of yours), `rebase` (a
 pull request of yours whose branch trails main). Add your own, or replace a
 shipped one by reusing its id:
 
+The shipped `implement` recipe uses `fix/issue-{number}` for an issue with no
+branch. On a project with `branch_root_template`, dispatch mints that branch
+and places the plan inside its workspace; without branch workspaces it refuses
+by name and explains what to configure instead of writing at the project root.
+A matter's existing forge or registry branch still wins. To deliberately keep
+issue work branch-less, replace `implement` with a configured recipe carrying
+your chosen semantics.
+
 ```json
 {
   "work": {

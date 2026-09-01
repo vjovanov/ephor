@@ -171,6 +171,16 @@ ships, the previous "latest" section moves verbatim to
 
 ### Changed
 
+- **The shipped `implement` recipe isolates branch-less issue work**
+  ([§FS-005-dispatch.1](../requirements.md#1-a-recipe-decides-which-items-deserve-work-and-what-to-ask-for),
+  [§FS-005-dispatch.25](../requirements.md#25-work-about-a-matter-with-no-branch-can-mint-the-branch-it-needs), PR #N).
+  With no configured replacement, an issue with no branch is dispatched on
+  `fix/issue-{number}` inside a workspace minted when the project has
+  `branch_root_template`; without branch workspaces it is refused by name with
+  configuration guidance instead of writing at the project root. Existing
+  matter-branch precedence and configured `implement` replacements are
+  unchanged.
+
 - **`src/work/mod.rs` takes the first seam its size budget names, and the
   boundary check learns that shape**
   ([§FS-012-file-size.2](../requirements.md#2-the-limits),

@@ -1551,13 +1551,21 @@ Five ship and apply with no configuration at all:
 | `fix-gate` 🛠 | a pull request of yours whose **jobs failed** | yes |
 | `answer` 💬 | anything owing a reply — pr, issue, message | no |
 | `review` 👓 | a pull request you are reviewing | no |
-| `implement` 🧩 | an issue you opened | no |
+| `implement` 🧩 | an issue you opened | yes |
 | `rebase` ⤴ | anything whose branch is here and **trails main** | yes |
 
 Recipes are also entries of the action menu (§7.6): `x` on a row offers the
 work that can be handed over about it beside the commands that can be run on
 it, each saying who would get it. `w` is the same recipes with the plan and
 the tickets around them.
+
+The shipped `implement` recipe carries `"branch": "fix/issue-{number}"`. For
+an issue with no branch, dispatch mints that branch and places the plan inside
+its workspace when the project defines `branch_root_template`; a project
+without branch workspaces is refused by name with the configuration needed to
+proceed. An existing forge or registry branch still wins. A project that
+intentionally wants branch-less issue work replaces `implement` with a
+configured recipe of its own.
 
 Add your own, or replace a shipped one by reusing its id:
 
