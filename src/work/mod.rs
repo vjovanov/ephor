@@ -1195,11 +1195,25 @@ impl Dispatcher {
                 // edits the change — and the project root of a project whose
                 // checkouts are one per branch holds no change to edit. This
                 // used to be written there anyway; it is refused now, which is
-                // what the menu has always done (§FS-005-dispatch.25).
+                // what the menu has always done (§FS-005-dispatch.25). A
+                // matter matched only to the project's main branch is on no
+                // branch by the same rule, and the refusal names what it
+                // declined rather than calling the matter unmatched.
                 WorkspaceState::Unmatched => {
+                    let clause = match placement
+                        .matched(item)
+                        .filter(|matched| placement.is_main_branch(&matched.branch))
+                    {
+                        Some(matched) => format!(
+                            "matched {}, this project's main branch — the trunk every workspace \
+                             is grown from, not a branch of its own",
+                            matched.branch
+                        ),
+                        None => "is on no branch".to_string(),
+                    };
                     return Err(EphorError::Command(format!(
-                        "{}: {} is on no branch, and this work edits the change. Give the entry \
-                         a 'branch' template naming the branch it belongs on, so dispatch makes \
+                        "{}: {} {clause}, and this work edits the change. Give the entry a \
+                         'branch' template naming the branch it belongs on, so dispatch makes \
                          the workspace:\n  \"branch\": \"fix/issue-{{number}}\"\n\
                          or hand over work that reads the change instead of editing it.",
                         item.project, item.id,

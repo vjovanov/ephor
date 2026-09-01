@@ -43,6 +43,9 @@ case "${1:?subcommand}" in
     printf '%s' '[
       { "key": "acme/widget#95", "title": "Durations read as seconds",
         "url": "https://acme.example/issue/95",
+        "updated_at": "2026-07-30T12:00:00Z", "status": "open" },
+      { "key": "acme/widget#96", "title": "Document the main workflow",
+        "url": "https://acme.example/issue/96",
         "updated_at": "2026-07-30T12:00:00Z", "status": "open" }
     ]'
     ;;
@@ -215,6 +218,12 @@ fn watching(branch_template: Option<&str>, branch_root: bool) -> World {
 
 const ITEM: &str = "acmeforge:acme/widget#95";
 
+/// An issue whose title carries the word `main` — the one piece of evidence
+/// that attributes it to the project's configured main branch by registry
+/// match, the shape this project's `main` checkout is discovered under
+/// (§FS-005-dispatch.25).
+const MAIN_ITEM: &str = "acmeforge:acme/widget#96";
+
 /// Where the workspace the template names belongs, and the plan inside it.
 fn workspace(world: &World) -> PathBuf {
     world.forest().join("fix/issue-95")
@@ -224,6 +233,11 @@ fn plan(world: &World) -> PathBuf {
     workspace(world)
         .join("panta")
         .join("acmeforge-acme-widget-95-fix-issue")
+}
+
+/// The same, for [`MAIN_ITEM`].
+fn main_item_workspace(world: &World) -> PathBuf {
+    world.forest().join("fix/issue-96")
 }
 
 /// The dry run promises the plan inside the workspace the template names, and
@@ -851,4 +865,109 @@ fn the_offer_follows_the_template_on_both_surfaces() {
             .any(|offer| offer["id"] == "fix-issue"),
         "{view}"
     );
+}
+
+/// An issue the registry matches only to the project's configured main
+/// branch — the word `main` in its title, resolved against the `main`
+/// checkout every workspace here is grown from — is minted a branch of its
+/// own exactly like one with no branch at all: the main branch is the trunk,
+/// never a matter's own, so it never silently resolves inside the main
+/// checkout (§FS-005-dispatch.25, the defect `vjovanov/ephor#37` reported).
+#[test]
+fn an_issue_matched_only_to_the_main_branch_mints_its_own_branch() {
+    let world = watching(Some("fix/issue-{number}"), true);
+
+    // Asked what it would do, it names the minted branch — never the main
+    // checkout's own workspace.
+    let said = world
+        .ephor()
+        .args([
+            "work",
+            "lay",
+            "fix-issue",
+            "--item",
+            MAIN_ITEM,
+            "--dry-run",
+            "--json",
+        ])
+        .assert()
+        .success();
+    let report = json_of(said.get_output())["report"]
+        .as_str()
+        .expect("a report")
+        .to_string();
+    assert!(report.contains("fix/issue-96"), "{report}");
+    assert!(
+        report.contains(&main_item_workspace(&world).to_string_lossy().to_string()),
+        "{report}"
+    );
+    assert!(!main_item_workspace(&world).exists());
+
+    // The two surfaces agree before dispatch: the offer is the *will check
+    // out first* shape, not blocked as though the branch were merely unknown
+    // (§REQ-002-parity.3).
+    let view = json_of(
+        world
+            .ephor()
+            .args(["work", "offers", "--item", MAIN_ITEM, "--json"])
+            .assert()
+            .success()
+            .get_output(),
+    );
+    let offer = view["offers"]
+        .as_array()
+        .expect("offers")
+        .iter()
+        .find(|offer| offer["id"] == "fix-issue")
+        .unwrap_or_else(|| {
+            panic!("'fix-issue' is not offered on the main-attributed issue: {view}")
+        });
+    assert_eq!(offer["gate"], json!("needs-checkout"), "{offer}");
+    assert_eq!(offer["branch"], json!("fix/issue-96"), "{offer}");
+
+    world
+        .ephor()
+        .args(["work", "lay", "fix-issue", "--item", MAIN_ITEM])
+        .assert()
+        .success();
+
+    let workspace = main_item_workspace(&world);
+    assert!(workspace.join(".git").exists(), "no working tree");
+    assert!(
+        workspace
+            .join("panta/acmeforge-acme-widget-96-fix-issue/index.rhei.md")
+            .is_file(),
+        "the plan is not in the minted branch workspace"
+    );
+    // Never the main checkout's own work root — the misplacement this case
+    // pins against.
+    assert!(!world.forest().join("main/panta").exists());
+
+    let ledger = read_json(&world.path().join("state/ephor/work.json"));
+    let entry = &ledger["entries"][MAIN_ITEM];
+    assert_eq!(entry["branch"], json!("fix/issue-96"));
+    assert_eq!(entry["checkout"], json!(workspace.to_string_lossy()));
+}
+
+/// Without a template, the same matter is refused exactly as a branch-less
+/// one is — and the refusal names the main branch it declined rather than
+/// calling the matter unmatched, leaving no workspace or work root behind
+/// (§FS-005-dispatch.25).
+#[test]
+fn an_issue_matched_only_to_the_main_branch_and_no_template_is_refused_by_name() {
+    let world = watching(None, true);
+
+    world
+        .ephor()
+        .args(["work", "lay", "fix-issue", "--item", MAIN_ITEM])
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("this project's main branch")
+                .and(predicate::str::contains("'branch' template")),
+        );
+
+    assert!(!world.forest().join("main/panta").exists());
+    assert!(!world.forest().join("panta").exists());
+    assert!(!world.forest().join("fix").exists());
 }
