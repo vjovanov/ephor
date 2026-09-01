@@ -36,7 +36,7 @@ ships, the previous "latest" section moves verbatim to
   directory, merges repeated files left to right, preserves structured values,
   and lets explicit `--set` answers win. File answers are shown with their
   provenance, execution targets remain under Ephor's hand policy, and invalid
-  or runtime-rejected input leaves no partial workflow workspace. (PR #N)
+  or runtime-rejected input leaves no partial workflow workspace. (PR #49)
 
 - **A workflow entry can ask to run itself, and what it lays down is due like
   any other work**
