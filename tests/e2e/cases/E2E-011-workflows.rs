@@ -76,6 +76,10 @@ if [ "$verb" = templates ]; then
     "inputs": [
       { "name": "change_ref", "description": "The change to review.",
         "type": "string", "required": true, "default": null, "validate": null },
+      { "name": "dossier_path", "description": "The dossier file.",
+        "type": "path", "required": true, "default": null, "validate": null },
+      { "name": "item_path", "description": "The item file.",
+        "type": "path", "required": true, "default": null, "validate": null },
       { "name": "smart_target", "description": "Who adjudicates.",
         "type": "string", "required": false,
         "default": "someone-elses-model", "validate": null },
@@ -123,6 +127,19 @@ if [ "$verb" = instantiate ]; then
     echo "× no change_ref in $values" >&2
     exit 1
   fi
+  if [ "$(basename "$ref")" = changeset-review ]; then
+    dossier_path="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["dossier_path"])' "$values")"
+    item_path="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["item_path"])' "$values")"
+    test -f "$dossier_path" || { echo "× dossier path does not exist: $dossier_path" >&2; exit 1; }
+    test -f "$item_path" || { echo "× item path does not exist: $item_path" >&2; exit 1; }
+    if [ -n "$dry" ]; then
+      printf '%s\n' "$values" >> "$STAGING_LOG"
+      if [ "${REFUSE_STAGED:-}" = yes ]; then
+        echo "× carried files refused" >&2
+        exit 1
+      fi
+    fi
+  fi
   if [ -n "$dry" ]; then
     echo "would render $(basename "$ref") into $output"
     exit 0
@@ -153,7 +170,7 @@ fn watching() -> World {
     std::fs::write(
         workflows.join("changeset-review").join("template.yaml"),
         "name: changeset-review\ninputs:\n  - name: change_ref\n    type: string\n    \
-         positional: 1\n  - name: smart_target\n    type: string\n    \
+         positional: 1\n  - name: dossier_path\n    type: path\n  - name: item_path\n    type: path\n  - name: smart_target\n    type: string\n    \
          format: execution-target\n",
     )
     .expect("the workflow's own manifest");
@@ -164,13 +181,19 @@ fn watching() -> World {
           "icon": "⌥",
           "description": "review this change",
           "when": { "kinds": ["pr"] },
-          "inputs": { "change_ref": "{repo}#{number}" }
+          "inputs": { "change_ref": "{repo}#{number}",
+                      "dossier_path": "{dossier}", "item_path": "{item}" }
         }"#,
     )
     .expect("the entry beside the workflow");
     world.stub(
         "acme-runtime",
-        &ACME_RUNTIME.replace("$WORKFLOWS", &workflows.to_string_lossy()),
+        &ACME_RUNTIME
+            .replace("$WORKFLOWS", &workflows.to_string_lossy())
+            .replace(
+                "$STAGING_LOG",
+                &world.path().join("staging.log").to_string_lossy(),
+            ),
     );
     // One hand the binding's own registry declares, so who does the work is
     // something ephor can answer (§FS-005-dispatch.14).
@@ -376,6 +399,24 @@ fn a_workflow_is_laid_down_beside_the_matters_own_plan() {
         "{}",
         view["report"]
     );
+    for (input, file) in [("dossier_path", "dossier.md"), ("item_path", "item.json")] {
+        let shown = view["answers"]
+            .as_array()
+            .expect("answers")
+            .iter()
+            .find(|answer| answer["input"] == input)
+            .unwrap_or_else(|| panic!("no answer for {input}"));
+        let expected = work_root(&world)
+            .join(".ephor/acmeforge-app-101-review-change")
+            .join(file)
+            .to_string_lossy()
+            .replace('\\', "/");
+        assert_eq!(shown["shown"], json!(expected));
+    }
+    assert!(
+        !String::from_utf8_lossy(&json_dry_run.stdout).contains("ephor-workflow-values-"),
+        "ephemeral paths are not public answers"
+    );
     assert_dry_run_left_destination_untouched(&world);
     world
         .ephor()
@@ -497,6 +538,58 @@ fn a_workflow_is_laid_down_beside_the_matters_own_plan() {
         .join("acmeforge-app-101-review-change-2")
         .join("index.rhei.md")
         .is_file());
+}
+
+fn staged_values(world: &World) -> Vec<std::path::PathBuf> {
+    world
+        .read("staging.log")
+        .lines()
+        .map(std::path::PathBuf::from)
+        .collect()
+}
+
+fn assert_staging_removed(path: &std::path::Path) {
+    let dir = path.parent().expect("the staging directory");
+    for file in ["dossier.md", "item.json", "values.json"] {
+        assert!(!dir.join(file).exists(), "staging left {file}");
+    }
+    assert!(!dir.exists(), "staging left {}", dir.display());
+}
+
+/// A dry run gives the runtime the complete carried-file set, but leaves no
+/// destination behind. Both the successful validation and a runtime refusal
+/// clean up the set, and each invocation gets its own collision-resistant
+/// staging directory.
+#[test]
+fn a_workflow_dry_run_stages_and_cleans_carried_files() {
+    let world = watching();
+    let dry_run = [
+        "work",
+        "lay",
+        "review-change",
+        "--item",
+        "acmeforge:app/101",
+        "--dry-run",
+    ];
+
+    world.ephor().args(dry_run).assert().success();
+    let first = staged_values(&world);
+    assert_eq!(first.len(), 1, "runtime saw one staging set: {first:?}");
+    assert_staging_removed(&first[0]);
+    assert_dry_run_left_destination_untouched(&world);
+
+    world
+        .ephor()
+        .env("REFUSE_STAGED", "yes")
+        .args(dry_run)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("carried files refused"));
+    let all = staged_values(&world);
+    assert_eq!(all.len(), 2, "runtime saw both staging sets: {all:?}");
+    assert_ne!(first[0], all[1], "dry runs do not reuse a staging path");
+    assert_staging_removed(&all[1]);
+    assert_dry_run_left_destination_untouched(&world);
 }
 
 /// An input nobody answered is refused by name rather than written with a hole

@@ -1898,15 +1898,22 @@ impl Dispatcher {
             .unwrap_or_else(|_| "{}".to_string());
         if dry_run {
             // The runtime validates the resolved inputs even when it is only
-            // reporting what it would render. Its values file is staged in a
-            // private temporary directory so asking that question cannot make
-            // any part of the destination (§FS-005-dispatch.19).
-            let staged = StagedValues::new(&values_json)?;
+            // reporting what it would render. Its values and carried files
+            // are staged in a private temporary directory so asking that
+            // question cannot make any part of the destination
+            // (§FS-005-dispatch.19).
+            let destination = carried(&laying.site.dir, &laying.plan_id);
+            let staged = StagedWorkflow::new(
+                &laying.answered.values,
+                &destination,
+                &format!("# {}\n\n{}", item.title, laying.site.dossier),
+                &identifiers(&laying.site.metadata),
+            )?;
             let report = runtime::workflow::lay(
                 &self.global,
                 &laying.site.checkout.workspace,
                 &laying.workflow,
-                &staged.path,
+                &staged.values,
                 &laying.output,
                 true,
             )?;
@@ -3501,16 +3508,23 @@ const DOSSIER: &str = "dossier.md";
 const ITEM: &str = "item.json";
 const VALUES: &str = "values.json";
 
-/// The values file a runtime needs to validate a dry run. It lives in a fresh
+/// The files a runtime needs to validate a dry run. They live in a fresh
 /// temporary directory, not beside the plan, and the directory is removed
 /// when the runtime has answered — including when it refused.
-struct StagedValues {
+struct StagedWorkflow {
     dir: PathBuf,
-    path: PathBuf,
+    dossier: PathBuf,
+    item: PathBuf,
+    values: PathBuf,
 }
 
-impl StagedValues {
-    fn new(content: &str) -> Result<StagedValues> {
+impl StagedWorkflow {
+    fn new(
+        values: &serde_json::Map<String, Value>,
+        destination: &std::path::Path,
+        dossier: &str,
+        item: &str,
+    ) -> Result<StagedWorkflow> {
         static NEXT: AtomicU32 = AtomicU32::new(0);
         let base = std::env::temp_dir();
         let pid = std::process::id();
@@ -3519,16 +3533,35 @@ impl StagedValues {
             let dir = base.join(format!("ephor-workflow-values-{pid}-{serial}"));
             match fs::create_dir(&dir) {
                 Ok(()) => {
-                    let staged = StagedValues {
-                        path: dir.join(VALUES),
+                    let staged = StagedWorkflow {
+                        dossier: dir.join(DOSSIER),
+                        item: dir.join(ITEM),
+                        values: dir.join(VALUES),
                         dir,
                     };
-                    fs::write(&staged.path, content).map_err(|err| {
-                        EphorError::Command(format!(
-                            "Cannot write temporary workflow values {}: {err}",
-                            staged.path.display()
-                        ))
-                    })?;
+                    let destination_dossier = for_shell(&destination.join(DOSSIER));
+                    let destination_item = for_shell(&destination.join(ITEM));
+                    let staged_dossier = for_shell(&staged.dossier);
+                    let staged_item = for_shell(&staged.item);
+                    let mut runtime_values = values.clone();
+                    for value in runtime_values.values_mut() {
+                        replace_path(value, &destination_dossier, &staged_dossier);
+                        replace_path(value, &destination_item, &staged_item);
+                    }
+                    let values = serde_json::to_string_pretty(&runtime_values)
+                        .unwrap_or_else(|_| "{}".to_string());
+                    for (path, content) in [
+                        (&staged.dossier, dossier),
+                        (&staged.item, item),
+                        (&staged.values, values.as_str()),
+                    ] {
+                        fs::write(path, content).map_err(|err| {
+                            EphorError::Command(format!(
+                                "Cannot write temporary workflow file {}: {err}",
+                                path.display()
+                            ))
+                        })?;
+                    }
                     return Ok(staged);
                 }
                 Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -3547,9 +3580,31 @@ impl StagedValues {
     }
 }
 
-impl Drop for StagedValues {
+impl Drop for StagedWorkflow {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.dir);
+    }
+}
+
+/// Replace only the values sent to a dry-run runtime. Public answers retain
+/// the eventual destination paths, while every supported carried-file input
+/// the runtime validates points at an existing staged equivalent.
+fn replace_path(value: &mut Value, destination: &str, staged: &str) {
+    match value {
+        Value::String(text) if text.contains(destination) => {
+            *text = text.replace(destination, staged);
+        }
+        Value::Array(items) => {
+            for item in items {
+                replace_path(item, destination, staged);
+            }
+        }
+        Value::Object(fields) => {
+            for field in fields.values_mut() {
+                replace_path(field, destination, staged);
+            }
+        }
+        _ => {}
     }
 }
 
