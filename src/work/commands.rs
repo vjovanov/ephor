@@ -737,14 +737,7 @@ fn laying_for(
     picked: Option<&crate::work::recipe::HandPin>,
     dry_run: bool,
 ) -> Result<Landing> {
-    let laying = dispatcher.laying(
-        item,
-        entry,
-        &BTreeMap::new(),
-        &serde_json::Map::new(),
-        false,
-        picked,
-    )?;
+    let laying = dispatcher.laying(item, entry, &BTreeMap::new(), picked)?;
     let workflow = laying.workflow.id.clone();
     let plan = laying.root().join(&laying.plan_id);
     if dry_run {
@@ -995,7 +988,7 @@ fn lay_workflow(config: &StatusConfig, args: &crate::cli::WorkLayArgs) -> Result
         .map_err(EphorError::Command)?;
     let entry = workflow_entry(&mut dispatcher, config, &item, &args.entry)?;
     let file_values = workflow_values(&args.values)?;
-    let laying = dispatcher.laying(
+    let laying = dispatcher.laying_with_values(
         &item,
         &entry,
         &typed,

@@ -1758,6 +1758,18 @@ impl Dispatcher {
         item: &Item,
         entry: &ActionConfig,
         typed: &BTreeMap<String, String>,
+        picked: Option<&recipe::HandPin>,
+    ) -> Result<Laying> {
+        self.laying_with_values(item, entry, typed, &serde_json::Map::new(), false, picked)
+    }
+
+    /// Everything one workflow entry would write, including explicitly
+    /// loaded values files.
+    pub fn laying_with_values(
+        &mut self,
+        item: &Item,
+        entry: &ActionConfig,
+        typed: &BTreeMap<String, String>,
         file_values: &serde_json::Map<String, Value>,
         values_file_supplied: bool,
         picked: Option<&recipe::HandPin>,
