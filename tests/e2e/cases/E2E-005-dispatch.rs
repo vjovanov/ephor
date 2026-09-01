@@ -533,12 +533,14 @@ case "${1:?subcommand}" in
 esac
 "#;
 
-    /// The trivial recipe every one of the four issues matches: no gate, no
-    /// role, and no checkout, so nothing about *whether* an item is worked
-    /// stands between a fixture ranking and the order it produces.
+    /// The branch-less replacement for the shipped `implement` recipe, which
+    /// keeps these ranking cases about ordering rather than branch workspaces.
+    /// Every issue matches: no gate, no role, and no checkout, so nothing
+    /// about *whether* an item is worked stands between a fixture ranking and
+    /// the order it produces.
     fn trivial_recipe() -> serde_json::Value {
         json!({
-            "id": "triage",
+            "id": "implement",
             "description": "look at the issue",
             "when": { "kinds": ["issue"] },
             "needs_checkout": false,
