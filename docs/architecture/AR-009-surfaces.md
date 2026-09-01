@@ -45,7 +45,7 @@ Where a screen has to *ask* for something the command line takes as an
 argument, the asking is the surface's and the move is still the API's: the
 workflow key prompts for one missing scalar and opens an editor for anything
 larger ([§FS-005-dispatch.19](../../requirements.md#19-a-workflow-the-runtime-offers-is-an-action-and-its-inputs-are-answered-here)), then hands what it collected to the same call
-`--set` feeds. A screen that asked and then laid the plan down itself would
+`--values` and `--set` feed. A screen that asked and then laid the plan down itself would
 be a second implementation of one move, which is how two surfaces come to
 disagree about what a workflow was answered with.
 

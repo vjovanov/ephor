@@ -2233,7 +2233,7 @@ ephor work sync [--project P] [--dry-run]
 ephor work cancel --item ID TICKET… [--why WORDS] [--dry-run]
 ephor work run [--project P] [--item ID] [--due [--max-concurrent N]] [--watch] [-- RHEI_ARGS…]
 ephor work workflows [--project P] [WORKFLOW] [--json]
-ephor work lay ENTRY --item ID [--set INPUT=VALUE]… [--hand H] [--dry-run]
+ephor work lay ENTRY --item ID [--values FILE]… [--set INPUT=VALUE]… [--hand H] [--dry-run]
 ephor work forget [--item ID | --done | --missing]
 ephor work states
 ```
@@ -2757,15 +2757,25 @@ are named in the runtime's language, where the same spelling says nothing.
 Say nothing and nothing changes: the entry is a menu row, laid by you and
 started by you.
 
-**Answering the inputs.** Five steps, each displacing the ones after it:
+**Answering the inputs.** Six steps, each displacing the ones after it:
 
-1. what you answered for this laying alone — `--set <input>=<value>`, or the
-   line you typed in the interface;
-2. what the entry's `inputs` says;
-3. ephor's answer for an input that names who does the work;
-4. the workflow's own default;
-5. nobody — a required input still unanswered, which is asked for rather than
+1. what you answered explicitly for this laying alone — `--set <input>=<value>`,
+   or the line you typed in the interface;
+2. what the repeatable `--values <file>` options say, merged left to right;
+3. what the entry's `inputs` says;
+4. ephor's answer for an input that names who does the work;
+5. the workflow's own default;
+6. nobody — a required input still unanswered, which is asked for rather than
    written with a hole in it.
+
+Each `--values` file is a YAML or JSON mapping, read relative to the directory
+where the command was invoked. Later files replace earlier values for the same
+input; explicit `--set` answers replace all file values. Lists, records, numbers,
+and flags keep their types, and a value for an execution-target input still goes
+through the roster and permitted-hand policy. The answer listing calls these
+answers **a values file**, so the human and JSON accounts distinguish them from
+explicit answers (`you`). A missing, unreadable, malformed, non-mapping, or
+runtime-rejected values input is refused before any workflow workspace is made.
 
 A string is rendered with the matter's own fields, exactly as a brief is
 (§8.3), plus `{dossier}` and `{item}` — the paths of two files ephor writes
@@ -2791,6 +2801,8 @@ own default included, since a default is a naming.
 ephor work lay review-change --item github-prs:acme/widget#42 --dry-run
 ephor work lay review-change --item github-prs:acme/widget#42
 ephor work lay venue-intake --item … --set conference='ECOOP 2027'
+ephor work lay review-change --item github-prs:acme/widget#42 \
+  --values .values-project.yaml --values .values-local.json
 ```
 
 `--dry-run` prints what would answer every input and where each answer came

@@ -73,8 +73,9 @@ way a states document is scanned in §3, right enough to fill an input and never
 the authority on anything else; and the entry that makes the workflow an
 action, handed up as bytes, because this module knows where such a file sits
 and never what it means. Rendering one is a summons like any other: the
-resolved values written out as the binding's own values file, the output
-directory named under the work root, and the workspace left behind recognized
+values supplied by the reader's YAML or JSON files and explicit answers
+resolved into the binding's own values file, the output directory named under
+the work root, and the workspace left behind recognized
 by the plan reading below — so a workflow's plan is an operation the moment it
 exists, and asks nothing further of this module. The hand grammar stays here as
 everywhere: an input the workflow declares an execution target for is filled

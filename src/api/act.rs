@@ -998,7 +998,14 @@ impl Session {
         let Some(dispatcher) = &mut self.dispatcher else {
             return views::Outcome::refused("Work needs the registry, which could not be read");
         };
-        let laying = match dispatcher.laying(item, &entry.action, &typed, picked.as_ref()) {
+        let laying = match dispatcher.laying(
+            item,
+            &entry.action,
+            &typed,
+            &serde_json::Map::new(),
+            false,
+            picked.as_ref(),
+        ) {
             Ok(laying) => laying,
             Err(err) => return views::Outcome::refused(err.to_string()),
         };

@@ -30,6 +30,14 @@ ships, the previous "latest" section moves verbatim to
 
 ### Added
 
+- **`ephor work lay` loads repeatable workflow values files**
+  ([§FS-005-dispatch.19](../requirements.md#19-a-workflow-the-runtime-offers-is-an-action-and-its-inputs-are-answered-here)).
+  `--values <file>` accepts YAML or JSON mappings relative to the invocation
+  directory, merges repeated files left to right, preserves structured values,
+  and lets explicit `--set` answers win. File answers are shown with their
+  provenance, execution targets remain under Ephor's hand policy, and invalid
+  or runtime-rejected input leaves no partial workflow workspace. (PR #N)
+
 - **A workflow entry can ask to run itself, and what it lays down is due like
   any other work**
   ([§FS-005-dispatch.28](../requirements.md#28-a-workflow-entry-can-ask-for-the-same-thing-a-recipe-can),
