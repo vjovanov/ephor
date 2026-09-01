@@ -484,7 +484,7 @@ fn a_refusal_after_the_template_resolved_leaves_no_workspace() {
 
     // The entry resolves its template first and asks who does the work after,
     // and this hand is nobody the runtime knows.
-    world
+    let refused = world
         .ephor()
         .args([
             "work",
@@ -494,10 +494,26 @@ fn a_refusal_after_the_template_resolved_leaves_no_workspace() {
             ITEM,
             "--hand",
             "nobody",
+            "--json",
         ])
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("nobody"));
+        .failure();
+    let output = refused.get_output();
+    let view = json_of(output);
+    let says = view["says"].as_str().expect("the JSON refusal");
+    assert!(says.contains("names 'nobody'"), "{says}");
+    assert!(says.contains("the roster has:"), "{says}");
+    assert!(
+        says.contains("a model profile named 'nobody' with an agent carrier"),
+        "{says}"
+    );
+    assert!(says.contains("Rhei settings `models` registry"), "{says}");
+    assert!(says.contains("nameable model-carrying hand"), "{says}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr).trim(),
+        format!("ERROR: {says}"),
+        "stderr and JSON carry the same complete refusal"
+    );
     assert!(
         !workspace(&world).exists(),
         "a refusal left {} behind",

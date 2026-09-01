@@ -302,6 +302,15 @@ fn render_roster(
             ),
         }
     }
+    if !roster.hands.is_empty() && !roster.has_model_carrying_hand() {
+        println!(
+            "  {}",
+            style.dim(&format!(
+                "no model-carrying hands are configured; {}",
+                crate::work::runtime::roster::model_profile_help(None)
+            ))
+        );
+    }
 }
 
 fn roster_json(roster: &crate::work::runtime::roster::Roster, config: &StatusConfig) -> Value {
