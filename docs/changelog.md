@@ -2300,7 +2300,7 @@ ships, the previous "latest" section moves verbatim to
   `models` registry, and choosing an unknown named hand keeps refusing it while
   explaining how a matching model profile with an agent carrier creates that
   name. Selection, narrowing, JSON shape, and no-write refusal behavior stay
-  unchanged. (PR #TBD)
+  unchanged. (PR #48)
 
 - **`ephor work lay --dry-run` leaves the ordinary work root untouched**
   ([§FS-005-dispatch.19](../requirements.md#19-a-workflow-the-runtime-offers-is-an-action-and-its-inputs-are-answered-here)).
