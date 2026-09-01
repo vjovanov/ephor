@@ -102,6 +102,10 @@ if [ "$verb" = instantiate ]; then
       *) shift ;;
     esac
   done
+  if grep -q '"reject"' "$values"; then
+    echo "× runtime rejected workflow values" >&2
+    exit 1
+  fi
   if [ -n "$dry" ]; then
     echo "would render $(basename "$ref") into $output"
     exit 0
@@ -285,6 +289,44 @@ fn a_dry_run_names_the_workspace_it_would_make_and_makes_nothing() {
     // Nor anywhere else: the fallback this replaced would have written the
     // work root beside the checkouts, in the project root itself.
     assert!(!world.forest().join("panta").exists());
+}
+
+/// A values-file dry run is a promise about the same laying as the real run,
+/// so the existing runtime root validates it before ephor reports a workspace
+/// it has not minted. The staged validation still writes nothing to either
+/// prospective destination (§FS-005-dispatch.19).
+#[test]
+fn values_dry_run_preflights_before_promising_a_minted_workspace() {
+    let world = watching(Some("fix/issue-{number}"), true);
+    std::fs::write(world.path().join("rejected.yaml"), "ticket: reject\n")
+        .expect("runtime-rejected values");
+
+    world
+        .ephor()
+        .current_dir(world.path())
+        .args([
+            "work",
+            "lay",
+            "fix-issue",
+            "--item",
+            ITEM,
+            "--values",
+            "rejected.yaml",
+            "--dry-run",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("runtime rejected workflow values"));
+
+    assert!(
+        !workspace(&world).exists(),
+        "a refused dry run made {}",
+        workspace(&world).display()
+    );
+    assert!(
+        !world.forest().join("panta").exists(),
+        "a refused dry run made a fallback work root"
+    );
 }
 
 /// The whole of the fix on one matter: the workspace is made through the one

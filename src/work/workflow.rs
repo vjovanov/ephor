@@ -192,6 +192,25 @@ impl Answered {
 /// standing; `Err` is the refusal, said where it was named.
 pub type Rendering<'a> = &'a dyn Fn(&str) -> Result<Option<String>, String>;
 
+/// Refuse values-file fields the selected workflow does not declare. This is
+/// separate from answering because a reader's typo must be rejected before
+/// ephor accounts for any answers or prepares anywhere to write them
+/// (§FS-005-dispatch.19).
+pub fn validate_file_values(
+    workflow: &Workflow,
+    file_values: &serde_json::Map<String, Value>,
+) -> Result<(), String> {
+    for name in file_values.keys() {
+        if workflow.input(name).is_none() {
+            return Err(format!(
+                "workflow '{}' has no input named '{name}'",
+                workflow.id
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Answer every input of `workflow` (§FS-005-dispatch.19).
 ///
 /// `typed` is what the reader said explicitly for this instantiation alone, by
@@ -589,6 +608,21 @@ mod tests {
             Value::String("claude-code[high]:anthropic:opus".into())
         );
         assert_eq!(out.answer("smart_target").unwrap().from, From::Values);
+    }
+
+    #[test]
+    fn an_unknown_values_file_input_is_refused_by_name() {
+        let flow = workflow(vec![input("ci_commands", Kind::List, false, false)]);
+        let file_values = serde_json::Map::from_iter([(
+            "ci_comands".to_string(),
+            serde_json::json!(["cargo test"]),
+        )]);
+
+        let refusal = validate_file_values(&flow, &file_values).expect_err("the typo is refused");
+        assert_eq!(
+            refusal,
+            "workflow 'changeset-review' has no input named 'ci_comands'"
+        );
     }
 
     #[test]

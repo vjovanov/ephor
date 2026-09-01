@@ -470,6 +470,11 @@ fn invalid_values_files_leave_no_workflow_workspace() {
     std::fs::write(world.path().join("not-a-map.yaml"), "- one\n- two\n")
         .expect("non-mapping values");
     std::fs::write(
+        world.path().join("unknown.yaml"),
+        "ci_comands:\n  - cargo test\n",
+    )
+    .expect("values with a misspelled input");
+    std::fs::write(
         world.path().join("rejected.yaml"),
         "ci_commands:\n  - reject\n",
     )
@@ -493,6 +498,26 @@ fn invalid_values_files_leave_no_workflow_workspace() {
             .stderr(predicate::str::contains("values file"));
         assert!(!work_root(&world).exists(), "{file} left a work root");
     }
+
+    world
+        .ephor()
+        .current_dir(world.path())
+        .args([
+            "work",
+            "lay",
+            "review-change",
+            "--item",
+            "acmeforge:app/101",
+            "--values",
+            "unknown.yaml",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("no input named 'ci_comands'"));
+    assert!(
+        !work_root(&world).exists(),
+        "unknown input left a work root"
+    );
 
     world
         .ephor()
