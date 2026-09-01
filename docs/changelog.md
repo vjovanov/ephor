@@ -174,7 +174,7 @@ ships, the previous "latest" section moves verbatim to
 - **A registry match to the project's main branch is not a matter's own
   branch, for placement**
   ([§FS-005-dispatch.25](../requirements.md#25-work-about-a-matter-with-no-branch-can-mint-the-branch-it-needs),
-  [§FS-005-dispatch.1](../requirements.md#1-a-recipe-decides-which-items-deserve-work-and-what-to-ask-for), PR #N).
+  [§FS-005-dispatch.1](../requirements.md#1-a-recipe-decides-which-items-deserve-work-and-what-to-ask-for), PR #40).
   An issue or pull request the registry matched only to the configured
   `main_branch` — the trunk every workspace is grown from — used to keep that
   branch like any other of the matter's own, so a `branch` template was
