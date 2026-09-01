@@ -2293,6 +2293,15 @@ ships, the previous "latest" section moves verbatim to
 
 ### Fixed
 
+- **Capabilities and missing-hand refusals explain how to configure
+  model-carrying hands**
+  ([§FS-005-dispatch.14](../requirements.md#14-who-does-the-work-is-chosen-and-defaulted-per-project)).
+  A roster containing only agent-default hands now points to the Rhei settings
+  `models` registry, and choosing an unknown named hand keeps refusing it while
+  explaining how a matching model profile with an agent carrier creates that
+  name. Selection, narrowing, JSON shape, and no-write refusal behavior stay
+  unchanged. (PR #TBD)
+
 - **`ephor work lay --dry-run` leaves the ordinary work root untouched**
   ([§FS-005-dispatch.19](../requirements.md#19-a-workflow-the-runtime-offers-is-an-action-and-its-inputs-are-answered-here)).
   A dry run now asks the runtime to validate and report the resolved workflow

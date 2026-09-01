@@ -1362,6 +1362,15 @@ sentence beside the entry, the same sentence everywhere that hand appears.
 The roster is reportable before anything depends on it: `ephor doctor` and
 `ephor capabilities` print each hand, what it resolves to, and why an
 unavailable one is unavailable ([§FS-010-doctor.2](requirements.md#2-the-ladder-is-answerable-on-its-own)).
+When that roster contains only agent-default hands, `capabilities` also says
+that no model-carrying hands are configured and points to model profiles in
+the shipped binding's `models` settings registry as the way to create
+nameable model-carrying hands. A choice naming an id absent from the roster is
+still refused before anything is written, with both the requested id and the
+current roster retained in the refusal; the refusal additionally says that a
+model profile bearing that id and an agent carrier in the same registry makes
+it a nameable model-carrying hand. A missing name is never passed through as
+an ordinary string.
 
 **The hand for a piece of work resolves in seven steps**, each displacing
 the ones after it: what the reader picked for this dispatch alone; the pin

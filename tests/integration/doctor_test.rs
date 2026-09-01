@@ -505,7 +505,17 @@ fn the_roster_prints_each_hand_and_why_an_unavailable_one_is_unavailable() {
     make_executable(&bin.join("runner-of-ours"), "#!/bin/sh\nexit 0\n");
     make_executable(&bin.join("claude"), "#!/bin/sh\nexit 0\n");
     let home = tmp.path().join("home");
-    fs::create_dir_all(&home).unwrap();
+    let settings = home.join(".config/rhei/settings.json");
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    fs::write(
+        &settings,
+        r#"{
+            "agents": {
+                "local": { "command": ["claude"], "modes": { "high": [] } }
+            }
+        }"#,
+    )
+    .unwrap();
 
     let out = ephor(tmp.path())
         .env("PATH", bin.to_string_lossy().to_string())
@@ -527,6 +537,18 @@ fn the_roster_prints_each_hand_and_why_an_unavailable_one_is_unavailable() {
     // One whose agent is not stays on the list with the computed reason.
     assert!(report.contains("✗ codex"), "{report}");
     assert!(report.contains("codex is not on PATH"), "{report}");
+    // With agents but no model profiles, the text answer points to the
+    // binding-owned way to create a model-carrying, nameable hand
+    // (§FS-005-dispatch.14).
+    assert!(
+        report.contains("no model-carrying hands are configured"),
+        "{report}"
+    );
+    assert!(
+        report.contains("Rhei settings `models` registry"),
+        "{report}"
+    );
+    assert!(report.contains("~/.config/rhei/settings.json"), "{report}");
 
     // The same roster, as the JSON a program reads.
     let out = ephor(tmp.path())
@@ -536,6 +558,16 @@ fn the_roster_prints_each_hand_and_why_an_unavailable_one_is_unavailable() {
         .output()
         .unwrap();
     let rows: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        rows["roster"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>(),
+        ["hands", "refusal", "runner"].into_iter().collect(),
+        "model-profile guidance does not change the JSON roster shape"
+    );
     assert_eq!(rows["roster"]["runner"], "runner-of-ours");
     assert_eq!(rows["roster"]["refusal"], Value::Null);
     let hands = rows["roster"]["hands"].as_array().unwrap();
@@ -549,6 +581,35 @@ fn the_roster_prints_each_hand_and_why_an_unavailable_one_is_unavailable() {
     assert_eq!(by_id("claude-code")["efforts"], json!(["yolo"]));
     assert_eq!(by_id("codex")["available"], false);
     assert_eq!(by_id("codex")["why"], "codex is not on PATH");
+
+    // Once a profile creates a model-carrying hand, the roster no longer
+    // describes itself as agent-default-only.
+    fs::write(
+        settings,
+        r#"{
+            "agents": {
+                "local": { "command": ["claude"], "modes": { "high": [] } }
+            },
+            "models": {
+                "deep": {
+                    "provider": "example", "model": "m-deep", "default_agent": "local"
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+    let out = ephor(tmp.path())
+        .env("PATH", bin.to_string_lossy().to_string())
+        .env("HOME", &home)
+        .args(["capabilities", "widget"])
+        .output()
+        .unwrap();
+    let report = String::from_utf8_lossy(&out.stdout);
+    assert!(report.contains("✓ deep"), "{report}");
+    assert!(
+        !report.contains("no model-carrying hands are configured"),
+        "{report}"
+    );
 }
 
 /// The degrade (§FS-005-dispatch.14): with the bound runtime not on `PATH`

@@ -85,6 +85,34 @@ pub struct Roster {
     pub refusal: Option<String>,
 }
 
+impl Roster {
+    /// Whether any hand carries a concrete model of its own. A roster with
+    /// hands but no such entry is the agent-default-only state whose remedy
+    /// `capabilities` needs to explain (§FS-005-dispatch.14).
+    pub(crate) fn has_model_carrying_hand(&self) -> bool {
+        self.hands
+            .iter()
+            .any(|hand| hand.agent.is_some() && hand.model.is_some())
+    }
+}
+
+/// How the shipped binding grows a nameable model-carrying hand. This owns
+/// the Rhei settings grammar for both the roster renderer and a missing-name
+/// refusal, so neither caller has to know a binding-specific key or path
+/// (§REQ-001-boundary.5).
+pub(crate) fn model_profile_help(id: Option<&str>) -> String {
+    match id {
+        Some(id) => format!(
+            "a model profile named '{id}' with an agent carrier in the Rhei settings `models` \
+             registry (normally `~/.config/rhei/settings.json`) creates '{id}' as a nameable \
+             model-carrying hand"
+        ),
+        None => "model profiles with an agent carrier in the Rhei settings `models` registry \
+                 (normally `~/.config/rhei/settings.json`) create nameable model-carrying hands"
+            .to_string(),
+    }
+}
+
 /// The roster, read from the binding's merged settings: built-in profiles,
 /// then the person's global file, then the work root's overlay
 /// (§DA-004-roster-is-asked-not-configured). `root` is the execution root a
@@ -295,13 +323,14 @@ pub fn resolve(
         HandPin::Named { id, effort } => {
             let Some(hand) = roster.hands.iter().find(|hand| &hand.id == id) else {
                 return Choice::Refused(format!(
-                    "{whence} names '{id}', which is not a hand here (the roster has: {})",
+                    "{whence} names '{id}', which is not a hand here (the roster has: {}); {}",
                     roster
                         .hands
                         .iter()
                         .map(|hand| hand.id.as_str())
                         .collect::<Vec<_>>()
-                        .join(", ")
+                        .join(", "),
+                    model_profile_help(Some(id))
                 ));
             };
             match settle_effort(hand, effort.as_deref(), &whence) {
@@ -1510,7 +1539,14 @@ mod tests {
             other => panic!("a typo went through: {other:?}"),
         };
         assert!(why.contains("names 'lnua'"), "{why}");
+        assert!(why.contains("the roster has:"), "{why}");
         assert!(why.contains("luna"), "{why}");
+        assert!(
+            why.contains("a model profile named 'lnua' with an agent carrier"),
+            "{why}"
+        );
+        assert!(why.contains("Rhei settings `models` registry"), "{why}");
+        assert!(why.contains("nameable model-carrying hand"), "{why}");
 
         // An effort is checked against what the hand declares, before
         // anything is written — the binding refuses it at the spawn.

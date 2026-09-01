@@ -710,6 +710,9 @@ who can be asked (rhei)
   ✓ claude-code        claude-code · its own default model · efforts: yolo
   ✗ codex              codex · its own default model · efforts: yolo — codex is not on PATH
   ✓ pi                 pi · its own default model · efforts: high
+  no model-carrying hands are configured; model profiles with an agent carrier
+  in the Rhei settings `models` registry (normally `~/.config/rhei/settings.json`)
+  create nameable model-carrying hands
 ```
 
 ephor never builds that list itself. Which models an agent can carry, and
@@ -720,6 +723,10 @@ An entry whose binary is missing is listed with that reason rather than
 dropped, and with no runtime bound the section says so in the workable rung's
 own words. `--json` carries the same two halves as `{ "projects": …,
 "roster": … }`.
+
+The final note appears only when every roster entry uses its agent's default
+model. It is configuration guidance rather than another roster field, so the
+JSON shape stays unchanged.
 
 ### 4.4 What a failing source does
 
@@ -1741,7 +1748,12 @@ The long form `{ "agent", "model", "effort" }` is for a pair the runtime's
 registry never listed — a proxy serving a model it does not know about. It is
 accepted **with a note** rather than refused, because ephor cannot prove such a
 pair invalid. A name the roster does have is checked against it: a typo, or an
-effort the hand does not declare, is refused before anything is written.
+effort the hand does not declare, is refused before anything is written. A
+missing name is refused with the requested id and current roster still shown,
+plus the direct remedy: a model profile bearing that name and an agent carrier
+in the Rhei settings `models` registry makes it a nameable model-carrying hand.
+It is not accepted as ordinary text, so execution-target validation and
+`permitted_hands` keep applying.
 
 **Naming a hand without an effort** is settled by what the hand declares. A
 hand declaring no efforts is asked plainly — there is nothing an ask could
