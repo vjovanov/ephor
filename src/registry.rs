@@ -3,7 +3,7 @@
 //! The registry is kept as loosely-typed JSON (`serde_json::Value`) to mirror
 //! the merge/override semantics of the original Python implementation.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
@@ -842,21 +842,39 @@ pub fn str_field<'a>(entry: &'a Value, field: &str) -> Option<&'a str> {
         .filter(|s| !s.is_empty())
 }
 
-/// The organization ids named here that this registry does not declare
-/// (§FS-005-dispatch.24). Which organizations exist is identity and is the
-/// registry's alone (§REQ-001-boundary.2), so a binding written against one —
-/// an autorun ceiling, say — is a binding over nobody until the registry has
-/// heard of it, and the caller says so rather than shrugging.
-pub fn unknown_organizations<'a>(
+/// Which organization each project belongs to, as the registry declares it
+/// (§FS-005-dispatch.24). Membership is identity and lives in the project's
+/// own row: it is the `organization` field there and nothing else, read here
+/// and never written back (§REQ-001-boundary.2). A project whose row names no
+/// organization is absent here, which is how it comes to be under no
+/// organization ceiling.
+pub fn organization_of_each_project(registry: &Value) -> BTreeMap<String, String> {
+    array_field(registry, "projects")
+        .iter()
+        .filter_map(|project| {
+            let organization = str_field(project, "organization")?;
+            Some((id_of(project).to_string(), organization.to_string()))
+        })
+        .collect()
+}
+
+/// The organization ids named here that no registry row places a project
+/// inside (§FS-005-dispatch.24). A binding written against an organization —
+/// an autorun ceiling, say — reaches the projects whose rows join it, so an
+/// id no row joins is a binding over nobody and the caller says so rather
+/// than shrugging. This asks the membership the binding itself is resolved
+/// through, so an id that is bounding somebody is never announced as
+/// bounding nobody; an id the registry declares but no project has joined is
+/// as empty as one it never declared, and is named the same way.
+pub fn organizations_over_nobody<'a>(
     registry: &Value,
     named: impl Iterator<Item = &'a String>,
 ) -> Vec<String> {
-    let declared: HashSet<&str> = array_field(registry, "organizations")
-        .iter()
-        .map(id_of)
+    let inhabited: HashSet<String> = organization_of_each_project(registry)
+        .into_values()
         .collect();
     named
-        .filter(|id| !declared.contains(id.as_str()))
+        .filter(|id| !inhabited.contains(id.as_str()))
         .cloned()
         .collect()
 }
@@ -922,28 +940,32 @@ mod tests {
         );
     }
 
-    /// §FS-005-dispatch.24: a binding written over an organization the
-    /// registry does not declare is a binding over nobody, and the caller is
-    /// told which name it was.
+    /// §FS-005-dispatch.24: a binding written over an organization no
+    /// registry row places a project inside is a binding over nobody, and the
+    /// caller is told which name it was. Membership is the `organization`
+    /// field on a project's row and nothing else, so the declaration array
+    /// neither makes an organization inhabited nor is needed for one to be.
     #[test]
-    fn an_organization_the_registry_never_declared_is_named_back() {
+    fn an_organization_no_project_row_joins_is_named_back() {
+        let named = ["acme".to_string(), "empty".to_string(), "typo".to_string()];
+        // `empty` is declared and joined by nobody; `acme` is joined without
+        // the array declaring anything at all, which the validator permits.
         let registry = serde_json::json!({
-            "organizations": [{ "id": "acme", "name": "Acme" }],
-            "projects": []
+            "organizations": [{ "id": "empty", "name": "Empty" }],
+            "projects": [{ "id": "widget", "organization": "acme" }]
         });
-        let named = [
-            "acme".to_string(),
-            "nosuchorg".to_string(),
-            "typo".to_string(),
-        ];
         assert_eq!(
-            unknown_organizations(&registry, named.iter()),
-            vec!["nosuchorg".to_string(), "typo".to_string()]
+            organizations_over_nobody(&registry, named.iter()),
+            vec!["empty".to_string(), "typo".to_string()]
         );
-        // A registry that declares none puts every name outside it, and a
-        // caller that names none has nothing to be told.
-        let empty = serde_json::json!({ "projects": [] });
-        assert_eq!(unknown_organizations(&empty, named.iter()).len(), 3);
-        assert!(unknown_organizations(&registry, [].iter()).is_empty());
+        assert_eq!(
+            organization_of_each_project(&registry),
+            BTreeMap::from([("widget".to_string(), "acme".to_string())])
+        );
+        // A registry holding no project puts every name outside every
+        // organization, and a caller that names none has nothing to be told.
+        let barren = serde_json::json!({ "projects": [] });
+        assert_eq!(organizations_over_nobody(&barren, named.iter()).len(), 3);
+        assert!(organizations_over_nobody(&registry, [].iter()).is_empty());
     }
 }

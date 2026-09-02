@@ -1965,18 +1965,27 @@ fn an_absent_organizations_map_leaves_every_organization_unbounded() {
     assert_eq!(starts(&log), 2);
 }
 
-/// §FS-005-dispatch.24: a ceiling keyed on an organization the registry does
-/// not declare bounds nobody, so the sweep that would have read it says so by
-/// name — a typo may not quietly remove the bound its author meant to set —
-/// and starts exactly what it would have started without the key.
+/// §FS-005-dispatch.24: a ceiling keyed on an organization no registry row
+/// places a project inside bounds nobody, so the sweep that would have read it
+/// says so by name — a key may not quietly remove the bound its author meant
+/// to set — and starts exactly what it would have started without the key. An
+/// organization the registry declares that no project has joined is as empty
+/// as one it never declared, and is named the same way.
 #[test]
-fn a_ceiling_over_an_organization_the_registry_does_not_declare_is_noted() {
+fn a_ceiling_over_an_organization_holding_no_project_is_noted() {
     let tmp = tempdir();
     let log = tmp.path().join("runner.log");
     dispatched_but_unstarted(tmp.path(), &log);
+    let path = tmp.path().join("workspaces.json");
+    let mut registry: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    registry["organizations"] = json!([{ "id": "emptyguild", "name": "The Empty Guild" }]);
+    write_registry(&path, &registry);
     reconfigure(tmp.path(), |config| {
         config["work"]["max_concurrent"] = Value::Null;
-        config["organizations"] = json!({ "nosuchorg": { "work": { "max_concurrent": 0 } } });
+        config["organizations"] = json!({
+            "emptyguild": { "work": { "max_concurrent": 0 } },
+            "nosuchorg": { "work": { "max_concurrent": 0 } }
+        });
     });
 
     let output = ephor(tmp.path())
@@ -1984,17 +1993,54 @@ fn a_ceiling_over_an_organization_the_registry_does_not_declare_is_noted() {
         .output()
         .unwrap();
     let reading: Value = serde_json::from_slice(&output.stdout).unwrap();
-    let notes = reading["notes"].as_array().unwrap();
-    assert_eq!(notes.len(), 1, "{reading}");
-    assert!(
-        notes[0]
-            .as_str()
-            .unwrap()
-            .contains("organizations.nosuchorg names no organization the registry declares"),
+    // The declared-but-empty id and the undeclared one are one condition, and
+    // the sweep says the same sentence about each.
+    assert_eq!(
+        reading["notes"],
+        json!([
+            "organizations.emptyguild: no registry row places a project in it, so the ceiling written there bounds nothing",
+            "organizations.nosuchorg: no registry row places a project in it, so the ceiling written there bounds nothing"
+        ]),
         "{reading}"
     );
     assert_eq!(reading["runs"][0]["outcome"], "started", "{reading}");
     assert_eq!(starts(&log), 1, "a ceiling over nobody refuses nobody");
+}
+
+/// §FS-005-dispatch.24: membership is the project row's `organization` field
+/// and nothing else, so a registry that declares no `organizations` array at
+/// all — which the validator permits, and which this fixture writes — still
+/// puts its project inside the organization its row names — the fixture this
+/// case starts from writes no such array, so the shape is the repository's own
+/// default. The ceiling binds there, and nothing announces it as bounding
+/// nobody: one reading answers both, so no document can refuse by a key it
+/// calls empty in the same breath.
+#[test]
+fn a_ceiling_binds_where_a_row_joins_it_though_the_registry_declares_no_array() {
+    let tmp = tempdir();
+    let log = tmp.path().join("runner.log");
+    dispatched_but_unstarted(tmp.path(), &log);
+    let path = tmp.path().join("workspaces.json");
+    let mut registry: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    registry["projects"][0]["organization"] = json!("acme");
+    write_registry(&path, &registry);
+    reconfigure(tmp.path(), |config| {
+        config["work"]["max_concurrent"] = Value::Null;
+        config["organizations"] = json!({ "acme": { "work": { "max_concurrent": 0 } } });
+    });
+
+    let output = ephor(tmp.path())
+        .args(["work", "run", "--due", "--json"])
+        .output()
+        .unwrap();
+    let reading: Value = serde_json::from_slice(&output.stdout).unwrap();
+    // A ceiling that is refusing starts bounds somebody.
+    assert_eq!(reading["notes"], json!([]), "{reading}");
+    assert_eq!(reading["runs"][0]["outcome"], "passed-over", "{reading}");
+    let why = reading["runs"][0]["reason"].as_str().unwrap_or_default();
+    let full = "organizations.acme.work.max_concurrent 0 is full";
+    assert!(why.contains(full), "{reading}");
+    assert_eq!(starts(&log), 0, "{reading}");
 }
 
 /// §FS-005-dispatch.24: a project ceiling above its organization's is named
