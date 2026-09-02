@@ -902,7 +902,23 @@ impl Session {
     /// two answers to "can this project be checked out" is exactly what
     /// §AR-005-capabilities exists to prevent.
     pub fn open(config: &StatusConfig) -> Result<Session> {
-        let configured: Vec<String> = config.projects.keys().cloned().collect();
+        Session::open_over(config, &crate::scope::Projects::every())
+    }
+
+    /// The same session, over the projects a scope selector left
+    /// (§FS-011-command-line.9).
+    ///
+    /// This is where the two files meet: `--workspace`, `--tag` and `--org`
+    /// name rows of the registry, and the session picks its projects from the
+    /// site's own watch list. Narrowing here rather than at each reader is
+    /// what makes the branch rows, the feeds, the stats and the screen agree
+    /// about what is in scope — they all read `Session::projects`.
+    pub fn open_over(config: &StatusConfig, scope: &crate::scope::Projects) -> Result<Session> {
+        let configured: Vec<String> = scope
+            .over(config.projects.keys())?
+            .into_iter()
+            .cloned()
+            .collect();
         let info = load_registry_info(&configured)?;
 
         // Order projects by organization (registry order), then by name.

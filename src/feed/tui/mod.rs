@@ -237,9 +237,9 @@ struct App {
     message: String,
 }
 
-pub fn run() -> Result<ExitCode> {
+pub fn run(scope: &crate::scope::Projects) -> Result<ExitCode> {
     let config = load_config()?;
-    let mut app = App::load(&config)?;
+    let mut app = App::load(&config, scope)?;
     let mut terminal = ratatui::init();
     let result = app.event_loop(&mut terminal, &config);
     ratatui::restore();
@@ -253,11 +253,13 @@ pub(crate) fn highlight_style() -> Style {
 }
 
 impl App {
-    fn load(config: &StatusConfig) -> Result<Self> {
+    fn load(config: &StatusConfig, scope: &crate::scope::Projects) -> Result<Self> {
         // The same session a command opens (§AR-009-surfaces.2): the screen
-        // reads exactly the data `ephor actions` and `ephor branches` do.
+        // reads exactly the data `ephor actions` and `ephor branches` do —
+        // over the same scope, so the screen and the table agree about which
+        // projects a selector left (§FS-011-command-line.9).
         let mut app = App {
-            ctx: Ctx::open(config)?,
+            ctx: Ctx::open_over(config, scope)?,
             navigator: NavigatorState::new(),
             screen: Screen::Navigator,
             saved: None,
