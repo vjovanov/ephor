@@ -842,6 +842,25 @@ pub fn str_field<'a>(entry: &'a Value, field: &str) -> Option<&'a str> {
         .filter(|s| !s.is_empty())
 }
 
+/// The organization ids named here that this registry does not declare
+/// (§FS-005-dispatch.24). Which organizations exist is identity and is the
+/// registry's alone (§REQ-001-boundary.2), so a binding written against one —
+/// an autorun ceiling, say — is a binding over nobody until the registry has
+/// heard of it, and the caller says so rather than shrugging.
+pub fn unknown_organizations<'a>(
+    registry: &Value,
+    named: impl Iterator<Item = &'a String>,
+) -> Vec<String> {
+    let declared: HashSet<&str> = array_field(registry, "organizations")
+        .iter()
+        .map(id_of)
+        .collect();
+    named
+        .filter(|id| !declared.contains(id.as_str()))
+        .cloned()
+        .collect()
+}
+
 pub fn array_field<'a>(registry: &'a Value, field: &str) -> &'a [Value] {
     registry
         .get(field)
@@ -901,5 +920,30 @@ mod tests {
             expand_template("{{literal}}", &context).unwrap(),
             "{literal}"
         );
+    }
+
+    /// §FS-005-dispatch.24: a binding written over an organization the
+    /// registry does not declare is a binding over nobody, and the caller is
+    /// told which name it was.
+    #[test]
+    fn an_organization_the_registry_never_declared_is_named_back() {
+        let registry = serde_json::json!({
+            "organizations": [{ "id": "acme", "name": "Acme" }],
+            "projects": []
+        });
+        let named = [
+            "acme".to_string(),
+            "nosuchorg".to_string(),
+            "typo".to_string(),
+        ];
+        assert_eq!(
+            unknown_organizations(&registry, named.iter()),
+            vec!["nosuchorg".to_string(), "typo".to_string()]
+        );
+        // A registry that declares none puts every name outside it, and a
+        // caller that names none has nothing to be told.
+        let empty = serde_json::json!({ "projects": [] });
+        assert_eq!(unknown_organizations(&empty, named.iter()).len(), 3);
+        assert!(unknown_organizations(&registry, [].iter()).is_empty());
     }
 }
