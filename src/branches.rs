@@ -168,7 +168,7 @@ pub enum WorkspaceState {
 
 /// One project's placement data: where it is checked out, how its branch
 /// workspaces are named, and which branches it has.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Placement {
     pub project: String,
     pub root: PathBuf,
