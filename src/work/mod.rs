@@ -2706,11 +2706,11 @@ impl Dispatcher {
         projects: &[String],
         runner_args: &[String],
         max_concurrent: Option<usize>,
-    ) -> Result<Vec<Launched>> {
+    ) -> Result<Sweep> {
         // The runtime is a rung like any other capacity, and with nothing
         // bound there is no run to start (§AR-005-capabilities.2).
         if runtime::refusal(&self.global).is_some() {
-            return Ok(Vec::new());
+            return Ok(Sweep::default());
         }
         let detaches = runtime::can_detach(&self.global);
         // Everything after this point is one site-wide reservation: reload
@@ -2721,7 +2721,13 @@ impl Dispatcher {
         self.ledger = ledger::load()?;
         let roots = self.work_roots();
         let ceilings = Ceilings {
-            site: max_concurrent.or(self.global.max_concurrent),
+            // `--max-concurrent N` replaces the configured aggregate ceiling
+            // on roots in flight and that one alone; the working ceiling has
+            // no flag (§FS-005-dispatch.24).
+            site: Limits {
+                concurrent: max_concurrent.or(self.global.max_concurrent),
+                active: self.global.max_active,
+            },
             site_as_configured: self.global.max_concurrent,
             organizations: self
                 .organizations
@@ -2735,7 +2741,12 @@ impl Dispatcher {
                 .projects
                 .iter()
                 .filter_map(|(project, work)| {
-                    work.max_concurrent.map(|limit| (project.clone(), limit))
+                    let limits = Limits {
+                        concurrent: work.max_concurrent,
+                        active: work.max_active,
+                    };
+                    (limits.concurrent.is_some() || limits.active.is_some())
+                        .then(|| (project.clone(), limits))
                 })
                 .collect(),
             membership: self.organization_of_each_project(),
@@ -2752,7 +2763,7 @@ impl Dispatcher {
         }
         let live = LiveRuns::read(&self.global, &roots, &ceilings.membership);
         let mut capacity = Capacity::new(ceilings, live);
-        let launched = self
+        let runs = self
             .due_in(&roots, now)
             .into_iter()
             .filter(|root| {
@@ -2818,7 +2829,10 @@ impl Dispatcher {
             })
             .collect();
         ledger::store(&self.ledger)?;
-        Ok(launched)
+        Ok(Sweep {
+            runs,
+            capacity: capacity.standing(),
+        })
     }
 
     /// Remember that starting a run on this root did not work, so the next
@@ -2964,13 +2978,38 @@ impl Launched {
     }
 }
 
+/// Live roots in one scope — the site, or one project — split by what they
+/// are doing (§FS-005-dispatch.24). `live` is every root in flight and
+/// answers for `max_concurrent`; `active` is the ones being worked and
+/// answers for `max_active`. The difference is the roots parked on a
+/// person's answer, which is the count a reader is owed.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct Counts {
+    live: usize,
+    active: usize,
+}
+
+impl Counts {
+    fn took(&mut self, active: bool) {
+        self.live += 1;
+        self.active += usize::from(active);
+    }
+
+    /// Live but not working: the roots waiting on a person.
+    fn parked(self) -> usize {
+        self.live - self.active
+    }
+}
+
 /// Live roots at the beginning of a sweep, counted once from the same root
 /// snapshot that supplies due candidates (§FS-005-dispatch.24).
 #[derive(Debug, Default)]
 struct LiveRuns {
-    global: usize,
+    global: Counts,
+    /// An organization bounds roots in flight only, so its slots are a plain
+    /// count rather than a split one (§FS-005-dispatch.24).
     organizations: BTreeMap<String, usize>,
-    projects: BTreeMap<String, usize>,
+    projects: BTreeMap<String, Counts>,
 }
 
 impl LiveRuns {
@@ -2984,7 +3023,11 @@ impl LiveRuns {
             if !runtime::watch::live(global, &root.root) {
                 continue;
             }
-            live.global += 1;
+            // What the root is doing is asked only of a root that is live:
+            // the reading costs the plans and the machine, and an idle root
+            // has no slot to be spending (§FS-005-dispatch.24).
+            let active = !runtime::watch::parked(global, root);
+            live.global.took(active);
             let projects: BTreeSet<&str> = root
                 .plans
                 .iter()
@@ -2998,7 +3041,10 @@ impl LiveRuns {
                 .filter_map(|project| membership.get(*project).map(String::as_str))
                 .collect();
             for project in projects {
-                *live.projects.entry(project.to_string()).or_default() += 1;
+                live.projects
+                    .entry(project.to_string())
+                    .or_default()
+                    .took(active);
             }
             for organization in organizations {
                 *live
@@ -3011,20 +3057,58 @@ impl LiveRuns {
     }
 }
 
-/// The three nested ceilings one sweep reads, and who is inside which
-/// organization (§FS-005-dispatch.24). Missing ceilings stay missing:
-/// omission is unlimited, while `Some(0)` is deliberately no capacity.
+/// The two ceilings one scope — the site, or one project — may declare
+/// (§FS-005-dispatch.24). Missing stays missing: omission is unlimited, while
+/// `Some(0)` is deliberately no capacity.
+#[derive(Debug, Default, Clone, Copy)]
+struct Limits {
+    /// `max_concurrent`, over every live root.
+    concurrent: Option<usize>,
+    /// `max_active`, over the live roots that are working.
+    active: Option<usize>,
+}
+
+impl Limits {
+    /// Which of the two refuses a start here, in the words that name the key
+    /// it refused on (§FS-005-dispatch.24). Roots in flight is asked first,
+    /// so a scope that never named the second key answers exactly as it did
+    /// before there was one — same wording, same count.
+    fn full(&self, live: Counts, scope: &str) -> Option<String> {
+        if let Some(limit) = self.concurrent.filter(|limit| live.live >= *limit) {
+            return Some(format!(
+                "{scope}.max_concurrent {limit} is full ({} live run(s))",
+                live.live
+            ));
+        }
+        if let Some(limit) = self.active.filter(|limit| live.active >= *limit) {
+            return Some(format!(
+                "{scope}.max_active {limit} is full ({} active run(s), {} parked)",
+                live.active,
+                live.parked()
+            ));
+        }
+        None
+    }
+}
+
+/// The nested ceilings one sweep reads, and who is inside which organization
+/// (§FS-005-dispatch.24). Missing ceilings stay missing: omission is
+/// unlimited, while `Some(0)` is deliberately no capacity.
 #[derive(Debug, Default)]
 struct Ceilings {
-    /// The site ceiling in force for this sweep: the configured one, or the
-    /// number `--max-concurrent` put in its place for this invocation.
-    site: Option<usize>,
-    /// The site ceiling as configuration writes it. A pair written the wrong
-    /// way round is a fact about the configuration, so it is measured against
-    /// this rather than against a flag that narrowed one sweep on purpose.
+    /// The site ceilings in force for this sweep: the configured pair, with
+    /// the number `--max-concurrent` put in the flight one's place for this
+    /// invocation.
+    site: Limits,
+    /// The site flight ceiling as configuration writes it. A pair written the
+    /// wrong way round is a fact about the configuration, so it is measured
+    /// against this rather than against a flag that narrowed one sweep on
+    /// purpose.
     site_as_configured: Option<usize>,
+    /// An organization bounds roots in flight and nothing else, so it holds
+    /// one number rather than a pair (§FS-005-dispatch.24).
     organizations: BTreeMap<String, usize>,
-    projects: BTreeMap<String, usize>,
+    projects: BTreeMap<String, Limits>,
     /// Which organization each project belongs to, as the registry declares
     /// it. A project absent here belongs to none and is under no organization
     /// ceiling (§FS-005-dispatch.24).
@@ -3042,10 +3126,14 @@ impl Ceilings {
     /// here rewrites a number; it says which project, which ceiling it is
     /// above, and both of them (§FS-005-dispatch.24). A ceiling of `0` above
     /// is a pause the reader wrote on purpose rather than a budget anything
-    /// can be above, so no pair is read out of it.
+    /// can be above, so no pair is read out of it. Roots in flight is the
+    /// nesting this reads: it is the ceiling an organization declares.
     fn inversions(&self) -> Vec<String> {
         let mut said = Vec::new();
-        for (project, inner) in &self.projects {
+        for (project, limits) in &self.projects {
+            let Some(inner) = limits.concurrent else {
+                continue;
+            };
             let above = self
                 .organization_of(project)
                 .and_then(|organization| {
@@ -3059,7 +3147,7 @@ impl Ceilings {
                         .map(|site| ("global work".to_string(), site)),
                 );
             for (named, outer) in above {
-                if outer > 0 && *inner > outer {
+                if outer > 0 && inner > outer {
                     said.push(format!(
                         "projects.{project}.work.max_concurrent {inner} is above \
                          {named}.max_concurrent {outer}: the project number stands, and the \
@@ -3072,13 +3160,13 @@ impl Ceilings {
     }
 }
 
-/// Remaining slots at each of the three scopes, as one sweep spends them.
+/// Remaining slots at each scope, as one sweep spends them.
 #[derive(Debug)]
 struct Capacity {
     ceilings: Ceilings,
-    global_live: usize,
+    global_live: Counts,
     organization_live: BTreeMap<String, usize>,
-    project_live: BTreeMap<String, usize>,
+    project_live: BTreeMap<String, Counts>,
 }
 
 impl Capacity {
@@ -3108,15 +3196,8 @@ impl Capacity {
     /// Why this root may not start, asked outermost first so the reason names
     /// the widest ceiling that was actually full (§FS-005-dispatch.24).
     fn refusal(&self, projects: &[String]) -> Option<String> {
-        if let Some(limit) = self
-            .ceilings
-            .site
-            .filter(|limit| self.global_live >= *limit)
-        {
-            return Some(format!(
-                "global work.max_concurrent {limit} is full ({} live run(s))",
-                self.global_live
-            ));
+        if let Some(why) = self.ceilings.site.full(self.global_live, "global work") {
+            return Some(why);
         }
         for organization in self.organizations_of(projects) {
             let count = self
@@ -3137,16 +3218,12 @@ impl Capacity {
             }
         }
         for project in projects {
-            let count = self.project_live.get(project).copied().unwrap_or(0);
-            if let Some(limit) = self
-                .ceilings
-                .projects
-                .get(project)
-                .filter(|limit| count >= **limit)
-            {
-                return Some(format!(
-                    "projects.{project}.work.max_concurrent {limit} is full ({count} live run(s))"
-                ));
+            let Some(limits) = self.ceilings.projects.get(project) else {
+                continue;
+            };
+            let live = self.project_live.get(project).copied().unwrap_or_default();
+            if let Some(why) = limits.full(live, &format!("projects.{project}.work")) {
+                return Some(why);
             }
         }
         None
@@ -3156,7 +3233,10 @@ impl Capacity {
         if !remains_live {
             return;
         }
-        self.global_live += 1;
+        // A run that has just begun is working: it takes a slot under both
+        // ceilings, and only parking on a person's answer gives the second
+        // one back (§FS-005-dispatch.24).
+        self.global_live.took(true);
         let organizations: Vec<String> = self
             .organizations_of(projects)
             .into_iter()
@@ -3166,9 +3246,68 @@ impl Capacity {
             *self.organization_live.entry(organization).or_default() += 1;
         }
         for project in projects {
-            *self.project_live.entry(project.clone()).or_default() += 1;
+            self.project_live
+                .entry(project.clone())
+                .or_default()
+                .took(true);
         }
     }
+
+    /// How capacity stands, for the reading the sweep prints
+    /// (§FS-005-dispatch.24). The aggregate scope, because that is the one
+    /// every root is counted in.
+    fn standing(&self) -> Standing {
+        Standing {
+            live: self.global_live.live,
+            active: self.global_live.active,
+            parked: self.global_live.parked(),
+            max_concurrent: self.ceilings.site.concurrent,
+            max_active: self.ceilings.site.active,
+        }
+    }
+}
+
+/// What the sweep saw of the site's capacity when it was done
+/// (§FS-005-dispatch.24): the live roots split into the ones being worked and
+/// the ones parked on a person, beside the two ceilings that were in force.
+/// The counts include what this sweep started, so it reads as the world the
+/// sweep left behind rather than the one it found.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Standing {
+    pub live: usize,
+    pub active: usize,
+    pub parked: usize,
+    pub max_concurrent: Option<usize>,
+    pub max_active: Option<usize>,
+}
+
+impl Standing {
+    /// The one line a reader gets: what is live, and how much of it is a
+    /// person's turn rather than work being done.
+    pub fn says(&self) -> String {
+        let ceiling = |key: &str, limit: Option<usize>| match limit {
+            Some(limit) => format!("work.{key} {limit}"),
+            None => format!("work.{key} unlimited"),
+        };
+        format!(
+            "capacity: {} live root(s) — {} active, {} parked ({}, {})",
+            self.live,
+            self.active,
+            self.parked,
+            ceiling("max_concurrent", self.max_concurrent),
+            ceiling("max_active", self.max_active),
+        )
+    }
+}
+
+/// What one sweep came to (§FS-005-dispatch.24): what happened at every due
+/// root, and how capacity stood when it was over. Two answers because the
+/// second is a reading in its own right — a ceiling reported full must not be
+/// the only thing said about the roots filling it.
+#[derive(Debug, Default)]
+pub struct Sweep {
+    pub runs: Vec<Launched>,
+    pub capacity: Standing,
 }
 
 /// How a work root is named in the ledger's record of starts. The path as

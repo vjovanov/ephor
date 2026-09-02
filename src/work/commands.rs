@@ -1595,10 +1595,10 @@ fn run_work(config: &StatusConfig, args: &crate::cli::WorkRunArgs) -> Result<Exi
 /// and, where it could not begin, why.
 fn started(dispatcher: &mut Dispatcher, projects: &[String], json: bool) -> Result<()> {
     let launched = dispatcher.start_due(Utc::now(), projects, &[], None)?;
-    if launched.is_empty() {
+    if launched.runs.is_empty() {
         return Ok(());
     }
-    for run in &launched {
+    for run in &launched.runs {
         match (json, run.failed.is_some()) {
             // Under `--json` the reading is alone on standard output
             // (§FS-011-command-line.7); a line about a run still reaches
@@ -1624,13 +1624,18 @@ fn swept(
     args: &crate::cli::WorkRunArgs,
 ) -> Result<ExitCode> {
     let style = Style::detect();
-    let launched = dispatcher.start_due(
+    let swept = dispatcher.start_due(
         Utc::now(),
         &args.project,
         &args.runner_args,
         args.max_concurrent,
     )?;
+    let launched = &swept.runs;
     let failed = launched.iter().filter(|run| run.failed.is_some()).count();
+    // What the ceilings are holding, split into work being done and work
+    // waiting on a person: a full ceiling must not be the whole story
+    // (§FS-005-dispatch.24).
+    let standing = &swept.capacity;
     if args.json {
         let rows: Vec<serde_json::Value> = launched
             .iter()
@@ -1656,6 +1661,13 @@ fn swept(
                 // written the wrong way round, said where it bites rather
                 // than only at a check (§FS-005-dispatch.24).
                 "notes": dispatcher.notes(),
+                "capacity": {
+                    "live": standing.live,
+                    "active": standing.active,
+                    "parked": standing.parked,
+                    "max_concurrent": standing.max_concurrent,
+                    "max_active": standing.max_active,
+                },
             }))
             .unwrap_or_else(|_| "null".to_string())
         );
@@ -1664,7 +1676,7 @@ fn swept(
     if launched.is_empty() {
         println!("Nothing is due: no work root is waiting for a run.");
     } else {
-        for run in &launched {
+        for run in launched {
             println!(
                 "\n▶ {} {}",
                 runtime::label(&config.work),
@@ -1678,6 +1690,13 @@ fn swept(
                 None => println!("{}", run.says()),
             }
         }
+    }
+    // Said whenever anything is live, whichever ceilings are configured: the
+    // reader who set only `max_concurrent` is the one most likely to be
+    // surprised that a slot is a person rather than an agent
+    // (§FS-005-dispatch.24).
+    if standing.live > 0 {
+        println!("\n{}", style.dim(&standing.says()));
     }
     // The ceilings this sweep read, where one of them contradicts another. It
     // is said whether or not anything started, because the reading is what is

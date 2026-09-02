@@ -714,11 +714,46 @@ fn candidate(id: &str, project: &str) -> Due {
 /// before that tier existed still has.
 fn site_and_projects(site: Option<usize>, projects: BTreeMap<String, usize>) -> Ceilings {
     Ceilings {
-        site,
+        site: Limits {
+            concurrent: site,
+            active: None,
+        },
         site_as_configured: site,
-        projects,
+        projects: flight_ceilings(projects),
         ..Ceilings::default()
     }
+}
+
+/// A scope bounding roots in flight and nothing else — every ceiling written
+/// before there was a working one (§FS-005-dispatch.24).
+fn flight(limit: usize) -> Limits {
+    Limits {
+        concurrent: Some(limit),
+        active: None,
+    }
+}
+
+fn flight_ceilings(projects: BTreeMap<String, usize>) -> BTreeMap<String, Limits> {
+    projects
+        .into_iter()
+        .map(|(project, limit)| (project, flight(limit)))
+        .collect()
+}
+
+/// Live roots that are all being worked, which is what a capacity test about
+/// the flight ceilings alone assumes of them (§FS-005-dispatch.24).
+fn working(live: usize) -> Counts {
+    Counts {
+        live,
+        active: live,
+    }
+}
+
+fn working_each(projects: BTreeMap<String, usize>) -> BTreeMap<String, Counts> {
+    projects
+        .into_iter()
+        .map(|(project, live)| (project, working(live)))
+        .collect()
 }
 
 #[test]
@@ -741,8 +776,8 @@ fn zero_pauses_autorun_and_omission_is_unlimited() {
 #[test]
 fn a_project_ceiling_is_additional_to_the_aggregate_ceiling() {
     let live = LiveRuns {
-        global: 1,
-        projects: BTreeMap::from([("widget".to_string(), 1)]),
+        global: working(1),
+        projects: working_each(BTreeMap::from([("widget".to_string(), 1)])),
         ..LiveRuns::default()
     };
     let capacity = Capacity::new(
@@ -761,7 +796,7 @@ fn a_project_ceiling_is_additional_to_the_aggregate_ceiling() {
 #[test]
 fn an_organization_ceiling_binds_the_sum_of_its_projects_and_nobody_else() {
     let ceilings = Ceilings {
-        site: Some(9),
+        site: flight(9),
         site_as_configured: Some(9),
         organizations: BTreeMap::from([("acme".to_string(), 1)]),
         projects: BTreeMap::new(),
@@ -771,9 +806,9 @@ fn an_organization_ceiling_binds_the_sum_of_its_projects_and_nobody_else() {
         ]),
     };
     let live = LiveRuns {
-        global: 1,
+        global: working(1),
         organizations: BTreeMap::from([("acme".to_string(), 1)]),
-        projects: BTreeMap::from([("widget".to_string(), 1)]),
+        projects: working_each(BTreeMap::from([("widget".to_string(), 1)])),
     };
     let capacity = Capacity::new(ceilings, live);
     // The live root is `widget`'s, and it is `gadget` that is refused: the
@@ -791,16 +826,16 @@ fn an_organization_ceiling_binds_the_sum_of_its_projects_and_nobody_else() {
 #[test]
 fn the_outermost_full_ceiling_is_the_reason_a_root_is_passed_over() {
     let ceilings = Ceilings {
-        site: Some(1),
+        site: flight(1),
         site_as_configured: Some(1),
         organizations: BTreeMap::from([("acme".to_string(), 1)]),
-        projects: BTreeMap::from([("widget".to_string(), 1)]),
+        projects: BTreeMap::from([("widget".to_string(), flight(1))]),
         membership: BTreeMap::from([("widget".to_string(), "acme".to_string())]),
     };
     let full = LiveRuns {
-        global: 1,
+        global: working(1),
         organizations: BTreeMap::from([("acme".to_string(), 1)]),
-        projects: BTreeMap::from([("widget".to_string(), 1)]),
+        projects: working_each(BTreeMap::from([("widget".to_string(), 1)])),
     };
     let every_one = Capacity::new(ceilings, full);
     assert!(every_one
@@ -808,18 +843,18 @@ fn the_outermost_full_ceiling_is_the_reason_a_root_is_passed_over() {
         .is_some_and(|why| why.contains("global work.max_concurrent 1")));
 
     let roomy_site = Ceilings {
-        site: Some(9),
+        site: flight(9),
         site_as_configured: Some(9),
         organizations: BTreeMap::from([("acme".to_string(), 1)]),
-        projects: BTreeMap::from([("widget".to_string(), 1)]),
+        projects: BTreeMap::from([("widget".to_string(), flight(1))]),
         membership: BTreeMap::from([("widget".to_string(), "acme".to_string())]),
     };
     let capacity = Capacity::new(
         roomy_site,
         LiveRuns {
-            global: 1,
+            global: working(1),
             organizations: BTreeMap::from([("acme".to_string(), 1)]),
-            projects: BTreeMap::from([("widget".to_string(), 1)]),
+            projects: working_each(BTreeMap::from([("widget".to_string(), 1)])),
         },
     );
     assert!(capacity
@@ -832,10 +867,10 @@ fn the_outermost_full_ceiling_is_the_reason_a_root_is_passed_over() {
 #[test]
 fn an_inverted_ceiling_is_named_and_the_ceiling_above_it_still_binds() {
     let ceilings = Ceilings {
-        site: Some(2),
+        site: flight(2),
         site_as_configured: Some(2),
         organizations: BTreeMap::from([("acme".to_string(), 1)]),
-        projects: BTreeMap::from([("widget".to_string(), 4)]),
+        projects: BTreeMap::from([("widget".to_string(), flight(4))]),
         membership: BTreeMap::from([("widget".to_string(), "acme".to_string())]),
     };
     let said = ceilings.inversions();
@@ -852,13 +887,13 @@ fn an_inverted_ceiling_is_named_and_the_ceiling_above_it_still_binds() {
     );
     // The project's number is not rewritten, and the warning is not a licence:
     // one live root fills the organization and the next start is refused.
-    assert_eq!(ceilings.projects["widget"], 4);
+    assert_eq!(ceilings.projects["widget"].concurrent, Some(4));
     let capacity = Capacity::new(
         ceilings,
         LiveRuns {
-            global: 1,
+            global: working(1),
             organizations: BTreeMap::from([("acme".to_string(), 1)]),
-            projects: BTreeMap::from([("widget".to_string(), 1)]),
+            projects: working_each(BTreeMap::from([("widget".to_string(), 1)])),
         },
     );
     assert!(capacity
@@ -872,9 +907,9 @@ fn an_inverted_ceiling_is_named_and_the_ceiling_above_it_still_binds() {
 #[test]
 fn a_one_sweep_aggregate_override_is_not_an_inverted_configuration() {
     let narrowed = Ceilings {
-        site: Some(1),
+        site: flight(1),
         site_as_configured: Some(4),
-        projects: BTreeMap::from([("widget".to_string(), 2)]),
+        projects: BTreeMap::from([("widget".to_string(), flight(2))]),
         ..Ceilings::default()
     };
     assert!(narrowed.inversions().is_empty());
@@ -882,7 +917,7 @@ fn a_one_sweep_aggregate_override_is_not_an_inverted_configuration() {
     let capacity = Capacity::new(
         narrowed,
         LiveRuns {
-            global: 1,
+            global: working(1),
             ..LiveRuns::default()
         },
     );
@@ -906,10 +941,10 @@ fn a_paused_ceiling_above_a_project_is_not_a_pair_written_the_wrong_way_round() 
         .is_some_and(|why| why.contains("global work.max_concurrent 0")));
 
     let paused_organization = Ceilings {
-        site: Some(4),
+        site: flight(4),
         site_as_configured: Some(4),
         organizations: BTreeMap::from([("acme".to_string(), 0)]),
-        projects: BTreeMap::from([("widget".to_string(), 2)]),
+        projects: BTreeMap::from([("widget".to_string(), flight(2))]),
         membership: BTreeMap::from([("widget".to_string(), "acme".to_string())]),
     };
     assert!(
@@ -928,10 +963,10 @@ fn a_paused_ceiling_above_a_project_is_not_a_pair_written_the_wrong_way_round() 
 #[test]
 fn ceilings_written_the_right_way_round_are_said_nothing_about() {
     let nested = Ceilings {
-        site: Some(4),
+        site: flight(4),
         site_as_configured: Some(4),
         organizations: BTreeMap::from([("acme".to_string(), 3)]),
-        projects: BTreeMap::from([("widget".to_string(), 2)]),
+        projects: BTreeMap::from([("widget".to_string(), flight(2))]),
         membership: BTreeMap::from([("widget".to_string(), "acme".to_string())]),
     };
     assert!(nested.inversions().is_empty());
@@ -978,8 +1013,8 @@ fn existing_live_roots_consume_global_and_project_capacity() {
         &[widget, other],
         &BTreeMap::from([("widget".to_string(), "acme".to_string())]),
     );
-    assert_eq!(live.global, 1);
-    assert_eq!(live.projects.get("widget"), Some(&1));
+    assert_eq!(live.global, working(1));
+    assert_eq!(live.projects.get("widget"), Some(&working(1)));
     assert_eq!(live.projects.get("other"), None);
     // The one live root spends one of its organization's slots too
     // (§FS-005-dispatch.24).
@@ -1024,10 +1059,10 @@ fn a_live_root_spanning_two_projects_of_one_organization_spends_one_slot() {
             ("gadget".to_string(), "acme".to_string()),
         ]),
     );
-    assert_eq!(live.global, 1);
+    assert_eq!(live.global, working(1));
     // Each project holding a plan on the root spends one of its own slots …
-    assert_eq!(live.projects.get("widget"), Some(&1));
-    assert_eq!(live.projects.get("gadget"), Some(&1));
+    assert_eq!(live.projects.get("widget"), Some(&working(1)));
+    assert_eq!(live.projects.get("gadget"), Some(&working(1)));
     // … and the one organization holding both spends one, not two.
     assert_eq!(live.organizations.get("acme"), Some(&1));
     drop(holder);
