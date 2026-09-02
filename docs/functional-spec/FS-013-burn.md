@@ -69,6 +69,10 @@ here rather than left to whoever writes the next reader:
   in force at that event, never to one model for the whole session.
 - **Sub-agent transcripts are real spend and are counted**, tagged so they
   can be told from the session that spawned them.
+- **One log reports its cached counters inside the input total and the other
+  reports them beside it.** Where they are inside, what is left after taking
+  them out is the input; where they are beside, they are already apart. Read
+  the wrong way round, a cache read is counted twice.
 
 Provider stays beside model in every key: not every model a tool runs is
 priced or served by the vendor whose tool it is.
@@ -115,11 +119,17 @@ groupings: project, model, session, plan, matter. The first three read the
 machine lens, the last two the work lens; asking for a grouping selects the
 lens that can answer it.
 
-**The current rate** is the last five minutes' tokens over five minutes, and
-beside it the sessions that are still going: a transcript written to in the
-last few minutes, with what it has spent per minute since. That is the whole
-of "live" in this version — it is read from the same buckets and file times
-as everything else, and nothing is subscribed to.
+**The current rate** is what the span in progress and the one before it hold,
+over the time those cover. The span before it is in because the one in
+progress may have started a second ago, and a rate that read nearly zero on
+every five-minute boundary would be a number nobody could use.
+
+Beside it are the sessions that are still going: those that spent anything in
+the last few spans, with what each has spent per minute over them. A session
+counts as going on what it spent, never on the rounded rate — one that spent a
+little over fifteen minutes rounds to nothing a minute and is very much still
+going. That is the whole of "live" in this version: read from the same
+buckets as everything else, with nothing subscribed to.
 
 ## 7. Dollars are opportunistic, and `unpriced` is never `$0.00`
 

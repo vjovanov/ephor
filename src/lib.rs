@@ -13,6 +13,7 @@ pub mod agents;
 pub mod api;
 pub mod attribution;
 pub mod branches;
+pub mod burn;
 pub mod capabilities;
 pub mod checkout;
 pub mod cli;
