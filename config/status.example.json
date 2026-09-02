@@ -49,6 +49,13 @@
       }
     ]
   },
+  "organizations": {
+    "acme": {
+      "work": {
+        "max_concurrent": 3
+      }
+    }
+  },
   "projects": {
     "widget": {
       "checkout": {

@@ -1610,6 +1610,24 @@ A project concurrency ceiling is additional to the site's aggregate ceiling,
 not a replacement for it. `ranking` is read only from the site's own `work`
 block — the sweep it orders already spans every configured project.
 
+Between those two there is a third, over the projects that actually share a
+machine:
+
+```jsonc
+{
+  "organizations": {
+    "acme": { "work": { "max_concurrent": 3 } }   // the budget acme's projects share
+  }
+}
+```
+
+`organizations.<org-id>.work.max_concurrent` bounds the live autorun roots of
+every project whose registry row carries that `organization` id (§3), inside
+the site's aggregate ceiling and outside each project's own. Membership is the
+registry's and is written nowhere else; a project whose row names no
+organization is under no organization ceiling, and a configuration with no
+`organizations` block behaves exactly as it did before the key existed.
+
 **`autorun`** is the one field that changes *when* work happens rather than
 what it says. With it, a ticket written from this recipe gets its run without
 anyone pressing anything: dispatch starts it in the same breath, and
@@ -2281,12 +2299,21 @@ ephor work states
   cannot become a spawn loop. Where the runner has no detached shape the sweep
   starts nothing and says so: a run nobody asked for must not take a terminal.
   Nothing is due unless a recipe or a laying entry asked for it — silence
-  still means you press the key. `work.max_concurrent` bounds live roots across the whole site;
-  `projects.<id>.work.max_concurrent` adds a ceiling inside that aggregate.
-  Omitted ceilings are unlimited and zero starts no new runs. On this command,
-  `--max-concurrent N` replaces the configured aggregate ceiling for this one
-  sweep while project ceilings remain in force. Already-live roots consume
-  capacity, including roots outside a `--project` filter. New starts consume a
+  still means you press the key. Three nested ceilings bound it:
+  `work.max_concurrent` across the whole site,
+  `organizations.<org-id>.work.max_concurrent` across the projects the registry
+  puts in that organization, and `projects.<id>.work.max_concurrent` inside
+  both. Omitted ceilings are unlimited and zero starts no new runs. All three
+  are evaluated and a start is refused by whichever is full first, outermost
+  named first. A project ceiling written above its organization's or above the
+  site's is a `note:` naming the project, the ceiling above it, and both
+  numbers — it is not refused and it is not rewritten, and the ceiling above it
+  still bounds its total, and the site number a pair is measured against is
+  the configured one. On this command, `--max-concurrent N` replaces the
+  configured aggregate ceiling for this one sweep while organization and
+  project ceilings remain in force; a project ceiling above that one-sweep
+  number is your own choice and is not noted. Already-live roots consume capacity,
+  including roots outside a `--project` filter. New starts consume a
   slot only while their runtime lock remains held, so a refused or immediately
   completed start leaves room for the next root. Candidates follow
   `work.ranking`, with every unranked root retaining the previous deterministic

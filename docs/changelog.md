@@ -38,6 +38,25 @@ ships, the previous "latest" section moves verbatim to
 
 ### Added
 
+- **Autorun capacity has an organization tier between the site's and each
+  project's**
+  ([§FS-005-dispatch.24](functional-spec/FS-005-dispatch.md#24-work-nobody-has-to-start-starts-itself)).
+  The feed configuration gains a top-level `organizations` map mirroring
+  `projects`: `organizations.<org-id>.work.max_concurrent` bounds the live
+  autorun roots of every project whose registry row carries that
+  `organization` id, inside the site's aggregate ceiling and outside each
+  project's own. Membership stays the registry's; the ceiling is read-only
+  against it. All three ceilings are evaluated and a sweep refuses by
+  whichever is full first, naming the outermost one in the `passed-over`
+  reason in prose and `--json`. A project ceiling written above its
+  organization's — or above the site's — is a note at the sweep giving the
+  project, the ceiling above it and both numbers; it is never refused, never
+  rewritten, and the ceiling above it still bounds its total. Omission is
+  unchanged in both directions: a configuration with no `organizations` map,
+  or a project whose registry row names no organization, starts exactly what
+  it started before. Note that the feed configuration refuses unknown keys, so
+  a `status.json` carrying `organizations` needs this version. (PR #TBD)
+
 - **The functional specification is one document per declaration.** The twelve
   `§FS` declarations now live under `docs/functional-spec/`, so each subject
   has its own file and the obsolete whole-file size exceptions are gone. (PR #52)
