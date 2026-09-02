@@ -96,6 +96,11 @@ pub struct StateInfo {
     /// write. A fresh ticket has no earlier state, so this is where one may
     /// not start (§FS-005-dispatch.6).
     pub needs_input: bool,
+    /// The state's `poll:` declares `waiting_on:` — what this wait is for is
+    /// a person's answer, not a machine's (§FS-005-dispatch.24). The other
+    /// half of [`StateInfo::is_gating`]: both are work stopped until somebody
+    /// answers, and they differ only in who resumes it.
+    pub waits_on_person: bool,
 }
 
 impl WorkRoot {
@@ -243,6 +248,15 @@ impl WorkRoot {
         self.flag(state, |info| info.is_gating)
     }
 
+    /// Whether a state's poll says that what it waits for is a person
+    /// (§FS-005-dispatch.24). A gating state must be moved by hand; this one
+    /// moves itself the moment the answer lands — which is why the machine
+    /// has to say so, and why a reading that only knew `gating` would call
+    /// six hours of waiting on an author live work.
+    pub fn waits_on_person(&self, state: &str) -> bool {
+        self.flag(state, |info| info.waits_on_person)
+    }
+
     fn flag(&self, state: &str, of: impl Fn(&StateInfo) -> bool) -> bool {
         self.states
             .iter()
@@ -353,6 +367,9 @@ fn machine_name(yaml: &str) -> Option<String> {
 fn state_infos(yaml: &str) -> Vec<StateInfo> {
     let mut states: Vec<StateInfo> = Vec::new();
     let mut inside = false;
+    // Whether the lines being read hang under the current state's `poll:`.
+    // Only they may say who the poll waits on (§FS-005-dispatch.24).
+    let mut in_poll = false;
     for line in yaml.lines() {
         if line.starts_with("states:") {
             inside = true;
@@ -369,12 +386,18 @@ fn state_infos(yaml: &str) -> Vec<StateInfo> {
         if trimmed.starts_with('#') {
             continue;
         }
+        // Anything at the state's own key level or above has closed the poll
+        // block, whatever comes next.
+        if indent <= 4 {
+            in_poll = false;
+        }
         if indent == 2 && trimmed.ends_with(':') {
             states.push(StateInfo {
                 name: trimmed.trim_end_matches(':').to_string(),
                 is_final: false,
                 is_gating: false,
                 needs_input: false,
+                waits_on_person: false,
             });
         } else if indent > 2 {
             let flag = |prefix: &str| {
@@ -382,6 +405,19 @@ fn state_infos(yaml: &str) -> Vec<StateInfo> {
                     .strip_prefix(prefix)
                     .map(|value| value.trim().eq_ignore_ascii_case("true"))
             };
+            // `poll:` written as a block opens on its own line and is read on
+            // the ones beneath it; written as a flow mapping it says
+            // everything on this one.
+            if indent == 4 {
+                if let Some(rest) = trimmed.strip_prefix("poll:") {
+                    in_poll = rest.trim().is_empty();
+                }
+            }
+            let person_wait = waits_on_someone(trimmed)
+                && match indent {
+                    4 => trimmed.starts_with("poll:"),
+                    _ => in_poll,
+                };
             if let Some(last) = states.last_mut() {
                 if let Some(value) = flag("final:") {
                     last.is_final = value;
@@ -395,10 +431,32 @@ fn state_infos(yaml: &str) -> Vec<StateInfo> {
                 if indent == 4 && trimmed == "inputs:" {
                     last.needs_input = true;
                 }
+                if person_wait {
+                    last.waits_on_person = true;
+                }
             }
         }
     }
     states
+}
+
+/// Whether a line declaring `waiting_on:` names somebody: the label after
+/// the key, cut where a flow mapping ends the value and unquoted
+/// (§FS-005-dispatch.24). A blank label is not a declaration — the runtime
+/// refuses one, and reading it as a person wait would hand out capacity on a
+/// machine that will not run at all.
+fn waits_on_someone(line: &str) -> bool {
+    let Some((_, after)) = line.split_once("waiting_on:") else {
+        return false;
+    };
+    !after
+        .split([',', '}'])
+        .next()
+        .unwrap_or(after)
+        .trim()
+        .trim_matches(['"', '\''].as_slice())
+        .trim()
+        .is_empty()
 }
 
 /// One ticket, as it is written into a plan.
@@ -1031,6 +1089,78 @@ mod tests {
         assert!(fs::read_to_string(tmp.path().join(".gitignore"))
             .unwrap()
             .contains('*'));
+    }
+
+    /// A poll that says who it waits for is read out of the machine, and a
+    /// poll that says nothing is machine backoff — which is the whole
+    /// difference between a run spending tokens and a run waiting on a
+    /// person (§FS-005-dispatch.24).
+    #[test]
+    fn a_poll_declaring_who_it_waits_on_is_read_as_a_person_wait() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(
+            tmp.path().join("states.yaml"),
+            concat!(
+                "name: m\n",
+                "states:\n",
+                // The block form, as the runtime's own examples write it.
+                "  plan-approval:\n",
+                "    program: [\"bash\", \"await.sh\"]\n",
+                "    poll:\n",
+                "      interval: 15m\n",
+                "      max_attempts: 96\n",
+                "      waiting_on: author\n",
+                // A poll waiting on a build says nothing, and is not this.
+                "  ci-wait:\n",
+                "    program: [\"bash\", \"ci.sh\"]\n",
+                "    poll:\n",
+                "      interval: 5m\n",
+                "      max_attempts: 12\n",
+                // The flow form says the same thing on one line.
+                "  review-wait:\n",
+                "    poll: { interval: 1h, waiting_on: \"reviewer\", max_attempts: 4 }\n",
+                // A label that is blank is a machine the runtime refuses, not
+                // a person wait: reading it as one would hand out a slot.
+                "  blank-wait:\n",
+                "    poll:\n",
+                "      interval: 5m\n",
+                "      waiting_on:\n",
+                // The key outside a poll block is not the declaration, and
+                // neither is one inside a comment or an agent's prose.
+                "  implement:\n",
+                "    agent: x\n",
+                "    waiting_on: author\n",
+                "    instructions: |\n",
+                "      poll:\n",
+                "        waiting_on: nobody\n",
+                "  reviewed:\n",
+                "    # waiting_on: author\n",
+                "    agent: x\n",
+                "  done:\n    final: true\n",
+            ),
+        )
+        .unwrap();
+        let root = WorkRoot::open(tmp.path()).unwrap().unwrap();
+        assert!(root.waits_on_person("plan-approval"));
+        assert!(root.waits_on_person("review-wait"));
+        assert!(!root.waits_on_person("ci-wait"));
+        assert!(!root.waits_on_person("blank-wait"));
+        assert!(!root.waits_on_person("implement"));
+        assert!(!root.waits_on_person("reviewed"));
+        assert!(!root.waits_on_person("done"));
+        // A state nobody declared is not a person wait either, and neither
+        // are the machine's other facts about the same states.
+        assert!(!root.waits_on_person("nonexistent"));
+        assert!(!root.is_gating("plan-approval"));
+        assert!(root.is_final("done"));
+        // A person-waiting poll is not gating and the shipped machine has
+        // neither: absence is the reading every machine written before this
+        // field keeps.
+        let shipped = WorkRoot::ensure(&tmp.path().join("shipped"), SHIPPED_STATES).unwrap();
+        assert!(shipped
+            .state_names()
+            .iter()
+            .all(|state| !shipped.waits_on_person(state)));
     }
 
     /// The machine in force is the declared one where there is one and the
