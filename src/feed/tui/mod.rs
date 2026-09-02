@@ -2250,11 +2250,7 @@ mod tests {
             template: template.map(String::from),
             branches: vec![branch],
             main_branch: Some("master".to_string()),
-            repos: Vec::new(),
-            aliases: Vec::new(),
-            territory: Vec::new(),
-            trust: crate::manifest::Trust::Full,
-            organization: None,
+            ..Placement::default()
         };
         Ctx {
             feeds: Vec::new(),
