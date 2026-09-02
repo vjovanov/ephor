@@ -82,6 +82,10 @@ name = "e2e_014_mint_the_branch"
 path = "tests/e2e/cases/E2E-014-mint-the-branch.rs"
 
 [[test]]
+name = "e2e_015_scope_selectors"
+path = "tests/e2e/cases/E2E-015-scope-selectors.rs"
+
+[[test]]
 name = "agents_test"
 path = "tests/integration/agents_test.rs"
 
@@ -112,6 +116,10 @@ path = "tests/integration/rebase_test.rs"
 [[test]]
 name = "registry_test"
 path = "tests/integration/registry_test.rs"
+
+[[test]]
+name = "scope_test"
+path = "tests/integration/scope_test.rs"
 
 [[test]]
 name = "update_test"
