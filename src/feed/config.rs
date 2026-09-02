@@ -36,6 +36,15 @@ pub struct StatusConfig {
     pub sources: Vec<serde_json::Value>,
     #[serde(default)]
     pub projects: BTreeMap<String, ProjectFeedConfig>,
+    /// The autorun ceiling each organization's projects share, keyed by the
+    /// `organization` id their registry rows carry (§FS-005-dispatch.24). The
+    /// ceiling is an operational binding and belongs here; which projects are
+    /// inside it is identity and stays in the registry
+    /// (§REQ-001-boundary.2). An absent map is an omitted ceiling for every
+    /// organization, which is what makes a configuration written before this
+    /// tier existed start exactly the runs it started before.
+    #[serde(default)]
+    pub organizations: BTreeMap<String, OrganizationFeedConfig>,
 }
 
 /// Whether a source fetches unscoped — asking nothing about any one project,
@@ -533,9 +542,42 @@ pub struct ProjectFeedConfig {
     pub work: crate::work::recipe::ProjectWorkConfig,
 }
 
+/// One organization's block, shaped like a project's so a reader who has
+/// written `projects.<id>.work.max_concurrent` already knows this one
+/// (§FS-005-dispatch.24). Only work is configured per organization: an
+/// organization watches nothing of its own — its projects do.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OrganizationFeedConfig {
+    #[serde(default)]
+    pub work: crate::work::recipe::OrganizationWorkConfig,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// §FS-005-dispatch.24: the organization block is a ceiling and nothing
+    /// else, it is optional under `deny_unknown_fields`, and an omitted map is
+    /// an omitted ceiling for every organization.
+    #[test]
+    fn parses_the_organization_autorun_ceiling_and_defaults_it_to_nothing() {
+        let config: StatusConfig = serde_json::from_str(
+            r#"{ "organizations": { "acme": { "work": { "max_concurrent": 3 } } } }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            config.organizations["acme"].work.max_concurrent,
+            Some(3),
+            "the ceiling is read from the organization's own block"
+        );
+        let without: StatusConfig = serde_json::from_str("{}").unwrap();
+        assert!(without.organizations.is_empty());
+        assert!(serde_json::from_str::<StatusConfig>(
+            r#"{ "organizations": { "acme": { "projects": ["widget"] } } }"#
+        )
+        .is_err());
+    }
 
     #[test]
     fn parses_global_and_project_actions() {

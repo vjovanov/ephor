@@ -709,12 +709,30 @@ fn candidate(id: &str, project: &str) -> Due {
     }
 }
 
+/// The ceilings a capacity test reads: a site number and the per-project
+/// numbers, with no organization tier — the shape every configuration written
+/// before that tier existed still has.
+fn site_and_projects(site: Option<usize>, projects: BTreeMap<String, usize>) -> Ceilings {
+    Ceilings {
+        site,
+        site_as_configured: site,
+        projects,
+        ..Ceilings::default()
+    }
+}
+
 #[test]
 fn zero_pauses_autorun_and_omission_is_unlimited() {
-    let unlimited = Capacity::new(None, BTreeMap::new(), LiveRuns::default());
+    let unlimited = Capacity::new(
+        site_and_projects(None, BTreeMap::new()),
+        LiveRuns::default(),
+    );
     assert!(unlimited.refusal(&["widget".to_string()]).is_none());
 
-    let paused = Capacity::new(Some(0), BTreeMap::new(), LiveRuns::default());
+    let paused = Capacity::new(
+        site_and_projects(Some(0), BTreeMap::new()),
+        LiveRuns::default(),
+    );
     assert!(paused
         .refusal(&["widget".to_string()])
         .is_some_and(|why| why.contains("global work.max_concurrent 0")));
@@ -725,17 +743,176 @@ fn a_project_ceiling_is_additional_to_the_aggregate_ceiling() {
     let live = LiveRuns {
         global: 1,
         projects: BTreeMap::from([("widget".to_string(), 1)]),
+        ..LiveRuns::default()
     };
-    let capacity = Capacity::new(Some(3), BTreeMap::from([("widget".to_string(), 1)]), live);
+    let capacity = Capacity::new(
+        site_and_projects(Some(3), BTreeMap::from([("widget".to_string(), 1)])),
+        live,
+    );
     assert!(capacity
         .refusal(&["widget".to_string()])
         .is_some_and(|why| why.contains("projects.widget.work.max_concurrent 1")));
     assert!(capacity.refusal(&["another".to_string()]).is_none());
 }
 
+/// §FS-005-dispatch.24: the organization tier sits between the two that were
+/// there, binds the sum of its projects' live roots, and reaches no project
+/// the registry left outside it.
+#[test]
+fn an_organization_ceiling_binds_the_sum_of_its_projects_and_nobody_else() {
+    let ceilings = Ceilings {
+        site: Some(9),
+        site_as_configured: Some(9),
+        organizations: BTreeMap::from([("acme".to_string(), 1)]),
+        projects: BTreeMap::new(),
+        membership: BTreeMap::from([
+            ("widget".to_string(), "acme".to_string()),
+            ("gadget".to_string(), "acme".to_string()),
+        ]),
+    };
+    let live = LiveRuns {
+        global: 1,
+        organizations: BTreeMap::from([("acme".to_string(), 1)]),
+        projects: BTreeMap::from([("widget".to_string(), 1)]),
+    };
+    let capacity = Capacity::new(ceilings, live);
+    // The live root is `widget`'s, and it is `gadget` that is refused: the
+    // ceiling is over the organization's total, not over one project.
+    assert!(capacity.refusal(&["gadget".to_string()]).is_some_and(
+        |why| why.contains("organizations.acme.work.max_concurrent 1 is full (1 live run(s))")
+    ));
+    // A project the registry puts in no organization is under no organization
+    // ceiling.
+    assert!(capacity.refusal(&["outsider".to_string()]).is_none());
+}
+
+/// §FS-005-dispatch.24: the outermost full ceiling is the reason, so a reader
+/// is never told about an inner one while a wider one was the real bound.
+#[test]
+fn the_outermost_full_ceiling_is_the_reason_a_root_is_passed_over() {
+    let ceilings = Ceilings {
+        site: Some(1),
+        site_as_configured: Some(1),
+        organizations: BTreeMap::from([("acme".to_string(), 1)]),
+        projects: BTreeMap::from([("widget".to_string(), 1)]),
+        membership: BTreeMap::from([("widget".to_string(), "acme".to_string())]),
+    };
+    let full = LiveRuns {
+        global: 1,
+        organizations: BTreeMap::from([("acme".to_string(), 1)]),
+        projects: BTreeMap::from([("widget".to_string(), 1)]),
+    };
+    let every_one = Capacity::new(ceilings, full);
+    assert!(every_one
+        .refusal(&["widget".to_string()])
+        .is_some_and(|why| why.contains("global work.max_concurrent 1")));
+
+    let roomy_site = Ceilings {
+        site: Some(9),
+        site_as_configured: Some(9),
+        organizations: BTreeMap::from([("acme".to_string(), 1)]),
+        projects: BTreeMap::from([("widget".to_string(), 1)]),
+        membership: BTreeMap::from([("widget".to_string(), "acme".to_string())]),
+    };
+    let capacity = Capacity::new(
+        roomy_site,
+        LiveRuns {
+            global: 1,
+            organizations: BTreeMap::from([("acme".to_string(), 1)]),
+            projects: BTreeMap::from([("widget".to_string(), 1)]),
+        },
+    );
+    assert!(capacity
+        .refusal(&["widget".to_string()])
+        .is_some_and(|why| why.contains("organizations.acme.work.max_concurrent 1")));
+}
+
+/// §FS-005-dispatch.24: a project ceiling above the one over it is named, and
+/// nothing is rewritten — the organization total still binds afterwards.
+#[test]
+fn an_inverted_ceiling_is_named_and_the_ceiling_above_it_still_binds() {
+    let ceilings = Ceilings {
+        site: Some(2),
+        site_as_configured: Some(2),
+        organizations: BTreeMap::from([("acme".to_string(), 1)]),
+        projects: BTreeMap::from([("widget".to_string(), 4)]),
+        membership: BTreeMap::from([("widget".to_string(), "acme".to_string())]),
+    };
+    let said = ceilings.inversions();
+    assert_eq!(said.len(), 2, "{said:?}");
+    assert!(
+        said[0].contains("projects.widget.work.max_concurrent 4")
+            && said[0].contains("organizations.acme.work.max_concurrent 1"),
+        "{said:?}"
+    );
+    assert!(
+        said[1].contains("projects.widget.work.max_concurrent 4")
+            && said[1].contains("global work.max_concurrent 2"),
+        "{said:?}"
+    );
+    // The project's number is not rewritten, and the warning is not a licence:
+    // one live root fills the organization and the next start is refused.
+    assert_eq!(ceilings.projects["widget"], 4);
+    let capacity = Capacity::new(
+        ceilings,
+        LiveRuns {
+            global: 1,
+            organizations: BTreeMap::from([("acme".to_string(), 1)]),
+            projects: BTreeMap::from([("widget".to_string(), 1)]),
+        },
+    );
+    assert!(capacity
+        .refusal(&["widget".to_string()])
+        .is_some_and(|why| why.contains("organizations.acme.work.max_concurrent 1")));
+}
+
+/// §FS-005-dispatch.24: `--max-concurrent` narrows one sweep on purpose, so a
+/// project ceiling it happens to exceed is not a configuration written the
+/// wrong way round and is not said to be one.
+#[test]
+fn a_one_sweep_aggregate_override_is_not_an_inverted_configuration() {
+    let narrowed = Ceilings {
+        site: Some(1),
+        site_as_configured: Some(4),
+        projects: BTreeMap::from([("widget".to_string(), 2)]),
+        ..Ceilings::default()
+    };
+    assert!(narrowed.inversions().is_empty());
+    // The flag still binds the sweep, which is the half that is not a note.
+    let capacity = Capacity::new(
+        narrowed,
+        LiveRuns {
+            global: 1,
+            ..LiveRuns::default()
+        },
+    );
+    assert!(capacity
+        .refusal(&["widget".to_string()])
+        .is_some_and(|why| why.contains("global work.max_concurrent 1")));
+}
+
+/// §FS-005-dispatch.24: ceilings written the right way round say nothing, and
+/// an omitted one cannot be inverted.
+#[test]
+fn ceilings_written_the_right_way_round_are_said_nothing_about() {
+    let nested = Ceilings {
+        site: Some(4),
+        site_as_configured: Some(4),
+        organizations: BTreeMap::from([("acme".to_string(), 3)]),
+        projects: BTreeMap::from([("widget".to_string(), 2)]),
+        membership: BTreeMap::from([("widget".to_string(), "acme".to_string())]),
+    };
+    assert!(nested.inversions().is_empty());
+    let unlimited = site_and_projects(None, BTreeMap::from([("widget".to_string(), 9)]));
+    assert!(unlimited.inversions().is_empty());
+}
+
 #[test]
 fn failed_and_immediately_finished_starts_leave_the_slot_available() {
-    let mut capacity = Capacity::new(Some(1), BTreeMap::new(), LiveRuns::default());
+    let mut capacity = Capacity::new(
+        site_and_projects(Some(1), BTreeMap::new()),
+        LiveRuns::default(),
+    );
     // A failed start never calls `started`; an immediately finished or
     // already-dead start records `false`. Neither consumes the slot.
     let projects = ["widget".to_string()];
@@ -764,10 +941,17 @@ fn existing_live_roots_consume_global_and_project_capacity() {
     let holder = fs::File::open(widget.root.join(".rhei/run.lock")).unwrap();
     holder.lock().unwrap();
 
-    let live = LiveRuns::read(&work_config(), &[widget, other]);
+    let live = LiveRuns::read(
+        &work_config(),
+        &[widget, other],
+        &BTreeMap::from([("widget".to_string(), "acme".to_string())]),
+    );
     assert_eq!(live.global, 1);
     assert_eq!(live.projects.get("widget"), Some(&1));
     assert_eq!(live.projects.get("other"), None);
+    // The one live root spends one of its organization's slots too
+    // (§FS-005-dispatch.24).
+    assert_eq!(live.organizations.get("acme"), Some(&1));
     drop(holder);
 }
 
@@ -1511,7 +1695,10 @@ fn a_workflow_root_ranks_and_is_capped_beside_a_recipe_root() {
     assert_eq!(ranked[1].item.as_deref(), Some("forge:widget/42"));
     // And the ceiling reaches the workflow root exactly as it reaches the
     // other one: one aggregate slot, taken by whichever ranks first.
-    let mut capacity = Capacity::new(Some(1), BTreeMap::new(), LiveRuns::default());
+    let mut capacity = Capacity::new(
+        site_and_projects(Some(1), BTreeMap::new()),
+        LiveRuns::default(),
+    );
     assert!(capacity.refusal(&ranked[0].projects).is_none());
     capacity.started(&ranked[0].projects, true);
     assert!(capacity.refusal(&ranked[1].projects).is_some());

@@ -1323,6 +1323,7 @@ fn sync_work(config: &StatusConfig, args: &crate::cli::WorkSyncArgs) -> Result<E
                 "reopened": reopened,
                 "dry_run": args.dry_run,
                 "items": landed,
+                "notes": dispatcher.notes(),
             }))
             .unwrap_or_else(|_| "null".to_string())
         );
@@ -1336,6 +1337,11 @@ fn sync_work(config: &StatusConfig, args: &crate::cli::WorkSyncArgs) -> Result<E
             "reopened"
         }
     );
+    // The continuation above read the ceilings, so it can have something to
+    // say about them (§FS-005-dispatch.24).
+    for note in dispatcher.notes() {
+        println!("note: {}", Style::detect().dim(note));
+    }
     Ok(ExitCode::SUCCESS)
 }
 
@@ -1646,10 +1652,16 @@ fn swept(
             serde_json::to_string_pretty(&serde_json::json!({
                 "runs": rows,
                 "failed": failed,
+                // What the sweep learned about the ceilings it read — a pair
+                // written the wrong way round, said where it bites rather
+                // than only at a check (§FS-005-dispatch.24).
+                "notes": dispatcher.notes(),
             }))
             .unwrap_or_else(|_| "null".to_string())
         );
-    } else if launched.is_empty() {
+        return exit_code(failed);
+    }
+    if launched.is_empty() {
         println!("Nothing is due: no work root is waiting for a run.");
     } else {
         for run in &launched {
@@ -1667,6 +1679,18 @@ fn swept(
             }
         }
     }
+    // The ceilings this sweep read, where one of them contradicts another. It
+    // is said whether or not anything started, because the reading is what is
+    // wrong (§FS-005-dispatch.24).
+    for note in dispatcher.notes() {
+        println!("note: {}", style.dim(note));
+    }
+    exit_code(failed)
+}
+
+/// A sweep is a success unless a launch actually failed: a root passed over
+/// for capacity is an answer, not a failure (§FS-005-dispatch.24).
+fn exit_code(failed: usize) -> Result<ExitCode> {
     if failed > 0 {
         return Ok(ExitCode::from(1));
     }
