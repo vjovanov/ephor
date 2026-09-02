@@ -88,6 +88,71 @@ pub fn live(_config: &WorkConfig, root: &Path) -> bool {
     }
 }
 
+/// Whether a live root is **parked**: nothing in it is being worked, and
+/// something in it is a person's turn (§FS-005-dispatch.24).
+///
+/// The reading the second autorun ceiling is counted from, and the one place
+/// the difference between "two runs are live" and "one of them is a bash
+/// script waiting on an author" is decided. It is the board's judgment
+/// narrowed to a verdict about the root: the same machine in force per plan,
+/// the same witness for what a run holds (§FS-005-dispatch.15.2), and the
+/// same two ways work stops for a person — a `gating` state, or a poll that
+/// declares who it waits on.
+///
+/// It fails closed in every direction. A plan whose machine cannot be read,
+/// or a root that declares none, is **not** parked: with finality and gating
+/// unreadable, calling the root parked would hand out a slot on a guess. So
+/// is a root where any open ticket is witnessed held — one working ticket
+/// makes the root working, whatever the rest of it waits on. And a root
+/// nothing waits on is not parked either: parked is a positive finding, never
+/// the absence of one.
+///
+/// The runner's own listing is deliberately not asked for here, unlike the
+/// board's (§FS-005-dispatch.15.1): a sweep would fork it once per live root
+/// on every pass, and the plans on disk are the store those rows are read
+/// back out of anyway.
+pub fn parked(config: &WorkConfig, group: &RootPlans) -> bool {
+    let witness = witness(config, &group.root);
+    let born = lock_born(&group.root);
+    // The root's own machine, for every plan that declares none of its own
+    // (§FS-005-dispatch.28).
+    let root_machine = WorkRoot::open(&group.root).ok().flatten();
+    let mut waits = false;
+    for plan_ref in &group.plans {
+        let own = super::plan::own_machine(&plan_ref.path);
+        let judge: Option<&WorkRoot> = match &own {
+            Ok(Some(store)) => Some(store),
+            Ok(None) => root_machine.as_ref(),
+            Err(_) => None,
+        };
+        let Some(judge) = judge else {
+            return false;
+        };
+        let Some(plan) = Plan::read(&plan_ref.path).ok().flatten() else {
+            continue;
+        };
+        for ticket in plan.tickets() {
+            let Some(state) = ticket.state.as_deref() else {
+                continue;
+            };
+            if judge.is_final(state) {
+                continue;
+            }
+            if witness.holds(
+                &group.root,
+                born,
+                &plan_ref.plan_id,
+                &ticket.id,
+                Some(state),
+            ) {
+                return false;
+            }
+            waits |= judge.is_gating(state) || judge.waits_on_person(state);
+        }
+    }
+    waits
+}
+
 /// One slot assignment the journal never released: a task some run took up
 /// and, as far as the journal alone can say, never let go of.
 ///
@@ -1220,6 +1285,111 @@ mod tests {
         // release, and the root stops being live with no file changed.
         drop(holder);
         assert_released(&config(), root);
+    }
+
+    /// A machine with both ways work stops for a person and one way it does
+    /// not, so the parked reading has all three to tell apart.
+    const PERSON_WAITS: &str = concat!(
+        "name: m\n",
+        "states:\n",
+        "  implement:\n    agent: x\n",
+        "  plan-approval:\n    poll:\n      interval: 15m\n      waiting_on: author\n",
+        "  ci-wait:\n    poll:\n      interval: 5m\n      max_attempts: 12\n",
+        "  needs-human:\n    gating: true\n",
+        "  done:\n    final: true\n",
+    );
+
+    /// One work root holding one plan, with whatever tickets are asked for
+    /// and whatever machine is passed — none at all where `states` is empty.
+    fn root_with_tickets(root: &Path, states: &str, tickets: &str) -> RootPlans {
+        fs::create_dir_all(root).unwrap();
+        if !states.is_empty() {
+            write(&root.join("states.yaml"), states);
+        }
+        let plan = root.join("widget-42.rhei.md");
+        write(
+            &plan,
+            &format!("# Rhei: t\n**States:** m\n\n## Tasks\n\n{tickets}"),
+        );
+        RootPlans {
+            root: root.to_path_buf(),
+            plans: vec![PlanRef {
+                project: "widget".to_string(),
+                plan_id: "widget-42".to_string(),
+                path: plan,
+                item: Some("forge:widget/42".to_string()),
+                title: "Widen the retry window".to_string(),
+            }],
+        }
+    }
+
+    fn task(id: &str, state: &str) -> String {
+        format!("### Task {id}: do it\n**State:** {state}\n\nwork\n\n")
+    }
+
+    /// What a live root is doing decides whether it costs an agent slot, and
+    /// the reading fails closed everywhere it cannot tell
+    /// (§FS-005-dispatch.24).
+    #[test]
+    fn a_root_is_parked_only_where_a_person_is_what_it_waits_for() {
+        let tmp = tempfile::tempdir().unwrap();
+        let at = |name: &str| tmp.path().join(name);
+
+        // A poll that says it waits on the author, with the rest of the plan
+        // finished or waiting behind it: the measured case, in miniature.
+        let approval = root_with_tickets(
+            &at("approval"),
+            PERSON_WAITS,
+            &format!(
+                "{}{}",
+                task("fix-1", "done"),
+                task("fix-2", "plan-approval")
+            ),
+        );
+        assert!(parked(&config(), &approval));
+
+        // The gate the machine already had is the same fact: work stopped
+        // until somebody answers (§FS-005-dispatch.9).
+        let gated = root_with_tickets(&at("gated"), PERSON_WAITS, &task("fix-1", "needs-human"));
+        assert!(parked(&config(), &gated));
+
+        // A poll waiting on a build is not waiting on anybody: machine
+        // backoff is work in progress and holds its slot.
+        let ci = root_with_tickets(&at("ci"), PERSON_WAITS, &task("fix-1", "ci-wait"));
+        assert!(!parked(&config(), &ci));
+
+        // Nothing waiting on a person at all: parked is a positive finding,
+        // never the absence of one.
+        let working = root_with_tickets(&at("working"), PERSON_WAITS, &task("fix-1", "implement"));
+        assert!(!parked(&config(), &working));
+
+        // One ticket witnessed held makes the root active however much of
+        // the rest of it waits on a person (§FS-005-dispatch.15.2).
+        let mixed = root_with_tickets(
+            &at("mixed"),
+            PERSON_WAITS,
+            &format!(
+                "{}{}",
+                task("fix-1", "plan-approval"),
+                task("fix-2", "implement")
+            ),
+        );
+        assert!(parked(&config(), &mixed), "nothing is held yet");
+        write(
+            &at("mixed").join(JOURNAL),
+            "2026-08-14T10:00:00Z  fix-2  start@implement  runtime/logs/task-fix-2-implement.log\n",
+        );
+        assert!(!parked(&config(), &mixed));
+
+        // A root that declares no machine is active: with gating and finality
+        // unreadable, calling it parked would hand out a slot on a guess.
+        let unjudged = root_with_tickets(&at("unjudged"), "", &task("fix-1", "needs-human"));
+        assert!(!parked(&config(), &unjudged));
+
+        // And so is one whose machine will not read at all.
+        let broken = root_with_tickets(&at("broken"), "name: m\nstates:\n", &task("fix-1", "x"));
+        write(&at("broken").join("states.yaml"), ": not: yaml\n");
+        assert!(!parked(&config(), &broken));
     }
 
     #[test]
