@@ -1965,6 +1965,38 @@ fn an_absent_organizations_map_leaves_every_organization_unbounded() {
     assert_eq!(starts(&log), 2);
 }
 
+/// §FS-005-dispatch.24: a ceiling keyed on an organization the registry does
+/// not declare bounds nobody, so the sweep that would have read it says so by
+/// name — a typo may not quietly remove the bound its author meant to set —
+/// and starts exactly what it would have started without the key.
+#[test]
+fn a_ceiling_over_an_organization_the_registry_does_not_declare_is_noted() {
+    let tmp = tempdir();
+    let log = tmp.path().join("runner.log");
+    dispatched_but_unstarted(tmp.path(), &log);
+    reconfigure(tmp.path(), |config| {
+        config["work"]["max_concurrent"] = Value::Null;
+        config["organizations"] = json!({ "nosuchorg": { "work": { "max_concurrent": 0 } } });
+    });
+
+    let output = ephor(tmp.path())
+        .args(["work", "run", "--due", "--json"])
+        .output()
+        .unwrap();
+    let reading: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let notes = reading["notes"].as_array().unwrap();
+    assert_eq!(notes.len(), 1, "{reading}");
+    assert!(
+        notes[0]
+            .as_str()
+            .unwrap()
+            .contains("organizations.nosuchorg names no organization the registry declares"),
+        "{reading}"
+    );
+    assert_eq!(reading["runs"][0]["outcome"], "started", "{reading}");
+    assert_eq!(starts(&log), 1, "a ceiling over nobody refuses nobody");
+}
+
 /// §FS-005-dispatch.24: a project ceiling above its organization's is named
 /// at the sweep, in prose and `--json`, and changes nothing — the project's
 /// number stands and the organization's total still refuses the next start.

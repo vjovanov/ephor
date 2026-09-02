@@ -198,9 +198,10 @@ fn an_autorun_ceiling_of_zero_passes_due_work_over_without_failing_the_sweep() {
 
 /// A budget can be written over the set of projects that actually share a
 /// machine, and the reader who runs into it is told which one it was: an
-/// organization ceiling passes due work over and names itself, while a project
-/// ceiling written above it is said out loud and changes nothing
-/// (§FS-005-dispatch.24).
+/// organization ceiling passes due work over and names itself. A ceiling of
+/// `0` is a pause the reader wrote on purpose, so the project number left
+/// under it is not a pair written the wrong way round and nothing is said
+/// about it (§FS-005-dispatch.24).
 #[test]
 fn an_organization_ceiling_passes_due_work_over_and_names_the_organization() {
     let world = watching();
@@ -235,7 +236,6 @@ fn an_organization_ceiling_passes_due_work_over_and_names_the_organization() {
         .expect("the capped sweep runs");
     assert!(output.status.success());
     let reading = json_of(&output);
-    let said = reading.to_string();
     assert_eq!(reading["failed"], 0, "{reading}");
     assert_eq!(reading["runs"][0]["outcome"], "passed-over", "{reading}");
     assert!(
@@ -244,13 +244,12 @@ fn an_organization_ceiling_passes_due_work_over_and_names_the_organization() {
             .is_some_and(|why| why.contains("organizations.guild.work.max_concurrent 0 is full")),
         "{reading}"
     );
-    // The project's larger number is honoured as written and named as wrong,
-    // rather than being quietly clamped to the organization's.
+    // Nothing starts under the pause, and the project number left under it is
+    // not called a contradiction: a paused ceiling is not a budget.
     assert!(
-        said.contains(
-            "projects.demo.work.max_concurrent 2 is above \
-             organizations.guild.work.max_concurrent 0"
-        ),
+        reading["notes"]
+            .as_array()
+            .is_some_and(|notes| notes.is_empty()),
         "{reading}"
     );
 }

@@ -891,6 +891,38 @@ fn a_one_sweep_aggregate_override_is_not_an_inverted_configuration() {
         .is_some_and(|why| why.contains("global work.max_concurrent 1")));
 }
 
+/// §FS-005-dispatch.24: a ceiling of `0` above is a pause somebody wrote on
+/// purpose, not a budget a project can be above — so a site or organization
+/// paused over projects that keep their own numbers is said nothing about.
+/// This is what keeps a configuration that never heard of the tier silent.
+#[test]
+fn a_paused_ceiling_above_a_project_is_not_a_pair_written_the_wrong_way_round() {
+    let paused_site = site_and_projects(Some(0), BTreeMap::from([("widget".to_string(), 1)]));
+    assert!(paused_site.inversions().is_empty(), "{:?}", paused_site);
+    // The pause still refuses, which is the half that is not a note.
+    let capacity = Capacity::new(paused_site, LiveRuns::default());
+    assert!(capacity
+        .refusal(&["widget".to_string()])
+        .is_some_and(|why| why.contains("global work.max_concurrent 0")));
+
+    let paused_organization = Ceilings {
+        site: Some(4),
+        site_as_configured: Some(4),
+        organizations: BTreeMap::from([("acme".to_string(), 0)]),
+        projects: BTreeMap::from([("widget".to_string(), 2)]),
+        membership: BTreeMap::from([("widget".to_string(), "acme".to_string())]),
+    };
+    assert!(
+        paused_organization.inversions().is_empty(),
+        "{:?}",
+        paused_organization
+    );
+    let capacity = Capacity::new(paused_organization, LiveRuns::default());
+    assert!(capacity
+        .refusal(&["widget".to_string()])
+        .is_some_and(|why| why.contains("organizations.acme.work.max_concurrent 0 is full")));
+}
+
 /// §FS-005-dispatch.24: ceilings written the right way round say nothing, and
 /// an omitted one cannot be inverted.
 #[test]
@@ -951,6 +983,52 @@ fn existing_live_roots_consume_global_and_project_capacity() {
     assert_eq!(live.projects.get("other"), None);
     // The one live root spends one of its organization's slots too
     // (§FS-005-dispatch.24).
+    assert_eq!(live.organizations.get("acme"), Some(&1));
+    drop(holder);
+}
+
+/// §FS-005-dispatch.24: a root holding plans from two projects of one
+/// organization spends one of that organization's slots rather than two —
+/// the slot is the live run, and there is one of those.
+#[test]
+fn a_live_root_spanning_two_projects_of_one_organization_spends_one_slot() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("shared/panta");
+    let mut shared = due_root(&root, &ticket_at("fix-gate-1", "collect"));
+    let second = root.join("gadget-7.rhei.md");
+    fs::write(
+        &second,
+        format!(
+            "# Rhei: g\n**States:** m\n\n## Tasks\n\n{}",
+            ticket_at("fix-gate-1", "collect")
+        ),
+    )
+    .unwrap();
+    shared.plans.push(runtime::watch::PlanRef {
+        project: "gadget".to_string(),
+        plan_id: "gadget-7".to_string(),
+        path: second,
+        item: Some("forge:gadget/7".to_string()),
+        title: "The sibling project's plan".to_string(),
+    });
+    fs::create_dir_all(root.join(".rhei")).unwrap();
+    fs::write(root.join(".rhei/run.lock"), "").unwrap();
+    let holder = fs::File::open(root.join(".rhei/run.lock")).unwrap();
+    holder.lock().unwrap();
+
+    let live = LiveRuns::read(
+        &work_config(),
+        &[shared],
+        &BTreeMap::from([
+            ("widget".to_string(), "acme".to_string()),
+            ("gadget".to_string(), "acme".to_string()),
+        ]),
+    );
+    assert_eq!(live.global, 1);
+    // Each project holding a plan on the root spends one of its own slots …
+    assert_eq!(live.projects.get("widget"), Some(&1));
+    assert_eq!(live.projects.get("gadget"), Some(&1));
+    // … and the one organization holding both spends one, not two.
     assert_eq!(live.organizations.get("acme"), Some(&1));
     drop(holder);
 }
