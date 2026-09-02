@@ -886,7 +886,7 @@
                 "description": "`started` is a run that went beneath the screen, watched afterwards by attaching (FS-005-dispatch.20); `passed-over` is an otherwise eligible autorun root omitted because an aggregate, organization, or project concurrency ceiling is full and is not a failure (FS-005-dispatch.24); the other three are a run watched here, with `parked` the runtime declining for now, which is not a failed run (FS-006-project-interface.3)."
               },
               "id": { "type": "string", "description": "What the run is called, where it named itself \u2014 the id the board prints and the runner's own attach command takes (FS-005-dispatch.20)." },
-              "reason": { "type": "string", "description": "The aggregate, organization, or project ceiling that caused a `passed-over` autorun outcome, named as it is written in the configuration (FS-005-dispatch.24)." },
+              "reason": { "type": "string", "description": "The aggregate, organization, or project ceiling that caused a `passed-over` autorun outcome, named as it is written in the configuration and by the key it refused on \u2014 `max_concurrent` over roots in flight, `max_active` over the ones being worked (FS-005-dispatch.24)." },
               "says": {
                 "type": ["string", "null"]
               }
@@ -897,6 +897,18 @@
         "notes": {
           "type": "array",
           "items": { "$ref": "#/$defs/note" }
+        },
+        "capacity": {
+          "type": "object",
+          "description": "How capacity stood when the sweep was over, so a ceiling reported full never hides that a person is holding one of the slots (FS-005-dispatch.24). Present under `--due`, which is the only form that reads capacity.",
+          "required": ["live", "active", "parked"],
+          "properties": {
+            "live": { "type": "integer", "description": "Work roots a run holds, whatever that run is doing \u2014 what `max_concurrent` counts." },
+            "active": { "type": "integer", "description": "Of those, the ones being worked \u2014 what `max_active` counts." },
+            "parked": { "type": "integer", "description": "Of those, the ones whose open work waits on a person: gating, or a poll declaring `waiting_on`." },
+            "max_concurrent": { "type": ["integer", "null"], "description": "The aggregate roots-in-flight ceiling in force, or null where none is." },
+            "max_active": { "type": ["integer", "null"], "description": "The aggregate working ceiling in force, or null where none is." }
+          }
         }
       }
     },

@@ -50,6 +50,14 @@ pub struct WorkConfig {
     /// unlimited; zero pauses new autorun starts (§FS-005-dispatch.24).
     #[serde(default)]
     pub max_concurrent: Option<usize>,
+    /// The most autorun roots that may be *working* across the site — the
+    /// live ones, less those parked on a person's answer
+    /// (§FS-005-dispatch.24). Read exactly as [`WorkConfig::max_concurrent`]
+    /// is: omitted is unlimited, zero pauses new autorun starts. Omitting it
+    /// is the default, so a site that names only the other key is bounded
+    /// exactly as it was.
+    #[serde(default)]
+    pub max_active: Option<usize>,
 }
 
 impl Default for WorkConfig {
@@ -62,6 +70,7 @@ impl Default for WorkConfig {
             hands: BTreeMap::new(),
             ranking: None,
             max_concurrent: None,
+            max_active: None,
         }
     }
 }
@@ -95,6 +104,12 @@ pub struct ProjectWorkConfig {
     /// in force and adds none of its own (§FS-005-dispatch.24).
     #[serde(default)]
     pub max_concurrent: Option<usize>,
+    /// This project's ceiling on working roots, inside the site's aggregate
+    /// one. The same relation to [`WorkConfig::max_active`] that
+    /// [`ProjectWorkConfig::max_concurrent`] has to its own counterpart
+    /// (§FS-005-dispatch.24).
+    #[serde(default)]
+    pub max_active: Option<usize>,
 }
 
 /// Work for every project of one organization: the ceiling they share, inside
@@ -1168,6 +1183,20 @@ mod tests {
         assert!(
             serde_json::from_value::<ProjectWorkConfig>(json!({ "max_concurrant": 1 })).is_err()
         );
+
+        // The agent ceiling is the same pair, read the same way, and is
+        // omitted by default so that a site naming only the other key is
+        // bounded exactly as it was (§FS-005-dispatch.24).
+        let site: WorkConfig =
+            serde_json::from_value(json!({ "max_concurrent": 4, "max_active": 2 })).unwrap();
+        let project: ProjectWorkConfig =
+            serde_json::from_value(json!({ "max_active": 0 })).unwrap();
+        assert_eq!(site.max_active, Some(2));
+        assert_eq!(project.max_active, Some(0));
+        assert_eq!(project.max_concurrent, None);
+        assert_eq!(WorkConfig::default().max_active, None);
+        assert_eq!(ProjectWorkConfig::default().max_active, None);
+        assert!(serde_json::from_value::<ProjectWorkConfig>(json!({ "max_activ": 1 })).is_err());
     }
 
     /// The table a project writes to say who does what

@@ -967,8 +967,8 @@ impl Session {
                                     &[],
                                     None,
                                 ) {
-                                    Ok(runs) => {
-                                        for run in runs {
+                                    Ok(swept) => {
+                                        for run in swept.runs {
                                             says = format!("{says} · {}", run.says());
                                         }
                                     }
