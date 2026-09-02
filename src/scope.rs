@@ -25,7 +25,7 @@ use std::collections::BTreeSet;
 use serde_json::Value;
 
 use crate::cli::{Cli, Command, WorkArgs, WorkCommand};
-use crate::error::{registry_error, EphorError, Result};
+use crate::error::{registry_error, Result};
 use crate::registry;
 
 /// One of the three selectors declared on [`Cli`] (§FS-011-command-line.9).
@@ -49,11 +49,22 @@ impl Selector {
 
 /// What a verb does with the selectors (§FS-011-command-line.9), and where the
 /// selection is made. There is no third answer to the first question: a verb
-/// honours all three selectors or refuses every one of them.
+/// honours all three selectors or refuses every one of them. The two refusing
+/// variants differ only in what the refusal *says* — a verb about one target
+/// and a verb about the whole site both refuse, and neither may say something
+/// untrue about what it reads on the way.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Honours {
-    /// Nothing: the verb names one target, or reads no project set at all.
+    /// Nothing: the verb is about what it is given — one item, one checkout,
+    /// one file — so there is no set of projects for a selector to narrow.
     Nothing,
+    /// Nothing either, but for the other reason: the verb reads every project
+    /// the site is configured with and answers for the site itself, not for a
+    /// group the registry names. `doctor`, `capabilities` and `operations`
+    /// are here, and they say so when they refuse: a refusal that told a
+    /// reader these verbs read no projects would send them looking for a
+    /// project set that is right there in the output.
+    NothingOverTheSite,
     /// The projects the site watches, which is a different list from the
     /// registry's: these verbs pick from `status.json` while the selectors
     /// name registry rows. The bridge between the two is [`Scope::projects`],
@@ -72,7 +83,7 @@ impl Honours {
     pub fn selectors(self) -> &'static [Selector] {
         const PROJECTS: &[Selector] = &[Selector::Workspace, Selector::Tag, Selector::Organization];
         match self {
-            Honours::Nothing => &[],
+            Honours::Nothing | Honours::NothingOverTheSite => &[],
             Honours::Watched | Honours::Registry => PROJECTS,
         }
     }
@@ -123,13 +134,16 @@ pub fn honoured(command: &Command) -> (String, Honours) {
         Command::Job(_) => said("job", Honours::Nothing),
         Command::Actions(_) => said("actions", Honours::Nothing),
         Command::Branches(_) => said("branches", Honours::Watched),
-        Command::Operations(_) => said("operations", Honours::Nothing),
+        Command::Operations(_) => said("operations", Honours::NothingOverTheSite),
         Command::Thread(_) => said("thread", Honours::Nothing),
         Command::React(_) => said("react", Honours::Nothing),
         Command::Tick(_) => said("tick", Honours::Nothing),
         Command::Reply(_) => said("reply", Honours::Nothing),
-        Command::Capabilities(_) => said("capabilities", Honours::Nothing),
-        Command::Doctor(_) => said("doctor", Honours::Nothing),
+        // The three that answer for the site itself: they read every
+        // configured project, so their refusal says that rather than denying
+        // it (§FS-011-command-line.9).
+        Command::Capabilities(_) => said("capabilities", Honours::NothingOverTheSite),
+        Command::Doctor(_) => said("doctor", Honours::NothingOverTheSite),
         Command::Tui => said("tui", Honours::Watched),
     }
 }
@@ -235,6 +249,11 @@ impl Scope {
                 " {verb} takes no scope selector: it is about what it is given, \
                  not about a set of projects."
             )),
+            Honours::NothingOverTheSite => says.push_str(&format!(
+                " {verb} takes no scope selector: it reads every project the \
+                 site is configured with and answers for the site itself, not \
+                 for a group the registry names."
+            )),
             _ => {
                 let takes: Vec<&str> = honours
                     .selectors()
@@ -244,7 +263,11 @@ impl Scope {
                 says.push_str(&format!(" {verb} takes {}.", spoken(&takes)));
             }
         }
-        Err(EphorError::Command(says))
+        // A refusal of the second kind exits like a refusal of the first: an
+        // empty selection is 2, and so is every other usage-shaped refusal
+        // ephor makes, so "the scope was refused" is one comparison for the
+        // caller rather than two (§FS-011-command-line.9).
+        Err(registry_error(says))
     }
 
     /// The projects these selectors name, resolved against the registry.
@@ -468,18 +491,57 @@ mod tests {
     }
 
     /// §FS-011-command-line.9: a verb that reads no project set refuses every
-    /// selector it was given, and says which ones it does take.
+    /// selector it was given, and says which ones it does take. The refusal
+    /// is a registry error, so it exits 2 like the empty selection at the
+    /// other end of the same rule rather than making the caller test for two
+    /// codes to learn one thing.
     #[test]
     fn a_verb_that_reads_no_projects_refuses_the_selector() {
-        let refused = scope(&["--org", "graal", "rebase"])
+        let err = scope(&["--org", "graal", "rebase"])
             .held_to("rebase", Honours::Nothing)
-            .unwrap_err()
-            .to_string();
+            .unwrap_err();
+        assert!(
+            matches!(err, crate::error::EphorError::Registry(_)),
+            "a refused selector must exit 2: {err:?}"
+        );
+        let refused = err.to_string();
         assert!(refused.contains("rebase does not take --org"), "{refused}");
         assert!(refused.contains("takes no scope selector"), "{refused}");
         assert!(scope(&["rebase"])
             .held_to("rebase", Honours::Nothing)
             .is_ok());
+    }
+
+    /// §FS-011-command-line.9: `doctor`, `capabilities` and `operations`
+    /// refuse the selectors too, but they *do* read every configured project
+    /// — so the sentence they refuse with says that instead of denying it.
+    /// A reader told these verbs are about no set of projects would go
+    /// looking for the project set their own output prints.
+    #[test]
+    fn a_verb_that_answers_for_the_site_says_what_it_reads() {
+        for verb in ["doctor", "capabilities", "operations"] {
+            let (named, honours) = honoured(&cli(&[verb]).command);
+            assert_eq!(
+                (named.as_str(), honours),
+                (verb, Honours::NothingOverTheSite)
+            );
+            let refused = scope(&["--org", "graal", verb])
+                .held_to(&named, honours)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                refused.contains(&format!("{verb} does not take --org")),
+                "{refused}"
+            );
+            assert!(
+                refused.contains("reads every project the site is configured with"),
+                "{refused}"
+            );
+            assert!(
+                !refused.contains("not about a set of projects"),
+                "{refused}"
+            );
+        }
     }
 
     /// §FS-011-command-line.9: `--all` is not a scope selector any more. It
