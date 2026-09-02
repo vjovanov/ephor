@@ -51,11 +51,16 @@ ships, the previous "latest" section moves verbatim to
   reason in prose and `--json`. A project ceiling written above its
   organization's — or above the site's — is a note at the sweep giving the
   project, the ceiling above it and both numbers; it is never refused, never
-  rewritten, and the ceiling above it still bounds its total. Omission is
-  unchanged in both directions: a configuration with no `organizations` map,
-  or a project whose registry row names no organization, starts exactly what
-  it started before. Note that the feed configuration refuses unknown keys, so
-  a `status.json` carrying `organizations` needs this version. (PR #TBD)
+  rewritten, and the ceiling above it still bounds its total. A ceiling of `0`
+  above is a pause somebody wrote on purpose rather than a budget, so the
+  numbers under it are not noted. Omission is unchanged in both directions: a
+  configuration with no `organizations` map, or a project whose registry row
+  names no organization, starts exactly what it started before. An
+  `organizations` id the registry does not declare bounds nobody and is named
+  for it — by `ephor doctor`, in the words an unknown project id gets, and in
+  a note at the sweep — rather than quietly ignored. Note that the feed
+  configuration refuses unknown keys, so a `status.json` carrying
+  `organizations` needs this version. (PR #TBD)
 
 - **The functional specification is one document per declaration.** The twelve
   `§FS` declarations now live under `docs/functional-spec/`, so each subject
