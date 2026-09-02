@@ -36,37 +36,13 @@ is the seam it is missing — never a trim to fit.
   never hand-trimmed: an example somebody copies whole loses the thing it
   demonstrates when it is cut to fit a line count.
 
-## 2. The limits
-
-Two tiers per rule. **Soft** warns and lets the commit through; **hard** refuses
-it. Line counts exclude blank and comment lines, so a citation or a rationale in
-a doc comment is free — a budget that taxed comments would pay an agent to delete
-the grounding this tree exists to keep.
-
-| what | soft | hard |
-| --- | --- | --- |
-| citable spec | 750 lines | 2000 lines |
-| entrypoint | 250 lines | 500 lines |
-| the manual | 2000 lines | 3200 lines |
-| source under `src/` | 800 lines | 2000 lines |
-| tests outside a source file | 700 lines | 2000 lines |
-| the Python suite | 450 lines | 700 lines |
-| a script | 300 lines | 500 lines |
-| a CI workflow | 300 lines | 600 lines |
-| the changelog, schemas, examples | bytes only | bytes only |
-
-`.agents/fissile.toml` is where each of these is configured, and it carries the
-derivation for every one — what this tree measures, and which number it is taken
-from. Read it before changing a limit: a limit moved to clear a finding is a
-budget that has stopped meaning anything.
-
-## 3. The gate
+## 2. The gate
 
 `fissile check` runs in the commit hook against the files a commit touches, and
 in CI against the whole tree. It is not advisory: a hard overflow fails the
 build, and the tree passes or a recorded exception says why it does not.
 
-## 4. An overflow is recorded with the boundary it is missing
+## 3. An overflow is recorded with the boundary it is missing
 
 A file that cannot meet its budget is written down, not argued in a commit
 message. The record says which of two things is true, and it is refused if it

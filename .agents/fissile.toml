@@ -82,7 +82,7 @@ fissile exception add <path> --severity soft --rule {rule}
 [[messages]]
 id = "split-source-hard"
 text = """
-Must split before more code lands here: this file is past the 2000-line ceiling §FS-012-file-size.2 sets for a source file. Move cohesive groups into sibling modules along a boundary the code already has, and change nothing else — the split is a pure refactor, so `cargo test` and `python scripts/check_boundary.py` must pass on the moved code unedited.
+Must split before more code lands here: this file is past the 2000-line ceiling this rule sets for a source file, enforcing the budget in §FS-012-file-size.1. Move cohesive groups into sibling modules along a boundary the code already has, and change nothing else — the split is a pure refactor, so `cargo test` and `python scripts/check_boundary.py` must pass on the moved code unedited.
 Do not invent an abstraction or shuffle lines to get under the limit; a worse layout under budget is not the goal.
 If you cannot see a split that leaves the architecture intact, stop and ask a human. The only other way past this gate is a reviewed exception:
 fissile exception add <path> --severity hard --rule {rule}
@@ -122,7 +122,7 @@ fissile exception add <path> --severity soft --rule {rule}
 [[messages]]
 id = "split-spec-hard"
 text = """
-Must split before adding more: this document is past the 2000-line ceiling §FS-012-file-size.2 sets for a citable spec, which is the point where it has stopped being one document. Give any section that carries its own behavior a declared ID, and move it to its own file — where a kind's home is a single file, `grund.toml` can make it a `folder` instead, and every `§` citation into it keeps resolving.
+Must split before adding more: this document is past the 2000-line ceiling this rule sets for a citable spec, enforcing the budget in §FS-012-file-size.1; at that point it has stopped being one document. Give any section that carries its own behavior a declared ID, and move it to its own file — where a kind's home is a single file, `grund.toml` can make it a `folder` instead, and every `§` citation into it keeps resolving.
 If no split keeps the document coherent, ask a human rather than cutting at an arbitrary heading.
 """
 

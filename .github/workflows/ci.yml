@@ -145,7 +145,7 @@ jobs:
           verbs: style
 
   # Every file in this tree is measured against a budget set by how it is read
-  # (§FS-012-file-size.3): the rules and the derivation for each limit are in
+  # (§FS-012-file-size.2): the rules and the derivation for each limit are in
   # `.agents/fissile.toml`. The pre-commit hook measures the files a commit
   # touches; this measures the whole tree, so a file that grew past its budget
   # on a branch nobody committed through the hook is still caught. One platform,

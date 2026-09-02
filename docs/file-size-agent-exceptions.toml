@@ -1,5 +1,5 @@
 fissile_exceptions_version = 2
-# Soft-severity file-size exceptions (§FS-012-file-size.4). An agent may add an
+# Soft-severity file-size exceptions (§FS-012-file-size.3). An agent may add an
 # entry here on its own; a hard entry is a human's, and lives in
 # `docs/file-size-human-exceptions.toml`.
 #

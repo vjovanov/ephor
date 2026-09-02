@@ -41,7 +41,7 @@ grund:
     grund check
     grund fmt --check
 
-# Hold every file to the budget its reader sets (§FS-012-file-size.3)
+# Hold every file to the budget its reader sets (§FS-012-file-size.2)
 fissile:
     fissile check
 

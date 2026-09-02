@@ -73,7 +73,7 @@ repos:
         always_run: true
         stages: [pre-commit]
       # `fissile check` holds every file to the budget its reader sets
-      # (§FS-012-file-size.3): the rules and their derivations are in
+      # (§FS-012-file-size.2): the rules and their derivations are in
       # `.agents/fissile.toml`. Like `grund`, this calls an installed binary
       # rather than `cargo run` — it is a third-party tool, not this
       # repository's own (cargo install fissile --version 0.8.1). Soft overflows
