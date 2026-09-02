@@ -30,6 +30,11 @@ ships, the previous "latest" section moves verbatim to
 
 ### Changed
 
+- **File-size limits have one authority.** The duplicated numeric limits table
+  is removed from [§FS-012-file-size](functional-spec/FS-012-file-size.md#fs-012-file-size-every-file-is-measured-against-a-budget-set-by-how-it-is-read), so
+  `.agents/fissile.toml` alone holds the configured numbers and its hard-limit
+  findings now say that each rule sets its own ceiling. (PR #N)
+
 - **Every declaration is listed in its folder's index.** `grund check` warned
   that thirty-two declarations — across `§FS`, `§AR`, `§REQ` and the decision
   folders — were absent from their index README, and that the warning becomes an
@@ -275,7 +280,7 @@ ships, the previous "latest" section moves verbatim to
 
 - **`src/work/mod.rs` takes the first seam its size budget names, and the
   boundary check learns that shape**
-  ([§FS-012-file-size.2](functional-spec/FS-012-file-size.md#2-the-limits),
+  ([§FS-012-file-size.1](functional-spec/FS-012-file-size.md#1-the-budget-follows-the-reader),
   [§REQ-001-boundary.5](requirements/REQ-001-boundary.md#5-no-product-literal-outside-its-adapter)).
   The dispatch module's inline `#[cfg(test)] mod tests` moves whole to
   `src/work/mod_tests.rs`, attached by `#[cfg(test)] #[path =

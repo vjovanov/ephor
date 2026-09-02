@@ -1,5 +1,5 @@
 //! Unit tests for the dispatch module (§FS-005-dispatch), moved out of
-//! `mod.rs` so that file stays inside the source budget §FS-012-file-size.2
+//! `mod.rs` so that file stays inside the source budget §FS-012-file-size.1
 //! sets. Attached by `#[cfg(test)] #[path = "mod_tests.rs"] mod tests;` there,
 //! so this is the body of `work::tests` and reads its parent through
 //! `use super::*`.

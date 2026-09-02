@@ -1,5 +1,5 @@
 fissile_exceptions_version = 2
-# Hard-severity file-size exceptions (§FS-012-file-size.4), each a human's to
+# Hard-severity file-size exceptions (§FS-012-file-size.3), each a human's to
 # add. An entry is identified by this registry and its `path`, which is why it
 # carries no name of its own.
 #
