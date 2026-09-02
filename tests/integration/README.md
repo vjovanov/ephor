@@ -21,6 +21,9 @@ against.
 - `doctor_test.rs` — `ephor doctor` and `ephor capabilities` ([§FS-010-doctor](../../docs/functional-spec/FS-010-doctor.md#fs-010-doctor-ephor-can-be-asked-whether-it-still-works-and-answers-in-one-screen)).
 - `rebase_test.rs` — `ephor rebase` end to end ([§FS-004-quick-actions.6](../../docs/functional-spec/FS-004-quick-actions.md#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase)).
 - `work_test.rs` — `ephor work` end to end ([§FS-005-dispatch](../../docs/functional-spec/FS-005-dispatch.md#fs-005-dispatch-what-ephor-watches-it-can-hand-to-an-agent-runtime)).
+- `scope_test.rs` — the scope selectors across the registry and the site's
+  watch list, over a world with two organizations
+  ([§FS-011-command-line.9](../../docs/functional-spec/FS-011-command-line.md#9-a-scope-selector-is-honoured-or-refused), [§AR-009-surfaces.2](../../docs/architecture/AR-009-surfaces.md#2-the-session-is-built-once-and-shared)).
 - `forge_extension_test.rs` — an out-of-process forge extension, a real shell
   script and nothing else ([§FS-001-forge-interface.2](../../docs/functional-spec/FS-001-forge-interface.md#2-two-transports-one-interface)).
 - `agents_test.rs`, `feed_test.rs`, `registry_test.rs`, `update_test.rs` — the

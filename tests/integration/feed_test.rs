@@ -199,7 +199,7 @@ fn refresh_populates_cache_and_feed_lists_items() {
     for (key, value) in feed_env(tmp.path()) {
         cmd.env(key, value);
     }
-    cmd.args(["--all", "mark-read"]).assert().success();
+    cmd.args(["mark-read", "--all"]).assert().success();
 
     let mut cmd = ephor_cmd();
     cmd.env("PATH", &path);
@@ -544,7 +544,7 @@ fn status_check_exits_4_on_unread_needs_response() {
     for (key, value) in feed_env(tmp.path()) {
         cmd.env(key, value);
     }
-    cmd.args(["--all", "mark-read"]).assert().success();
+    cmd.args(["mark-read", "--all"]).assert().success();
 
     let mut cmd = ephor_cmd();
     cmd.env("PATH", &path);
