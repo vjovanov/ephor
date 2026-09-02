@@ -1,7 +1,9 @@
 # FS-002-release: ephor releases from a tag, with a changelog entry per change
 
 Versions are semver, and a version exists exactly when a `vX.Y.Z` tag does. The
-version in `Cargo.toml` and the tag agree or the release refuses to run.
+version in `Cargo.toml` and the tag agree or the release refuses to run. Between
+releases the manifest carries the *next* version with a `-dev` suffix, which is
+not a version in that sense and is never publishable.
 
 ## 1. Changelog
 
@@ -50,3 +52,15 @@ No artifact is published while the tree still violates
 literal confinement of [§REQ-001-boundary.5](../requirements/REQ-001-boundary.md#5-no-product-literal-outside-its-adapter). The checks are mechanical and run
 before anything is uploaded.
 
+## 5. Between releases, main carries a dev version
+
+A release leaves main holding the version it just published, so every build from
+main until the next release reports the tag it is already ahead of. Nothing on
+the machine can then tell a binary built from main from the released one, and a
+fix that is merged but not installed looks identical to one that is installed.
+
+So the release advances main as its last act: after publishing `X.Y.Z` it
+commits `X.Y.(Z+1)-dev`. The suffix is what makes `--version` say which side of
+the tag a build came from. It is deliberately not a releasable version — the
+release path sets the clean version on its candidate branch and verifies it
+there, so a `-dev` manifest can never be published.

@@ -1,6 +1,6 @@
 [package]
 name = "ephor"
-version = "0.1.0"
+version = "0.1.0-dev"
 edition = "2021"
 description = "Project registry, AGENTS.md rendering, workspace updates, and per-project status feed"
 license = "MIT"
