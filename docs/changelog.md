@@ -53,7 +53,7 @@ ships, the previous "latest" section moves verbatim to
   rather than printed as an empty table. The screen scopes with them too: a
   `tui` opened under a selector shows those projects and its `r` key now
   fetches only them. **Callers who passed a selector that was silently ignored
-  now get an error, and that is the point.** (PR #N)
+  now get an error, and that is the point.** (PR #58)
 
 - **`--all` belongs to the verbs that read it.** It was a global flag with two
   meanings: "every branch entry rather than only the active ones" to
@@ -64,7 +64,7 @@ ships, the previous "latest" section moves verbatim to
   — is no longer accepted, and no other verb advertises it. `mark-read --all`
   is narrowed by `--org`, `--tag` and `--workspace` like every other project
   selection, and prunes the read-marks of vanished items only when the sweep
-  really covered every watched project. (PR #N)
+  really covered every watched project. (PR #58)
 
 - **Every declaration is listed in its folder's index.** `grund check` warned
   that thirty-two declarations — across `§FS`, `§AR`, `§REQ` and the decision
