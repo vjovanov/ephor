@@ -197,6 +197,33 @@ fn a_dispatch_proposes_only_the_scoped_organizations_work() {
     );
 }
 
+/// A scoped fetch fetches the projects in scope — and only the project
+/// selection is narrowed. The sources shared across the site are fetched once
+/// and placed by the engine (§AR-008-pipeline.1), so they are still placed
+/// against the whole watch list: a scoped fetch must not file another
+/// project's conversation under what nothing claimed.
+#[test]
+fn a_scoped_fetch_fetches_the_scoped_projects() {
+    let tmp = tempdir();
+    two_orgs(tmp.path());
+    let out = ephor(tmp.path())
+        .args(["refresh", "--org", "graal", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let tally = json_of(&out);
+    let fetched: Vec<&str> = tally["projects"]
+        .as_array()
+        .expect("one row per project")
+        .iter()
+        .map(|row| row["project"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(fetched, vec!["graal"], "{tally:#}");
+    assert!(!tmp.path().join("state/ephor/feed/ephor.json").exists());
+}
+
 /// §FS-011-command-line.9 through the branch reading: `ephor branches` opens
 /// the same scoped session the screen does.
 #[test]
