@@ -113,7 +113,7 @@ ephor refresh [PROJECT ...] [--quiet]       # fetch providers into the cache
 ephor status                                # summary table per project
 ephor status widget [--refresh|--cached] [--max-age SECS] [--json] [--check]
 ephor feed [--project P] [--unread] [--kind pr|ci|message|status] [--json]
-ephor mark-read widget | --all mark-read | mark-read --id ITEM_ID
+ephor mark-read widget | mark-read --all | mark-read --id ITEM_ID
 ```
 
 - Cache lives in `~/.local/state/ephor/` (`feed/<project>.json`, `seen.json`).
