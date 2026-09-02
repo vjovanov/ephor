@@ -251,14 +251,34 @@ fetch / checkout / pull according to its `update_mode`, then **post hooks**,
 then the root `AGENTS.md`. `--skip-agents` leaves the file alone; `--debug`
 passes a debug flag through to hooks that declare `pass_debug`.
 
-All four take the global selectors:
+All four take the global scope selectors:
 
 | Flag | Selects |
 |---|---|
 | `--workspace ID` | one project or derived workspace id, repeatable |
 | `--tag TAG` | projects carrying a tag, repeatable |
 | `--org ID` | one organization |
-| `--all` | every branch entry, not only the active ones |
+
+`validate`, `ensure-agents` and `update` also take `--all` — every branch
+entry, not only the active ones. It is their own flag and goes after the verb,
+because it asks about branch entries rather than about projects
+([§FS-011-command-line.9](functional-spec/FS-011-command-line.md#9-a-scope-selector-is-honoured-or-refused)).
+
+The three selectors are declared once and reach every command's help, so every
+command either honours them or refuses them by name with a non-zero exit: no
+verb parses a selector and changes nothing. The verbs that honour them are
+`list`, `status`, `feed`, `refresh`, `mark-read`, `branches`, `tui`, `work
+list`, `work dispatch`, `work sync`, `work run`, and these four. Everything
+else names one target, or reads no set of projects, and says so:
+
+```console
+$ ephor rebase --org foundation
+ERROR: rebase does not take --org. rebase takes no scope selector: it is
+about what it is given, not about a set of projects.
+```
+
+A selection that comes out empty is refused rather than printed as an empty
+reading, so a mistyped organization is a message rather than a quiet table.
 
 `ensure-agents` also renders an ad-hoc workspace that is in no registry:
 
@@ -307,7 +327,7 @@ the registry — that is where its root and branches come from.
 ephor refresh [PROJECT ...] [--quiet]      # fetch into the cache
 ephor status [PROJECT] [--refresh|--cached] [--max-age SECS] [--json] [--check]
 ephor feed [--project P ...] [--unread] [--kind pr|ci|issue|task|message|status] [--json]
-ephor mark-read PROJECT | --all | --id ITEM_ID [--kind K]
+ephor mark-read PROJECT | --all | --id ITEM_ID [--kind K]   # --all: every watched project
 ephor failures --project P --source S --repo R --number N
 ephor rebase [--checkout DIR] [--project P] [--onto BRANCH | --upstream] [--item ID] [--dispatch] [--report PATH]
 ephor checkout [--project P] [--branch B] [--item ID] [--from BRANCH] [--report PATH]
@@ -324,7 +344,11 @@ ephor doctor [--project P] [--skip-self|--self-only] [--json]
 - **`feed`** is the flat cross-project stream, newest first, from the cache.
 - **`mark-read`** marks items read. An item is unread until then, and
   **resurfaces when it changes again** — reading is per version, not per item.
-  A full `--all` sweep also prunes entries for items that no longer exist.
+  `--all` is `mark-read`'s own flag and means every watched project; narrow it
+  with `--org`, `--tag` or `--workspace` like any other project selection
+  ([§FS-011-command-line.9](functional-spec/FS-011-command-line.md#9-a-scope-selector-is-honoured-or-refused)). A sweep that really covered every watched project
+  also prunes entries for items that no longer exist; a narrowed one does not,
+  because it did not read the feeds it would be forgetting.
 - **`failures`** prints what went wrong under one red gate; it is what the
   quick action on a red gate runs.
 - **`rebase`** replays a checkout onto its main branch — or, with

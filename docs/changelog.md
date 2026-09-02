@@ -35,6 +35,34 @@ ships, the previous "latest" section moves verbatim to
   `.agents/fissile.toml` alone holds the configured numbers and its hard-limit
   findings now say that each rule sets its own ceiling. (PR #57)
 
+- **A scope selector is honoured or refused, never ignored**
+  ([§FS-011-command-line.9](functional-spec/FS-011-command-line.md#9-a-scope-selector-is-honoured-or-refused)). `--workspace`, `--tag` and `--org` were parsed by
+  every verb and read by three, so `ephor status --org foundation` and `--org
+  graal` printed the same site-wide table and `ephor work dispatch --org X
+  --dry-run` proposed the other organization's work. Every variant of the
+  command tree is now classified: `list`, `status`, `feed`, `refresh`,
+  `mark-read`, `branches`, `tui`, `work list`, `work dispatch`, `work sync`,
+  `work run`, `validate`, `ensure-agents` and `update` scope their reading by
+  the selectors, and every other verb refuses each one it was given, naming
+  itself and the flag and exiting non-zero — under `--json` as an outcome on
+  standard output like any other refusal. Because the feed-side verbs pick
+  their projects from `status.json` while the selectors name registry rows, a
+  selector is resolved against the registry and intersected with what the site
+  watches; a selection that comes out empty is refused rather than printed as
+  an empty table. **Callers who passed a selector that was silently ignored
+  now get an error, and that is the point.** (PR #N)
+
+- **`--all` belongs to the verbs that read it.** It was a global flag with two
+  meanings: "every branch entry rather than only the active ones" to
+  `validate`, `ensure-agents` and `update`, and "every project" to
+  `mark-read`. It is now declared on each of those four verbs and says there
+  what that verb means by it, so `ephor validate --all` and `ephor mark-read
+  --all` are unchanged while `ephor --all validate` — the flag before the verb
+  — is no longer accepted, and no other verb advertises it. `mark-read --all`
+  is narrowed by `--org`, `--tag` and `--workspace` like every other project
+  selection, and prunes the read-marks of vanished items only when the sweep
+  really covered every watched project. (PR #N)
+
 - **Every declaration is listed in its folder's index.** `grund check` warned
   that thirty-two declarations — across `§FS`, `§AR`, `§REQ` and the decision
   folders — were absent from their index README, and that the warning becomes an
