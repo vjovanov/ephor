@@ -1460,23 +1460,62 @@ can be run as often as anything cares to run it and asks nothing about what
 it did last time — a due root gets a run, a live root gets nothing, and
 running the sweep twice in a second is the same as running it once.
 
-**Autorun may be bounded without changing the manual key.** The site's
-`work.max_concurrent` is the aggregate ceiling on live runs across all work
-roots, and `projects.<id>.work.max_concurrent` is an additional ceiling on
-that project's live roots inside the aggregate one. The project number never
-replaces or exceeds the site number. Leaving either out leaves that ceiling
-unlimited; writing `0` admits no new autorun starts under it. These limits
-apply only to this sweep: a run a reader explicitly starts keeps being the
-reader's move. `ephor work run --due --max-concurrent N` replaces the site's
-configured aggregate ceiling for that invocation, including when `N` is
-zero; every project ceiling still applies inside the command-line ceiling.
+**Autorun may be bounded at three nested scopes without changing the manual
+key.** The site's `work.max_concurrent` is the aggregate ceiling on live runs
+across all work roots; `organizations.<org-id>.work.max_concurrent` is a
+ceiling on the live roots of every project that organization holds, inside
+the site's; and `projects.<id>.work.max_concurrent` is a ceiling on that one
+project's live roots, inside both. The site holds every organization, an
+organization holds its projects, and a project holds its roots — nesting the
+registry already declares, because which organization a project belongs to is
+the `organization` field on its registry row and nothing else, read here and
+never written
+([§REQ-001-boundary.2](../requirements/REQ-001-boundary.md#2-three-homes-one-resolution-order)).
+Leaving any of the three out leaves that ceiling unlimited; writing `0`
+admits no new autorun starts under it. An absent `organizations` map is an
+omitted ceiling for every organization, so a configuration that has never
+heard of this tier starts exactly the runs it started before; a project whose
+registry row names no organization is under no organization ceiling. These
+limits apply only to this sweep: a run a reader explicitly starts keeps being
+the reader's move. `ephor work run --due --max-concurrent N` replaces the
+site's configured aggregate ceiling for that invocation, including when `N`
+is zero; every organization and project ceiling still applies inside the
+command-line ceiling.
+
+**Every ceiling is evaluated, and the outermost full one is the reason.** A
+start is refused by whichever of the three is full first, asked in that
+order — site, then organization, then project. So no root begins because an
+inner ceiling had room while an outer one did not, and the reason a reader is
+given names the widest thing that was actually full. None of the three
+replaces another and none clamps another: they are three questions asked of
+the same start, and the answer is the first *no*.
+
+**A ceiling written the wrong way round is named, not corrected.** An
+organization's number is expected to be the larger of the pair, because it is
+the budget its projects share, so a project ceiling above its organization's
+— or above the site's — is almost always a mistake. It is warned about by
+name wherever the ceilings are read, and the warning says which project,
+which ceiling it is above, and both numbers, so it is seen when it bites
+rather than only when someone runs a check over the file. It is not refused
+and the project's number is not rewritten: whoever configured the one project
+is closer to it than whoever set the number above it, and a tool that
+silently clamped them would be deciding something it does not know. Nor is
+the warning a licence — the organization's total still binds, because a pair
+written the wrong way round is not permission to exceed a ceiling somebody
+set on purpose. The site number a pair is measured against is the configured
+one: `--max-concurrent` narrows a single sweep deliberately, so a project
+ceiling above it is the reader's own choice rather than a configuration
+contradicting itself, and nothing is said about it.
 
 **Capacity is live work, not attempts.** One root snapshot supplies both the
 due candidates and the live counts. Every already-live root consumes one
-aggregate slot and one slot in each project whose plan it holds, whether or
-not that root is due or selected by a command's `--project`. A successful
-start consumes those same slots only while its runtime lock remains held. A
-start that fails, reports itself finished during the launch handshake, or has
+aggregate slot, one slot in each project whose plan it holds, and one slot in
+each organization holding such a project, whether or not that root is due or
+selected by a command's `--project`. A root holding plans from two projects
+of one organization spends one of that organization's slots rather than two:
+the slot is the live run, and there is one of those. A successful start
+consumes those same slots only while its runtime lock remains held. A start
+that fails, reports itself finished during the launch handshake, or has
 already released its lock leaves the slot for the next candidate in the same
 sweep. The failed-start back-off still applies independently.
 
@@ -1485,10 +1524,10 @@ sweep. The failed-start back-off still applies independently.
 file's order before the rest; roots the ranking does not distinguish retain
 the deterministic root-path order the sweep already had. The ranking orders
 and never filters. Every otherwise eligible root not started solely because
-an aggregate or project ceiling is full is returned as one `passed-over`
-outcome with the ceiling as its reason, in prose and `--json`. Passing a root
-over is not a failed launch and does not increase the reading's `failed`
-count.
+an aggregate, organization, or project ceiling is full is returned as one
+`passed-over` outcome with the ceiling as its reason, in prose and `--json`.
+Passing a root over is not a failed launch and does not increase the
+reading's `failed` count.
 
 **The sweep is safe where the key was.** Everything dispatch refuses before
 writing a ticket, starting refuses before running one
