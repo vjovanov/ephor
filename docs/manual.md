@@ -283,6 +283,7 @@ ephor ensure-agents --type monorepo --root ~/tmp/scratch \
   "sources": [ /* §4.3 — fetched once, placed by ephor */ ],
   "actions": [ /* §7 */ ],
   "work":    { /* §8 */ },
+  "organizations": { /* §8 — the budget an organization's projects share */ },
   "projects": {
     "widget": {
       "providers": [ { "provider": "github-prs", "repos": ["acme/widget"], "reviews": true } ],
@@ -1626,7 +1627,12 @@ every project whose registry row carries that `organization` id (§3), inside
 the site's aggregate ceiling and outside each project's own. Membership is the
 registry's and is written nowhere else; a project whose row names no
 organization is under no organization ceiling, and a configuration with no
-`organizations` block behaves exactly as it did before the key existed.
+`organizations` block behaves exactly as it did before the key existed. An id
+the registry does not declare is a ceiling over nobody, so it is named rather
+than ignored: `ephor doctor` says `Feed config references unknown organization
+'<id>' (not in the registry).`, in the words an unknown project id gets, and
+the sweep carries a `note:` of its own. Nothing is refused for it — the key
+simply is not the one biting.
 
 **`autorun`** is the one field that changes *when* work happens rather than
 what it says. With it, a ticket written from this recipe gets its run without
@@ -2309,10 +2315,14 @@ ephor work states
   site's is a `note:` naming the project, the ceiling above it, and both
   numbers — it is not refused and it is not rewritten, and the ceiling above it
   still bounds its total, and the site number a pair is measured against is
-  the configured one. On this command, `--max-concurrent N` replaces the
-  configured aggregate ceiling for this one sweep while organization and
-  project ceilings remain in force; a project ceiling above that one-sweep
-  number is your own choice and is not noted. Already-live roots consume capacity,
+  the configured one. A ceiling of `0` above is a pause rather than a budget,
+  so the numbers under a paused site or organization are not noted. An
+  `organizations` id the registry does not declare is a `note:` too: it bounds
+  nobody, and a ceiling may not quietly be nothing. On this command,
+  `--max-concurrent N` replaces the configured aggregate ceiling for this one
+  sweep while organization and project ceilings remain in force; a project
+  ceiling above that one-sweep number is your own choice and is not noted.
+  Already-live roots consume capacity,
   including roots outside a `--project` filter. New starts consume a
   slot only while their runtime lock remains held, so a refused or immediately
   completed start leaves room for the next root. Candidates follow
