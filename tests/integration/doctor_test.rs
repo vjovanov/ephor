@@ -308,6 +308,34 @@ fn it_says_what_it_is_doing_while_it_does_it_without_saying_it_to_a_parser() {
     );
 }
 
+/// §FS-005-dispatch.24: an autorun ceiling written over an organization the
+/// registry does not declare bounds nothing, so `doctor` names it in the same
+/// words an unknown project id is named in. It is not an error — the site is
+/// as healthy as it was — but the bound its author believes they set is not
+/// there, and a ceiling may never quietly be nothing.
+#[test]
+fn a_ceiling_over_an_organization_the_registry_does_not_declare_is_named() {
+    let tmp = tempdir();
+    fixture(tmp.path(), json!([{ "provider": "demo" }]));
+    let path = tmp.path().join("status.json");
+    let mut config: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    config["organizations"] = json!({ "nosuchorg": { "work": { "max_concurrent": 1 } } });
+    fs::write(&path, serde_json::to_string_pretty(&config).unwrap()).unwrap();
+
+    let out = ephor(tmp.path())
+        .args(["doctor", "--skip-self", "--project", "widget"])
+        .output()
+        .unwrap();
+    let narration = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        narration.contains(
+            "Feed config references unknown organization 'nosuchorg' (not in the registry)."
+        ),
+        "{narration}"
+    );
+    assert!(out.status.success(), "{narration}");
+}
+
 /// The self pass narrates by being incremental rather than by describing
 /// itself twice: each check is its own line as it finishes, so the progress
 /// and the report are one thing (§FS-010-doctor.3).
