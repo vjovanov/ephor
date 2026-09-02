@@ -746,10 +746,7 @@ fn flight_ceilings(projects: BTreeMap<String, usize>) -> BTreeMap<String, Limits
 /// Live roots that are all being worked, which is what a capacity test about
 /// the flight ceilings alone assumes of them (§FS-005-dispatch.24).
 fn working(live: usize) -> Counts {
-    Counts {
-        live,
-        active: live,
-    }
+    Counts { live, active: live }
 }
 
 fn working_each(projects: BTreeMap<String, usize>) -> BTreeMap<String, Counts> {

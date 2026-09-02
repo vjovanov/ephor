@@ -203,3 +203,146 @@ pub fn required_project(root: &Path) -> Value {
         "branches": []
     })
 }
+
+// ---------------------------------------------------------------------------
+// The world `ephor work` is exercised in: a fake forge, a registry and a
+// status configuration around one project, and the fake runners a sweep
+// launches. Shared because `work_test.rs` and `work_capacity_test.rs` are two
+// halves of one subject and build the same world (§FS-012-file-size).
+// ---------------------------------------------------------------------------
+
+/// A fake `gh` serving one pull request of the user's own with a failing
+/// check, and one review comment awaiting an answer. The role searches arrive
+/// as one aliased GraphQL request (§FS-001-forge-interface.8), and the head
+/// branch and review decision ride in with it.
+pub const FAKE_GH: &str = r#"#!/usr/bin/env bash
+set -euo pipefail
+args="$*"
+conn() { printf '{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[%s]}' "$1"; }
+none=$(conn '')
+case "$args" in
+  *"search(query:"*"is:pr"*)
+    pr42='{"number": 42, "title": "Retry window", "url": "https://github.com/acme/widget/pull/42", "updatedAt": "2026-08-01T10:00:00Z", "state": "OPEN", "headRefName": "you/ABC-42-work", "reviewDecision": "CHANGES_REQUESTED", "repository": {"nameWithOwner": "acme/widget"}}'
+    printf '{"data":{"r0":%s,"r1":%s,"r2":%s,"r3":%s,"r4":%s}}' "$(conn "$pr42")" "$none" "$none" "$none" "$none"
+    ;;
+  *"pr checks"*)
+    printf '[{"name": "gate", "state": "FAILURE", "link": "https://ci/1"}, {"name": "style", "state": "SUCCESS", "link": "https://ci/2"}]'
+    ;;
+  *"pr list"*)
+    printf '[{"number": 42, "title": "Retry window", "url": "https://github.com/acme/widget/pull/42", "updatedAt": "2026-08-01T10:00:00Z"}]'
+    ;;
+  *)
+    printf '[]'
+    ;;
+esac
+"#;
+pub fn env(tmp: &Path) -> Vec<(String, String)> {
+    vec![
+        (
+            "XDG_STATE_HOME".to_string(),
+            tmp.join("state").to_string_lossy().into_owned(),
+        ),
+        (
+            "EPHOR_STATUS_CONFIG".to_string(),
+            tmp.join("status.json").to_string_lossy().into_owned(),
+        ),
+        (
+            "EPHOR_REGISTRY".to_string(),
+            tmp.join("workspaces.json").to_string_lossy().into_owned(),
+        ),
+    ]
+}
+pub fn ephor(tmp: &Path) -> assert_cmd::Command {
+    let mut cmd = ephor_cmd();
+    let fake_bin = tmp.join("fakebin");
+    fs::create_dir_all(&fake_bin).unwrap();
+    make_executable(&fake_bin.join("gh"), FAKE_GH);
+    cmd.env(
+        "PATH",
+        format!(
+            "{}:{}",
+            fake_bin.to_string_lossy(),
+            std::env::var("PATH").unwrap_or_default()
+        ),
+    );
+    for (key, value) in env(tmp) {
+        cmd.env(key, value);
+    }
+    cmd
+}
+pub fn fixture(tmp: &Path, work: Value) {
+    let project_root = tmp.join("demo");
+    fs::create_dir_all(&project_root).unwrap();
+    fixture_with(tmp, &project_root, "main", work);
+}
+/// The same fixture rooted at a checkout that already exists, on the main
+/// branch that checkout was grown from — for the recipes whose opening move is
+/// measured in git rather than reported by a forge.
+pub fn fixture_on(tmp: &Path, project_root: &Path, main_branch: &str) {
+    fixture_with(tmp, project_root, main_branch, Value::Null);
+}
+pub fn fixture_with(tmp: &Path, project_root: &Path, main_branch: &str, work: Value) {
+    let template = write_template(tmp);
+    let mut types = base_project_types(&template);
+    // The shared fixture's monorepo type leaves `default_branch` as the
+    // `{branch}` template, which no test expands. A project whose staleness is
+    // actually measured needs the branch its repository is replayed against.
+    types[0]["repos"][0]["default_branch"] = json!(main_branch);
+
+    write_registry(
+        &tmp.join("workspaces.json"),
+        &json!({
+            "project_types": types,
+            "hook_sets": [],
+            "projects": [{
+                "id": "demo",
+                "type": "monorepo",
+                "display_name": "Demo",
+                "root": project_root.to_string_lossy(),
+                "main_branch": main_branch,
+                "branches": [
+                    { "id": "demo-ticket", "branch": "you/ABC-42-work", "active": true, "ticket": "ABC-42" }
+                ]
+            }]
+        }),
+    );
+    let mut config = json!({
+        "defaults": { "ttl_seconds": 600, "provider_timeout_seconds": 10, "github_user": "tester" },
+        "projects": {
+            "demo": {
+                "providers": [{ "provider": "github-prs", "repos": ["acme/widget"] }]
+            }
+        }
+    });
+    if !work.is_null() {
+        config["work"] = work;
+    }
+    fs::write(
+        tmp.join("status.json"),
+        serde_json::to_string_pretty(&config).unwrap(),
+    )
+    .unwrap();
+}
+pub fn detaching_runner(tmp: &Path, log: &Path) {
+    fs::create_dir_all(tmp.join("fakebin")).unwrap();
+    make_executable(
+        &tmp.join("fakebin/rhei"),
+        &format!(
+            "#!/usr/bin/env bash\n\
+             case \"$*\" in\n\
+             *--help*) printf 'Options:\\n      --headless  detach it\\n'; exit 0 ;;\n\
+             *--headless*) printf '%s\\n' \"$*\" >> {log}; printf '{{\"id\":\"3f9a2c\",\"pid\":9,\"status\":\"running\",\"exit_code\":null}}\\n'; exit 0 ;;\n\
+             *) printf 'other %s\\n' \"$*\" >> {log}; exit 0 ;;\n\
+             esac\n",
+            log = log.to_string_lossy(),
+        ),
+    );
+}
+/// How many runs the fake launcher was asked to start.
+pub fn starts(log: &Path) -> usize {
+    fs::read_to_string(log)
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| line.contains("--headless"))
+        .count()
+}
