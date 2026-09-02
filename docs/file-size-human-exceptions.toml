@@ -9,7 +9,7 @@ fissile_exceptions_version = 2
 # and the condition that retires the entry. Describing the file does not count —
 # "it is long" is the finding, not the argument.
 #
-# All four entries below are `deferred`, and that is the state of this tree
+# All three entries below are `deferred`, and that is the state of this tree
 # rather than a coincidence: these are the files this repository's first
 # measurement found, and every one of them has a seam available. None is
 # indivisible.
@@ -37,16 +37,6 @@ max_accepted = { value = 600, unit = "lines" }
 until = "the Status feed and Work sections are cut to their tour, with the reference they duplicate left to docs/manual.md"
 reason = """
 README.md line 9 says it itself: "docs/manual.md is the manual; this page is the tour". Two of its sections are not a tour. `## Status feed` and `## Work: handing an item to an agent runtime` are 192 and 198 non-blank lines, 390 of this file's 525, and both are reference — provider tables, configuration keys, recipe fields — that docs/manual.md already carries in chapters 4 to 6 and chapter 8. Everything else here is 135 lines and is a tour. Missing boundary: nothing has to be built — the destination already exists and line 9 already names it. What is missing is the cut, which is an editorial change rather than a design one, and that is why this is deferred rather than structural. It is not taken in this commit because trimming the front door of the repository inside the change that first measures it would put an editorial judgment where a mechanical one is being reviewed, and the two should be reviewable apart.
-"""
-[[exceptions]]
-path = "requirements.md"
-match = "exact"
-rules = ["specs"]
-kind = "deferred"
-max_accepted = { value = 3200, unit = "lines" }
-until = "the FS home becomes a folder in .agents/grund.toml and each declaration moves to its own document"
-reason = """
-Twelve §FS declarations in one file, of which §FS-005-dispatch is 1423 lines — half the document on its own. The other four kind homes in this tree are already folders: .agents/grund.toml gives AR, REQ, DF and DA a `folder`, and only FS a `file`. Missing boundary: that same folder for FS. The move is mechanical and the citations survive it, because a § names an ID and not a path — grund resolves the ID wherever the declaration lives, and `grund fmt --write` rewrites the rendered links. It is not taken here because moving every spec declaration in the repository is a change that has to be reviewed as itself, not as a rider on the commit that first measured the file.
 """
 [[exceptions]]
 path = "src/work/mod.rs"

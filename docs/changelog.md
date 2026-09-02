@@ -1,7 +1,7 @@
 # Changelog
 
 Records every notable change to `ephor`. Versions follow semver
-([§FS-002-release](../requirements.md#fs-002-release-ephor-releases-from-a-tag-with-a-changelog-entry-per-change));
+([§FS-002-release](functional-spec/FS-002-release.md#fs-002-release-ephor-releases-from-a-tag-with-a-changelog-entry-per-change));
 the **latest release is inline** in this file, and **older releases live
 one-per-file under `docs/changelog/`** so a reader — human or agent — only
 loads the history they ask for.
@@ -17,7 +17,7 @@ Keep-a-Changelog set; omit any with no entries.
 
 One bullet per change, present tense, leading with the affected area. Every
 pull request adds a bullet naming its own number (`PR #12`), which CI checks
-([§FS-002-release.1](../requirements.md#1-changelog)).
+([§FS-002-release.1](functional-spec/FS-002-release.md#1-changelog)).
 
 ### 1.3 Progressive discovery
 
@@ -30,8 +30,12 @@ ships, the previous "latest" section moves verbatim to
 
 ### Added
 
+- **The functional specification is one document per declaration.** The twelve
+  `§FS` declarations now live under `docs/functional-spec/`, so each subject
+  has its own file and the obsolete whole-file size exceptions are gone. (PR #N)
+
 - **`ephor work lay` loads repeatable workflow values files**
-  ([§FS-005-dispatch.19](../requirements.md#19-a-workflow-the-runtime-offers-is-an-action-and-its-inputs-are-answered-here)).
+  ([§FS-005-dispatch.19](functional-spec/FS-005-dispatch.md#19-a-workflow-the-runtime-offers-is-an-action-and-its-inputs-are-answered-here)).
   `--values <file>` accepts YAML or JSON mappings relative to the invocation
   directory, merges repeated files left to right, preserves structured values,
   and lets explicit `--set` answers win. File answers are shown with their
@@ -40,8 +44,8 @@ ships, the previous "latest" section moves verbatim to
 
 - **A workflow entry can ask to run itself, and what it lays down is due like
   any other work**
-  ([§FS-005-dispatch.28](../requirements.md#28-a-workflow-entry-can-ask-for-the-same-thing-a-recipe-can),
-  [§FS-005-dispatch.24](../requirements.md#24-work-nobody-has-to-start-starts-itself)).
+  ([§FS-005-dispatch.28](functional-spec/FS-005-dispatch.md#28-a-workflow-entry-can-ask-for-the-same-thing-a-recipe-can),
+  [§FS-005-dispatch.24](functional-spec/FS-005-dispatch.md#24-work-nobody-has-to-start-starts-itself)).
   `"autorun": true` may now be written on an entry that lays a workflow down,
   in all three of its homes — beside the workflow, in the project's manifest,
   in your own `status.json` — and is refused on an entry that runs a command
@@ -69,7 +73,7 @@ ships, the previous "latest" section moves verbatim to
   you. (PR #28)
 
 - **Autorun sweeps can cap live work globally and per project**
-  ([§FS-005-dispatch.24](../requirements.md#24-work-nobody-has-to-start-starts-itself)).
+  ([§FS-005-dispatch.24](functional-spec/FS-005-dispatch.md#24-work-nobody-has-to-start-starts-itself)).
   `work.max_concurrent` sets an aggregate ceiling and
   `projects.<id>.work.max_concurrent` adds a project ceiling inside it;
   omission stays unlimited and zero starts no new runs. `ephor work run
@@ -80,7 +84,7 @@ ships, the previous "latest" section moves verbatim to
   non-failing `passed-over` outcomes in prose and JSON. (PR #25)
 
 - **Dispatch reads an ordering already made, and a limit bounds what runs**
-  ([§FS-005-dispatch.26](../requirements.md#26-an-ordering-already-made-can-be-read-and-a-limit-bounds-what-runs),
+  ([§FS-005-dispatch.26](functional-spec/FS-005-dispatch.md#26-an-ordering-already-made-can-be-read-and-a-limit-bounds-what-runs),
   PR #24). Ephor does not compute a rank — it reads one a project already
   wrote: an optional `"ranking": "<path>"` in the `work` block of site
   configuration, or `--ranking <path>` on `ephor work dispatch` displacing it
@@ -100,7 +104,7 @@ ships, the previous "latest" section moves verbatim to
   behaviour and output are exactly today's.
 
 - **Every file is measured against a budget set by how it is read**
-  ([§FS-012-file-size](../requirements.md#fs-012-file-size-every-file-is-measured-against-a-budget-set-by-how-it-is-read), PR #23). `.agents/fissile.toml` gives this tree its first
+  ([§FS-012-file-size](functional-spec/FS-012-file-size.md#fs-012-file-size-every-file-is-measured-against-a-budget-set-by-how-it-is-read), PR #23). `.agents/fissile.toml` gives this tree its first
   file-size budgets and `fissile check` enforces them, in the pre-commit hook
   against the files a commit touches, in `just check`, and in a `fissile` job in
   CI against the whole tree. The budget follows the reader rather than the file
@@ -114,8 +118,8 @@ ships, the previous "latest" section moves verbatim to
   than trimmed to fit.
 
 - **Work about a matter with no branch can mint the branch it needs**
-  ([§FS-005-dispatch.25](../requirements.md#25-work-about-a-matter-with-no-branch-can-mint-the-branch-it-needs),
-  [§FS-004-quick-actions.7](../requirements.md#7-a-workspace-that-is-not-there-is-offered-the-checkout),
+  ([§FS-005-dispatch.25](functional-spec/FS-005-dispatch.md#25-work-about-a-matter-with-no-branch-can-mint-the-branch-it-needs),
+  [§FS-004-quick-actions.7](functional-spec/FS-004-quick-actions.md#7-a-workspace-that-is-not-there-is-offered-the-checkout),
   PR #13). An entry that hands work over may now say which branch that work
   belongs on: `"branch": "fix/issue-{number}"`, on a configured action carrying
   `agent` or `workflow`, a project's own offer naming a workflow, the entry
@@ -152,7 +156,7 @@ ships, the previous "latest" section moves verbatim to
   entry is inside the workspace it names.
 
 - **Work nobody has to start starts itself**
-  ([§FS-005-dispatch.24](../requirements.md#24-work-nobody-has-to-start-starts-itself),
+  ([§FS-005-dispatch.24](functional-spec/FS-005-dispatch.md#24-work-nobody-has-to-start-starts-itself),
   [§DA-008-a-run-follows-the-ticket](decisions/architectural/DA-008-a-run-follows-the-ticket.md#da-008-a-run-follows-the-ticket-autorun-is-a-sweep-that-starts-a-run-never-a-runner-kept-alive),
   PR #6). A recipe may now say `"autorun": true`, and a ticket written from it
   gets its run without anyone pressing a key: the reader's deliberate act
@@ -181,8 +185,8 @@ ships, the previous "latest" section moves verbatim to
 
 - **A registry match to the project's main branch is not a matter's own
   branch, for placement**
-  ([§FS-005-dispatch.25](../requirements.md#25-work-about-a-matter-with-no-branch-can-mint-the-branch-it-needs),
-  [§FS-005-dispatch.1](../requirements.md#1-a-recipe-decides-which-items-deserve-work-and-what-to-ask-for), PR #40).
+  ([§FS-005-dispatch.25](functional-spec/FS-005-dispatch.md#25-work-about-a-matter-with-no-branch-can-mint-the-branch-it-needs),
+  [§FS-005-dispatch.1](functional-spec/FS-005-dispatch.md#1-a-recipe-decides-which-items-deserve-work-and-what-to-ask-for), PR #40).
   An issue or pull request the registry matched only to the configured
   `main_branch` — the trunk every workspace is grown from — used to keep that
   branch like any other of the matter's own, so a `branch` template was
@@ -198,8 +202,8 @@ ships, the previous "latest" section moves verbatim to
   the forge's own fact and keeps winning.
 
 - **The shipped `implement` recipe isolates branch-less issue work**
-  ([§FS-005-dispatch.1](../requirements.md#1-a-recipe-decides-which-items-deserve-work-and-what-to-ask-for),
-  [§FS-005-dispatch.25](../requirements.md#25-work-about-a-matter-with-no-branch-can-mint-the-branch-it-needs), PR #38).
+  ([§FS-005-dispatch.1](functional-spec/FS-005-dispatch.md#1-a-recipe-decides-which-items-deserve-work-and-what-to-ask-for),
+  [§FS-005-dispatch.25](functional-spec/FS-005-dispatch.md#25-work-about-a-matter-with-no-branch-can-mint-the-branch-it-needs), PR #38).
   With no configured replacement, an issue with no branch is dispatched on
   `fix/issue-{number}` inside a workspace minted when the project has
   `branch_root_template`; without branch workspaces it is refused by name with
@@ -209,7 +213,7 @@ ships, the previous "latest" section moves verbatim to
 
 - **`src/work/mod.rs` takes the first seam its size budget names, and the
   boundary check learns that shape**
-  ([§FS-012-file-size.2](../requirements.md#2-the-limits),
+  ([§FS-012-file-size.2](functional-spec/FS-012-file-size.md#2-the-limits),
   [§REQ-001-boundary.5](requirements/REQ-001-boundary.md#5-no-product-literal-outside-its-adapter)).
   The dispatch module's inline `#[cfg(test)] mod tests` moves whole to
   `src/work/mod_tests.rs`, attached by `#[cfg(test)] #[path =
@@ -223,8 +227,8 @@ ships, the previous "latest" section moves verbatim to
 
 - **Work that edits the change, about a matter on no branch, is refused on the
   command line instead of written at the project root**
-  ([§FS-005-dispatch.25](../requirements.md#25-work-about-a-matter-with-no-branch-can-mint-the-branch-it-needs),
-  [§FS-005-dispatch.6](../requirements.md#6-dispatch-is-offered-where-it-would-work-and-refuses-where-it-would-not),
+  ([§FS-005-dispatch.25](functional-spec/FS-005-dispatch.md#25-work-about-a-matter-with-no-branch-can-mint-the-branch-it-needs),
+  [§FS-005-dispatch.6](functional-spec/FS-005-dispatch.md#6-dispatch-is-offered-where-it-would-work-and-refuses-where-it-would-not),
   PR #13). A recipe with `needs_checkout` or an entry with `requires_checkout`,
   dispatched about a matter no branch could be found for on a project whose
   checkouts are one per branch, used to resolve its work root from the project
@@ -237,7 +241,7 @@ ships, the previous "latest" section moves verbatim to
   than editing it are placed exactly as before.
 
 - **A ticket a run has in hand says so on its own row**
-  ([§FS-005-dispatch.23](../requirements.md#23-work-stands-on-rows-of-its-own-beneath-the-row-it-is-about),
+  ([§FS-005-dispatch.23](functional-spec/FS-005-dispatch.md#23-work-stands-on-rows-of-its-own-beneath-the-row-it-is-about),
   PR #6). *Open* and *being worked on right now* were one yellow `⚙`: the
   ticket an agent was inside of and the ticket nothing had picked up looked
   identical, and telling them apart meant leaving for the board. A ticket a
@@ -245,14 +249,14 @@ ships, the previous "latest" section moves verbatim to
   live run that has gone silent carries `· quiet Nm` — the board's own words,
   narrowed to one matter rather than invented a second time. It asks nothing
   new of the world: the liveness is the lock the watch already probes and the
-  holding is the run's own record ([§FS-005-dispatch.15.2](../requirements.md#152-what-a-run-is-doing-is-read-from-the-runs-own-stream)), taken once per work
+  holding is the run's own record ([§FS-005-dispatch.15.2](functional-spec/FS-005-dispatch.md#152-what-a-run-is-doing-is-read-from-the-runs-own-stream)), taken once per work
   root across the whole feed rather than once per matter. `running`, `queued`,
   and `quiet` join the readings too, so a command sees what a row does.
 
 - **What a live run is doing is read from the run's own stream, not from a
   journal that outlives every run**
-  ([§FS-005-dispatch.15.2](../requirements.md#152-what-a-run-is-doing-is-read-from-the-runs-own-stream),
-  [§FS-005-dispatch.15](../requirements.md#15-every-operation-is-visible-in-one-place),
+  ([§FS-005-dispatch.15.2](functional-spec/FS-005-dispatch.md#152-what-a-run-is-doing-is-read-from-the-runs-own-stream),
+  [§FS-005-dispatch.15](functional-spec/FS-005-dispatch.md#15-every-operation-is-visible-in-one-place),
   PR #6). The runtime writes a record of each run — truncated when that run
   starts, one line per structural move, numbered and terminated — and ephor
   now reads it wherever it asks which tickets a run has in hand: the board,
@@ -268,13 +272,13 @@ ships, the previous "latest" section moves verbatim to
   binding, and liveness is still the lock and only the lock. The stream joins
   the change gate's fixed handful of timestamps, so a run that has written
   only there still surfaces within moments
-  ([§FS-005-dispatch.15.1](../requirements.md#151-the-board-keeps-itself-current)).
+  ([§FS-005-dispatch.15.1](functional-spec/FS-005-dispatch.md#151-the-board-keeps-itself-current)).
 
 - **The workspace a row says is missing is made from that row, and what ephor
   makes is a place work can go**
-  ([§FS-004-quick-actions.7.1](../requirements.md#71-a-workspace-that-is-there-is-still-owed-its-store),
-  [§FS-004-quick-actions.7.2](../requirements.md#72-the-offer-is-a-key-on-the-row-that-says-the-workspace-is-missing),
-  [§FS-006-project-interface.7](../requirements.md#7-the-projects-own-tasks-are-read-where-they-live),
+  ([§FS-004-quick-actions.7.1](functional-spec/FS-004-quick-actions.md#71-a-workspace-that-is-there-is-still-owed-its-store),
+  [§FS-004-quick-actions.7.2](functional-spec/FS-004-quick-actions.md#72-the-offer-is-a-key-on-the-row-that-says-the-workspace-is-missing),
+  [§FS-006-project-interface.7](functional-spec/FS-006-project-interface.md#7-the-projects-own-tasks-are-read-where-they-live),
   PR #6). A row that says `∅ not checked out` now answers **`C`** with the
   checkout, on the matter's row, on the work rows beneath it, and on the
   branch's own — including the rows under *(not linked to a branch)*, which is
@@ -303,7 +307,7 @@ ships, the previous "latest" section moves verbatim to
 
 - **A workflow's inputs are answered on one screen, and what has a known set
   is chosen from it**
-  ([§FS-005-dispatch.19](../requirements.md#19-a-workflow-the-runtime-offers-is-an-action-and-its-inputs-are-answered-here),
+  ([§FS-005-dispatch.19](functional-spec/FS-005-dispatch.md#19-a-workflow-the-runtime-offers-is-an-action-and-its-inputs-are-answered-here),
   [§DA-006-hands-fill-a-workflows-targets](decisions/architectural/DA-006-hands-fill-a-workflows-targets.md#da-006-hands-fill-a-workflows-targets-who-a-workflows-agents-are-is-ephors-answer-not-the-workflows),
   PR #5). Laying a workflow down used to ask only about the holes: one missing
   scalar was one line typed where you stood, and anything more was a JSON file
@@ -335,7 +339,7 @@ ships, the previous "latest" section moves verbatim to
 
 - **A run of the runtime starts beneath the screen, and is watched by
   attaching**
-  ([§FS-005-dispatch.20](../requirements.md#20-a-run-of-the-runtime-starts-beneath-the-screen-and-is-watched-by-attaching),
+  ([§FS-005-dispatch.20](functional-spec/FS-005-dispatch.md#20-a-run-of-the-runtime-starts-beneath-the-screen-and-is-watched-by-attaching),
   [§AR-007-runtime](architecture/AR-007-runtime.md#ar-007-runtime-the-runtime-adapter-and-rhei-as-its-shipped-binding), PR #4). Pressing `R` used
   to hand the whole interface to one run for as long as the work took — and the
   work was handed over precisely so that nobody had to stay. `R` and
@@ -361,8 +365,8 @@ ships, the previous "latest" section moves verbatim to
   run; leaving it detaches and never stops the run.
 
 - **What is already going is shown where it could be started again**
-  ([§FS-005-dispatch.21](../requirements.md#21-what-is-already-going-is-shown-where-it-could-be-started-again),
-  [§FS-011-command-line.8](../requirements.md#8-what-is-going-is-said-and-the-way-in-is-printed),
+  ([§FS-005-dispatch.21](functional-spec/FS-005-dispatch.md#21-what-is-already-going-is-shown-where-it-could-be-started-again),
+  [§FS-011-command-line.8](functional-spec/FS-011-command-line.md#8-what-is-going-is-said-and-the-way-in-is-printed),
   PR #4). The menu said what could be done and the board said what was being
   done, and neither said the other: opening the menu on an item whose rebase was
   already replaying showed the rebase as something to start. Every entry with
@@ -391,7 +395,7 @@ ships, the previous "latest" section moves verbatim to
   question is written in where none is.
 
 - **A window of the reader's own, where one is bound**
-  ([§FS-005-dispatch.22](../requirements.md#22-a-window-of-the-readers-own-where-one-is-bound),
+  ([§FS-005-dispatch.22](functional-spec/FS-005-dispatch.md#22-a-window-of-the-readers-own-where-one-is-bound),
   [§AR-002-summons.6](architecture/AR-002-summons.md#6-windowed-the-readers-own-window),
   [§DA-007-window-is-a-bound-opener](decisions/architectural/DA-007-window-is-a-bound-opener.md#da-007-window-is-a-bound-opener-a-window-of-the-readers-own-is-a-bound-opener-with-the-terminal-as-the-floor),
   PR #4). ephor has one terminal and is sitting in it, and handing it over
@@ -420,7 +424,7 @@ ships, the previous "latest" section moves verbatim to
 
 - **Everything the screen holds is a command, and every answer has a machine
   form** ([§REQ-002-parity](requirements/REQ-002-parity.md#req-002-parity-every-ability-is-reachable-without-the-screen-and-every-answer-has-a-machine-form),
-  [§FS-011-command-line](../requirements.md#fs-011-command-line-every-ability-is-a-command-and-every-answer-has-a-json-form),
+  [§FS-011-command-line](functional-spec/FS-011-command-line.md#fs-011-command-line-every-ability-is-a-command-and-every-answer-has-a-json-form),
   [§AR-009-surfaces](architecture/AR-009-surfaces.md#ar-009-surfaces-one-api-beneath-both-surfaces-and-one-schema-per-answer), PR #2). The interactive
   interface is a convenience over the watch, never the place the watch lives —
   but a good third of what it could do had no command behind it, so a runtime
@@ -497,8 +501,8 @@ ships, the previous "latest" section moves verbatim to
   than being the empty list.
 
 - **A workflow the runtime offers is an action**
-  ([§FS-005-dispatch.19](../requirements.md#19-a-workflow-the-runtime-offers-is-an-action-and-its-inputs-are-answered-here),
-  [§FS-006-project-interface.9](../requirements.md#9-offers-the-projects-actions),
+  ([§FS-005-dispatch.19](functional-spec/FS-005-dispatch.md#19-a-workflow-the-runtime-offers-is-an-action-and-its-inputs-are-answered-here),
+  [§FS-006-project-interface.9](functional-spec/FS-006-project-interface.md#9-offers-the-projects-actions),
   [§DA-006-hands-fill-a-workflows-targets](decisions/architectural/DA-006-hands-fill-a-workflows-targets.md#da-006-hands-fill-a-workflows-targets-who-a-workflows-agents-are-is-ephors-answer-not-the-workflows)).
   The runtime carries more than a place to put tickets: it carries whole
   **workflows** — parameterized plans that lay down tasks of their own, under a
@@ -538,7 +542,7 @@ ships, the previous "latest" section moves verbatim to
   finds it by looking like every other plan there, and a workflow and a ticket
   about one change share the root's one run rather than editing the same tree
   at once. Laying one down writes files and nothing else
-  ([§FS-005-dispatch.7](../requirements.md#7-handing-over-work-is-the-readers-move-and-stays-inside-the-machine)):
+  ([§FS-005-dispatch.7](functional-spec/FS-005-dispatch.md#7-handing-over-work-is-the-readers-move-and-stays-inside-the-machine)):
   running it is the move after, from the board. A second laying of the same
   entry is a second record, not a correction of the first. From the command
   line, `ephor work workflows` lists what the runtime offers and what each one
@@ -549,8 +553,8 @@ ships, the previous "latest" section moves verbatim to
   say.
 
 - **A gate can be restarted from the inbox, in two shapes**
-  ([§FS-004-quick-actions.9](../requirements.md#9-a-gate-is-offered-the-restart-in-two-shapes),
-  [§FS-001-forge-interface.1](../requirements.md#1-capabilities)).
+  ([§FS-004-quick-actions.9](functional-spec/FS-004-quick-actions.md#9-a-gate-is-offered-the-restart-in-two-shapes),
+  [§FS-001-forge-interface.1](functional-spec/FS-001-forge-interface.md#1-capabilities)).
   Reading what failed answered the question a red gate asks; it never answered
   the one you usually have about it, which is *was that even me*. A runner
   died, a mirror was unreachable, the same flake landed again — nothing about
@@ -563,7 +567,7 @@ ships, the previous "latest" section moves verbatim to
   gate entry, which is the one that still has something to do there; an item
   with no gate gets neither. Restarting everything asks first, and both run
   beneath the screen as jobs
-  ([§FS-005-dispatch.17](../requirements.md#17-a-move-that-needs-nobody-runs-beneath-the-screen)):
+  ([§FS-005-dispatch.17](functional-spec/FS-005-dispatch.md#17-a-move-that-needs-nobody-runs-beneath-the-screen)):
   a restart asks nothing and the gate answers minutes later.
   On **GitHub** it is native and per-job — the pull request's head commit is
   resolved, its workflow runs are re-run, and `--failed` is GitHub's own
@@ -578,7 +582,7 @@ ships, the previous "latest" section moves verbatim to
   directly, exactly as `see the CI failures` always has.
 
 - **A move that needs nobody runs beneath the screen**
-  ([§FS-005-dispatch.17](../requirements.md#17-a-move-that-needs-nobody-runs-beneath-the-screen),
+  ([§FS-005-dispatch.17](functional-spec/FS-005-dispatch.md#17-a-move-that-needs-nobody-runs-beneath-the-screen),
   [§AR-002-summons.5](architecture/AR-002-summons.md#5-detached-the-job)).
   Pressing `⤴ rebase onto master` handed the whole interface to a replay that
   asks nothing: minutes of output nobody has to read while it is produced, no
@@ -598,13 +602,13 @@ ships, the previous "latest" section moves verbatim to
   entry needing the branch workspace runs its checkout as the job's first
   step, with the directory verified rather than trusted — and a conflict is
   still handed over as a ticket
-  ([§FS-005-dispatch.12](../requirements.md#12-work-an-algorithm-can-finish-does-not-start-with-a-model)).
+  ([§FS-005-dispatch.12](functional-spec/FS-005-dispatch.md#12-work-an-algorithm-can-finish-does-not-start-with-a-model)).
   Configured actions and project offers keep the terminal unless they say
   `"background": true`: an entry may be `lazygit`, an editor, or a pager, and
   one of those started beneath the screen is a program nobody can type into.
 
 - **A source follows a label**
-  ([§FS-001-forge-interface.1](../requirements.md#1-capabilities)).
+  ([§FS-001-forge-interface.1](functional-spec/FS-001-forge-interface.md#1-capabilities)).
   `github-issues` could ask two questions — the issues you opened, the issues
   you are in — and neither reaches a repository where the work you follow is
   named by the project rather than by you: on one with 518 open issues the
@@ -621,12 +625,12 @@ ships, the previous "latest" section moves verbatim to
   with exactly `limit` issues fails the source, naming the count, the label,
   and the two ways out — it delivered a prefix nobody can size, and a queue
   shown as a fraction of itself reads as the queue
-  ([§FS-001-forge-interface.6](../requirements.md#6-a-source-that-did-not-answer-says-so-and-says-which-kind-of-not)).
+  ([§FS-001-forge-interface.6](functional-spec/FS-001-forge-interface.md#6-a-source-that-did-not-answer-says-so-and-says-which-kind-of-not)).
   The two role searches are otherwise unchanged, and still truncate silently
   at their own limit.
 
 - **A ticket can be taken back**
-  ([§FS-005-dispatch.16](../requirements.md#16-work-that-should-not-go-on-is-cancelled-and-the-plan-says-so),
+  ([§FS-005-dispatch.16](functional-spec/FS-005-dispatch.md#16-work-that-should-not-go-on-is-cancelled-and-the-plan-says-so),
   [§DA-005-cancel-is-the-runtimes-move](decisions/architectural/DA-005-cancel-is-the-runtimes-move.md#da-005-cancel-is-the-runtimes-move-cancelling-a-ticket-asks-the-runtime-and-never-rewrites-the-state-line)).
   The same recipe pressed twice was two runs of one fix in one checkout, and
   the only way back was an editor on the plan. `c` on the work screen now
@@ -654,7 +658,7 @@ ships, the previous "latest" section moves verbatim to
   already installed is never rewritten and has to gain both by hand.
 
 - **The replay onto the published copy has its environment spelling**
-  ([§FS-004-quick-actions.8](../requirements.md#8-a-branch-that-trails-its-own-published-copy-is-offered-the-rebase-onto-it)).
+  ([§FS-004-quick-actions.8](functional-spec/FS-004-quick-actions.md#8-a-branch-that-trails-its-own-published-copy-is-offered-the-rebase-onto-it)).
   Every argument of `ephor rebase` could arrive as an environment variable —
   which is how a state machine passes `{meta.*}` — except the one that picks
   the other rebase, so a program state could ask for `--onto` via `ONTO` and
@@ -666,7 +670,7 @@ ships, the previous "latest" section moves verbatim to
   different rebase than the state asked for.
 
 - **An agent-only hand actually binds**
-  ([§FS-005-dispatch.14](../requirements.md#14-who-does-the-work-is-chosen-and-defaulted-per-project)).
+  ([§FS-005-dispatch.14](functional-spec/FS-005-dispatch.md#14-who-does-the-work-is-chosen-and-defaulted-per-project)).
   A hand naming an agent and no model — which is every hand on a machine whose
   runtime settings declare no model profiles — was chosen and then did
   nothing: the plan language pins a model, so the ticket carried no line and
@@ -689,7 +693,7 @@ ships, the previous "latest" section moves verbatim to
   declare a model profile in the runtime's own settings, which pins the hand
   per ticket everywhere and needs none of this.**
 - **The reader picks the hand, once**
-  ([§FS-005-dispatch.14](../requirements.md#14-who-does-the-work-is-chosen-and-defaulted-per-project)).
+  ([§FS-005-dispatch.14](functional-spec/FS-005-dispatch.md#14-who-does-the-work-is-chosen-and-defaulted-per-project)).
   The first of the seven steps — what the reader picked for this dispatch
   alone — existed only as an unfed slot in the resolution. `t` on a menu
   entry that hands work over now opens the picker: the roster's hands in one
@@ -705,8 +709,8 @@ ships, the previous "latest" section moves verbatim to
   resolves from the tables again. The work screen's offers now name the hand
   each would go to, in the same sentence the menu's entries carry.
 - **An issue nobody has taken can count as work waiting**
-  ([§FS-001-forge-interface.1](../requirements.md#1-capabilities),
-  [§FS-003-feed-categories.4](../requirements.md#4-a-conversation-is-answered-in-whatever-form-the-forge-recorded-it)).
+  ([§FS-001-forge-interface.1](functional-spec/FS-001-forge-interface.md#1-capabilities),
+  [§FS-003-feed-categories.4](functional-spec/FS-003-feed-categories.md#4-a-conversation-is-answered-in-whatever-form-the-forge-recorded-it)).
   Whether an issue awaits you was read off the conversation — last word, or a
   reaction, or a forge-tracked task — and the conversation is exactly what
   cannot say this: an issue somebody filed and nobody picked up has its
@@ -723,7 +727,7 @@ ships, the previous "latest" section moves verbatim to
   among issues you once commented on somewhere it would turn every stranger's
   open bug into your work.
 - **A forge can report the review you gave**
-  ([§FS-001-forge-interface.1](../requirements.md#1-capabilities)). Only the
+  ([§FS-001-forge-interface.1](functional-spec/FS-001-forge-interface.md#1-capabilities)). Only the
   forge knows it: a reviewer list says who was asked and a conversation says
   who spoke, and neither says who answered — an approval leaves no message
   behind, and a reviewer who commented at length has still not approved. So a
@@ -737,7 +741,7 @@ ships, the previous "latest" section moves verbatim to
   forge saying the old verdict is no longer the answer. What a verdict
   *retires* is not decided here: this reports what you did, not what is left.
 - **`ephor doctor`: the watch can be asked whether it still works**
-  ([§FS-010-doctor](../requirements.md#fs-010-doctor-ephor-can-be-asked-whether-it-still-works-and-answers-in-one-screen)).
+  ([§FS-010-doctor](functional-spec/FS-010-doctor.md#fs-010-doctor-ephor-can-be-asked-whether-it-still-works-and-answers-in-one-screen)).
   Everything that makes the watch untrue is quiet — a credential that expired,
   an extension that left `PATH`, a checkout somebody deleted — and each one
   only makes a section of the feed empty, which is the one thing an empty
@@ -754,15 +758,15 @@ ships, the previous "latest" section moves verbatim to
   is repaired on the way; a diagnostic that could not be run while unsure is
   one nobody runs.
 - **`ephor capabilities`: the ladder is answerable on its own**
-  ([§FS-010-doctor.2](../requirements.md#2-the-ladder-is-answerable-on-its-own)).
-  Every rung of [§FS-006-project-interface.10](../requirements.md#10-capability-rung-by-rung) was computed with a sentence
+  ([§FS-010-doctor.2](functional-spec/FS-010-doctor.md#2-the-ladder-is-answerable-on-its-own)).
+  Every rung of [§FS-006-project-interface.10](functional-spec/FS-006-project-interface.md#10-capability-rung-by-rung) was computed with a sentence
   saying why it was missing, and the only thing that ever printed it was the
   interactive inbox — so "why is this action not offered here" cost a TUI
   session. `capabilities [PROJECT] [--json]` prints it, reading the last
   refresh rather than running one.
 - A cache no refresh produced now says exactly that, rather than reporting
   every source as silent
-  ([§FS-006-project-interface.10](../requirements.md#10-capability-rung-by-rung)).
+  ([§FS-006-project-interface.10](functional-spec/FS-006-project-interface.md#10-capability-rung-by-rung)).
   The *observable* rung is "at least one source **answering**", and a refresh
   that has not run is not every source having failed: one is a command to run,
   the other is a credential or a network to go and look at. The case that
@@ -772,7 +776,7 @@ ships, the previous "latest" section moves verbatim to
   tells them apart, and the rung names the remedy.
 - **A project's own issues are read where they live, and the rung is named
   for what it holds**
-  ([§FS-006-project-interface.7](../requirements.md#7-the-projects-own-tasks-are-read-where-they-live)).
+  ([§FS-006-project-interface.7](functional-spec/FS-006-project-interface.md#7-the-projects-own-tasks-are-read-where-they-live)).
   The default work root is `{workspace}/panta`, so dispatch on a
   branch-addressable project writes its plans into the branch's own tree — and
   the reader looked only at the forest root, so it never read them back. A
@@ -788,14 +792,14 @@ ships, the previous "latest" section moves verbatim to
   holds is ephor's own planning state that happens to live in a checkout
   ([§REQ-001-boundary.3](requirements/REQ-001-boundary.md#3-requirements-on-a-project-are-capabilities-never-artifacts)).
 - The *ticketed* rung is now **local-issues**
-  ([§FS-006-project-interface.10](../requirements.md#10-capability-rung-by-rung)).
+  ([§FS-006-project-interface.10](functional-spec/FS-006-project-interface.md#10-capability-rung-by-rung)).
   A *ticket* is what a remote tracker keys — a Jira key, a forge issue number —
   and these are the project's own, kept in its checkout, so one name for one
-  thing ([§FS-001-forge-interface.3](../requirements.md#3-policy-lives-above-the-interface-never-in-an-implementation)). `requires: ["ticketed"]` still resolves,
+  thing ([§FS-001-forge-interface.3](functional-spec/FS-001-forge-interface.md#3-policy-lives-above-the-interface-never-in-an-implementation)). `requires: ["ticketed"]` still resolves,
   so nothing anybody already wrote stops meaning what it meant.
 - **A released binary is self-checked by doing its job, and the profile is
   trained on the same walk**
-  ([§FS-002-release.3](../requirements.md#3-artifacts)). Both "self-checks"
+  ([§FS-002-release.3](functional-spec/FS-002-release.md#3-artifacts)). Both "self-checks"
   ran `--version` and `--help`, which test the argument parser: a binary that
   linked, printed its version and could not refresh a source would have
   shipped. Every artifact is now held to `doctor --self-only`, which builds a
@@ -810,7 +814,7 @@ ships, the previous "latest" section moves verbatim to
   entirely from error paths. The training workload is the self pass now:
   hermetic, and the only workload that is also what the release verifies.
 - `doctor` says what it is doing while it does it
-  ([§FS-010-doctor.3](../requirements.md#3-two-passes-the-site-and-ephor-itself)).
+  ([§FS-010-doctor.3](functional-spec/FS-010-doctor.md#3-two-passes-the-site-and-ephor-itself)).
   Asking every source of every project takes as long as the slowest forge, and
   the first version printed nothing at all until it was finished — a minute of
   silence that reads as hung, which is the same failure the tool exists to
@@ -821,14 +825,14 @@ ships, the previous "latest" section moves verbatim to
   finishes.
 - The ladder counts the sources that were **asked**, not the ones the
   configuration names
-  ([§FS-006-project-interface.7](../requirements.md#7-the-projects-own-tasks-are-read-where-they-live)).
+  ([§FS-006-project-interface.7](functional-spec/FS-006-project-interface.md#7-the-projects-own-tasks-are-read-where-they-live)).
   A local ticket store is probed rather than configured and a shared source is
   declared once for the site, and both write a slot of their own — so a
   project with a store reported more sources answering than it had, `5/4`.
 
 - **The tree carries nobody's employer any more, and the roadmap says what the
   law still owes**
-  ([§FS-001-forge-interface.5](../requirements.md#5-no-site-specific-data-in-the-repository),
+  ([§FS-001-forge-interface.5](functional-spec/FS-001-forge-interface.md#5-no-site-specific-data-in-the-repository),
   [§RM-003-boundary](roadmap.md#rm-003-boundary-the-seams-the-law-still-owes)).
   `scripts/check-no-site-specific.sh` passes both halves for the first time: a
   private CLI in a shipped example, a source name in two test fixtures, and the
@@ -842,7 +846,7 @@ ships, the previous "latest" section moves verbatim to
   ledger entries, `forest` reaching the git prober, the gate seam having no
   surface, and the `beads` reader nobody has written.
 - **The manual is the interface reference, surface by surface**
-  ([§FS-006-project-interface](../requirements.md#fs-006-project-interface-a-project-and-ephor-meet-over-one-interface-in-three-homes)).
+  ([§FS-006-project-interface](functional-spec/FS-006-project-interface.md#fs-006-project-interface-a-project-and-ephor-meet-over-one-interface-in-three-homes)).
   Every part of the project interface now has a section that cites the point it
   documents: the three homes and their resolution order (§1.1), a field table
   for `ephor.json` (§4.2.1), check verbs and how features are enumerated
@@ -852,11 +856,11 @@ ships, the previous "latest" section moves verbatim to
   checkout; the work chapter names the runner binding where it says what runs a
   plan; the README's tour gains what a project can say about itself. Two
   corrections fell out of the sweep: the ladder's *checkable* rung now counts a
-  manifest that binds the verbs elsewhere, as [§FS-006-project-interface.5](../requirements.md#5-checks-are-verbs-and-every-script-is-self-contained) always
+  manifest that binds the verbs elsewhere, as [§FS-006-project-interface.5](functional-spec/FS-006-project-interface.md#5-checks-are-verbs-and-every-script-is-self-contained) always
   said it should — probing was the only thing it asked — and the vocabulary said
   four recipes ship where five do.
 - **Every seam has an executable scenario, and the scenario cites its spec
-  point** ([§FS-006-project-interface](../requirements.md#fs-006-project-interface-a-project-and-ephor-meet-over-one-interface-in-three-homes),
+  point** ([§FS-006-project-interface](functional-spec/FS-006-project-interface.md#fs-006-project-interface-a-project-and-ephor-meet-over-one-interface-in-three-homes),
   `e2e/cases`). Six cases under `e2e/cases/`, each one a story run against the
   real binary in a temporary world: a forge nobody built in, reached by a bash
   script on `PATH`; a repository checking itself with `ephor check`; a project
@@ -886,7 +890,7 @@ ships, the previous "latest" section moves verbatim to
   that remain are one pinned ledger entry each, and an entry that stops
   matching fails the check too: the list only shrinks.
 - **Three CI steps ship, and they run from your repository alone**
-  ([§FS-009-shipped-actions](../requirements.md#fs-009-shipped-actions-what-ephor-ships-for-ci-runs-from-the-repository-alone),
+  ([§FS-009-shipped-actions](functional-spec/FS-009-shipped-actions.md#fs-009-shipped-actions-what-ephor-ships-for-ci-runs-from-the-repository-alone),
   manual §9.3). `setup` installs a pinned ephor release, checksum-verified,
   and puts it on `PATH`; `validate` holds a repository's `ephor.json` — and a
   committed registry where it keeps one — to the published schemas; `check`
@@ -899,7 +903,7 @@ ships, the previous "latest" section moves verbatim to
   have a site. ephor's own CI is the first consumer, running them against
   ephor's own `ephor.json`.
 - **`ephor check` runs a project's own verbs from its checkout**
-  ([§FS-006-project-interface.5](../requirements.md#5-checks-are-verbs-and-every-script-is-self-contained),
+  ([§FS-006-project-interface.5](functional-spec/FS-006-project-interface.md#5-checks-are-verbs-and-every-script-is-self-contained),
   manual §9.3). The seam had no command line; now it has one, and it is what
   the shipped step stands on. With no verb named it runs the aggregate where a
   project declares one and whatever else it declares where it does not; the
@@ -911,7 +915,7 @@ ships, the previous "latest" section moves verbatim to
   machine.
 
 - **A project can offer menu entries, and yours still win**
-  ([§FS-006-project-interface.9](../requirements.md#9-offers-the-projects-actions),
+  ([§FS-006-project-interface.9](functional-spec/FS-006-project-interface.md#9-offers-the-projects-actions),
   manual §7.6). The `actions` of a project's `ephor.json` now arrive in the
   action menu, between what ephor recognized and what you configured. All three
   are one shape: an `id`, a `when` selector in the language work recipes use —
@@ -927,7 +931,7 @@ ships, the previous "latest" section moves verbatim to
   trusted for descriptions only never carries offers in the first place.
 
 - **An answer comes back as a proposal, and posting it is one move of yours**
-  ([§FS-005-dispatch.13](../requirements.md#13-a-communication-is-work-too-and-its-answer-comes-back-as-a-proposal),
+  ([§FS-005-dispatch.13](functional-spec/FS-005-dispatch.md#13-a-communication-is-work-too-and-its-answer-comes-back-as-a-proposal),
   manual §8.12).
   The shipped `answer` recipe now asks the run for the reply as a file of its
   own, and ephor reads it back and shows it in the thread screen under the
@@ -956,7 +960,7 @@ ships, the previous "latest" section moves verbatim to
   named for the plan now, with an alias so a ledger written before this still
   reads.
 - **Tickets a project keeps in its checkout are read where they live**
-  ([§FS-006-project-interface.7](../requirements.md#7-the-projects-own-tasks-are-read-where-they-live)).
+  ([§FS-006-project-interface.7](functional-spec/FS-006-project-interface.md#7-the-projects-own-tasks-are-read-where-they-live)).
   A `panta/` plan directory — or one the manifest points at — is now a source
   like any other: its open tasks arrive in the feed beside what the forges
   reported, under the store's own ids, attributed to the checkout's project
@@ -966,7 +970,7 @@ ships, the previous "latest" section moves verbatim to
   does not hide a probed one — a project may keep two, and both are read — and
   the *ticketed* rung counts a declared store as well as a well-known name.
 - **The gate is the project's, in three verbs**
-  ([§FS-006-project-interface.6](../requirements.md#6-the-gate-is-the-projects-in-three-verbs)).
+  ([§FS-006-project-interface.6](functional-spec/FS-006-project-interface.md#6-the-gate-is-the-projects-in-three-verbs)).
   `status` answers what the gate is doing per repository of the forest,
   `failures` answers what actually failed, and `restart` re-runs the failing
   gate and everything downstream of it, committing nothing. Each is bound site
@@ -984,7 +988,7 @@ ships, the previous "latest" section moves verbatim to
   program. The *gated* rung counts a bound verb, not only a source that
   happens to report one.
 - **Checks are verbs, and which ones run stays your decision**
-  ([§FS-006-project-interface.5](../requirements.md#5-checks-are-verbs-and-every-script-is-self-contained)).
+  ([§FS-006-project-interface.5](functional-spec/FS-006-project-interface.md#5-checks-are-verbs-and-every-script-is-self-contained)).
   ephor binds three: `check`, `style`, `smoke` — probed as `./check.sh`,
   `./check-style.sh`, `./smoke-test.sh` at the forest root, or declared in the
   manifest under whatever paths a project prefers, or bound by you, in that
@@ -999,8 +1003,8 @@ ships, the previous "latest" section moves verbatim to
   given, falling back to its old guessing only when nothing was handed over.
   The *checkable* rung now counts a bound verb, not just a well-known filename.
 - **A project can speak for itself, and the interface is published**
-  ([§FS-006-project-interface.2](../requirements.md#2-the-manifest-is-offered-never-required),
-  [§FS-006-project-interface.11](../requirements.md#11-the-interface-is-versioned),
+  ([§FS-006-project-interface.2](functional-spec/FS-006-project-interface.md#2-the-manifest-is-offered-never-required),
+  [§FS-006-project-interface.11](functional-spec/FS-006-project-interface.md#11-the-interface-is-versioned),
   manual §4.2.1). ephor reads `ephor.json` at a forest root: identity hints,
   the forest's own layout, check and gate verbs, ticket stores, and offers.
   Offered, never required — every field optional, `{}` valid, and a project
@@ -1015,7 +1019,7 @@ ships, the previous "latest" section moves verbatim to
   with `ephor validate --manifest .`, offline: no schema refers to another by
   URL, so a project can validate what it says with no ephor present.
 - **Sources stop placing what they find; one engine does it**
-  ([§FS-008-attribution](../requirements.md#fs-008-attribution-every-conversation-finds-its-project-or-says-that-it-could-not),
+  ([§FS-008-attribution](functional-spec/FS-008-attribution.md#fs-008-attribution-every-conversation-finds-its-project-or-says-that-it-could-not),
   [§AR-003-attribution](architecture/AR-003-attribution.md#ar-003-attribution-one-matching-engine-evidence-against-identity-at-two-scopes),
   manual §4.2). A source that asks nothing about any one project — GitHub's
   notification list, and mailboxes when they arrive — is declared at the top
@@ -1036,8 +1040,8 @@ ships, the previous "latest" section moves verbatim to
   someone else's row silently. Declaring a shared source under a project still
   works and says once per refresh where it belongs now.
 - **A row that comes back says what brought it back**
-  ([§FS-007-matters.2](../requirements.md#2-same-subject-one-matter-related-subjects-linked-matters),
-  [§FS-007-matters.5](../requirements.md#5-an-event-moves-state-and-resurfacing-names-its-reason)).
+  ([§FS-007-matters.2](functional-spec/FS-007-matters.md#2-same-subject-one-matter-related-subjects-linked-matters),
+  [§FS-007-matters.5](functional-spec/FS-007-matters.md#5-an-event-moves-state-and-resurfacing-names-its-reason)).
   Merging is the model's now rather than a pass over rendered rows: reports of
   one subject fold into one matter, the fuller one surviving and the thinner
   one handing over the conversation, gate and reasons it alone saw. Matters
@@ -1050,8 +1054,8 @@ ships, the previous "latest" section moves verbatim to
   A row marked read before this shows no reason rather than a guessed one.
 - **One subject, one row: the CI and review-thread rows dissolve into the
   change they are about**
-  ([§FS-007-matters.3](../requirements.md#3-a-discussion-is-messages-grouped-in-a-channel),
-  [§FS-007-matters.5](../requirements.md#5-an-event-moves-state-and-resurfacing-names-its-reason)).
+  ([§FS-007-matters.3](functional-spec/FS-007-matters.md#3-a-discussion-is-messages-grouped-in-a-channel),
+  [§FS-007-matters.5](functional-spec/FS-007-matters.md#5-an-event-moves-state-and-resurfacing-names-its-reason)).
   A pull request with a red gate and two unresolved review threads was four
   rows: the pull request, a CI row for the same change, and one row per thread.
   It is one row now. `github-ci` reports the pull request carrying its gate —
@@ -1066,7 +1070,7 @@ ships, the previous "latest" section moves verbatim to
   counts matters whose gate is red wherever they sit, rather than rows of one
   kind, so it means the same thing it always did.
 - **The feed is made of matters**
-  ([§FS-007-matters](../requirements.md#fs-007-matters-the-feed-is-made-of-matters-and-a-matter-knows-why-it-is-there),
+  ([§FS-007-matters](functional-spec/FS-007-matters.md#fs-007-matters-the-feed-is-made-of-matters-and-a-matter-knows-why-it-is-there),
   [§AR-006-matters](architecture/AR-006-matters.md#ar-006-matters-the-core-types-of-the-watch)).
   The store now holds the model rather than a flat row per report: a `Matter`
   with a stated subject key, a placement (project and branch, or unattributed
@@ -1085,7 +1089,7 @@ ships, the previous "latest" section moves verbatim to
   survives the rebuild untouched.
 - **What a project can do is a ladder, computed once and consulted everywhere**
   ([§AR-005-capabilities](architecture/AR-005-capabilities.md#ar-005-capabilities-availability-is-computed-once-and-consulted-everywhere),
-  [§FS-006-project-interface.10](../requirements.md#10-capability-rung-by-rung),
+  [§FS-006-project-interface.10](functional-spec/FS-006-project-interface.md#10-capability-rung-by-rung),
   manual §7.5). Whether something could run was decided in a dozen places, each
   with its own sentence or with none: a menu entry that could not run said only
   `(unavailable)` and made you press it to find out why, the inbox's `R` key
@@ -1115,19 +1119,19 @@ ships, the previous "latest" section moves verbatim to
   silently dropped from the fold. And **`$EPHOR_REPOS`** hands a summoned
   command the same repository list, in the same order, so the shipped landing
   example folds over ephor's forest instead of probing its own
-  ([§FS-005-dispatch.8](../requirements.md#8-the-ticket-carries-the-item-as-data-not-only-as-prose)).
+  ([§FS-005-dispatch.8](functional-spec/FS-005-dispatch.md#8-the-ticket-carries-the-item-as-data-not-only-as-prose)).
   Under it, one resolver answers where a branch is checked out — the inbox's
   grouping, the action menu, dispatch, and the CLI had three implementations
   of that question and now share one
   ([§AR-004-forest.3](architecture/AR-004-forest.md#3-workspace-resolution)).
 - **Running work is a summons too**
   ([§AR-002-summons](architecture/AR-002-summons.md#ar-002-summons-one-executor-runs-everything-ephor-asks-of-the-world),
-  [§FS-005-dispatch.12](../requirements.md#12-work-an-algorithm-can-finish-does-not-start-with-a-model)).
+  [§FS-005-dispatch.12](functional-spec/FS-005-dispatch.md#12-work-an-algorithm-can-finish-does-not-start-with-a-model)).
   `ephor work run` and the inbox's `R` key built the runner invocation twice,
   in two places, with two ideas about what a failure was. There is one
   construction of it now and one process path to it, still run from the
   checkout the work is about
-  ([§FS-005-dispatch.3](../requirements.md#3-one-rhei-per-item-one-ticket-per-dispatch)),
+  ([§FS-005-dispatch.3](functional-spec/FS-005-dispatch.md#3-one-rhei-per-item-one-ticket-per-dispatch)),
   and a runner that exits `75` is parked rather than failed. Reading a plan
   in your editor goes through the same path, so the TUI has no hand-rolled
   spawn left.
@@ -1143,10 +1147,10 @@ ships, the previous "latest" section moves verbatim to
   envelope as every other verb, with its stdout-reading `text` and `json`
   forms kept and marked as the legacy they are. `custom-status` is also told
   which project it is running for now, in the same `EPHOR_*` vocabulary a menu
-  action receives ([§FS-005-dispatch.8](../requirements.md#8-the-ticket-carries-the-item-as-data-not-only-as-prose)).
+  action receives ([§FS-005-dispatch.8](functional-spec/FS-005-dispatch.md#8-the-ticket-carries-the-item-as-data-not-only-as-prose)).
 - **One executor for everything ephor asks of the world**
   ([§AR-002-summons](architecture/AR-002-summons.md#ar-002-summons-one-executor-runs-everything-ephor-asks-of-the-world),
-  [§FS-006-project-interface.3](../requirements.md#3-a-summons-environment-in-exit-code-and-answer-out)).
+  [§FS-006-project-interface.3](functional-spec/FS-006-project-interface.md#3-a-summons-environment-in-exit-code-and-answer-out)).
   A new `seams` layer holds the summons executor: it resolves where a command
   runs (the branch workspace where one resolves, the forest root otherwise, or
   a named repository of the forest) and refuses with the reason rather than
@@ -1157,7 +1161,7 @@ ships, the previous "latest" section moves verbatim to
   binding's. Alongside it, `$EPHOR_ANSWER`: the executor names a fresh file
   before spawning, and a command that writes one gets it validated against the
   published envelope schema
-  ([§FS-006-project-interface.4](../requirements.md#4-the-answer-envelope))
+  ([§FS-006-project-interface.4](functional-spec/FS-006-project-interface.md#4-the-answer-envelope))
   — now embedded in the binary — with its `failures` and `gate` conveniences
   normalized into events, its `features` into facts, and its answer paths
   resolved against where the command ran. No answer file is a complete answer:
@@ -1167,7 +1171,7 @@ ships, the previous "latest" section moves verbatim to
   checked.**
   [§DA-001-runtime-bound-default](decisions/architectural/DA-001-runtime-bound-default.md#da-001-runtime-bound-default-the-runtime-is-a-bound-default-not-a-named-coupling)
   records the runtime's reversal into a bound default, superseding the old
-  [§FS-005-dispatch](../requirements.md#fs-005-dispatch-what-ephor-watches-it-can-hand-to-an-agent-runtime)
+  [§FS-005-dispatch](functional-spec/FS-005-dispatch.md#fs-005-dispatch-what-ephor-watches-it-can-hand-to-an-agent-runtime)
   lead stance;
   [§DA-002-fetch-attribution-split](decisions/architectural/DA-002-fetch-attribution-split.md#da-002-fetch-attribution-split-fetch-normalizes-attribution-places)
   the fetch/attribution split with its `status.json` restructuring named as
@@ -1179,7 +1183,7 @@ ships, the previous "latest" section moves verbatim to
   [§REQ-001-boundary](requirements/REQ-001-boundary.md#req-001-boundary-every-capacity-ephor-lacks-crosses-a-seam-and-the-seam-has-one-anatomy)
   is now cited from every FS and AR page it binds.
 - **Being asked is now a reason a pull request is yours**
-  ([§FS-001-forge-interface.1](../requirements.md#1-capabilities)). `github-prs`
+  ([§FS-001-forge-interface.1](functional-spec/FS-001-forge-interface.md#1-capabilities)). `github-prs`
   searched `--author`, `--commenter`, and `--mentions` — all three of which
   find pull requests you have *already spoken in*. A review requested of you and
   a pull request assigned to you leave nothing behind in the conversation, so
@@ -1188,7 +1192,7 @@ ships, the previous "latest" section moves verbatim to
   yours rides on the item as `raw.reasons`, and a review asked for and not yet
   given needs a response on its own — no thread rule can find that one.
 - **`github-notifications`: the source whose job is to be exhaustive**
-  ([§FS-001-forge-interface.1](../requirements.md#1-capabilities), manual §5.2).
+  ([§FS-001-forge-interface.1](functional-spec/FS-001-forge-interface.md#1-capabilities), manual §5.2).
   Every other source asks a question you composed, and a question never asked
   looks on screen exactly like one answered "nothing". This one asks nothing —
   it reads GitHub's own notification list and reports what is on it: team
@@ -1205,13 +1209,13 @@ ships, the previous "latest" section moves verbatim to
   out-of-process forge answers `notices` alongside `pull-requests` and `issues`.
   GitLab's todos map onto it almost one for one.
 - **One subject is one row, however many sources reported it**
-  ([§FS-003-feed-categories.5](../requirements.md#5-one-subject-is-one-row-however-many-sources-reported-it)).
+  ([§FS-003-feed-categories.5](functional-spec/FS-003-feed-categories.md#5-one-subject-is-one-row-however-many-sources-reported-it)).
   Sources are meant to overlap now, so the overlap is merged rather than shown:
   the report carrying the conversation, the gate, and the role wins the row, and
   what only the thinner one knew — the reason GitHub gave for telling you —
   comes with it. Identity is the subject the forge stated, never the title.
 - **The rebase ephor already knew you needed**
-  ([§FS-004-quick-actions.6](../requirements.md#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase)).
+  ([§FS-004-quick-actions.6](functional-spec/FS-004-quick-actions.md#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase)).
   The inbox has always said `3 behind` on a branch row and then left you to go
   elsewhere about it. Now a pull request whose branch workspace is on disk and
   trails its `main_branch` is offered **`⤴ rebase onto <main> (N behind)`** in
@@ -1220,7 +1224,7 @@ ships, the previous "latest" section moves verbatim to
   and no vendor CLI anywhere in it. Uncommitted work is reported and left
   alone rather than stashed.
 - **A conflict becomes work, and nothing else does**
-  ([§FS-005-dispatch.12](../requirements.md#12-work-an-algorithm-can-finish-does-not-start-with-a-model)).
+  ([§FS-005-dispatch.12](functional-spec/FS-005-dispatch.md#12-work-an-algorithm-can-finish-does-not-start-with-a-model)).
   Replaying a branch is a fetch and a rebase; paying a model to type those is
   paying for something a script does the same way every time. So `ephor
   rebase` runs first and exits `3` where it stopped, leaving the repository
@@ -1239,7 +1243,7 @@ ships, the previous "latest" section moves verbatim to
   and a troubleshooting section keyed by the message you actually get. The
   README is now the tour and points at it.
 - **Work**: what ephor watches, it can hand to an agent runtime
-  ([§FS-005-dispatch](../requirements.md#fs-005-dispatch-what-ephor-watches-it-can-hand-to-an-agent-runtime)).
+  ([§FS-005-dispatch](functional-spec/FS-005-dispatch.md#fs-005-dispatch-what-ephor-watches-it-can-hand-to-an-agent-runtime)).
   An item plus a **recipe** becomes a ticket in a
   [rhei](https://github.com/vjovanov/rhei) plan, written into the checkout the
   item's branch resolves to. The ticket carries the **dossier** rather than a
@@ -1256,7 +1260,7 @@ ships, the previous "latest" section moves verbatim to
   it is now: a pull request whose gate went green and whose reviewer asked a
   question is no longer a red gate, and reopening it as one would hand the work
   a ticket about a problem that is not there.
-- **A ticket carries the item as data** ([§FS-005-dispatch.8](../requirements.md#8-the-ticket-carries-the-item-as-data-not-only-as-prose)), not only as
+- **A ticket carries the item as data** ([§FS-005-dispatch.8](functional-spec/FS-005-dispatch.md#8-the-ticket-carries-the-item-as-data-not-only-as-prose)), not only as
   prose: every ticket's identifiers — project and source, kind and id, repo and
   number, branch and ticket, url and state, and the checkout — are written into
   the plan's frontmatter under the same names a shell action gets in its
@@ -1287,7 +1291,7 @@ ships, the previous "latest" section moves verbatim to
   unresolved; and `land` commits nothing, because every fix commits its own
   work and `git add -A` before a push sweeps up whatever else was in the tree.
 - **A workspace that is not there is offered the checkout**
-  ([§FS-004-quick-actions.7](../requirements.md#7-a-workspace-that-is-not-there-is-offered-the-checkout)). ephor knew the branch was not on disk — it
+  ([§FS-004-quick-actions.7](functional-spec/FS-004-quick-actions.md#7-a-workspace-that-is-not-there-is-offered-the-checkout)). ephor knew the branch was not on disk — it
   computes the directory from the project's own template and looks — and then
   refused every action that needed it with "no 'checkout' command is
   configured", which is knowing what is wrong and sending the reader to a
@@ -1303,11 +1307,11 @@ ships, the previous "latest" section moves verbatim to
   A repository whose branch another working tree is holding is reported and
   left alone rather than worked around, one already there is reported as
   already there, and the same command runs whether the reader presses the key
-  or a state machine calls it ([§FS-005-dispatch.12](../requirements.md#12-work-an-algorithm-can-finish-does-not-start-with-a-model)). A project that wants its
+  or a state machine calls it ([§FS-005-dispatch.12](functional-spec/FS-005-dispatch.md#12-work-an-algorithm-can-finish-does-not-start-with-a-model)). A project that wants its
   own checkout command still configures one and it still wins; the difference
   is only whether anybody expects to want their own.
 - **A failure that was never the change's fault is restarted, not fixed**
-  ([§FS-005-dispatch.11](../requirements.md#11-a-failure-that-is-not-the-changes-fault-is-restarted-not-fixed)). The loop could recognize a dead runner or a flake in
+  ([§FS-005-dispatch.11](functional-spec/FS-005-dispatch.md#11-a-failure-that-is-not-the-changes-fault-is-restarted-not-fixed)). The loop could recognize a dead runner or a flake in
   two places and act on it in neither: triage was told to open no ticket, which
   ended the plan with the gate still red and nothing to make it run again, and
   an analysis that concluded "not ours" carried no marker `route.sh` knew, so
@@ -1327,7 +1331,7 @@ ships, the previous "latest" section moves verbatim to
   `config/restart-gate.example.sh` is the worked script; `GATE_RESTART` is
   where a forge's own re-run command goes, since there is no neutral one.
 - **Work can stop for a person, and say so where you are looking**
-  ([§FS-005-dispatch.9](../requirements.md#9-work-that-stops-for-a-person-says-so-where-the-person-is-looking)). Where a ticket sits in a state the runtime will not
+  ([§FS-005-dispatch.9](functional-spec/FS-005-dispatch.md#9-work-that-stops-for-a-person-says-so-where-the-person-is-looking)). Where a ticket sits in a state the runtime will not
   leave on its own — a gating state — ephor reads that out of the machine and
   leads the item's badge with `⚠ waiting on you`, ahead of anything else the
   work is doing, since it is the one part nobody else will move. The work
@@ -1339,7 +1343,7 @@ ships, the previous "latest" section moves verbatim to
   uses it — collect, triage on a cheap model, then analyze → propose →
   critique → fix → verify per failure, with the escalation available at every
   step.
-- **Asking by hand** ([§FS-005-dispatch.10](../requirements.md#10-what-ephor-offers-is-not-a-limit-on-what-can-be-asked)): `a` on the work screen types one
+- **Asking by hand** ([§FS-005-dispatch.10](functional-spec/FS-005-dispatch.md#10-what-ephor-offers-is-not-a-limit-on-what-can-be-asked)): `a` on the work screen types one
   line and it becomes an ordinary ticket — same dossier, same plan, same
   order — with the reader's words as the brief, and `ephor work ask --item ID`
   does it from a script or from stdin. It is refused for nothing but being
@@ -1385,7 +1389,7 @@ ships, the previous "latest" section moves verbatim to
   do about it, so the action menu is worth pressing before anyone has
   configured it. A pull request whose gate is red gets `✗ see the CI failures`,
   and it leads the menu, ahead of the configured actions
-  ([§FS-004-quick-actions](../requirements.md#fs-004-quick-actions-a-problem-ephor-recognizes-arrives-with-the-action-for-it)).
+  ([§FS-004-quick-actions](functional-spec/FS-004-quick-actions.md#fs-004-quick-actions-a-problem-ephor-recognizes-arrives-with-the-action-for-it)).
   The condition is the red gate rather than the kind of item, so the action is
   on the row that shows the red count whichever source reported it: `github-prs`
   and `github-ci` page the failing job's log through `gh`, and a forge that
@@ -1408,18 +1412,18 @@ ships, the previous "latest" section moves verbatim to
   review task — reports each one's state on the message carrying it, and ephor
   draws it as the box it is. `t` on the thread screen ticks the selected task
   through the source that reported it, and the box fills in without waiting for
-  a refresh ([§FS-004-quick-actions.5](../requirements.md#5-a-task-is-ticked-where-it-is-read)).
+  a refresh ([§FS-004-quick-actions.5](functional-spec/FS-004-quick-actions.md#5-a-task-is-ticked-where-it-is-read)).
   New capability `tasks`, new subcommand `ephor-forge-<name> resolve-task`.
 - **A ticked box answers its thread.** Task state outranks who spoke last, in
   both directions: an open task keeps its conversation awaiting you however it
   ended, and a resolved one settles it even where every message belongs to a
-  robot ([§FS-003-feed-categories.4](../requirements.md#4-a-conversation-is-answered-in-whatever-form-the-forge-recorded-it)).
+  robot ([§FS-003-feed-categories.4](functional-spec/FS-003-feed-categories.md#4-a-conversation-is-answered-in-whatever-form-the-forge-recorded-it)).
   Bot checklists could not be cleared before this — nobody but the bot ever
   writes in those threads, so the last word was never the reader's and never
   would be, and a pull request whose boxes were all ticked weeks ago still read
   as work.
 - **ephor binds its own gate, so it holds every rung of its own ladder**
-  ([§FS-006-project-interface.6](../requirements.md#6-the-gate-is-the-projects-in-three-verbs)).
+  ([§FS-006-project-interface.6](functional-spec/FS-006-project-interface.md#6-the-gate-is-the-projects-in-three-verbs)).
   `scripts/gate-status.sh`, `scripts/gate-failures.sh` and
   `scripts/gate-restart.sh` ask GitHub Actions what the gate is doing, what
   failed, and to run the failures again; `ephor.json` binds them as the three
@@ -1431,7 +1435,7 @@ ships, the previous "latest" section moves verbatim to
   than reported green: silence and a clean gate have the same shape, and only
   the forge's exit code tells them apart.
 - **ephor learns who can be asked**
-  ([§FS-005-dispatch.14](../requirements.md#14-who-does-the-work-is-chosen-and-defaulted-per-project)).
+  ([§FS-005-dispatch.14](functional-spec/FS-005-dispatch.md#14-who-does-the-work-is-chosen-and-defaulted-per-project)).
   The runtime binding grows a fourth verb beside writing, running and reading
   back: the **roster** — every agent/model pairing the binding's own merged
   settings declare, each a **hand** with an id configuration can name, the
@@ -1478,7 +1482,7 @@ ships, the previous "latest" section moves verbatim to
   adds no arrow. No offer reads the fact yet — the rebase onto the published
   copy lands separately.
 - **A branch that trails its own published copy is offered the rebase onto it**
-  ([§FS-004-quick-actions.8](../requirements.md#8-a-branch-that-trails-its-own-published-copy-is-offered-the-rebase-onto-it)).
+  ([§FS-004-quick-actions.8](functional-spec/FS-004-quick-actions.md#8-a-branch-that-trails-its-own-published-copy-is-offered-the-rebase-onto-it)).
   Somebody else pushing to your branch is a different fact from main moving
   under it, and now it has its own move: a second quick action beside the
   first, naming the ref and the count — `⤴ rebase onto origin/you/ABC-42-retry
@@ -1507,7 +1511,7 @@ ships, the previous "latest" section moves verbatim to
 
 - **Recent holds the finished work that still leaves something to do, and
   nothing else**
-  ([§FS-003-feed-categories.2](../requirements.md#2-recent), PR #6). Recent
+  ([§FS-003-feed-categories.2](functional-spec/FS-003-feed-categories.md#2-recent), PR #6). Recent
   used to be every item that had finished inside the recency window, so a week
   of merged pull requests and closed issues stood at the bottom of the tree
   asking to be read and offering nothing to do about any of them — the sweep
@@ -1526,12 +1530,12 @@ ships, the previous "latest" section moves verbatim to
   nobody did. The comment usually arrives as a notice from a second source, and
   the fold onto the finished row is where it is recorded. Open work is the one
   loose end the window does not age out: it stands on rows beneath the matter
-  ([§FS-005-dispatch.23](../requirements.md#23-work-stands-on-rows-of-its-own-beneath-the-row-it-is-about)),
+  ([§FS-005-dispatch.23](functional-spec/FS-005-dispatch.md#23-work-stands-on-rows-of-its-own-beneath-the-row-it-is-about)),
   and a run nobody can see is a run nobody can take back.
 
 - **Work stands on rows of its own beneath the matter, where a key can reach
   it**
-  ([§FS-005-dispatch.23](../requirements.md#23-work-stands-on-rows-of-its-own-beneath-the-row-it-is-about),
+  ([§FS-005-dispatch.23](functional-spec/FS-005-dispatch.md#23-work-stands-on-rows-of-its-own-beneath-the-row-it-is-about),
   PR #6). A matter's work used to ride on the end of the matter's own line —
   `⚙ fix-gate · fix`, after the title, the state and the gate. It said the true
   thing and left nowhere to go with it: a line is not a row, so the cursor
@@ -1547,7 +1551,7 @@ ships, the previous "latest" section moves verbatim to
   holding it, `e` reads the plan, and the keys that go to the matter — `Enter`,
   `o`, `w`, `x` — go there from here too. The footer says which apply, measured
   against the row the cursor is on rather than the screen
-  ([§FS-004-quick-actions.2](../requirements.md#2-offered-only-where-it-would-work)):
+  ([§FS-004-quick-actions.2](functional-spec/FS-004-quick-actions.md#2-offered-only-where-it-would-work)):
   a row whose work is over has no ticket to take back, so it does not teach
   `c`, and pressing it says so instead of appearing to act.
 
@@ -1562,8 +1566,8 @@ ships, the previous "latest" section moves verbatim to
 
 - **Branch templates that need a field absent from a matter no longer turn a
   match into a dispatch refusal**
-  ([§FS-005-dispatch.25](../requirements.md#25-work-about-a-matter-with-no-branch-can-mint-the-branch-it-needs),
-  [§FS-005-dispatch.27](../requirements.md#27-an-offer-that-a-selector-refused-says-why)).
+  ([§FS-005-dispatch.25](functional-spec/FS-005-dispatch.md#25-work-about-a-matter-with-no-branch-can-mint-the-branch-it-needs),
+  [§FS-005-dispatch.27](functional-spec/FS-005-dispatch.md#27-an-offer-that-a-selector-refused-says-why)).
   The entry does not serve that matter: menus and readings withhold both agent
   and workflow entries, dispatch sweeps step over recipes and autorunning
   workflows without recording a refusal, and `ephor work offers` explains
@@ -1572,7 +1576,7 @@ ships, the previous "latest" section moves verbatim to
 
 - **`ephor checkout` no longer claims a local-only branch tracks the branch
   the forge has**
-  ([§FS-004-quick-actions.7](../requirements.md#7-a-workspace-that-is-not-there-is-offered-the-checkout),
+  ([§FS-004-quick-actions.7](functional-spec/FS-004-quick-actions.md#7-a-workspace-that-is-not-there-is-offered-the-checkout),
   PR #8). A repository that already had the branch was checked out and
   reported as tracking the branch the forge has whether or not the forge
   actually had a copy of it — a local branch cut from the main branch and
@@ -1585,7 +1589,7 @@ ships, the previous "latest" section moves verbatim to
 
 - **A refresh no longer spends more of the forge's search allowance than the
   forge will give**
-  ([§FS-001-forge-interface.8](../requirements.md#8-a-refresh-is-asked-in-the-cheapest-form-the-forge-offers)).
+  ([§FS-001-forge-interface.8](functional-spec/FS-001-forge-interface.md#8-a-refresh-is-asked-in-the-cheapest-form-the-forge-offers)).
   `github-prs` asked one search per role, per repository, per project, and
   `github-issues` asked two or more of its own — so a registry of seven tracked
   projects spent forty-five requests of GitHub's thirty-a-minute search
@@ -1597,15 +1601,15 @@ ships, the previous "latest" section moves verbatim to
   repositories a source watches ride in that one question rather than one
   question each. Nothing about the answer changed: each role is still its own
   search under its own alias, so a pull request still arrives with every reason
-  it is the reader's ([§FS-001-forge-interface.1](../requirements.md#1-capabilities)).
+  it is the reader's ([§FS-001-forge-interface.1](functional-spec/FS-001-forge-interface.md#1-capabilities)).
 
   **A pull request's branch and review decision arrive with it.** They were a
   second request each, one per pull request the reader authored, on top of the
   searches; the graph hands them over with the row that needed them
-  ([§FS-001-forge-interface.8.3](../requirements.md#83-what-is-already-in-hand-is-not-asked-for-again)).
+  ([§FS-001-forge-interface.8.3](functional-spec/FS-001-forge-interface.md#83-what-is-already-in-hand-is-not-asked-for-again)).
 
 - **A finished task in a local store is no longer a matter**
-  ([§FS-006-project-interface.7](../requirements.md#7-the-projects-own-tasks-are-read-where-they-live)).
+  ([§FS-006-project-interface.7](functional-spec/FS-006-project-interface.md#7-the-projects-own-tasks-are-read-where-they-live)).
   The plan reader pushed every task heading whatever its state, on the belief
   that a finished one would be hidden by the recency window anyway — but a
   local task has no activity time of its own beyond its plan file's, so every
@@ -1616,10 +1620,10 @@ ships, the previous "latest" section moves verbatim to
   is what such a store's tasks actually run under. A task in a final state is
   history the store keeps and is not read; a store whose machine cannot be read
   reports as a source that did not answer, exactly like a plan ephor cannot
-  read ([§FS-001-forge-interface.6](../requirements.md#6-a-source-that-did-not-answer-says-so-and-says-which-kind-of-not)).
+  read ([§FS-001-forge-interface.6](functional-spec/FS-001-forge-interface.md#6-a-source-that-did-not-answer-says-so-and-says-which-kind-of-not)).
 - **A parked subtask is visible on an idle root**
-  ([§FS-005-dispatch.15](../requirements.md#15-every-operation-is-visible-in-one-place),
-  [§FS-005-dispatch.9](../requirements.md#9-work-that-stops-for-a-person-says-so-where-the-person-is-looking)).
+  ([§FS-005-dispatch.15](functional-spec/FS-005-dispatch.md#15-every-operation-is-visible-in-one-place),
+  [§FS-005-dispatch.9](functional-spec/FS-005-dispatch.md#9-work-that-stops-for-a-person-says-so-where-the-person-is-looking)).
   The plan floor read only `###` headings and refused the dots in the
   runtime's subtask ids, so a subtask existed to the board only while a live
   run's own listing named it — a run that split a ticket, parked the
@@ -1632,7 +1636,7 @@ ships, the previous "latest" section moves verbatim to
   ticket, and a new dispatch still follows the last dispatch: a subtask is
   never the prior of a top-level ticket.
 - **A dead run's leavings are not a question**
-  ([§FS-005-dispatch.15](../requirements.md#15-every-operation-is-visible-in-one-place)).
+  ([§FS-005-dispatch.15](functional-spec/FS-005-dispatch.md#15-every-operation-is-visible-in-one-place)).
   A ticket parked for a person and a ticket a crashed run was holding
   mid-slot both rendered *waiting on you*, and they ask different things:
   one is a question about the work, the other a run that wants starting
@@ -1642,7 +1646,7 @@ ships, the previous "latest" section moves verbatim to
   **dropped by a run that died** for the second, listed right after what
   waits on you.
 - **A root whose machine cannot be read says so on its row**
-  ([§FS-005-dispatch.15](../requirements.md#15-every-operation-is-visible-in-one-place)).
+  ([§FS-005-dispatch.15](functional-spec/FS-005-dispatch.md#15-every-operation-is-visible-in-one-place)).
   With no readable `states.yaml` the board already withheld *queued* and the
   finished count — they are the machine's words — but withheld them
   silently, leaving a zero that read as nothing done. The fact rides the
@@ -1651,14 +1655,14 @@ ships, the previous "latest" section moves verbatim to
 - The board's ticket rows say what the work is about — the matter's own
   title beside the ids — instead of carrying the title in the data and never
   rendering it
-  ([§FS-005-dispatch.15](../requirements.md#15-every-operation-is-visible-in-one-place)).
+  ([§FS-005-dispatch.15](functional-spec/FS-005-dispatch.md#15-every-operation-is-visible-in-one-place)).
 - An operation whose tickets were all filtered out still answers for the
   plan behind it: the operation carries its root's plans, so the board's
   `Enter` and `e` no longer depend on a surviving ticket to find one
-  ([§FS-005-dispatch.15](../requirements.md#15-every-operation-is-visible-in-one-place)).
+  ([§FS-005-dispatch.15](functional-spec/FS-005-dispatch.md#15-every-operation-is-visible-in-one-place)).
 - **A base nobody could resolve no longer turns tracking config into a
   publication**
-  ([§FS-004-quick-actions.8](../requirements.md#8-a-branch-that-trails-its-own-published-copy-is-offered-the-rebase-onto-it),
+  ([§FS-004-quick-actions.8](functional-spec/FS-004-quick-actions.md#8-a-branch-that-trails-its-own-published-copy-is-offered-the-rebase-onto-it),
   [§DA-003-upstream-is-the-published-copy](decisions/architectural/DA-003-upstream-is-the-published-copy.md#da-003-upstream-is-the-published-copy-a-branchs-upstream-is-its-published-copy-not-its-tracking-config)).
   The rule that a recorded upstream naming the base publishes nothing was
   written as *the base, where one resolved* — so in a repository where nothing
@@ -1677,12 +1681,12 @@ ships, the previous "latest" section moves verbatim to
   ([§AR-004-forest.1](architecture/AR-004-forest.md#1-folds)).
 
 - **Keys and menu entries that could not do what they advertised**
-  ([§FS-004-quick-actions.2](../requirements.md#2-offered-only-where-it-would-work)).
+  ([§FS-004-quick-actions.2](functional-spec/FS-004-quick-actions.md#2-offered-only-where-it-would-work)).
   Six of them, all the same shape — the offer was on the screen and the
   keystroke was refused. The checkout offered on a branch row ran
   `ephor checkout --item "$EPHOR_ITEM_ID"`, and a branch row has no matter
   behind it
-  ([§FS-004-quick-actions.6](../requirements.md#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase)),
+  ([§FS-004-quick-actions.6](functional-spec/FS-004-quick-actions.md#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase)),
   so the one row that offer was added for answered *Nothing says which branch
   to check out*; it names the branch as well now, and either half may be empty.
   That row also pointed `EPHOR_WORKSPACE` at the directory the checkout had not
@@ -1703,7 +1707,7 @@ ships, the previous "latest" section moves verbatim to
   board footers say it too, and the thread's reaction picker is excluded, since
   a board opened over an armed picker leaves it armed underneath.
 - **An issue whose branch was on disk showed nothing saying so**
-  ([§FS-004-quick-actions.6](../requirements.md#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase)).
+  ([§FS-004-quick-actions.6](functional-spec/FS-004-quick-actions.md#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase)).
   The `✓`/`∅` marker asked whether the item was a pull request before asking
   whether its workspace was there, so an issue or a message about a change you
   have checked out was offered the rebase from its own row and shown nothing
@@ -1711,8 +1715,8 @@ ships, the previous "latest" section moves verbatim to
   sits beside: what the marker reports is a change on this machine, and a forge
   having filed a pull request about it is not that fact.
 - **Items arriving mid-refresh were filed under no branch**
-  ([§FS-008-attribution.2](../requirements.md#2-two-stages-one-engine),
-  [§FS-001-forge-interface.7](../requirements.md#7-a-fetch-runs-beneath-the-reading-never-in-front-of-it)).
+  ([§FS-008-attribution.2](functional-spec/FS-008-attribution.md#2-two-stages-one-engine),
+  [§FS-001-forge-interface.7](functional-spec/FS-001-forge-interface.md#7-a-fetch-runs-beneath-the-reading-never-in-front-of-it)).
   Each project takes its place in the feed as its own sources answer, and that
   landing did everything the full reload does except place the new items on
   their branches — a pass the tree stopped doing for itself when the answer was
@@ -1722,8 +1726,8 @@ ships, the previous "latest" section moves verbatim to
   the world nothing, which is why it belongs in the cheap half.
 - **The operations board lost your place, and the cursor could leave the
   screen**
-  ([§FS-005-dispatch.15](../requirements.md#15-every-operation-is-visible-in-one-place),
-  [§FS-005-dispatch.15.1](../requirements.md#151-the-board-keeps-itself-current)).
+  ([§FS-005-dispatch.15](functional-spec/FS-005-dispatch.md#15-every-operation-is-visible-in-one-place),
+  [§FS-005-dispatch.15.1](functional-spec/FS-005-dispatch.md#151-the-board-keeps-itself-current)).
   A rebuild fires from the tick and from every refresh landing, and it kept
   only the cursor's index — so a row appearing above it silently changed what
   `Enter` and `o` acted on. The cursor now belongs to the execution root, which
@@ -1747,7 +1751,7 @@ ships, the previous "latest" section moves verbatim to
   repository has. Every count came back unmeasurable, the checkout's total was
   *nothing to ask* rather than a number, no branch row carried a distance, and
   the quick action offered only on a branch that has fallen behind
-  ([§FS-004-quick-actions.6](../requirements.md#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase))
+  ([§FS-004-quick-actions.6](functional-spec/FS-004-quick-actions.md#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase))
   was therefore never offered on that project at all — silently, because a row
   showing no count and a row that is up to date look the same. A declared base
   that is still a template is passed over now, falling through to the project's
@@ -1760,7 +1764,7 @@ ships, the previous "latest" section moves verbatim to
   else `origin`), so a clone whose remote is called something else is fetched,
   measured and replayed like any other, and the reports name the ref they used.
 - **A branch you had checked out was still "not linked to a branch"**
-  ([§FS-008-attribution.2](../requirements.md#2-two-stages-one-engine)).
+  ([§FS-008-attribution.2](functional-spec/FS-008-attribution.md#2-two-stages-one-engine)).
   The inbox measured whether an item's workspace was on disk by expanding the
   project's template and looking, and then grouped that same item under the
   branches the registry row happened to name — two answers to one question,
@@ -1776,7 +1780,7 @@ ships, the previous "latest" section moves verbatim to
   [§AR-004-forest.3](architecture/AR-004-forest.md#3-workspace-resolution)
   keeps one answer. The row still has the last word on a branch it also names,
   and a branch only the disk knows cannot widen what the project claims:
-  identity is the row's alone ([§FS-008-attribution.1](../requirements.md#1-identity-is-declared-and-the-row-has-the-last-word)).
+  identity is the row's alone ([§FS-008-attribution.1](functional-spec/FS-008-attribution.md#1-identity-is-declared-and-the-row-has-the-last-word)).
 - **Moving the cursor in the inbox redrew at the price of a full attribution
   pass.** Two counts a row shows — how many items a branch holds, and a
   project's visible/unread/awaiting totals — were worked out while drawing,
@@ -1800,7 +1804,7 @@ ships, the previous "latest" section moves verbatim to
   whole branch list, with the branch the forge recorded winning over any that
   only resembles it, and the count on a branch row is the group beneath it.
 - **A summoned command was handed paths its own shell could not read**
-  ([§FS-006-project-interface.3](../requirements.md#3-a-summons-environment-in-exit-code-and-answer-out)).
+  ([§FS-006-project-interface.3](functional-spec/FS-006-project-interface.md#3-a-summons-environment-in-exit-code-and-answer-out)).
   A summons runs through a shell, so `$EPHOR_ANSWER` and the rest are strings
   that shell parses before anything opens them — and where the native separator
   is the shell's own escape character, a path handed over verbatim stops being
@@ -1851,7 +1855,7 @@ ships, the previous "latest" section moves verbatim to
   failed on the documentation rather than on anything a change did. Pinned to
   0.9.0, and the pin now says what it is for.
 - **A finished matter could still be counted as awaiting an answer**
-  ([§FS-003-feed-categories.2](../requirements.md#2-recent)). `forge::policy`
+  ([§FS-003-feed-categories.2](functional-spec/FS-003-feed-categories.md#2-recent)). `forge::policy`
   settles each report it builds, but a merge folds two of them: a notice's
   state is the reason the forge sent it, never a terminal state, so nothing
   settled the thin report before it reached `absorb`, and a merged pull
@@ -1860,24 +1864,24 @@ ships, the previous "latest" section moves verbatim to
   so the summary's Respond column, the unread counts and `status --check`
   stop counting work that is over.
 - **A finished status line appeared under both Status and Recent**
-  ([§FS-003-feed-categories.1](../requirements.md#1-the-categories)). Every
+  ([§FS-003-feed-categories.1](functional-spec/FS-003-feed-categories.md#1-the-categories)). Every
   interactive section but Recent's excluded finished work; Status did not, so
   a project answering `"status": "done"` was double counted in exactly the
   pile the categories exist to make readable. The plain renderer had it right.
 - **A lost shared source let the whole run report success**
-  ([§FS-001-forge-interface.6](../requirements.md#6-a-source-that-did-not-answer-says-so-and-says-which-kind-of-not)).
+  ([§FS-001-forge-interface.6](functional-spec/FS-001-forge-interface.md#6-a-source-that-did-not-answer-says-so-and-says-which-kind-of-not)).
   `ephor refresh` counted per-project failures and printed the shared ones
   without counting them, so losing the leg that reads the forge's own notice
   list — the completeness capability — exited `0`. It is a refreshed unit like
   a project now, and its failure is exit `4`.
 - **The dossier's message budget was a total that could be exceeded**
-  ([§FS-005-dispatch.2](../requirements.md#2-the-ticket-carries-what-ephor-knows-not-a-link-to-it)).
+  ([§FS-005-dispatch.2](functional-spec/FS-005-dispatch.md#2-the-ticket-carries-what-ephor-knows-not-a-link-to-it)).
   Two messages were reserved per thread *before* the total was applied, so
   twenty threads quoted forty messages against a budget of twenty-four. The
   reservation is spent out of the total now, and a thread the budget cannot
   reach is counted as dropped rather than silently omitted from the tally.
 - **The `rebase` recipe asked a model to run the rebase**
-  ([§FS-005-dispatch.12](../requirements.md#12-work-an-algorithm-can-finish-does-not-start-with-a-model)).
+  ([§FS-005-dispatch.12](functional-spec/FS-005-dispatch.md#12-work-an-algorithm-can-finish-does-not-start-with-a-model)).
   Only `ephor rebase --dispatch` made the deterministic move first; the inbox
   key, `work dispatch --recipe rebase` and `work sync` wrote a ticket whose
   brief said "run `ephor rebase` first" — a pass paid to have two commands
@@ -1886,36 +1890,36 @@ ships, the previous "latest" section moves verbatim to
   anything is written, a clean replay opens no plan at all, and a conflict is
   handed over as the situation it stopped in.
 - **Declared territory tied with references instead of settling it**
-  ([§FS-008-attribution.3](../requirements.md#3-venue-beats-reference-beats-resemblance)).
+  ([§FS-008-attribution.3](functional-spec/FS-008-attribution.md#3-venue-beats-reference-beats-resemblance)).
   A subject on a repository the project claims is that project's "before any
   reference or alias is consulted", but territory scored as a reference — so a
   mention on the project's own ecosystem that happened to name another
   project's ticket key tied and went to the unattributed bucket. Territory is
   a venue now, as the forest is.
 - **Resemblance could amend a subject some source had stated**
-  ([§FS-008-attribution.3](../requirements.md#3-venue-beats-reference-beats-resemblance)).
+  ([§FS-008-attribution.3](functional-spec/FS-008-attribution.md#3-venue-beats-reference-beats-resemblance)).
   The strength a placement was reached by was computed and dropped, so nothing
   downstream could hold "resemblance may start a new row, it may not amend
   one". It rides on the placement now, and a matter placed by nothing firmer
   than the project's name is its own subject in the merge.
 - **A ticket store that could not be read answered as an empty store**
-  ([§FS-006-project-interface.7](../requirements.md#7-the-projects-own-tasks-are-read-where-they-live),
-  [§FS-001-forge-interface.6](../requirements.md#6-a-source-that-did-not-answer-says-so-and-says-which-kind-of-not)).
+  ([§FS-006-project-interface.7](functional-spec/FS-006-project-interface.md#7-the-projects-own-tasks-are-read-where-they-live),
+  [§FS-001-forge-interface.6](functional-spec/FS-001-forge-interface.md#6-a-source-that-did-not-answer-says-so-and-says-which-kind-of-not)).
   An unreadable plan directory, and a plan the reader could not parse, both
   became "no tickets" — the one thing an empty section must never mean. A
   store is now reported like any other source that did not answer.
 - **A gate verb could never run where it said it did**
-  ([§FS-006-project-interface.3](../requirements.md#3-a-summons-environment-in-exit-code-and-answer-out)).
+  ([§FS-006-project-interface.3](functional-spec/FS-006-project-interface.md#3-a-summons-environment-in-exit-code-and-answer-out)).
   `seams::gate::run` built a rootless site, so a verb declaring
   `"cwd": "workspace"` silently ran at the forest root instead of in the
   branch workspace the change resolves to. It takes the caller's site now.
 - **The `observable` rung counted sources that were merely configured**
-  ([§FS-006-project-interface.10](../requirements.md#10-capability-rung-by-rung)).
+  ([§FS-006-project-interface.10](functional-spec/FS-006-project-interface.md#10-capability-rung-by-rung)).
   The ladder calls it "at least one source *answering*"; a project whose every
   source was broken still held the rung, which is the empty feed claiming to
   mean "nothing is waiting". Configured-and-silent is its own reason now.
 - **The shipped CI workflows could not run for anyone but ephor**
-  ([§FS-009-shipped-actions.1](../requirements.md#1-the-set)). Inside a
+  ([§FS-009-shipped-actions.1](functional-spec/FS-009-shipped-actions.md#1-the-set)). Inside a
   reusable workflow a relative `uses: ./.github/actions/…` resolves against
   the *caller's* checkout, so `ephor-check.yml` and `ephor-validate.yml`
   failed for every repository that wired them in. They fetch their own steps
@@ -1925,13 +1929,13 @@ ships, the previous "latest" section moves verbatim to
   pointed a reader at the wrong law.
 - The manual's CI examples pinned `v0.4.1`, a version that has never existed;
   they name this tree's version, and say why `version` and the `@ref` have to
-  agree ([§FS-002-release](../requirements.md#fs-002-release-ephor-releases-from-a-tag-with-a-changelog-entry-per-change)).
+  agree ([§FS-002-release](functional-spec/FS-002-release.md#fs-002-release-ephor-releases-from-a-tag-with-a-changelog-entry-per-change)).
 - A provider block's `timeout_seconds` was read from the configuration and
   then ignored: every provider ran under the shared
   `defaults.provider_timeout_seconds`. A forge behind a VPN, configured with
   the longer ceiling it needs, timed out on every refresh and its whole
   section of the feed stayed empty
-  ([§FS-001-forge-interface.6](../requirements.md#6-a-source-that-did-not-answer-says-so-and-says-which-kind-of-not)).
+  ([§FS-001-forge-interface.6](functional-spec/FS-001-forge-interface.md#6-a-source-that-did-not-answer-says-so-and-says-which-kind-of-not)).
 - An out-of-process forge whose `capabilities` probe failed was recorded as
   having declared no capabilities, which described an unreachable host or a
   crashed extension as a malformed one. The probe's own error is now reported.
@@ -1943,12 +1947,12 @@ ships, the previous "latest" section moves verbatim to
   `Requesting RCA for pull request …` and dropped the error four lines below
   it. The line reported is now the one that reads as a diagnosis, stripped of
   its colour codes, and the command is named once rather than three times
-  ([§FS-001-forge-interface.6](../requirements.md#6-a-source-that-did-not-answer-says-so-and-says-which-kind-of-not)).
+  ([§FS-001-forge-interface.6](functional-spec/FS-001-forge-interface.md#6-a-source-that-did-not-answer-says-so-and-says-which-kind-of-not)).
 - The thread screen advertised `+ react` on every message, including those no
   forge would take a reaction for; pressing it answered with one line at the
   bottom of a full screen of conversation, which is the one place a reader is
   not looking. Message keys are now offered per selected message
-  ([§FS-004-quick-actions.2](../requirements.md#2-offered-only-where-it-would-work)).
+  ([§FS-004-quick-actions.2](functional-spec/FS-004-quick-actions.md#2-offered-only-where-it-would-work)).
 - Posting a reaction only ever reached GitHub. `Forge::react` and the
   `ephor-forge-<name> react` subcommand were implemented and documented but had
   no caller, so an out-of-process forge that answered them could not be reached:
@@ -1960,7 +1964,7 @@ ships, the previous "latest" section moves verbatim to
 
 - **A finished job says so under the branch it ran on, not at the top of the
   screen**
-  ([§FS-005-dispatch.17](../requirements.md#17-a-move-that-needs-nobody-runs-beneath-the-screen)).
+  ([§FS-005-dispatch.17](functional-spec/FS-005-dispatch.md#17-a-move-that-needs-nobody-runs-beneath-the-screen)).
   A replay started beneath the screen used to announce itself in the
   header — `⤴ rebase onto main (level as of Aug 23): ok` above `ephor stream`
   — which names no project and no branch, so a reader with three of them going
@@ -1973,13 +1977,13 @@ ships, the previous "latest" section moves verbatim to
   the row is opened (`enter`, `o`, `x`, `w`, `c`) or a later job about the same
   subject replaces it. Only what has **ended** lands there: a job still going
   is already marked running where it could be started again
-  ([§FS-005-dispatch.21](../requirements.md#21-what-is-already-going-is-shown-where-it-could-be-started-again))
+  ([§FS-005-dispatch.21](functional-spec/FS-005-dispatch.md#21-what-is-already-going-is-shown-where-it-could-be-started-again))
   and holds a row among the operations
-  ([§FS-005-dispatch.15](../requirements.md#15-every-operation-is-visible-in-one-place)).
+  ([§FS-005-dispatch.15](functional-spec/FS-005-dispatch.md#15-every-operation-is-visible-in-one-place)).
 - **The rebase is offered on every branch that is here, and every distance says
   how fresh it is**
-  ([§FS-004-quick-actions.6](../requirements.md#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase),
-  [§FS-004-quick-actions.8](../requirements.md#8-a-branch-that-trails-its-own-published-copy-is-offered-the-rebase-onto-it)).
+  ([§FS-004-quick-actions.6](functional-spec/FS-004-quick-actions.md#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase),
+  [§FS-004-quick-actions.8](functional-spec/FS-004-quick-actions.md#8-a-branch-that-trails-its-own-published-copy-is-offered-the-rebase-onto-it)).
   A workspace whose repositories were last fetched nineteen days ago read
   `✓ checked out · up to date` and offered no rebase, while master had moved
   the whole time: the count is measured against the *last-fetched*
@@ -1997,13 +2001,13 @@ ships, the previous "latest" section moves verbatim to
   measured was a match against a copy of unstated age. The `behind` recipe
   selector is unchanged and still means *behind*: dispatching a level rebase to
   an agent is a ticket to do nothing, while pressing the key runs git first
-  ([§FS-005-dispatch.12](../requirements.md#12-work-an-algorithm-can-finish-does-not-start-with-a-model)).
+  ([§FS-005-dispatch.12](functional-spec/FS-005-dispatch.md#12-work-an-algorithm-can-finish-does-not-start-with-a-model)).
 - **The project's own work is called a task, everywhere**
-  ([§FS-006-project-interface.7](../requirements.md#7-the-projects-own-tasks-are-read-where-they-live),
-  [§FS-003-feed-categories.1](../requirements.md#1-the-categories)).
+  ([§FS-006-project-interface.7](functional-spec/FS-006-project-interface.md#7-the-projects-own-tasks-are-read-where-they-live),
+  [§FS-003-feed-categories.1](functional-spec/FS-003-feed-categories.md#1-the-categories)).
   A **ticket** is what a remote tracker keys, an **issue** is what a forge
   files, and what a project keeps in its own checkout is neither — so it is a
-  **task**, and one name for one thing ([§FS-001-forge-interface.3](../requirements.md#3-policy-lives-above-the-interface-never-in-an-implementation)). Tasks get
+  **task**, and one name for one thing ([§FS-001-forge-interface.3](functional-spec/FS-001-forge-interface.md#3-policy-lives-above-the-interface-never-in-an-implementation)). Tasks get
   a row of their own: a `task` kind and a **Tasks** category between
   Participating and Messages, in the navigator, the plain renderer and the
   manual's table, instead of sitting in **My Issues** among things other
@@ -2012,13 +2016,13 @@ ships, the previous "latest" section moves verbatim to
   wrote stops meaning what it meant. The manifest key is `tasks`, with
   `tickets` still read as the older spelling — evolution by addition, so the
   schema gains the new key rather than breaking the old
-  ([§FS-006-project-interface.11](../requirements.md#11-the-interface-is-versioned)).
+  ([§FS-006-project-interface.11](functional-spec/FS-006-project-interface.md#11-the-interface-is-versioned)).
   The feed cache model is bumped, so a cache holding these as issues is
   rebuilt rather than shown stale. What is not one of these keeps its name:
   the ticket ephor writes to dispatch work and the ticket keys a forge is
   asked for are other things and are still called tickets.
 - **The operations board enumerates the work roots, not the ledger**
-  ([§FS-005-dispatch.15](../requirements.md#15-every-operation-is-visible-in-one-place)).
+  ([§FS-005-dispatch.15](functional-spec/FS-005-dispatch.md#15-every-operation-is-visible-in-one-place)).
   Rows used to derive from ledger entries — operations about items ephor
   itself dispatched, about a third of what the section claims — so a plan
   written by hand, a project's own planning tickets, and a run started in
@@ -2031,13 +2035,13 @@ ships, the previous "latest" section moves verbatim to
   heading. The walk runs when rows are built — the board opened, a refresh
   landing, the glance seeing something move — never on the bare 2-second
   tick, which keeps statting only what the last walk found
-  ([§FS-005-dispatch.15.1](../requirements.md#151-the-board-keeps-itself-current));
+  ([§FS-005-dispatch.15.1](functional-spec/FS-005-dispatch.md#151-the-board-keeps-itself-current));
   measured against a real tree of fourteen projects and two dozen branch
   workspaces, the walk costs under a millisecond warm and the tick's gate
   stays in the tens of microseconds.
 
 - **The inbox's run key binds the hand too**
-  ([§FS-005-dispatch.14](../requirements.md#14-who-does-the-work-is-chosen-and-defaulted-per-project)).
+  ([§FS-005-dispatch.14](functional-spec/FS-005-dispatch.md#14-who-does-the-work-is-chosen-and-defaulted-per-project)).
   `R` on the work screen built its run without ever asking who should get it,
   so a hand naming an agent and no model bound from `ephor work run` and not
   from the key a reader actually presses — the wrong way round, since the
@@ -2054,7 +2058,7 @@ ships, the previous "latest" section moves verbatim to
 - **A workspace missing one of the project's repositories is completed, not
   called done**
   ([§AR-004-forest.1](architecture/AR-004-forest.md#1-folds),
-  [§FS-004-quick-actions.7](../requirements.md#7-a-workspace-that-is-not-there-is-offered-the-checkout)).
+  [§FS-004-quick-actions.7](functional-spec/FS-004-quick-actions.md#7-a-workspace-that-is-not-there-is-offered-the-checkout)).
   A declared repository with no working tree on disk became visible last round
   — every fold names it rather than quietly answering for fewer repositories
   than you have — and what was left undecided was whether it should also
@@ -2072,8 +2076,8 @@ ships, the previous "latest" section moves verbatim to
   changes nothing.
 
 - **A refresh landing places the project that landed, not every project**
-  ([§FS-001-forge-interface.7](../requirements.md#7-a-fetch-runs-beneath-the-reading-never-in-front-of-it),
-  [§FS-008-attribution.2](../requirements.md#2-two-stages-one-engine)).
+  ([§FS-001-forge-interface.7](functional-spec/FS-001-forge-interface.md#7-a-fetch-runs-beneath-the-reading-never-in-front-of-it),
+  [§FS-008-attribution.2](functional-spec/FS-008-attribution.md#2-two-stages-one-engine)).
   Items arriving mid-refresh are filed under their branches as they land, and
   that was done by re-running the whole site's placement pass on every arrival
   — so a refresh over N projects paid the whole matching pass N times, and the
@@ -2087,7 +2091,7 @@ ships, the previous "latest" section moves verbatim to
   about 2 ms.
 
 - **A repository parked on the base counts toward the rebase onto main alone**
-  ([§FS-004-quick-actions.8](../requirements.md#8-a-branch-that-trails-its-own-published-copy-is-offered-the-rebase-onto-it)).
+  ([§FS-004-quick-actions.8](functional-spec/FS-004-quick-actions.md#8-a-branch-that-trails-its-own-published-copy-is-offered-the-rebase-onto-it)).
   The copy-is-the-base duplication guard was all-or-nothing across the forest
   while the copy-side count summed across it, so a workspace with one
   repository on the change's branch and two parked on `master` tracking it —
@@ -2106,8 +2110,8 @@ ships, the previous "latest" section moves verbatim to
   refresh landing on the inbox from ~8 git subprocesses per repository to ~3.
 
 - **Recipes and actions are one menu**
-  ([§FS-005-dispatch.1](../requirements.md#1-a-recipe-decides-which-items-deserve-work-and-what-to-ask-for),
-  [§FS-006-project-interface.9](../requirements.md#9-offers-the-projects-actions)).
+  ([§FS-005-dispatch.1](functional-spec/FS-005-dispatch.md#1-a-recipe-decides-which-items-deserve-work-and-what-to-ask-for),
+  [§FS-006-project-interface.9](functional-spec/FS-006-project-interface.md#9-offers-the-projects-actions)).
   What you could do about a row depended on which key you knew: `x` listed the
   commands and `w` listed the work, and neither mentioned the other. `x` now
   carries both — the recipes that apply to the item stand after the quick
@@ -2132,8 +2136,8 @@ ships, the previous "latest" section moves verbatim to
   the work is still offered — the ticket is written either way — with the
   *workable* rung's own sentence where the hand would be.
 - **Every operation is visible in one place, and parked work resurfaces on
-  its own** ([§FS-005-dispatch.15](../requirements.md#15-every-operation-is-visible-in-one-place),
-  [§FS-005-dispatch.9](../requirements.md#9-work-that-stops-for-a-person-says-so-where-the-person-is-looking)).
+  its own** ([§FS-005-dispatch.15](functional-spec/FS-005-dispatch.md#15-every-operation-is-visible-in-one-place),
+  [§FS-005-dispatch.9](functional-spec/FS-005-dispatch.md#9-work-that-stops-for-a-person-says-so-where-the-person-is-looking)).
   Answering "what is ephor doing right now" meant visiting the work screen of
   every item that might have an answer. `;` now opens a watch-only operations
   board from any screen: rows are execution roots — the runtime locks one per
@@ -2149,7 +2153,7 @@ ships, the previous "latest" section moves verbatim to
   leaves its held ticket *waiting on you* rather than vanishing with the
   lock; within one operation what waits on the reader lists ahead of what
   runs, then claims, then the queue
-  ([§FS-005-dispatch.9](../requirements.md#9-work-that-stops-for-a-person-says-so-where-the-person-is-looking)).
+  ([§FS-005-dispatch.9](functional-spec/FS-005-dispatch.md#9-work-that-stops-for-a-person-says-so-where-the-person-is-looking)).
   The journal outlives every run and is believed accordingly: an assignment
   no run released is held per invocation — fanout cannot mark a task free
   while a sibling still runs it — and stops counting the moment the ticket's
@@ -2160,7 +2164,7 @@ ships, the previous "latest" section moves verbatim to
   matter, `o` opens a live run's
   dashboard, `Esc` returns exactly where the reader was; the background
   refresh reports on the board additionally to the header line it keeps
-  ([§FS-001-forge-interface.7](../requirements.md#7-a-fetch-runs-beneath-the-reading-never-in-front-of-it)).
+  ([§FS-001-forge-interface.7](functional-spec/FS-001-forge-interface.md#7-a-fetch-runs-beneath-the-reading-never-in-front-of-it)).
   Plan state and assignee read straight off the plan files as always — the
   floor that stays with no runner bound, when the board is the refresh row
   alone — and the runner's own `list --json` sharpens them where the binary
@@ -2173,11 +2177,11 @@ ships, the previous "latest" section moves verbatim to
   re-read only on refresh landings and dispatch, and now an mtime-gated tick
   between key reads re-reads what actually moved — so a ticket the runtime
   parks for you resurfaces the moment it parks
-  ([§FS-005-dispatch.15.1](../requirements.md#151-the-board-keeps-itself-current)),
-  which is [§FS-005-dispatch.9](../requirements.md#9-work-that-stops-for-a-person-says-so-where-the-person-is-looking) finally holding without a refresh.
+  ([§FS-005-dispatch.15.1](functional-spec/FS-005-dispatch.md#151-the-board-keeps-itself-current)),
+  which is [§FS-005-dispatch.9](functional-spec/FS-005-dispatch.md#9-work-that-stops-for-a-person-says-so-where-the-person-is-looking) finally holding without a refresh.
 - **A project says who does which action, and which hands may be used on it at
-  all** ([§FS-006-project-interface.9](../requirements.md#9-offers-the-projects-actions),
-  [§FS-005-dispatch.14](../requirements.md#14-who-does-the-work-is-chosen-and-defaulted-per-project)).
+  all** ([§FS-006-project-interface.9](functional-spec/FS-006-project-interface.md#9-offers-the-projects-actions),
+  [§FS-005-dispatch.14](functional-spec/FS-005-dispatch.md#14-who-does-the-work-is-chosen-and-defaulted-per-project)).
   Every ticket ephor wrote went to whoever the runtime would have picked
   unasked, so a trivial replay and the conflict that needed judgment were the
   same request — and the only way to change that was to point the runtime
@@ -2200,7 +2204,7 @@ ships, the previous "latest" section moves verbatim to
   with no runtime on `PATH` a configured hand resolves to nothing, says so in
   the workable rung's own words, and the ticket is written all the same.
 - **A refresh no longer takes the screen**
-  ([§FS-001-forge-interface.7](../requirements.md#7-a-fetch-runs-beneath-the-reading-never-in-front-of-it)).
+  ([§FS-001-forge-interface.7](functional-spec/FS-001-forge-interface.md#7-a-fetch-runs-beneath-the-reading-never-in-front-of-it)).
   `r` ran the whole fetch on the thread that draws and reads keys, so the
   interface froze until the last provider answered — nothing repainted, no key
   was read, and `^C` is a key event in raw mode, so there was no way out
@@ -2216,7 +2220,7 @@ ships, the previous "latest" section moves verbatim to
   not the load.
 - **The cursor follows the row it was on across a rebuild**, rather than the
   line number that row happened to occupy
-  ([§FS-001-forge-interface.7](../requirements.md#7-a-fetch-runs-beneath-the-reading-never-in-front-of-it)).
+  ([§FS-001-forge-interface.7](functional-spec/FS-001-forge-interface.md#7-a-fetch-runs-beneath-the-reading-never-in-front-of-it)).
   Selection was kept by index, which was harmless while the tree only changed
   when you asked it to; with answers arriving underneath a reader who is still
   moving, an index is the wrong thing to keep — rows sort in above the cursor
@@ -2251,7 +2255,7 @@ ships, the previous "latest" section moves verbatim to
   conversation now cites everyone on it.
 - **Deciding what a pull request means moved out of `github-prs` and into
   policy**, where every forge gets the same treatment
-  ([§FS-001-forge-interface.3](../requirements.md#3-policy-lives-above-the-interface-never-in-an-implementation)).
+  ([§FS-001-forge-interface.3](functional-spec/FS-001-forge-interface.md#3-policy-lives-above-the-interface-never-in-an-implementation)).
   The provider reports roles, reasons, conversation, and gate; `role`, the
   displayed state, and `needs_response` are composed above it.
 - **A gate now carries the forge's verdict, not only its counts.** A pull
@@ -2259,12 +2263,12 @@ ships, the previous "latest" section moves verbatim to
   downstream repository, on jobs the gate never started — and a row showing
   `✓118` read as finished work. The row now says `⊘ blocked` beside the counts
   and the reasons are one keystroke away
-  ([§FS-001-forge-interface.1](../requirements.md#1-capabilities)).
+  ([§FS-001-forge-interface.1](functional-spec/FS-001-forge-interface.md#1-capabilities)).
 - **A refresh that lost any provider now exits non-zero** (`4`; `3` still means
   every provider failed) and reports each failure as `error:` naming the
   project and provider. A partial refresh used to exit 0, so a source could
   stay dark indefinitely behind a timer that saw nothing wrong
-  ([§FS-001-forge-interface.6](../requirements.md#6-a-source-that-did-not-answer-says-so-and-says-which-kind-of-not)).
+  ([§FS-001-forge-interface.6](functional-spec/FS-001-forge-interface.md#6-a-source-that-did-not-answer-says-so-and-says-which-kind-of-not)).
 - Destinations that cannot be reached — DNS failure, refused connection, no
   route, a downed VPN — are classified as **unreachable** and reported as such
   in the refresh output, in `ephor status`, and in the interactive header. The
@@ -2276,7 +2280,7 @@ ships, the previous "latest" section moves verbatim to
 - `ephor status` says what a failed provider cost — `NO DATA`, or that the
   items shown are the last good ones.
 - **The rebase is offered wherever there is a branch**
-  ([§FS-004-quick-actions.6](../requirements.md#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase)).
+  ([§FS-004-quick-actions.6](functional-spec/FS-004-quick-actions.md#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase)).
   Both replays were offered only on pull requests, and only on projects whose
   registry row named a `main_branch` — so an issue about the same change, a
   status a source filed about it, and every branch row in the detail view got
@@ -2294,7 +2298,7 @@ ships, the previous "latest" section moves verbatim to
   project with no `main_branch` is offered it — and its rows show `↓2` alone
   rather than nothing at all. Where a branch cannot be resolved to a checkout
   the offer is withheld rather than made and left to fail on the keystroke
-  ([§FS-004-quick-actions.2](../requirements.md#2-offered-only-where-it-would-work)).
+  ([§FS-004-quick-actions.2](functional-spec/FS-004-quick-actions.md#2-offered-only-where-it-would-work)).
 - **Tests split into an integration home, and e2e moves under `tests/`.**
   (PR #18) `.agents/grund.toml`'s deprecated `[[kinds]] prefix` key is renamed
   `kind` throughout — required before grund 0.13.0, which stops loading it —
@@ -2312,7 +2316,7 @@ ships, the previous "latest" section moves verbatim to
 ### Fixed
 
 - **Optional workflow execution targets can resolve to nobody**
-  ([§FS-005-dispatch.19](../requirements.md#19-a-workflow-the-runtime-offers-is-an-action-and-its-inputs-are-answered-here)).
+  ([§FS-005-dispatch.19](functional-spec/FS-005-dispatch.md#19-a-workflow-the-runtime-offers-is-an-action-and-its-inputs-are-answered-here)).
   An empty target answer now passes to the runtime as written without being
   parsed, narrowed, or rendered as a hand, so optional tiers can retain the
   execution-target format and its policy for every non-empty choice. Empty
@@ -2320,7 +2324,7 @@ ships, the previous "latest" section moves verbatim to
 
 - **Capabilities and missing-hand refusals explain how to configure
   model-carrying hands**
-  ([§FS-005-dispatch.14](../requirements.md#14-who-does-the-work-is-chosen-and-defaulted-per-project)).
+  ([§FS-005-dispatch.14](functional-spec/FS-005-dispatch.md#14-who-does-the-work-is-chosen-and-defaulted-per-project)).
   A roster containing only agent-default hands now points to the Rhei settings
   `models` registry, and choosing an unknown named hand keeps refusing it while
   explaining how a matching model profile with an agent carrier creates that
@@ -2328,14 +2332,14 @@ ships, the previous "latest" section moves verbatim to
   unchanged. (PR #48)
 
 - **`ephor work lay --dry-run` leaves the ordinary work root untouched**
-  ([§FS-005-dispatch.19](../requirements.md#19-a-workflow-the-runtime-offers-is-an-action-and-its-inputs-are-answered-here)).
+  ([§FS-005-dispatch.19](functional-spec/FS-005-dispatch.md#19-a-workflow-the-runtime-offers-is-an-action-and-its-inputs-are-answered-here)).
   A dry run now asks the runtime to validate and report the resolved workflow
   without creating the work root or the dossier, item, and values files a real
   laying would carry. (PR #29)
 
 - **`ephor work offers` explains why a selector refused a recipe**
-  ([§FS-005-dispatch.27](../requirements.md#27-an-offer-that-a-selector-refused-says-why),
-  [§FS-003-feed-categories.1](../requirements.md#1-the-categories),
+  ([§FS-005-dispatch.27](functional-spec/FS-005-dispatch.md#27-an-offer-that-a-selector-refused-says-why),
+  [§FS-003-feed-categories.1](functional-spec/FS-003-feed-categories.md#1-the-categories),
   PR #22). A project's own tasks carry no role, so a `roles` selector — non-empty
   by definition once written — excluded every one of them the same as any other
   selector refusal: an offer that never appeared, and a "nothing matches this
@@ -2372,8 +2376,8 @@ First version. Not yet tagged or published — publication is gated on
 - Gate status on every pull request row — passed, failed, and running job
   counts, totalled across every repository the gate covers, with a per-repo
   breakdown when it spans more than one.
-- `grund` tree: [§FS-001-forge-interface](../requirements.md#fs-001-forge-interface-ephor-reaches-every-forge-and-issue-tracker-through-one-provider-interface)
-  and [§FS-002-release](../requirements.md#fs-002-release-ephor-releases-from-a-tag-with-a-changelog-entry-per-change),
+- `grund` tree: [§FS-001-forge-interface](functional-spec/FS-001-forge-interface.md#fs-001-forge-interface-ephor-reaches-every-forge-and-issue-tracker-through-one-provider-interface)
+  and [§FS-002-release](functional-spec/FS-002-release.md#fs-002-release-ephor-releases-from-a-tag-with-a-changelog-entry-per-change),
   with [§RM-001-forge-interface](roadmap.md#rm-001-forge-interface-put-every-forge-behind-the-interface)
   sequencing the work that has to land before anything ships.
 - Release pipeline: tag-triggered publication, profile-guided release binaries

@@ -16,13 +16,13 @@ not auto-discover tests in a subdirectory. `common/` is the shared harness
 (`mod common;`); `golden/` holds recorded provider responses fixtures compare
 against.
 
-- `check_test.rs` — `ephor check` end to end ([§FS-006-project-interface.5](../../requirements.md#5-checks-are-verbs-and-every-script-is-self-contained)).
-- `checkout_test.rs` — `ephor checkout` end to end ([§FS-004-quick-actions.7](../../requirements.md#7-a-workspace-that-is-not-there-is-offered-the-checkout)).
-- `doctor_test.rs` — `ephor doctor` and `ephor capabilities` ([§FS-010-doctor](../../requirements.md#fs-010-doctor-ephor-can-be-asked-whether-it-still-works-and-answers-in-one-screen)).
-- `rebase_test.rs` — `ephor rebase` end to end ([§FS-004-quick-actions.6](../../requirements.md#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase)).
-- `work_test.rs` — `ephor work` end to end ([§FS-005-dispatch](../../requirements.md#fs-005-dispatch-what-ephor-watches-it-can-hand-to-an-agent-runtime)).
+- `check_test.rs` — `ephor check` end to end ([§FS-006-project-interface.5](../../docs/functional-spec/FS-006-project-interface.md#5-checks-are-verbs-and-every-script-is-self-contained)).
+- `checkout_test.rs` — `ephor checkout` end to end ([§FS-004-quick-actions.7](../../docs/functional-spec/FS-004-quick-actions.md#7-a-workspace-that-is-not-there-is-offered-the-checkout)).
+- `doctor_test.rs` — `ephor doctor` and `ephor capabilities` ([§FS-010-doctor](../../docs/functional-spec/FS-010-doctor.md#fs-010-doctor-ephor-can-be-asked-whether-it-still-works-and-answers-in-one-screen)).
+- `rebase_test.rs` — `ephor rebase` end to end ([§FS-004-quick-actions.6](../../docs/functional-spec/FS-004-quick-actions.md#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase)).
+- `work_test.rs` — `ephor work` end to end ([§FS-005-dispatch](../../docs/functional-spec/FS-005-dispatch.md#fs-005-dispatch-what-ephor-watches-it-can-hand-to-an-agent-runtime)).
 - `forge_extension_test.rs` — an out-of-process forge extension, a real shell
-  script and nothing else ([§FS-001-forge-interface.2](../../requirements.md#2-two-transports-one-interface)).
+  script and nothing else ([§FS-001-forge-interface.2](../../docs/functional-spec/FS-001-forge-interface.md#2-two-transports-one-interface)).
 - `agents_test.rs`, `feed_test.rs`, `registry_test.rs`, `update_test.rs` — the
   registry and feed engine driven through the CLI: project registration,
   fetch/refresh, and the AGENTS.md rendering path.
@@ -35,7 +35,7 @@ line CI and the pre-commit hook run.
 - `test_check_boundary.py` — the boundary check itself ([§REQ-001-boundary.5](../../docs/requirements/REQ-001-boundary.md#5-no-product-literal-outside-its-adapter)).
 - `test_check_changelog_pr_entry.py`, `test_prepare_changelog_release.py` —
   the pull-request changelog gate and the release script
-  ([§FS-002-release.1](../../requirements.md#1-changelog), [§FS-002-release](../../requirements.md#fs-002-release-ephor-releases-from-a-tag-with-a-changelog-entry-per-change)).
+  ([§FS-002-release.1](../../docs/functional-spec/FS-002-release.md#1-changelog), [§FS-002-release](../../docs/functional-spec/FS-002-release.md#fs-002-release-ephor-releases-from-a-tag-with-a-changelog-entry-per-change)).
 
 Unit tests stay beside the code under `code`'s rule; there is no third kind
 for them.

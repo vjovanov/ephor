@@ -178,7 +178,7 @@ jobs:
       - name: fissile check
         run: fissile check
 
-  # The tree is a grund tree: citations in requirements.md, docs/, and src/ must
+  # The tree is a grund tree: citations in docs/, and src/ must
   # resolve. One platform — it checks the repository's text, not behaviour.
   grund:
     name: grund check

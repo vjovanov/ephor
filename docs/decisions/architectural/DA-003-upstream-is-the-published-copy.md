@@ -25,7 +25,7 @@ where a branch was **cut**, not where it is published: a branch started from
 on the `~/c/g` root repository that is exactly the answer `@{upstream}`
 gives. Read at face value, "rebase onto upstream" would silently duplicate
 the rebase onto the project's main branch sitting next to it in the menu
-([§FS-004-quick-actions.6](../../../requirements.md#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase)): two entries, one operation, and no way for the
+([§FS-004-quick-actions.6](../../functional-spec/FS-004-quick-actions.md#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase)): two entries, one operation, and no way for the
 reader to tell which fact either acted on. The exclusion in step 1 is the
 whole decision — tracking config that names this repository's base is a
 record of where the branch came from, and where a branch came from is what

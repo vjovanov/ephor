@@ -21,12 +21,12 @@ action menu for when watching is not enough.
 - `src/` — the `ephor` binary (registry engine + status feed)
 - `config/*.example.json` — worked examples of the two configuration files;
   your own live in `~/.config/ephor/` and are never committed
-  ([§FS-001-forge-interface.5](requirements.md#5-no-site-specific-data-in-the-repository))
+  ([§FS-001-forge-interface.5](docs/functional-spec/FS-001-forge-interface.md#5-no-site-specific-data-in-the-repository))
 - `config/templates/` — AGENTS.md templates referenced by the registry
 - `assets/*.schema.json` — the published schemas, embedded in the binary and
   printable with `ephor schema`: the registry, a project's `ephor.json`, the
   answer envelope, and the forge interface
-  ([§FS-006-project-interface.11](requirements.md#11-the-interface-is-versioned))
+  ([§FS-006-project-interface.11](docs/functional-spec/FS-006-project-interface.md#11-the-interface-is-versioned))
 - `tests/e2e/cases/` — one executable scenario per seam, each citing the `§FS`
   point it holds ephor to
 - `tests/integration/` — cross-part Rust tests and Python repo-hygiene tests
@@ -34,8 +34,8 @@ action menu for when watching is not enough.
 - `systemd/` — user units for periodic feed refresh and work sync
 - `docs/manual.md` — **the manual**: every command, key, and configuration
   field, end to end; `docs/registry.md` explains what the registry's concepts
-  mean, and `requirements.md`, `docs/roadmap.md` and `docs/changelog.md` are
-  the grund tree
+  mean, and `docs/functional-spec/`, `docs/roadmap.md` and
+  `docs/changelog.md` are the grund tree
 
 ## Install
 
@@ -63,7 +63,7 @@ before a first release is in
 ## Requirements and releases
 
 The repository is a [grund](https://github.com/vjovanov/grund) tree:
-[requirements.md](requirements.md) declares what ephor must do,
+[docs/functional-spec/](docs/functional-spec/) declares what ephor must do,
 [docs/roadmap.md](docs/roadmap.md) sequences what is not built yet, and
 `grund check` verifies that every `§ID` citation resolves.
 
@@ -72,7 +72,7 @@ just check         # the CI gate: fmt, build with -D warnings, tests, grund
 just pre-release   # everything a release verifies, publishing nothing
 ```
 
-Releases follow [§FS-002-release](requirements.md#fs-002-release-ephor-releases-from-a-tag-with-a-changelog-entry-per-change):
+Releases follow [§FS-002-release](docs/functional-spec/FS-002-release.md#fs-002-release-ephor-releases-from-a-tag-with-a-changelog-entry-per-change):
 a version exists exactly when a `vX.Y.Z` tag does, every pull request adds a
 bullet under `## Unreleased` in [docs/changelog.md](docs/changelog.md), and
 publication is a workflow rather than a hand-run command — `Auto bump` cuts a
@@ -212,7 +212,7 @@ a bot checklist from sitting in the inbox forever.
 — `j`/`k` + `Enter` or `1`-`9` runs one, `Esc` cancels.
 
 **Quick actions** need no configuration and lead the menu
-([§FS-004-quick-actions](requirements.md#fs-004-quick-actions-a-problem-ephor-recognizes-arrives-with-the-action-for-it)):
+([§FS-004-quick-actions](docs/functional-spec/FS-004-quick-actions.md#fs-004-quick-actions-a-problem-ephor-recognizes-arrives-with-the-action-for-it)):
 the source that produced an item offers what it knows to do about it.
 Today `github-ci` offers `✗ see the CI failures` on a pull request whose
 gate is red — the check list as GitHub reports it, then `gh run view
@@ -225,20 +225,20 @@ ephor offers three of its own, from what is on disk rather than from a source.
 workspace is on disk and whose project names a main branch — behind it or
 level, since the replay fetches first and is the move that refreshes the
 reading
-([§FS-004-quick-actions.6](requirements.md#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase)).
+([§FS-004-quick-actions.6](docs/functional-spec/FS-004-quick-actions.md#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase)).
 It runs `ephor rebase` there — fetch and replay every repository in the
 checkout, nothing stashed, nothing pushed — and where the replay stops in a
 conflict it opens the ticket about it, because that part is a question about
 the code and the rest never was
-([§FS-005-dispatch.12](requirements.md#12-work-an-algorithm-can-finish-does-not-start-with-a-model)).
+([§FS-005-dispatch.12](docs/functional-spec/FS-005-dispatch.md#12-work-an-algorithm-can-finish-does-not-start-with-a-model)).
 `⤴ rebase onto <remote>/<branch> (N behind as of Aug 11)` where the same
 checkout has a **published copy** of its own to replay onto instead — somebody
 else pushed to your branch
-([§FS-004-quick-actions.8](requirements.md#8-a-branch-that-trails-its-own-published-copy-is-offered-the-rebase-onto-it)):
+([§FS-004-quick-actions.8](docs/functional-spec/FS-004-quick-actions.md#8-a-branch-that-trails-its-own-published-copy-is-offered-the-rebase-onto-it)):
 `ephor rebase --upstream` replays each repository onto its own copy, which is
 the branch bare `git rebase` refuses to touch when no tracking configuration
 names one. And `⇣ check out <dir>` on an item whose branch workspace is not there yet
-([§FS-004-quick-actions.7](requirements.md#7-a-workspace-that-is-not-there-is-offered-the-checkout)):
+([§FS-004-quick-actions.7](docs/functional-spec/FS-004-quick-actions.md#7-a-workspace-that-is-not-there-is-offered-the-checkout)):
 `ephor checkout` needs nothing configured — the registry says where the
 workspace goes, which repositories it holds, and what a new branch grows from —
 and it is also the step that runs before any other action on a missing
@@ -250,7 +250,7 @@ own (below), and **configured actions** follow, from `status.json`: top-level
 project, and an optional `kinds` list restricts an action to `pr` / `ci` /
 `message` / `status` items. Where two entries share an `id`, yours beats the
 project's beats the shipped one, in the place the earlier one held
-([§FS-006-project-interface.9](requirements.md#9-offers-the-projects-actions)).
+([§FS-006-project-interface.9](docs/functional-spec/FS-006-project-interface.md#9-offers-the-projects-actions)).
 
 ```json
 {
@@ -298,7 +298,7 @@ main branch, plus the task store — before writing anything, and the work root
 resolves inside it. A project with
 no `branch_root_template` is refused by name, and so is checkout-needing work
 about an item with no branch and no template
-([§FS-005-dispatch.25](requirements.md#25-work-about-a-matter-with-no-branch-can-mint-the-branch-it-needs)).
+([§FS-005-dispatch.25](docs/functional-spec/FS-005-dispatch.md#25-work-about-a-matter-with-no-branch-can-mint-the-branch-it-needs)).
 
 The command runs via `sh -c` **in the item's checkout**, resolved through
 the org → project → branch hierarchy: the item is matched to its registry
@@ -324,7 +324,7 @@ returns after Enter. The item's context is exported to the script:
 
 Tracking a project costs minutes and touches nothing in it: ephor requires
 *capabilities* of a project, never artifacts in it
-([§FS-006-project-interface](requirements.md#fs-006-project-interface-a-project-and-ephor-meet-over-one-interface-in-three-homes)).
+([§FS-006-project-interface](docs/functional-spec/FS-006-project-interface.md#fs-006-project-interface-a-project-and-ephor-meet-over-one-interface-in-three-homes)).
 A project that wants to say more places one optional file at its forest root:
 
 ```jsonc
@@ -357,12 +357,12 @@ it adopts or overrides, and `manifest_trust` narrows a checkout you trust less
 to `descriptions` or `ignore`. What a project can do is resolved into a ladder
 of rungs, and a feature that needs a rung you do not hold says so where it
 would have appeared rather than vanishing
-([§FS-006-project-interface.10](requirements.md#10-capability-rung-by-rung)).
+([§FS-006-project-interface.10](docs/functional-spec/FS-006-project-interface.md#10-capability-rung-by-rung)).
 
 Three CI steps ship for the repository half of this — `setup`, `validate`,
 `check` — and each runs from repository-committed material and workflow inputs
 alone, never from anybody's site
-([§FS-009-shipped-actions](requirements.md#fs-009-shipped-actions-what-ephor-ships-for-ci-runs-from-the-repository-alone),
+([§FS-009-shipped-actions](docs/functional-spec/FS-009-shipped-actions.md#fs-009-shipped-actions-what-ephor-ships-for-ci-runs-from-the-repository-alone),
 [§9.3](docs/manual.md#93-ci-steps-ephor-ships)).
 
 ## Work: handing an item to an agent runtime
@@ -370,7 +370,7 @@ alone, never from anybody's site
 A watch that only watches hands you a list, and nearly every row on it has the
 same next move — read the failures and fix them, answer the question, read the
 change. ephor can hand that over
-([§FS-005-dispatch](requirements.md#fs-005-dispatch-what-ephor-watches-it-can-hand-to-an-agent-runtime)):
+([§FS-005-dispatch](docs/functional-spec/FS-005-dispatch.md#fs-005-dispatch-what-ephor-watches-it-can-hand-to-an-agent-runtime)):
 an item plus a **recipe** becomes a ticket in a
 [rhei](https://github.com/vjovanov/rhei) plan, written into the checkout the
 item's branch resolves to. ephor writes files and nothing else — no comment, no
@@ -428,7 +428,7 @@ worked on are different facts, and the row says which without your leaving it.
 ### By hand
 
 Recipes are for the work that repeats; most work does not
-([§FS-005-dispatch.10](requirements.md#10-what-ephor-offers-is-not-a-limit-on-what-can-be-asked)).
+([§FS-005-dispatch.10](docs/functional-spec/FS-005-dispatch.md#10-what-ephor-offers-is-not-a-limit-on-what-can-be-asked)).
 So nothing has to be written down in advance:
 
 - **`a` on the work screen** — type one line and it becomes an ordinary ticket,
@@ -499,7 +499,7 @@ never matches. A project's own tasks carry no role, so a non-empty `roles`
 excludes them all — write a task recipe with `kinds: ["task"]` and no
 `roles`; where a recipe is refused this way, `ephor work offers` names the
 field that refused it
-([§FS-005-dispatch.27](requirements.md#27-an-offer-that-a-selector-refused-says-why)).
+([§FS-005-dispatch.27](docs/functional-spec/FS-005-dispatch.md#27-an-offer-that-a-selector-refused-says-why)).
 The brief takes `{title}`, `{url}`, `{repo}`,
 `{number}`, `{branch}`, `{ticket}`, `{state}`, `{gate}`, `{workspace}`,
 `{root}`, `{project}`, `{source}`, `{kind}`, `{id}`, and `{reply}` — the file a
@@ -513,7 +513,7 @@ reads it back, and the thread screen shows it under the conversation it answers
 — `p` posts it through the same provider a reaction goes through, `e` edits it
 first, and where the channel cannot carry a reply the card still names the file
 you copy from
-([§FS-005-dispatch.13](requirements.md#13-a-communication-is-work-too-and-its-answer-comes-back-as-a-proposal)).
+([§FS-005-dispatch.13](docs/functional-spec/FS-005-dispatch.md#13-a-communication-is-work-too-and-its-answer-comes-back-as-a-proposal)).
 It needs no checkout, so a conversation is answerable on a project whose branch
 is not on this machine.
 
@@ -570,12 +570,12 @@ deliberately.
 | `github-notifications` | `GET /notifications` — GitHub's own list, the completeness net behind the searches you composed | the reason is a mention, a review request, an assignment, a broken gate, or an advisory |
 | `github-threads` | GraphQL unresolved review threads | last comment is not yours |
 | `custom-status` | any shell command in the workspace (`format: answer`, or the legacy `text` / `json`) | the answer says so |
-| `<anything else>` | a forge extension: `ephor-forge-<name>` on `PATH` ([§FS-001-forge-interface.2](requirements.md#2-two-transports-one-interface)) | ephor's policy, over what it answered |
+| `<anything else>` | a forge extension: `ephor-forge-<name>` on `PATH` ([§FS-001-forge-interface.2](docs/functional-spec/FS-001-forge-interface.md#2-two-transports-one-interface)) | ephor's policy, over what it answered |
 | `slack`/`discord`/`email` | stubs; activate by adding secrets under `~/config/secrets/ephor/` | mentions/DMs (planned) |
 
 A task store in the checkout — `panta/`, `.beads/` — is read on every refresh
 without any provider block, and reports under its own name
-([§FS-006-project-interface.7](requirements.md#7-the-projects-own-tasks-are-read-where-they-live)).
+([§FS-006-project-interface.7](docs/functional-spec/FS-006-project-interface.md#7-the-projects-own-tasks-are-read-where-they-live)).
 
 **Answered detection**: a citation or thread stops needing a response once
 you answered it — with a message afterwards, with a reaction on the

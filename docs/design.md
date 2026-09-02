@@ -1,8 +1,8 @@
 # The shape of ephor
 
 This is the master design for ephor's boundaries and core model. It is design
-material, not specification: `requirements.md` remains the authority until this
-document is decomposed into the grund tree (the decomposition map is §12), and
+material, not specification: `docs/functional-spec/` remains the authority
+until this document is decomposed into the grund tree (the decomposition map is §12), and
 where the two conflict before that lands, the tree wins. IDs written bare here
 (REQ-001, FS-006, …) are working names for declarations that do not exist yet.
 
@@ -34,7 +34,7 @@ revisited.
   threads, a mail thread, a Slack thread, a GitHub Discussion. What "grouped"
   means is the channel adapter's policy (mail groups by `References`, Slack by
   thread or a window around a mention). Channels declare capabilities — reply,
-  react, tick — in the [§FS-001-forge-interface](../requirements.md#fs-001-forge-interface-ephor-reaches-every-forge-and-issue-tracker-through-one-provider-interface) pattern.
+  react, tick — in the [§FS-001-forge-interface](functional-spec/FS-001-forge-interface.md#fs-001-forge-interface-ephor-reaches-every-forge-and-issue-tracker-through-one-provider-interface) pattern.
 - **Event** — a non-conversational observation that moves a matter's state:
   the gate went red, the pull request merged, a check finished, a ticket
   closed. Events are what fingerprints digest, and why resurfacing can say
@@ -119,7 +119,7 @@ ticket matter, linked to the pull request.
 
 **Kinds and categories.** Matter kinds: `pr`, `issue`, `ticket` (local),
 `build` (periodic CI not tied to a pull request), `status`, `topic`.
-[§FS-003-feed-categories](../requirements.md#fs-003-feed-categories-the-feed-sorts-itself-into-categories-and-finished-work-lands-in-recent) maps kind × role onto the presented categories;
+[§FS-003-feed-categories](functional-spec/FS-003-feed-categories.md#fs-003-feed-categories-the-feed-sorts-itself-into-categories-and-finished-work-lands-in-recent) maps kind × role onto the presented categories;
 finished matters land in Recent. Today's `ci` kind dissolves into events on a
 `pr` matter (or a `build` matter when periodic); `github-threads` stops
 minting rows — an unresolved review thread is a discussion of the pull
@@ -155,7 +155,7 @@ Git is not a rung: it is the substrate. A placed project *is* a forest.
 
 | seam | verbs | contract | binding home | shipped default | degrade |
 |---|---|---|---|---|---|
-| remote sources | fetch discussions/events since | provider capability set ([§FS-001-forge-interface](../requirements.md#fs-001-forge-interface-ephor-reaches-every-forge-and-issue-tracker-through-one-provider-interface)) | site config, shareable across projects | `gh`-backed GitHub (PRs, notifications) | last-good items marked stale |
+| remote sources | fetch discussions/events since | provider capability set ([§FS-001-forge-interface](functional-spec/FS-001-forge-interface.md#fs-001-forge-interface-ephor-reaches-every-forge-and-issue-tracker-through-one-provider-interface)) | site config, shareable across projects | `gh`-backed GitHub (PRs, notifications) | last-good items marked stale |
 | attribution | match evidence → matter → project, branch | identity facets, pure data | registry row (manifest hints) | ticket/repo/branch/alias matching | unattributed bucket |
 | project checks | `check`, `style`, `smoke [feature]`, `smoke --list` | commands at forest root, `EPHOR_*` env, exit codes, answer file | probed (`./check.sh`, `./check-style.sh`, `./smoke-test.sh`) or manifest | examples in `config/` | guess list, then opaque |
 | CI | `status`, `failures`, `restart` | commands with dossier env, answers in files | manifest (project truth) with site override | `gh pr checks` / `gh run view` | counts omitted, restart unavailable |
@@ -180,13 +180,13 @@ across all verbs: `0` pass, nonzero fail, `75` park/not-applicable.
 same for every developer of the project, so the binding's home is the
 manifest, with site override for credentials or variants. The existing
 `ci-failures.example.sh` and `restart-gate.example.sh` are the seam's embryo;
-restart keeps the [§FS-005-dispatch.11](../requirements.md#11-a-failure-that-is-not-the-changes-fault-is-restarted-not-fixed) semantics — a failure that is not the
+restart keeps the [§FS-005-dispatch.11](functional-spec/FS-005-dispatch.md#11-a-failure-that-is-not-the-changes-fault-is-restarted-not-fixed) semantics — a failure that is not the
 change's fault is restarted, not fixed, and restarting restarts downstream
 gates too.
 
 **The runtime stays named, but bound.** rhei is the shipped default and the
 documented plan language is the contract — that part of the old
-[§FS-005-dispatch](../requirements.md#fs-005-dispatch-what-ephor-watches-it-can-hand-to-an-agent-runtime) lead survives. What changes: the *process* is a binding
+[§FS-005-dispatch](functional-spec/FS-005-dispatch.md#fs-005-dispatch-what-ephor-watches-it-can-hand-to-an-agent-runtime) lead survives. What changes: the *process* is a binding
 (`work.runner`), core code holds no `rhei` literal outside the adapter, and
 with no runner the loop degrades to tickets-on-disk that remain readable,
 diffable, and hand-editable. A recipe's brief, the dossier, and the ledger are
@@ -276,7 +276,7 @@ fields it reads — checks read `summary` + `failures[]`, `smoke --list` reads
 `needs_response` / `url` / `matters[]`. Paths resolve relative to the
 summons's cwd. Unknown fields are ignored everywhere (must-ignore forward
 compatibility); `v` bumps only on incompatible change, with a changelog entry
-per [§FS-002-release](../requirements.md#fs-002-release-ephor-releases-from-a-tag-with-a-changelog-entry-per-change).
+per [§FS-002-release](functional-spec/FS-002-release.md#fs-002-release-ephor-releases-from-a-tag-with-a-changelog-entry-per-change).
 
 ## 8. Offers: actions and recipes, one language
 
@@ -285,14 +285,14 @@ The `when` selector language is shared between actions and recipes — `kinds`,
 `roles`, `gate`, `needs_response`, `sources` — a recipe is an offer whose
 command opens a ticket. `requires` names capability rungs and unmet rungs
 render "(unavailable: …)" per the degrade law. Menu order is provenance
-order: ephor's quick actions (built from what it observed — [§FS-004-quick-actions](../requirements.md#fs-004-quick-actions-a-problem-ephor-recognizes-arrives-with-the-action-for-it)),
+order: ephor's quick actions (built from what it observed — [§FS-004-quick-actions](functional-spec/FS-004-quick-actions.md#fs-004-quick-actions-a-problem-ephor-recognizes-arrives-with-the-action-for-it)),
 then the manifest's offers, then yours; same-`id` overrides run the other way —
 yours beats the project's beats the built-in, as shipped recipes are already
 replaced by id. The last entry is always "⌨ run a command here…".
 
 ## 9. Shipped GitHub Actions
 
-The packaging principle ([§FS-009-shipped-actions](../requirements.md#fs-009-shipped-actions-what-ephor-ships-for-ci-runs-from-the-repository-alone)): a shipped action is a
+The packaging principle ([§FS-009-shipped-actions](functional-spec/FS-009-shipped-actions.md#fs-009-shipped-actions-what-ephor-ships-for-ci-runs-from-the-repository-alone)): a shipped action is a
 Summons wearing CI clothes,
 and anything shipped must run from **repo-committed material alone** — the
 manifest and workflow inputs, never a personal site. That selects the
@@ -315,7 +315,7 @@ machine that is yours; that remains systemd's job, and a reusable workflow
 for self-hosted runners can follow once someone actually wants it. Factoring
 ephor's own release family into `workflow_call` form (rhei carries a
 hand-copy today) is worthwhile housekeeping but is release engineering, not
-this boundary — it rides with [§FS-002-release](../requirements.md#fs-002-release-ephor-releases-from-a-tag-with-a-changelog-entry-per-change).
+this boundary — it rides with [§FS-002-release](functional-spec/FS-002-release.md#fs-002-release-ephor-releases-from-a-tag-with-a-changelog-entry-per-change).
 
 ## 10. Code structure and enforcement
 
@@ -379,9 +379,9 @@ providers, not architecture. That is the test the design passes or fails.
   enforcement checks.
 - **FS**: FS-006 downstream API (three homes, manifest, envelope, offers —
   §5–§8); FS-007 matters, discussions, events (§3, superseding parts of
-  [§FS-003-feed-categories](../requirements.md#fs-003-feed-categories-the-feed-sorts-itself-into-categories-and-finished-work-lands-in-recent)'s mechanics while keeping its categories); FS-008
-  attribution and identity; rewrite of [§FS-005-dispatch](../requirements.md#fs-005-dispatch-what-ephor-watches-it-can-hand-to-an-agent-runtime) for the bound
-  runtime (§5); FS-009 shipped actions (§9). [§FS-001-forge-interface](../requirements.md#fs-001-forge-interface-ephor-reaches-every-forge-and-issue-tracker-through-one-provider-interface) stays
+  [§FS-003-feed-categories](functional-spec/FS-003-feed-categories.md#fs-003-feed-categories-the-feed-sorts-itself-into-categories-and-finished-work-lands-in-recent)'s mechanics while keeping its categories); FS-008
+  attribution and identity; rewrite of [§FS-005-dispatch](functional-spec/FS-005-dispatch.md#fs-005-dispatch-what-ephor-watches-it-can-hand-to-an-agent-runtime) for the bound
+  runtime (§5); FS-009 shipped actions (§9). [§FS-001-forge-interface](functional-spec/FS-001-forge-interface.md#fs-001-forge-interface-ephor-reaches-every-forge-and-issue-tracker-through-one-provider-interface) stays
   the remote-source law; [§RM-001-forge-interface](roadmap.md#rm-001-forge-interface-put-every-forge-behind-the-interface) remains its remediation and
   gains a cross-reference to REQ-001.
 - **AR**: eight short pages — layers, summons, attribution, forest,

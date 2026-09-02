@@ -12,8 +12,8 @@ watch already knew, and then keeps the ledger: what is being done, what it
 reached, and whether the item has moved since.
 
 This manual is the whole surface. [README.md](../README.md) is the tour;
-[requirements.md](../requirements.md) is why each of these behaves the way it
-does, and every `§ID` here points into it.
+[the functional specification](functional-spec/) is why each of these behaves
+the way it does, and every `§ID` here points into it.
 
 ---
 
@@ -65,14 +65,14 @@ reads and one directory it writes.
 | `~/.config/ephor/status.json` | the **feed**: which providers watch which project, plus actions and work recipes |
 
 Both are yours and neither belongs in a repository — they name your employer's
-hosts and accounts ([§FS-001-forge-interface.5](../requirements.md#5-no-site-specific-data-in-the-repository)).
+hosts and accounts ([§FS-001-forge-interface.5](functional-spec/FS-001-forge-interface.md#5-no-site-specific-data-in-the-repository)).
 The repository carries `config/*.example.json` only.
 
 There is a third place facts can live, and it is not yours: the **checkout**
 itself — an `ephor.json` a project chose to write (§4.2.1) and the well-known
 names it carries anyway. Every fact the interface uses lives in exactly one of
 the three, and one order resolves them all
-([§FS-006-project-interface.1](../requirements.md#1-the-three-homes)):
+([§FS-006-project-interface.1](functional-spec/FS-006-project-interface.md#1-the-three-homes)):
 
 | Home | Holds | Example |
 |---|---|---|
@@ -154,7 +154,7 @@ whether it blocks the merge and the reasons it gives. A gate is red when
 something failed **or** the forge refuses.
 
 **Category** — where an item lands in the inbox. Ephor's, never a provider's,
-so every forge sorts the same way ([§FS-003-feed-categories](../requirements.md#fs-003-feed-categories-the-feed-sorts-itself-into-categories-and-finished-work-lands-in-recent)).
+so every forge sorts the same way ([§FS-003-feed-categories](functional-spec/FS-003-feed-categories.md#fs-003-feed-categories-the-feed-sorts-itself-into-categories-and-finished-work-lands-in-recent)).
 
 **Manifest** — the `ephor.json` a project may place at its forest root, saying
 what it is called, how it is checked, how its gate is asked, where its tickets
@@ -362,7 +362,7 @@ Where each of its findings belongs is then ephor's to decide, not the
 source's: one matching engine weighs what the conversation carries against
 what each project's registry row declares — its repositories, the
 **territory** it claims beyond them, its ticket prefixes, the names it answers
-to ([§FS-008-attribution](../requirements.md#fs-008-attribution-every-conversation-finds-its-project-or-says-that-it-could-not)).
+to ([§FS-008-attribution](functional-spec/FS-008-attribution.md#fs-008-attribution-every-conversation-finds-its-project-or-says-that-it-could-not)).
 An explicit venue wins outright, a reference places next, and resemblance only
 argues; two projects claiming the same thing equally is **not** settled by
 order — it goes to the unattributed bucket carrying both, because a guess that
@@ -382,7 +382,7 @@ it belongs.
 `work.runner` names the command that runs a plan. Unset, it is the runtime
 ephor ships wired and ready — choosing one is a property of how *you* work,
 which is why one comes bound rather than demanded
-([§FS-005-dispatch](../requirements.md#fs-005-dispatch-what-ephor-watches-it-can-hand-to-an-agent-runtime),
+([§FS-005-dispatch](functional-spec/FS-005-dispatch.md#fs-005-dispatch-what-ephor-watches-it-can-hand-to-an-agent-runtime),
 [§DA-001-runtime-bound-default](decisions/architectural/DA-001-runtime-bound-default.md#da-001-runtime-bound-default-the-runtime-is-a-bound-default-not-a-named-coupling)):
 
 ```jsonc
@@ -398,7 +398,7 @@ disk — and only running refuses, naming the runner it looked for.
 ### 4.2.1 What a project can say about itself — `ephor.json`
 
 A project that wants to speak places one file at its forest root
-([§FS-006-project-interface.2](../requirements.md#2-the-manifest-is-offered-never-required)).
+([§FS-006-project-interface.2](functional-spec/FS-006-project-interface.md#2-the-manifest-is-offered-never-required)).
 It is **offered, never required**: every field is optional, an empty `{}` is
 valid, and a project that places nothing is fully watchable exactly as it
 stands. It may declare identity hints, its forest's own layout, check and gate
@@ -419,12 +419,12 @@ verbs, task stores, and offers — menu entries you invoke.
 
 | Block | Says | Where it is documented |
 |---|---|---|
-| `identity` | names, aliases, ticket patterns, repositories, territory, addresses — hints your row adopts or overrides ([§FS-008-attribution.1](../requirements.md#1-identity-is-declared-and-the-row-has-the-last-word)) | §4.2.2, [the registry](registry.md#identity-and-territory) |
+| `identity` | names, aliases, ticket patterns, repositories, territory, addresses — hints your row adopts or overrides ([§FS-008-attribution.1](functional-spec/FS-008-attribution.md#1-identity-is-declared-and-the-row-has-the-last-word)) | §4.2.2, [the registry](registry.md#identity-and-territory) |
 | `forest` | the repositories under the root, as the project declares them ([§AR-004-forest.1](architecture/AR-004-forest.md#1-folds)) | §5.1, `EPHOR_REPOS` |
-| `checks` | what fills `check`, `style`, `smoke` ([§FS-006-project-interface.5](../requirements.md#5-checks-are-verbs-and-every-script-is-self-contained)) | §4.2.3 |
-| `ci` | what answers `status`, `failures`, `restart` ([§FS-006-project-interface.6](../requirements.md#6-the-gate-is-the-projects-in-three-verbs)) | §4.2.4 |
-| `tasks` | task stores kept somewhere other than the probed names — `tickets` is the older spelling and is still read ([§FS-006-project-interface.7](../requirements.md#7-the-projects-own-tasks-are-read-where-they-live)) | §4.2.5 |
-| `actions` | menu entries the project offers ([§FS-006-project-interface.9](../requirements.md#9-offers-the-projects-actions)) | §7.6 |
+| `checks` | what fills `check`, `style`, `smoke` ([§FS-006-project-interface.5](functional-spec/FS-006-project-interface.md#5-checks-are-verbs-and-every-script-is-self-contained)) | §4.2.3 |
+| `ci` | what answers `status`, `failures`, `restart` ([§FS-006-project-interface.6](functional-spec/FS-006-project-interface.md#6-the-gate-is-the-projects-in-three-verbs)) | §4.2.4 |
+| `tasks` | task stores kept somewhere other than the probed names — `tickets` is the older spelling and is still read ([§FS-006-project-interface.7](functional-spec/FS-006-project-interface.md#7-the-projects-own-tasks-are-read-where-they-live)) | §4.2.5 |
+| `actions` | menu entries the project offers ([§FS-006-project-interface.9](functional-spec/FS-006-project-interface.md#9-offers-the-projects-actions)) | §7.6 |
 
 An offer is a menu entry in the same shape yours have (§7.2), selected by the
 same `when` language and gated by the same rungs — it sits between the shipped
@@ -442,7 +442,7 @@ checkout has no matter to carry and passes none — and it answers with an exit
 code and, optionally, the envelope it writes to `$EPHOR_ANSWER` (§4.2.6). `0`
 is done, `75` is parked — not applicable now, ask again later — and anything
 else failed
-([§FS-006-project-interface.3](../requirements.md#3-a-summons-environment-in-exit-code-and-answer-out)).
+([§FS-006-project-interface.3](functional-spec/FS-006-project-interface.md#3-a-summons-environment-in-exit-code-and-answer-out)).
 
 Two rules make it safe to read. **The row is authoritative**: identity fields
 are hints your registry adopts where it says nothing of its own and overrides
@@ -463,7 +463,7 @@ ephor schema answer|registry|forge
 
 The schemas are the interface's stability surface: what a release may change
 is answerable by diffing them
-([§FS-006-project-interface.11](../requirements.md#11-the-interface-is-versioned)).
+([§FS-006-project-interface.11](functional-spec/FS-006-project-interface.md#11-the-interface-is-versioned)).
 Each validates offline — nothing in one refers to another by URL.
 
 ### 4.2.2 Territory
@@ -479,12 +479,12 @@ A manifest may hint the same things — `identity.aliases`, `identity.repos`,
 the row adopts a hint where it says nothing of its own and overrides it where
 it does. The row has the last word because a checkout must not be able to claim
 another project's conversations
-([§FS-008-attribution.1](../requirements.md#1-identity-is-declared-and-the-row-has-the-last-word)).
+([§FS-008-attribution.1](functional-spec/FS-008-attribution.md#1-identity-is-declared-and-the-row-has-the-last-word)).
 
 ### 4.2.3 Check verbs — how a project says whether it is well
 
 Three verbs, and a project fills the ones it has
-([§FS-006-project-interface.5](../requirements.md#5-checks-are-verbs-and-every-script-is-self-contained)):
+([§FS-006-project-interface.5](functional-spec/FS-006-project-interface.md#5-checks-are-verbs-and-every-script-is-self-contained)):
 
 | Verb | Probed at the root | Is |
 |---|---|---|
@@ -525,13 +525,13 @@ what that rule exists to prevent.
 How to ask a project's CI is project truth, the same for everyone who works on
 it, so its home is the manifest's `ci` block, with your configuration
 overriding where credentials or variants demand
-([§FS-006-project-interface.6](../requirements.md#6-the-gate-is-the-projects-in-three-verbs)):
+([§FS-006-project-interface.6](functional-spec/FS-006-project-interface.md#6-the-gate-is-the-projects-in-three-verbs)):
 
 | Verb | Answers |
 |---|---|
 | `status` | what the gate is doing, per repository of the forest — the `gate` of an envelope |
 | `failures` | what actually failed: the job, its log, the error where it can be had — the expensive question, asked on demand |
-| `restart` | re-run the gate at the scope asked for — `EPHOR_RESTART` is `failed` (the failing gate and everything downstream of it) or `all` — committing nothing; `75` means "still running, ask again later" ([§FS-005-dispatch.11](../requirements.md#11-a-failure-that-is-not-the-changes-fault-is-restarted-not-fixed)) |
+| `restart` | re-run the gate at the scope asked for — `EPHOR_RESTART` is `failed` (the failing gate and everything downstream of it) or `all` — committing nothing; `75` means "still running, ask again later" ([§FS-005-dispatch.11](functional-spec/FS-005-dispatch.md#11-a-failure-that-is-not-the-changes-fault-is-restarted-not-fixed)) |
 
 **A forge-hosted gate needs no manifest at all**: the provider's own gate
 capability is the shipped default binding, which is why a pull request on
@@ -558,7 +558,7 @@ where your gate is the forge's, there is nothing to write.
 A project may keep its own work in its own checkout — a plan directory, a
 git-backed issue store — and ephor reads a **task store** it recognizes through
 the store's own files, into the same feed under the same rules as anything a
-forge reported ([§FS-006-project-interface.7](../requirements.md#7-the-projects-own-tasks-are-read-where-they-live)):
+forge reported ([§FS-006-project-interface.7](functional-spec/FS-006-project-interface.md#7-the-projects-own-tasks-are-read-where-they-live)):
 
 | Store | Probed | Read as |
 |---|---|---|
@@ -582,7 +582,7 @@ A task in a **final** state is not read at all — final as the store's own
 `states.yaml` says, or, where it declares none, as the runtime's built-in
 default machine says (`pending`, and `completed` final) — because the store is
 the record of the finished work and the feed shows what is open
-([§FS-006-project-interface.7](../requirements.md#7-the-projects-own-tasks-are-read-where-they-live)).
+([§FS-006-project-interface.7](functional-spec/FS-006-project-interface.md#7-the-projects-own-tasks-are-read-where-they-live)).
 A store whose machine cannot be read reports as a source that did not answer,
 exactly like a plan ephor cannot read.
 
@@ -595,7 +595,7 @@ and nothing about a project without one degrades
 Every command ephor summons may write a JSON **envelope** to the file named by
 `$EPHOR_ANSWER`, and that is the only structured channel: standard output is
 never parsed for structure
-([§FS-006-project-interface.4](../requirements.md#4-the-answer-envelope)).
+([§FS-006-project-interface.4](functional-spec/FS-006-project-interface.md#4-the-answer-envelope)).
 
 ```json
 { "v": 1,
@@ -639,7 +639,7 @@ when something is waiting on you.
 ### 4.3.1 Is it still working? — `doctor`
 
 Everything that makes the watch untrue is quiet
-([§FS-010-doctor](../requirements.md#fs-010-doctor-ephor-can-be-asked-whether-it-still-works-and-answers-in-one-screen)):
+([§FS-010-doctor](functional-spec/FS-010-doctor.md#fs-010-doctor-ephor-can-be-asked-whether-it-still-works-and-answers-in-one-screen)):
 a credential that expired, an extension that left `PATH`, a checkout somebody
 deleted. None of them announces itself — each one simply makes a section of
 the feed empty, which is the one thing an empty section must never mean. So
@@ -682,7 +682,7 @@ ephor already ships as the pattern to copy.
 
 The ladder of §7.5 for one project, or every configured one, without a
 sweep and without asking any forge anything
-([§FS-010-doctor.2](../requirements.md#2-the-ladder-is-answerable-on-its-own)).
+([§FS-010-doctor.2](functional-spec/FS-010-doctor.md#2-the-ladder-is-answerable-on-its-own)).
 It is the cheap answer to "why is this action not offered here".
 
 ```bash
@@ -703,7 +703,7 @@ refreshed says exactly that rather than reporting its sources as silent.
 
 Under the ladder comes **who can be asked** — the roster the bound runtime
 enumerates, one entry per agent-and-model combination it can actually serve
-([§FS-005-dispatch.14](../requirements.md#14-who-does-the-work-is-chosen-and-defaulted-per-project)):
+([§FS-005-dispatch.14](functional-spec/FS-005-dispatch.md#14-who-does-the-work-is-chosen-and-defaulted-per-project)):
 
 ```text
 who can be asked (rhei)
@@ -731,7 +731,7 @@ JSON shape stays unchanged.
 ### 4.4 What a failing source does
 
 A provider that cannot deliver **fails explicitly**
-([§FS-001-forge-interface.6](../requirements.md#6-a-source-that-did-not-answer-says-so-and-says-which-kind-of-not)).
+([§FS-001-forge-interface.6](functional-spec/FS-001-forge-interface.md#6-a-source-that-did-not-answer-says-so-and-says-which-kind-of-not)).
 It never substitutes an empty answer, because an empty section has to mean
 "nothing is waiting" and never "this source could not be read".
 
@@ -770,7 +770,7 @@ they need in **one request each**, whatever the number of roles, labels, or
 repositories a source names: every question rides in that request under its own
 alias, and repeated `repo:` qualifiers put a source's repositories in one
 question rather than one apiece
-([§FS-001-forge-interface.8](../requirements.md#8-a-refresh-is-asked-in-the-cheapest-form-the-forge-offers)).
+([§FS-001-forge-interface.8](functional-spec/FS-001-forge-interface.md#8-a-refresh-is-asked-in-the-cheapest-form-the-forge-offers)).
 Those requests are metered against GitHub's GraphQL allowance — five thousand
 points an hour, one point per request — and not against its search allowance,
 which is thirty requests a *minute* and is what a per-role, per-repository,
@@ -827,7 +827,7 @@ searches: not *which issues am I in* but *which issues carry this word* —
 Each label is one `label:<name> state:open` search, so issues
 nobody has ever touched arrive too, and each lands under the role its author
 gives it: **My Issues** where you opened it, **Participating** otherwise
-([§FS-001-forge-interface.1](../requirements.md#1-capabilities)). Only open
+([§FS-001-forge-interface.1](functional-spec/FS-001-forge-interface.md#1-capabilities)). Only open
 issues are asked for — a label search that took the closed too would spend its
 `limit` on history rather than on the queue. And a label search that comes back
 with exactly `limit` issues **fails the source** rather than showing you part
@@ -837,14 +837,14 @@ and is refused when it is read.
 
 **`custom-status`** runs its command as a summons like everything else ephor
 asks of a project
-([§FS-006-project-interface.3](../requirements.md#3-a-summons-environment-in-exit-code-and-answer-out)):
+([§FS-006-project-interface.3](functional-spec/FS-006-project-interface.md#3-a-summons-environment-in-exit-code-and-answer-out)):
 it runs in `cwd`, it is told about the project in the usual `EPHOR_*`
 variables ([§7.3](#73-the-environment)), and its exit code is read the one
 way — `0` reported, non-zero failed, `75` nothing to report just now.
 
 With `format: "answer"` the command writes the envelope to the file named by
 `$EPHOR_ANSWER`
-([§FS-006-project-interface.4](../requirements.md#4-the-answer-envelope)); each
+([§FS-006-project-interface.4](functional-spec/FS-006-project-interface.md#4-the-answer-envelope)); each
 `matters[]` entry becomes an item, and an answer carrying only a `summary`
 becomes one status line. This is the form every other verb speaks, and the one
 to write today.
@@ -864,7 +864,7 @@ its configured format says, because writing one is unambiguous.
 you answered it — with a message afterwards, with a reaction on the message, or
 by ticking the task it was waiting on. This is ephor's policy, applied
 identically over every provider
-([§FS-001-forge-interface.3](../requirements.md#3-policy-lives-above-the-interface-never-in-an-implementation)),
+([§FS-001-forge-interface.3](functional-spec/FS-001-forge-interface.md#3-policy-lives-above-the-interface-never-in-an-implementation)),
 which is why reacting or ticking from the inbox is often enough to clear an
 item. Task state outranks the last word in both directions: an open box awaits
 you however the conversation ended, and a ticked one settles it even where
@@ -891,7 +891,7 @@ only way some things reach the feed at all:
 It is meant to overlap the others, and overlapping costs you nothing: a pull
 request two sources both found is one row, keeping the fuller report and
 carrying over the reason only the notice knew
-([§FS-003-feed-categories.5](../requirements.md#5-one-subject-is-one-row-however-many-sources-reported-it)).
+([§FS-003-feed-categories.5](functional-spec/FS-003-feed-categories.md#5-one-subject-is-one-row-however-many-sources-reported-it)).
 So a pull request you were already tracking does not turn into two rows when
 GitHub also mentions it — it turns into the same row, now saying that your team
 was named on it.
@@ -929,7 +929,7 @@ row.
 **Cost.** One paginated API call per refresh, whatever the size of your feed —
 it is the cheapest source ephor has. If more notices than `limit` match, the
 source **fails** rather than showing you an unknown fraction of them
-([§FS-001-forge-interface.6](../requirements.md#6-a-source-that-did-not-answer-says-so-and-says-which-kind-of-not)):
+([§FS-001-forge-interface.6](functional-spec/FS-001-forge-interface.md#6-a-source-that-did-not-answer-says-so-and-says-which-kind-of-not)):
 its whole value is that you can believe it.
 
 ---
@@ -950,7 +950,7 @@ work gathered under it: check it out — with `ephor checkout` or by hand — an
 the next read picks it up, named for the directory it sits in. A branch the row
 names keeps the row's word on it (its ticket, whether it is `active`); a branch
 only the disk knows is shown as inactive and cannot widen what the project
-claims as its own ([§FS-008-attribution.2](../requirements.md#2-two-stages-one-engine)).
+claims as its own ([§FS-008-attribution.2](functional-spec/FS-008-attribution.md#2-two-stages-one-engine)).
 
 ### 6.1 The categories
 
@@ -988,7 +988,7 @@ past the window. Finished work never awaits a response: it is news, not a task.
 ```
 
 **The work stands on rows of its own beneath the matter**
-([§FS-005-dispatch.23](../requirements.md#23-work-stands-on-rows-of-its-own-beneath-the-row-it-is-about)):
+([§FS-005-dispatch.23](functional-spec/FS-005-dispatch.md#23-work-stands-on-rows-of-its-own-beneath-the-row-it-is-about)):
 one per ticket the plan holds open, the one the runtime parked (`⚠ … waiting on
 you`) first, each saying when it was asked for where the ledger knows. Where
 nothing is open there is one row for what the last ticket decided — `✓ fix-gate
@@ -1108,7 +1108,7 @@ A box also answers the thread. An unresolved task keeps its conversation
 awaiting you however it ended, and a resolved one settles it even though a
 robot had the last word — which is what keeps a pull request whose boxes are
 all ticked from sitting in the inbox forever
-([§FS-003-feed-categories.4](../requirements.md#4-a-conversation-is-answered-in-whatever-form-the-forge-recorded-it)).
+([§FS-003-feed-categories.4](functional-spec/FS-003-feed-categories.md#4-a-conversation-is-answered-in-whatever-form-the-forge-recorded-it)).
 
 **Gate screen** (`c`) — the per-repository counts spelled out and the forge's
 own reasons for refusing, verbatim: `j`/`k` scroll, `x` actions, `o` open,
@@ -1136,7 +1136,7 @@ branch row has none.
 ### 7.1 Quick actions
 
 Entries ephor has without being told, on an item where it already knows what
-the problem is ([§FS-004-quick-actions](../requirements.md#fs-004-quick-actions-a-problem-ephor-recognizes-arrives-with-the-action-for-it)).
+the problem is ([§FS-004-quick-actions](functional-spec/FS-004-quick-actions.md#fs-004-quick-actions-a-problem-ephor-recognizes-arrives-with-the-action-for-it)).
 They lead the menu, and configuration adds to them rather than replacing them.
 
 Today, six:
@@ -1147,7 +1147,7 @@ only where it would work: the gate is failing, the item still names its pull
 request, and the tool that reaches it is installed.
 
 **`⟳ restart what failed`** and **`⟳ restart the whole gate`** on an item
-carrying a gate ([§FS-004-quick-actions.9](../requirements.md#9-a-gate-is-offered-the-restart-in-two-shapes)).
+carrying a gate ([§FS-004-quick-actions.9](functional-spec/FS-004-quick-actions.md#9-a-gate-is-offered-the-restart-in-two-shapes)).
 The first is the ordinary case — a runner died, a mirror was unreachable, the
 same flake landed on the same job again — and it asks for that work back
 without re-running the whole gate. *How much* less is the forge's to say, and
@@ -1175,11 +1175,11 @@ Read the row before you press it. Where a forge starts its gate as a whole
 rather than job by job, *restart what failed* is the failing gate **and
 everything downstream of it** — the entry says `restart what failed, and
 downstream` there, because on a gate spanning a tree that can be most of the
-tree ([§FS-006-project-interface.6](../requirements.md#6-the-gate-is-the-projects-in-three-verbs)).
+tree ([§FS-006-project-interface.6](functional-spec/FS-006-project-interface.md#6-the-gate-is-the-projects-in-three-verbs)).
 
 **`⤴ rebase onto <main> (13 behind as of Jul 28)`** wherever there is a branch
 workspace on disk and the project names a `main_branch` to replay onto
-([§FS-004-quick-actions.6](../requirements.md#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase)).
+([§FS-004-quick-actions.6](functional-spec/FS-004-quick-actions.md#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase)).
 It is offered whether the branch measured behind or level — `(level as of Jul
 28)`, or just `(level)` where no fetch was ever dated — because that reading is
 only as fresh as the last fetch and this is the move that would refresh it: the
@@ -1198,7 +1198,7 @@ there is no base to name, and the entry would have nothing to say.
 
 **`⤴ rebase onto <remote>/<branch> (2 behind as of Aug 11)`** on the same
 checkouts and the same rows, about its own **published copy** instead —
-somebody else pushed to your branch ([§FS-004-quick-actions.8](../requirements.md#8-a-branch-that-trails-its-own-published-copy-is-offered-the-rebase-onto-it)).
+somebody else pushed to your branch ([§FS-004-quick-actions.8](functional-spec/FS-004-quick-actions.md#8-a-branch-that-trails-its-own-published-copy-is-offered-the-rebase-onto-it)).
 It follows the entry above in both respects: offered wherever there is a copy
 to replay onto, behind it or level, and dated from that copy's own ref rather
 than the base's — a fetch dates only the refs it actually brought down, so the
@@ -1216,7 +1216,7 @@ entry above under another name.
 
 **`⇣ check out <dir>`** on an item whose branch workspace is *not* on disk, for
 a project that keeps one checkout per branch
-([§FS-004-quick-actions.7](../requirements.md#7-a-workspace-that-is-not-there-is-offered-the-checkout)).
+([§FS-004-quick-actions.7](functional-spec/FS-004-quick-actions.md#7-a-workspace-that-is-not-there-is-offered-the-checkout)).
 It runs `ephor checkout`, which needs nothing configured — the project's
 `branch_root_template` says where the workspace goes, its type says which
 repositories it holds, and its `main_branch` says what a new branch grows from.
@@ -1237,7 +1237,7 @@ whether one is whole.
 
 **`C` on the row runs it too.** The row already says `∅ not checked out`, so
 the move is a key there rather than only an entry in the menu opened over it
-([§FS-004-quick-actions.7.2](../requirements.md#72-the-offer-is-a-key-on-the-row-that-says-the-workspace-is-missing)):
+([§FS-004-quick-actions.7.2](functional-spec/FS-004-quick-actions.md#72-the-offer-is-a-key-on-the-row-that-says-the-workspace-is-missing)):
 on the matter's row, on the work rows beneath it, and on the branch's own row,
 including the rows under *(not linked to a branch)*, which is where a matter
 whose branch nobody has checked out usually sits. It is the same entry the menu
@@ -1250,12 +1250,12 @@ place work can be handed to, not only a pile of repositories: the runtime is
 asked for a project of its own in the work root ephor resolves — `panta/` under
 the workspace, unless `work.root` says otherwise — and ephor's state machine
 goes in beside what it wrote
-([§FS-006-project-interface.7](../requirements.md#7-the-projects-own-tasks-are-read-where-they-live)).
+([§FS-006-project-interface.7](functional-spec/FS-006-project-interface.md#7-the-projects-own-tasks-are-read-where-they-live)).
 The directory ignores itself, so `git status` in the checkout is unchanged by
 it. A workspace that was already there is owed this too — made before ephor did
 this, or made by your own `checkout` command — so asking for the checkout again
 on a whole workspace is how a missing store is repaired
-([§FS-004-quick-actions.7.1](../requirements.md#71-a-workspace-that-is-there-is-still-owed-its-store)):
+([§FS-004-quick-actions.7.1](functional-spec/FS-004-quick-actions.md#71-a-workspace-that-is-there-is-still-owed-its-store)):
 it says `already checked out` and then `task store at <dir>` if it made one.
 Where the runner is not on `PATH`, ephor writes the store it can and says on
 standard error what it could not do; the checkout itself still succeeds.
@@ -1312,7 +1312,7 @@ action can be offered exactly where a recipe would be.
 
 **An entry may ask for work instead of running a command.** Write an `agent`
 block and no `command`, and the entry becomes a ticket rather than a process
-([§FS-005-dispatch.1](../requirements.md#1-a-recipe-decides-which-items-deserve-work-and-what-to-ask-for)):
+([§FS-005-dispatch.1](functional-spec/FS-005-dispatch.md#1-a-recipe-decides-which-items-deserve-work-and-what-to-ask-for)):
 
 ```jsonc
 { "id": "changelog", "icon": "✎", "description": "write the changelog bullet",
@@ -1341,7 +1341,7 @@ neither, is refused when the file is read.
 **The checkout dependency.** A project may define one `checkout` command whose
 contract is to make `$EPHOR_WORKSPACE` exist — ephor verifies the directory
 afterwards rather than trusting it
-([§FS-006-project-interface.8](../requirements.md#8-the-checkout-contract)). Actions marked `requires_checkout` are
+([§FS-006-project-interface.8](functional-spec/FS-006-project-interface.md#8-the-checkout-contract)). Actions marked `requires_checkout` are
 gated on it: when the workspace is missing the menu annotates them *(will check
 out first)* and running one chains checkout → action. On an item linked to no
 branch there is no workspace to make, so they show *(unavailable)* with the
@@ -1375,12 +1375,12 @@ set it themselves: a replay asks nothing.
 | `EPHOR_TITLE`, `EPHOR_URL`, `EPHOR_STATE` | display fields, empty when absent |
 | `EPHOR_REPO`, `EPHOR_NUMBER` | best-effort `owner/name` and number |
 | `EPHOR_RAW` | the item's whole raw JSON, for `jq` |
-| `EPHOR_ANSWER` | a file to write a structured answer to, if the command has one ([§FS-006-project-interface.4](../requirements.md#4-the-answer-envelope)) |
+| `EPHOR_ANSWER` | a file to write a structured answer to, if the command has one ([§FS-006-project-interface.4](functional-spec/FS-006-project-interface.md#4-the-answer-envelope)) |
 | `EPHOR_REPOS` | the workspace's repositories, one per line, in the order the project declares — what to fold over ([§AR-004-forest.1](architecture/AR-004-forest.md#1-folds)) |
 
 Exit codes are read the same way wherever a command is summoned from: `0`
 done, non-zero failed, and `75` **parked** — not applicable now, ask again
-later ([§FS-006-project-interface.3](../requirements.md#3-a-summons-environment-in-exit-code-and-answer-out)).
+later ([§FS-006-project-interface.3](functional-spec/FS-006-project-interface.md#3-a-summons-environment-in-exit-code-and-answer-out)).
 
 ### 7.4 One-off commands
 
@@ -1388,12 +1388,12 @@ The last entry of every menu is **`⌨ run a command here…`**. Type a shell
 command and it runs exactly as a configured one does — same checkout, same
 environment, same handover of the terminal. The menu opens even when nothing is
 configured, because that is when this entry matters most
-([§FS-005-dispatch.10](../requirements.md#10-what-ephor-offers-is-not-a-limit-on-what-can-be-asked)).
+([§FS-005-dispatch.10](functional-spec/FS-005-dispatch.md#10-what-ephor-offers-is-not-a-limit-on-what-can-be-asked)).
 
 ### 7.5 Why something is not offered
 
 What a project can do is a ladder, and every feature names the rungs it needs
-([§FS-006-project-interface.10](../requirements.md#10-capability-rung-by-rung)).
+([§FS-006-project-interface.10](functional-spec/FS-006-project-interface.md#10-capability-rung-by-rung)).
 A rung you do not hold degrades exactly the features that named it, and the
 reason is shown where the feature would have been — never an error, never
 silence. `ephor capabilities` prints the whole table for a project, which is
@@ -1427,7 +1427,7 @@ nobody checks would be worse than one nobody wrote.
 ### 7.6 Four places a menu entry comes from
 
 The menu is assembled in provenance order
-([§FS-006-project-interface.9](../requirements.md#9-offers-the-projects-actions)):
+([§FS-006-project-interface.9](functional-spec/FS-006-project-interface.md#9-offers-the-projects-actions)):
 
 1. **what ephor recognized** — a source's own quick actions (§7.1), the rebase
    on a branch that is here, the checkout on a workspace that is not there;
@@ -1436,10 +1436,10 @@ The menu is assembled in provenance order
 3. **what you configured** — `actions` and `projects.<id>.actions` (§7.2);
 4. **what can be handed over** — the recipes that apply to this item (§8.3),
    marked with `→` and the hand that would get them
-   ([§FS-005-dispatch.1](../requirements.md#1-a-recipe-decides-which-items-deserve-work-and-what-to-ask-for)).
+   ([§FS-005-dispatch.1](functional-spec/FS-005-dispatch.md#1-a-recipe-decides-which-items-deserve-work-and-what-to-ask-for)).
 
 On an entry that hands work over, **`t` opens the picker**
-([§FS-005-dispatch.14](../requirements.md#14-who-does-the-work-is-chosen-and-defaulted-per-project)):
+([§FS-005-dispatch.14](functional-spec/FS-005-dispatch.md#14-who-does-the-work-is-chosen-and-defaulted-per-project)):
 the roster's hands in one column and, beside a hand that declares efforts,
 those efforts in a second — absent where it declares none, which is every
 hand on a machine with no model profiles. Arrows move between the columns,
@@ -1477,7 +1477,7 @@ never runs on its own.
 An item plus a **recipe** becomes a ticket in a rhei plan, written into the
 checkout that item's branch resolves to. ephor writes files and nothing else —
 no comment, no push, no pull request — and then keeps the ledger
-([§FS-005-dispatch](../requirements.md#fs-005-dispatch-what-ephor-watches-it-can-hand-to-an-agent-runtime)).
+([§FS-005-dispatch](functional-spec/FS-005-dispatch.md#fs-005-dispatch-what-ephor-watches-it-can-hand-to-an-agent-runtime)).
 
 ### 8.1 The loop
 
@@ -1615,7 +1615,7 @@ what it says. With it, a ticket written from this recipe gets its run without
 anyone pressing anything: dispatch starts it in the same breath, and
 `ephor work run --due` — which the work-sync timer runs — starts anything born
 elsewhere
-([§FS-005-dispatch.24](../requirements.md#24-work-nobody-has-to-start-starts-itself)).
+([§FS-005-dispatch.24](functional-spec/FS-005-dispatch.md#24-work-nobody-has-to-start-starts-itself)).
 The deliberate act moves one step earlier and is made once, when you adopt the
 recipe. Leaving it out is the default and means what it always did: the run is
 yours to start. It is said on the thing that hands work over and nowhere else
@@ -1641,7 +1641,7 @@ A project's own tasks carry no role at all, so a `roles` selector — non-empty
 by definition — excludes every one of them; write a task recipe with `kinds:
 ["task"]` and no `roles`. Where a recipe is refused this way, `ephor work
 offers` names it: which field refused, and why, beside the offers it found
-([§FS-005-dispatch.27](../requirements.md#27-an-offer-that-a-selector-refused-says-why)).
+([§FS-005-dispatch.27](functional-spec/FS-005-dispatch.md#27-an-offer-that-a-selector-refused-says-why)).
 
 `failing` and `blocked` are separate because they ask for different work: jobs
 that failed are something a checkout can fix, while a forge refusing an
@@ -1701,7 +1701,7 @@ reopened, and only running refuses, naming the runner it looked for
 
 **Who does which action** — `work.hands` maps an action's id to the hand that
 does it, with `default` answering for every id it does not name
-([§FS-006-project-interface.9](../requirements.md#9-offers-the-projects-actions)).
+([§FS-006-project-interface.9](functional-spec/FS-006-project-interface.md#9-offers-the-projects-actions)).
 A hand id is one of the names the roster prints
 ([§4.3.2](#432-what-a-project-can-do--capabilities)), optionally at one of the
 efforts it declares. Every printed id is unique: where a model profile in the
@@ -1787,7 +1787,7 @@ ticket, with no ephor machinery involved beyond what dispatch already does.
 If you stop reading here, that is the whole fix, and the better one.
 
 Without a model profile the hand still binds
-([§FS-005-dispatch.14](../requirements.md#14-who-does-the-work-is-chosen-and-defaulted-per-project)):
+([§FS-005-dispatch.14](functional-spec/FS-005-dispatch.md#14-who-does-the-work-is-chosen-and-defaulted-per-project)):
 the ticket pins nothing — dispatch says so in a note — and `ephor work run`
 carries the choice as the runtime's own `--agent` / `--agent-mode` flags,
 resolved when the run is invoked, which is the same moment the runtime reads
@@ -1850,7 +1850,7 @@ analysis. A state machine can run one before the agent: rhei calls it a
 
 For that, the script has to be told which item it is about, and prose is not an
 input. So every ticket also carries the item as structured metadata
-([§FS-005-dispatch.8](../requirements.md#8-the-ticket-carries-the-item-as-data-not-only-as-prose)),
+([§FS-005-dispatch.8](functional-spec/FS-005-dispatch.md#8-the-ticket-carries-the-item-as-data-not-only-as-prose)),
 under the same names a shell action gets in its environment:
 
 ```markdown
@@ -1967,7 +1967,7 @@ it a state the runtime will not leave on its own —
 — and let it route itself there: the agent writes `NEEDS-HUMAN: <question>` as
 the first line of its artifact, and the program that reads that artifact exits
 `2` for it. `rhei run` then finishes everything else in the plan and stops at
-this ticket ([§FS-005-dispatch.9](../requirements.md#9-work-that-stops-for-a-person-says-so-where-the-person-is-looking)).
+this ticket ([§FS-005-dispatch.9](functional-spec/FS-005-dispatch.md#9-work-that-stops-for-a-person-says-so-where-the-person-is-looking)).
 
 ephor reads `gating` out of the machine, so the item's row says
 `⚠ fix-gate · waiting on you · cause-2` ahead of anything else, and the work
@@ -1984,7 +1984,7 @@ record of this item's work, where the next round can read them.
 **A failure that was never the change's fault.** A runner dies, a mirror is
 unreachable, the same flake lands again — and what the item needs is not a fix
 but another run
-([§FS-005-dispatch.11](../requirements.md#11-a-failure-that-is-not-the-changes-fault-is-restarted-not-fixed)).
+([§FS-005-dispatch.11](functional-spec/FS-005-dispatch.md#11-a-failure-that-is-not-the-changes-fault-is-restarted-not-fixed)).
 A loop that cannot make that move pays for it twice: a model diagnoses
 something that was never wrong, and a commit gets landed whose only purpose was
 to make the gate start again.
@@ -2132,7 +2132,7 @@ rather than scrolling away with it.
 The same recipe pressed twice, an ask on the wrong item, a question the item
 moved past — not every ticket should run to its end. `c` on the work screen
 takes one back
-([§FS-005-dispatch.16](../requirements.md#16-work-that-should-not-go-on-is-cancelled-and-the-plan-says-so)):
+([§FS-005-dispatch.16](functional-spec/FS-005-dispatch.md#16-work-that-should-not-go-on-is-cancelled-and-the-plan-says-so)):
 the open tickets are numbered, `j`/`k` or a digit picks one, and a one-line
 prompt asks why — the reason becomes the ticket's result, `Enter` on an empty
 line records that no reason was given, `Esc` keeps the ticket.
@@ -2140,7 +2140,7 @@ line records that no reason was given, `Esc` keeps the ticket.
 `c` on a ticket's own row in the inbox does the same thing with no picking at
 all: the row *is* the ticket, so the prompt asks straight away
 ([§6.2](#62-reading-a-row),
-[§FS-005-dispatch.23](../requirements.md#23-work-stands-on-rows-of-its-own-beneath-the-row-it-is-about)).
+[§FS-005-dispatch.23](functional-spec/FS-005-dispatch.md#23-work-stands-on-rows-of-its-own-beneath-the-row-it-is-about)).
 
 ```
   what has been asked for   — which one to take back?
@@ -2256,18 +2256,18 @@ ephor work states
   that is absent, empty, or unreadable falls back to today's order rather than
   failing, and the sweep says which of the three happened, along with any id
   the file named that matched nothing
-  ([§FS-005-dispatch.26](../requirements.md#26-an-ordering-already-made-can-be-read-and-a-limit-bounds-what-runs)).
+  ([§FS-005-dispatch.26](functional-spec/FS-005-dispatch.md#26-an-ordering-already-made-can-be-read-and-a-limit-bounds-what-runs)).
 - **`run`** groups by work root and names the plans ephor opened, so a runtime
   project you keep in the same checkout for your own work is not swept in. One
   root at a time: tickets in one root are about one checkout, and two agents in
   one working tree edit the same files. Pass runtime flags after `--`.
   It **starts the run detached** and prints the id it was given
-  ([§FS-005-dispatch.20](../requirements.md#20-a-run-of-the-runtime-starts-beneath-the-screen-and-is-watched-by-attaching));
+  ([§FS-005-dispatch.20](functional-spec/FS-005-dispatch.md#20-a-run-of-the-runtime-starts-beneath-the-screen-and-is-watched-by-attaching));
   `--watch` keeps your terminal and watches the run here, which is also what a
   runner with no detached shape does unasked, saying so.
   `--due` is the other question entirely: not "run this item's work" but
   "start whatever should be running and is not"
-  ([§FS-005-dispatch.24](../requirements.md#24-work-nobody-has-to-start-starts-itself)).
+  ([§FS-005-dispatch.24](functional-spec/FS-005-dispatch.md#24-work-nobody-has-to-start-starts-itself)).
   It reads the world rather than the ledger — every work root, the plans in
   it, the machine's own words about their states, and the runtime's lock — and
   starts a detached run on each root holding an open, unclaimed, unparked
@@ -2340,7 +2340,7 @@ plan has been deleted is reported as missing, never repaired.
 
 A rebase is two git commands and a question. The commands are the same every
 time and a model is not needed to type them, so ephor runs them first and hands
-over only the question ([§FS-005-dispatch.12](../requirements.md#12-work-an-algorithm-can-finish-does-not-start-with-a-model)).
+over only the question ([§FS-005-dispatch.12](functional-spec/FS-005-dispatch.md#12-work-an-algorithm-can-finish-does-not-start-with-a-model)).
 
 ```bash
 ephor rebase                                  # the working directory
@@ -2368,7 +2368,7 @@ and forcing is a decision that belongs to a state that says so
 
 **`--upstream`** replays onto the other ref: each branch's own published copy,
 resolved per repository from its `HEAD`
-([§FS-004-quick-actions.8](../requirements.md#8-a-branch-that-trails-its-own-published-copy-is-offered-the-rebase-onto-it)).
+([§FS-004-quick-actions.8](functional-spec/FS-004-quick-actions.md#8-a-branch-that-trails-its-own-published-copy-is-offered-the-rebase-onto-it)).
 That is a different ref in every repository, so it takes no branch name and
 excludes `--onto`. It is what answers the checkout a poly-repo workspace
 actually leaves behind: a branch grown with `git worktree add -b`, pushed, and
@@ -2419,7 +2419,7 @@ Often the next move on a matter is not a change but a reply. The shipped
 `answer` recipe asks for one, and it needs no checkout: the plan is written at
 the branch workspace where one resolves and at the forest root where none
 does, so a conversation is answerable on a project whose branch is not on this
-machine ([§FS-005-dispatch.13](../requirements.md#13-a-communication-is-work-too-and-its-answer-comes-back-as-a-proposal)).
+machine ([§FS-005-dispatch.13](functional-spec/FS-005-dispatch.md#13-a-communication-is-work-too-and-its-answer-comes-back-as-a-proposal)).
 
 The reply is asked for as a file of its own — `{reply}` in a brief expands to
 it, `<work root>/runtime/ephor/<plan>.reply.md` — and **nothing posts it**. The
@@ -2441,7 +2441,7 @@ through, and then the card says `posted` and the key stops being offered: the
 file is moved aside so the same words cannot go out twice.
 
 `p` appears only where the channel **said** it can carry a reply
-([§FS-007-matters.4](../requirements.md#4-a-channel-says-what-it-can-do)) — a
+([§FS-007-matters.4](functional-spec/FS-007-matters.md#4-a-channel-says-what-it-can-do)) — a
 forge declares the `replies` capability and puts a `reply` descriptor on the
 threads that take one ([§10.1](#101-a-forge-out-of-process)). Where it does
 not, the card is still there and names the file: the proposal is what you copy,
@@ -2454,7 +2454,7 @@ returns exactly where you were, and every screen's footer says so. The
 exceptions are the things you are already inside — a prompt, an open action
 menu, the thread screen's reaction picker — where `;` is a keystroke meant for
 them. It is the answer to "what is ephor doing right now", in one place
-([§FS-005-dispatch.15](../requirements.md#15-every-operation-is-visible-in-one-place)):
+([§FS-005-dispatch.15](functional-spec/FS-005-dispatch.md#15-every-operation-is-visible-in-one-place)):
 
 ```
  ephor — operations
@@ -2473,7 +2473,7 @@ them. It is the answer to "what is ephor doing right now", in one place
 
 Within one operation the tickets read in order of urgency: what waits on you
 first — it is the one part of the work nobody else will move
-([§FS-005-dispatch.9](../requirements.md#9-work-that-stops-for-a-person-says-so-where-the-person-is-looking))
+([§FS-005-dispatch.9](functional-spec/FS-005-dispatch.md#9-work-that-stops-for-a-person-says-so-where-the-person-is-looking))
 — then what a dead run dropped, then what runs, then claims, then the queue.
 Each ticket line carries the matter's own title beside the ids, so a row
 means something before you open it. And a ticket is a ticket at any depth:
@@ -2485,7 +2485,7 @@ the row carries the id it calls itself, `a` puts the runner's own surface on
 it, and — where the runner has one — the row shows the command that *stops* it,
 in the runner's own words. Shown, never run: a key that stopped a run would be
 a channel to the run ephor promised never to hold
-([§FS-005-dispatch.20](../requirements.md#20-a-run-of-the-runtime-starts-beneath-the-screen-and-is-watched-by-attaching)).
+([§FS-005-dispatch.20](functional-spec/FS-005-dispatch.md#20-a-run-of-the-runtime-starts-beneath-the-screen-and-is-watched-by-attaching)).
 `ephor operations --json` carries the same four facts — `run`, `control_url`,
 `attach`, `stop`.
 
@@ -2520,7 +2520,7 @@ reported, not offered as a key.
 ticket is the run exiting — nothing else was schedulable — so the lock goes
 free and no assignee marks the spot: parking is a transition, not a taking.
 The ticket stays on the board all the same, *waiting on you*, until you move
-it ([§FS-005-dispatch.9](../requirements.md#9-work-that-stops-for-a-person-says-so-where-the-person-is-looking)).
+it ([§FS-005-dispatch.9](functional-spec/FS-005-dispatch.md#9-work-that-stops-for-a-person-says-so-where-the-person-is-looking)).
 A run that died mid-slot leaves a row too, but not that one: the journal it
 left still names the ticket it was holding, and that ticket shows as
 **dropped by a run that died** — a parked ticket is a question about the
@@ -2559,7 +2559,7 @@ names that plan too.
 
 The refresh reports here **additionally** — the header line on whatever screen
 you are reading keeps carrying it
-([§FS-001-forge-interface.7](../requirements.md#7-a-fetch-runs-beneath-the-reading-never-in-front-of-it)).
+([§FS-001-forge-interface.7](functional-spec/FS-001-forge-interface.md#7-a-fetch-runs-beneath-the-reading-never-in-front-of-it)).
 With no runtime bound the board is the refresh row, ephor's own jobs, and the
 workable rung's sentence, which is the shape most installations see — correct,
 not broken. A job needs no runtime: it is ephor running a command.
@@ -2568,7 +2568,7 @@ The board, and every work row in the feed, keeps itself current: between
 key reads ephor glances at the plans and run artifacts it already knows by
 name (a clock gates the stats, a changed timestamp gates the re-read), so a
 ticket the runtime parks for you resurfaces when it parks
-([§FS-005-dispatch.15.1](../requirements.md#151-the-board-keeps-itself-current))
+([§FS-005-dispatch.15.1](functional-spec/FS-005-dispatch.md#151-the-board-keeps-itself-current))
 — no refresh needed, and no forge asked anything. A run *starting* writes no
 file that glance would notice — the OS takes its lock and that is the whole
 event — so while the board is open the locks are probed too, and a root that
@@ -2581,7 +2581,7 @@ at each project's checkout and again in every branch workspace on disk — so
 a plan written by hand, a project's own planning tickets, and a run somebody
 started in another terminal on a root ephor never dispatched into all appear,
 judged by the same artifacts as dispatched work
-([§FS-005-dispatch.15](../requirements.md#15-every-operation-is-visible-in-one-place)).
+([§FS-005-dispatch.15](functional-spec/FS-005-dispatch.md#15-every-operation-is-visible-in-one-place)).
 An operation ephor never dispatched has no matter behind it, so `Enter`
 opens its plan — titled in the plan's own words — instead of a thread.
 The walk runs when the board is built (opened, or rebuilt because the
@@ -2595,7 +2595,7 @@ Some menu entries need nobody watching. A replay across a poly-repo checkout
 weeks behind its base is minutes of output that asks nothing and decides
 nothing; handing it the whole interface costs you the watch and then asks for
 a keypress to give the screen back. Those entries run as **jobs**
-([§FS-005-dispatch.17](../requirements.md#17-a-move-that-needs-nobody-runs-beneath-the-screen)).
+([§FS-005-dispatch.17](functional-spec/FS-005-dispatch.md#17-a-move-that-needs-nobody-runs-beneath-the-screen)).
 
 Press `⤴ rebase onto master` and the menu closes onto the row you were on,
 with one line in the status bar:
@@ -2716,7 +2716,7 @@ An entry may say `"autorun": true` beside its `when`, in any of the three
 homes, and it means on a workflow what it means on a recipe (§8.3): the
 deliberate act moves one step earlier and is made once, when you adopt the
 entry
-([§FS-005-dispatch.28](../requirements.md#28-a-workflow-entry-can-ask-for-the-same-thing-a-recipe-can)).
+([§FS-005-dispatch.28](functional-spec/FS-005-dispatch.md#28-a-workflow-entry-can-ask-for-the-same-thing-a-recipe-can)).
 
 ```json
 { "id": "fix-task", "icon": "⛬", "description": "fix this task end to end",
@@ -2858,7 +2858,7 @@ and stays the floor. But if you are inside a multiplexer, or in a terminal that
 opens windows on request, there is a better move: the program in a window of
 its own, ephor still on screen, and *open* from then on meaning **bring that
 window forward**
-([§FS-005-dispatch.22](../requirements.md#22-a-window-of-the-readers-own-where-one-is-bound)).
+([§FS-005-dispatch.22](functional-spec/FS-005-dispatch.md#22-a-window-of-the-readers-own-where-one-is-bound)).
 
 The window is a **seam**, with the anatomy every seam has: two commands, one
 that opens a window running a given command and prints a handle for the window
@@ -2923,7 +2923,7 @@ Kept apart they forget each other — you open the menu on an item whose rebase
 is already replaying, press it, and either get refused by a lock or start a
 second one. So **every entry that has work going about its subject is marked
 running, and set apart**
-([§FS-005-dispatch.21](../requirements.md#21-what-is-already-going-is-shown-where-it-could-be-started-again)):
+([§FS-005-dispatch.21](functional-spec/FS-005-dispatch.md#21-what-is-already-going-is-shown-where-it-could-be-started-again)):
 
 ```
  actions — Widen the retry window
@@ -2981,7 +2981,7 @@ log is the exception — that is text this command prints.
 `R` on the work screen, and `ephor work run`, both print one line saying the run
 began and what it is called — and what watches it afterwards is the runner's own
 surface, opened on the run
-([§FS-005-dispatch.20](../requirements.md#20-a-run-of-the-runtime-starts-beneath-the-screen-and-is-watched-by-attaching)).
+([§FS-005-dispatch.20](functional-spec/FS-005-dispatch.md#20-a-run-of-the-runtime-starts-beneath-the-screen-and-is-watched-by-attaching)).
 Leaving that surface **detaches and never stops the run**: the reflex that ends
 a foreground command must not end a run another screen may also be watching.
 Stopping stays out of the screen — the row carries the runner's own stop
@@ -2994,7 +2994,7 @@ An issue has no branch. On a project whose checkouts are one per branch, that
 leaves work about the issue with nowhere to be done — the project root is the
 directory those workspaces sit in, not a checkout of anything — so an entry
 that *hands work over* can say which branch its work belongs on
-([§FS-005-dispatch.25](../requirements.md#25-work-about-a-matter-with-no-branch-can-mint-the-branch-it-needs)):
+([§FS-005-dispatch.25](functional-spec/FS-005-dispatch.md#25-work-about-a-matter-with-no-branch-can-mint-the-branch-it-needs)):
 
 ```jsonc
 // beside a workflow, in the workflow's own directory
@@ -3093,7 +3093,7 @@ whatever is older than the TTL and blocks until every provider answers.
 ### 9.3 CI steps ephor ships
 
 Three steps ship, and they version with ephor
-([§FS-009-shipped-actions](../requirements.md#fs-009-shipped-actions-what-ephor-ships-for-ci-runs-from-the-repository-alone)):
+([§FS-009-shipped-actions](functional-spec/FS-009-shipped-actions.md#fs-009-shipped-actions-what-ephor-ships-for-ci-runs-from-the-repository-alone)):
 pin the release you consume, as you pin any dependency.
 
 | Step | Does |
@@ -3165,7 +3165,7 @@ that declares nothing is told so — with both ways to declare something named
 Any `provider` name that is not built in names a **forge extension**: an
 executable `ephor-forge-<name>` on `PATH` (or an explicit `"command"`), which
 ephor runs once per capability with a JSON request on stdin and JSON on stdout
-([§FS-001-forge-interface.2](../requirements.md#2-two-transports-one-interface)).
+([§FS-001-forge-interface.2](functional-spec/FS-001-forge-interface.md#2-two-transports-one-interface)).
 A shell script with `jq` is a complete implementation.
 
 ```text
@@ -3290,7 +3290,7 @@ every command
 all.
 
 A checkout is enough for those three, which is why CI can run them
-([§FS-006-project-interface.11](../requirements.md#11-the-interface-is-versioned),
+([§FS-006-project-interface.11](functional-spec/FS-006-project-interface.md#11-the-interface-is-versioned),
 [§9.3](#93-ci-steps-ephor-ships)).
 
 ### 11.2 Environment

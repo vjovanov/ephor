@@ -51,7 +51,7 @@ too, and the list itself is a reading.
 Any command that prints a reading takes `--json` and prints that same
 reading as JSON on standard output, alone — no progress, no notes, no
 warnings, which go to the error stream where they narrate the run without
-becoming part of it ([§FS-010-doctor.3](../../requirements.md#3-two-passes-the-site-and-ephor-itself)). A command that changes something
+becoming part of it ([§FS-010-doctor.3](../functional-spec/FS-010-doctor.md#3-two-passes-the-site-and-ephor-itself)). A command that changes something
 prints, under `--json`, what it changed: the same outcome its prose
 describes, in the shape a program can act on.
 

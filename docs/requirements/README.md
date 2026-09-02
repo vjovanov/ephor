@@ -1,8 +1,8 @@
 # Laws
 
 Standing requirements — *laws* every change observes, distinct from the
-behavior specs in [requirements.md](../../requirements.md): an FS says what a
-feature does, a REQ constrains every feature there is. One file per law; each
+[behavior specs](../functional-spec/): an FS says what a feature does, a REQ
+constrains every feature there is. One file per law; each
 H1 declares a `REQ-NNN-<slug>` ID and the body is its contract. Citations
 (`§REQ-NNN-<slug>.<section>`) resolve into these files.
 

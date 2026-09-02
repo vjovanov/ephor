@@ -44,7 +44,7 @@ once and rendered twice.
 Where a screen has to *ask* for something the command line takes as an
 argument, the asking is the surface's and the move is still the API's: the
 workflow key prompts for one missing scalar and opens an editor for anything
-larger ([§FS-005-dispatch.19](../../requirements.md#19-a-workflow-the-runtime-offers-is-an-action-and-its-inputs-are-answered-here)), then hands what it collected to the same call
+larger ([§FS-005-dispatch.19](../functional-spec/FS-005-dispatch.md#19-a-workflow-the-runtime-offers-is-an-action-and-its-inputs-are-answered-here)), then hands what it collected to the same call
 `--values` and `--set` feed. A screen that asked and then laid the plan down itself would
 be a second implementation of one move, which is how two surfaces come to
 disagree about what a workflow was answered with.
@@ -76,7 +76,7 @@ two answers to "can this project be checked out" is the failure
 
 What `--json` prints is not an internal struct that happens to be
 `Serialize`. Each shape has an entry in a JSON schema shipped with the binary
-and printable by name ([§FS-006-project-interface.11](../../requirements.md#11-the-interface-is-versioned)), and the schemas are the
+and printable by name ([§FS-006-project-interface.11](../functional-spec/FS-006-project-interface.md#11-the-interface-is-versioned)), and the schemas are the
 stability surface that [§REQ-002-parity.4](../requirements/REQ-002-parity.md#4-the-machine-form-is-a-contract-not-a-dump) promises: what a release may change
 is answerable by diffing them.
 
