@@ -56,9 +56,12 @@ ships, the previous "latest" section moves verbatim to
   numbers under it are not noted. Omission is unchanged in both directions: a
   configuration with no `organizations` map, or a project whose registry row
   names no organization, starts exactly what it started before. An
-  `organizations` id the registry does not declare bounds nobody and is named
-  for it — by `ephor doctor`, in the words an unknown project id gets, and in
-  a note at the sweep — rather than quietly ignored. Note that the feed
+  `organizations` id no registry row places a project in bounds nobody and is
+  named for it — by `ephor doctor`, in the words an unknown project id gets,
+  and in a note at the sweep — rather than quietly ignored. That covers an id
+  the registry never declared and one it declares that no project has joined
+  alike: membership is the project row's `organization` field and nothing
+  else, so the ceiling and the note read the same thing. Note that the feed
   configuration refuses unknown keys, so a `status.json` carrying
   `organizations` needs this version. (PR #TBD)
 

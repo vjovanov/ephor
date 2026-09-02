@@ -1628,11 +1628,12 @@ the site's aggregate ceiling and outside each project's own. Membership is the
 registry's and is written nowhere else; a project whose row names no
 organization is under no organization ceiling, and a configuration with no
 `organizations` block behaves exactly as it did before the key existed. An id
-the registry does not declare is a ceiling over nobody, so it is named rather
-than ignored: `ephor doctor` says `Feed config references unknown organization
-'<id>' (not in the registry).`, in the words an unknown project id gets, and
-the sweep carries a `note:` of its own. Nothing is refused for it — the key
-simply is not the one biting.
+no registry row places a project in — one the registry never declared, or one
+it declares that no project has joined — is a ceiling over nobody, so it is
+named rather than ignored: `ephor doctor` says `Feed config references
+organization '<id>' (no registry row places a project in it).`, in the words
+an unknown project id gets, and the sweep carries a `note:` of its own.
+Nothing is refused for it — the key simply is not the one biting.
 
 **`autorun`** is the one field that changes *when* work happens rather than
 what it says. With it, a ticket written from this recipe gets its run without

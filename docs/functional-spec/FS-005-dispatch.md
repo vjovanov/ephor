@@ -1513,15 +1513,21 @@ the numbers beneath a paused site or organization are said nothing about
 either — a configuration that pauses the site and leaves its project numbers
 where they were is not thereby a configuration that contradicts itself.
 
-**A ceiling over nobody is said out loud.** Which organizations exist is the
-registry's alone, so `organizations.<org-id>` naming an id no registry row
-declares bounds nothing whatever it says. That is a typo removing the bound
-its author believes they set, which is the one thing a ceiling may never be,
-so it is named — by `ephor doctor`, in the same words an unknown project id
-is named in, and at the sweep where the missing bound would have been read.
-It is not an error and nothing is refused for it: the runs that would have
-happened without the key still happen, and the reader is told why the key
-they wrote is not the one biting.
+**A ceiling over nobody is said out loud.** An `organizations.<org-id>` key
+bounds nothing exactly when no registry row places a project inside that
+organization — the same reading the ceiling itself binds through, so a key
+that is refusing starts is never announced as bounding nobody. Two
+configurations arrive at that emptiness: an id no registry row names at all,
+which is the typo removing the bound its author believes they set, and an
+organization the registry declares that no project has yet joined. They are
+one condition and are named the same way, because membership is the
+`organization` field on a project's registry row and nothing else. Bounding
+nothing is the one thing a ceiling may never quietly be, so it is named — by
+`ephor doctor`, in the words an unknown project id is named in, and at the
+sweep where the missing bound would have been read. It is not an error and
+nothing is refused for it: the runs that would have happened without the key
+still happen, and the reader is told why the key they wrote is not the one
+biting.
 
 **Capacity is live work, not attempts.** One root snapshot supplies both the
 due candidates and the live counts. Every already-live root consumes one
