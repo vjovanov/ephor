@@ -131,6 +131,17 @@ impl World {
         write_json(&self.config_path(), &settings);
     }
 
+    /// Declare an organization and put the project inside it. Which
+    /// organization a project belongs to is the registry's to say and is said
+    /// nowhere else, which is what lets a ceiling be written over the grouping
+    /// (§FS-005-dispatch.24).
+    pub fn organize(&self, id: &str, name: &str) {
+        let mut registry = self.registry_doc();
+        registry["organizations"] = json!([{ "id": id, "name": name }]);
+        registry["projects"][0]["organization"] = json!(id);
+        write_json(&self.registry_path(), &registry);
+    }
+
     /// The registry as ephor reads it — for the parts of a scenario that ask
     /// the library a question the command line has no surface for.
     pub fn registry_doc(&self) -> Value {

@@ -1797,6 +1797,270 @@ fn a_project_autorun_ceiling_remains_inside_the_cli_aggregate_override() {
     assert_eq!(starts(&log), 0, "the project ceiling remains in force");
 }
 
+/// Put the fixture's project and one more inside a single organization, and
+/// give the second one a work root of its own. The grouping is the registry's
+/// to declare and is declared nowhere else (§FS-005-dispatch.24).
+fn one_organization(tmp: &Path, organization: &str, sibling: &str, item: &str) {
+    let path = tmp.join("workspaces.json");
+    let mut registry: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    registry["organizations"] = json!([{ "id": organization, "name": "The Guild" }]);
+    registry["projects"][0]["organization"] = json!(organization);
+    let mut second = registry["projects"][0].clone();
+    second["id"] = json!(sibling);
+    second["display_name"] = json!(sibling);
+    second["root"] = json!(tmp.join(sibling).to_string_lossy());
+    second["branches"] = json!([]);
+    registry["projects"].as_array_mut().unwrap().push(second);
+    write_registry(&path, &registry);
+    duplicate_work_root(tmp, item, sibling);
+    assign_project(tmp, item, sibling);
+}
+
+/// Say which project a duplicated root's plan belongs to. `duplicate_work_root`
+/// copies the fixture's entry, and the copy would otherwise keep the fixture's
+/// project — and with it that project's organization.
+fn assign_project(tmp: &Path, item: &str, project: &str) {
+    let ledger_path = tmp.join("state/ephor/work.json");
+    let mut ledger: Value =
+        serde_json::from_str(&fs::read_to_string(&ledger_path).unwrap()).unwrap();
+    ledger["entries"][item]["project"] = json!(project);
+    fs::write(&ledger_path, serde_json::to_string_pretty(&ledger).unwrap()).unwrap();
+}
+
+/// Take and hold a work root's runtime lock, so the sweep reads it as a root
+/// somebody else's run already has.
+fn hold(root: &Path) -> fs::File {
+    fs::create_dir_all(root.join(".rhei")).unwrap();
+    fs::write(root.join(".rhei/run.lock"), "").unwrap();
+    let holder = fs::File::open(root.join(".rhei/run.lock")).unwrap();
+    holder.lock().unwrap();
+    holder
+}
+
+/// A dispatched fixture with one autorun recipe, whose site ceiling of zero
+/// lets the ticket be written and starts nothing — the state every ceiling
+/// test below builds its own configuration on top of.
+fn dispatched_but_unstarted(tmp: &Path, log: &Path) {
+    fixture(
+        tmp,
+        json!({
+            "max_concurrent": 0,
+            "recipes": [{
+                "id": "fix-gate",
+                "icon": "🔧",
+                "description": "fix the red gate",
+                "brief": "fix {title}",
+                "autorun": true,
+                "when": { "kinds": ["pr"], "gate": "red" }
+            }]
+        }),
+    );
+    detaching_runner(tmp, log);
+    ephor(tmp).args(["refresh", "demo"]).assert().success();
+    ephor(tmp).args(["work", "dispatch"]).assert().success();
+}
+
+/// Read the site configuration, let the test rewrite it, and write it back.
+fn reconfigure(tmp: &Path, edit: impl Fn(&mut Value)) {
+    let path = tmp.join("status.json");
+    let mut config: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    edit(&mut config);
+    fs::write(&path, serde_json::to_string_pretty(&config).unwrap()).unwrap();
+}
+
+/// §FS-005-dispatch.24: the organization ceiling bounds the sum of its
+/// projects' live roots, and reaches exactly the projects the registry puts
+/// inside it — a project it names no organization for is bound by none.
+#[test]
+fn an_organization_ceiling_bounds_the_sum_of_its_projects_live_roots() {
+    let tmp = tempdir();
+    let log = tmp.path().join("runner.log");
+    dispatched_but_unstarted(tmp.path(), &log);
+    one_organization(
+        tmp.path(),
+        "guild",
+        "gadget",
+        "github-prs:acme/widget#gadget",
+    );
+    // A root outside the organization entirely: the registry knows no project
+    // by this name, so nothing puts it under the guild's ceiling.
+    duplicate_work_root(tmp.path(), "github-prs:acme/widget#outsider", "outsider");
+    assign_project(tmp.path(), "github-prs:acme/widget#outsider", "outsider");
+    reconfigure(tmp.path(), |config| {
+        config["work"]["max_concurrent"] = Value::Null;
+        config["organizations"] = json!({ "guild": { "work": { "max_concurrent": 1 } } });
+    });
+
+    // One of the guild's two projects already has a live run, which spends the
+    // guild's only slot.
+    let holder = hold(&tmp.path().join("gadget/panta"));
+    let output = ephor(tmp.path())
+        .args(["work", "run", "--due", "--json"])
+        .output()
+        .unwrap();
+    let reading: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        ephor::api::schema::holds("work-run", &reading).is_empty(),
+        "the organization tier must hold to the published work-run shape: {reading}"
+    );
+    assert_eq!(reading["failed"], 0, "{reading}");
+    let runs = reading["runs"].as_array().unwrap();
+    let demo = runs
+        .iter()
+        .find(|run| run["root"].as_str().unwrap().contains("/demo/"))
+        .unwrap_or_else(|| panic!("{reading}"));
+    assert_eq!(demo["outcome"], "passed-over", "{reading}");
+    assert!(
+        demo["reason"]
+            .as_str()
+            .unwrap()
+            .contains("organizations.guild.work.max_concurrent 1 is full (1 live run(s))"),
+        "{reading}"
+    );
+    // The project the registry left out of every organization is untouched by
+    // the guild's ceiling and gets its run.
+    let outsider = runs
+        .iter()
+        .find(|run| run["root"].as_str().unwrap().contains("/outsider/"))
+        .unwrap_or_else(|| panic!("{reading}"));
+    assert_eq!(outsider["outcome"], "started", "{reading}");
+    assert_eq!(starts(&log), 1);
+    drop(holder);
+}
+
+/// §FS-005-dispatch.24: an absent `organizations` map is an omitted ceiling
+/// for every organization, so a configuration written before the tier existed
+/// starts exactly what it started before.
+#[test]
+fn an_absent_organizations_map_leaves_every_organization_unbounded() {
+    let tmp = tempdir();
+    let log = tmp.path().join("runner.log");
+    dispatched_but_unstarted(tmp.path(), &log);
+    one_organization(
+        tmp.path(),
+        "guild",
+        "gadget",
+        "github-prs:acme/widget#gadget",
+    );
+    reconfigure(tmp.path(), |config| {
+        config["work"]["max_concurrent"] = Value::Null;
+    });
+
+    let output = ephor(tmp.path())
+        .args(["work", "run", "--due", "--json"])
+        .output()
+        .unwrap();
+    let reading: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(reading["failed"], 0, "{reading}");
+    let runs = reading["runs"].as_array().unwrap();
+    assert_eq!(runs.len(), 2, "{reading}");
+    assert!(
+        runs.iter().all(|run| run["outcome"] == "started"),
+        "{reading}"
+    );
+    assert!(
+        reading["notes"].as_array().unwrap().is_empty(),
+        "nothing is wrong with a configuration that omits the tier: {reading}"
+    );
+    assert_eq!(starts(&log), 2);
+}
+
+/// §FS-005-dispatch.24: a project ceiling above its organization's is named
+/// at the sweep, in prose and `--json`, and changes nothing — the project's
+/// number stands and the organization's total still refuses the next start.
+#[test]
+fn an_inverted_project_ceiling_is_named_and_the_organization_total_still_binds() {
+    let tmp = tempdir();
+    let log = tmp.path().join("runner.log");
+    dispatched_but_unstarted(tmp.path(), &log);
+    one_organization(
+        tmp.path(),
+        "guild",
+        "gadget",
+        "github-prs:acme/widget#gadget",
+    );
+    reconfigure(tmp.path(), |config| {
+        config["work"]["max_concurrent"] = Value::Null;
+        config["organizations"] = json!({ "guild": { "work": { "max_concurrent": 1 } } });
+        config["projects"]["demo"]["work"] = json!({ "max_concurrent": 4 });
+    });
+
+    let holder = hold(&tmp.path().join("gadget/panta"));
+    let output = ephor(tmp.path())
+        .args(["work", "run", "--due", "--json"])
+        .output()
+        .unwrap();
+    let reading: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(reading["failed"], 0, "{reading}");
+    let notes = reading["notes"].as_array().unwrap();
+    assert_eq!(notes.len(), 1, "{reading}");
+    let note = notes[0].as_str().unwrap();
+    assert!(
+        note.contains("projects.demo.work.max_concurrent 4"),
+        "{note}"
+    );
+    assert!(
+        note.contains("organizations.guild.work.max_concurrent 1"),
+        "{note}"
+    );
+    // Warned about, not corrected: the guild's total still refuses the start
+    // the project's own number would have allowed four times over.
+    assert_eq!(reading["runs"][0]["outcome"], "passed-over", "{reading}");
+    assert!(
+        reading["runs"][0]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("organizations.guild.work.max_concurrent 1 is full"),
+        "{reading}"
+    );
+    assert_eq!(starts(&log), 0);
+
+    // The same sentence in prose, where the reader who did not ask for JSON is
+    // (§AR-009-surfaces.1).
+    ephor(tmp.path())
+        .args(["work", "run", "--due"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "projects.demo.work.max_concurrent 4 is above \
+             organizations.guild.work.max_concurrent 1",
+        ));
+    drop(holder);
+}
+
+/// §FS-005-dispatch.24: the site half of the same rule — a project ceiling
+/// above the site's aggregate is named the same way, and is still not
+/// rewritten.
+#[test]
+fn an_inverted_project_ceiling_is_named_against_the_site_ceiling_too() {
+    let tmp = tempdir();
+    let log = tmp.path().join("runner.log");
+    dispatched_but_unstarted(tmp.path(), &log);
+    reconfigure(tmp.path(), |config| {
+        config["work"]["max_concurrent"] = json!(2);
+        config["projects"]["demo"]["work"] = json!({ "max_concurrent": 5 });
+    });
+
+    let output = ephor(tmp.path())
+        .args(["work", "run", "--due", "--json"])
+        .output()
+        .unwrap();
+    let reading: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(reading["failed"], 0, "{reading}");
+    let notes = reading["notes"].as_array().unwrap();
+    assert_eq!(notes.len(), 1, "{reading}");
+    assert!(
+        notes[0]
+            .as_str()
+            .unwrap()
+            .contains("projects.demo.work.max_concurrent 5 is above global work.max_concurrent 2"),
+        "{reading}"
+    );
+    // Named, not refused: the root the project's number allows still starts.
+    assert_eq!(reading["runs"][0]["outcome"], "started", "{reading}");
+    assert_eq!(starts(&log), 1);
+}
+
 /// Work nobody has to start starts itself (§FS-005-dispatch.24).
 ///
 /// A recipe that says `autorun` gets its run in the same breath as its ticket
