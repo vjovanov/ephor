@@ -12,7 +12,7 @@ use std::path::Path;
 
 use serde_json::Value;
 
-use crate::branches::{Checkout, WorkspaceState};
+use crate::branches::{Checkout, Organization, WorkspaceState};
 use crate::feed::gate::Gate;
 use crate::feed::model::Item;
 
@@ -31,7 +31,18 @@ pub struct Subject<'a> {
     pub item: &'a Item,
     pub checkout: &'a Checkout,
     pub root: &'a Path,
+    /// The organization the registry places this item's project in, where it
+    /// places it in one (§FS-005-dispatch.6.1) — what `{org}` and `{org_root}`
+    /// are rendered from, and what a work root reaching above the project is
+    /// refused against.
+    pub organization: Option<&'a Organization>,
 }
+
+/// The placeholders that reach above the project, to the organization the
+/// registry places it in (§FS-005-dispatch.6.1). Named apart because a work
+/// root that holds one of them cannot be rendered without an answer: a path is
+/// refused where prose would have carried the gap.
+pub const ORGANIZATION_PLACEHOLDERS: [&str; 2] = ["org", "org_root"];
 
 impl Subject<'_> {
     /// The fields a brief may name as `{placeholder}`.
@@ -56,7 +67,36 @@ impl Subject<'_> {
             ),
             ("root", self.root.to_string_lossy().into_owned()),
             ("gate", gate.as_ref().map(Gate::summary).unwrap_or_default()),
+            (
+                "org",
+                self.organization
+                    .map(|org| org.id.clone())
+                    .unwrap_or_default(),
+            ),
+            (
+                "org_root",
+                self.organization
+                    .and_then(|org| org.root.as_ref())
+                    .map(|root| root.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+            ),
         ])
+    }
+
+    /// Where a work-root template puts this item's work
+    /// (§FS-005-dispatch.6.1). Everything the dossier can name is nameable
+    /// here, so this is [`render`] with one thing held to first: a template
+    /// reaching above the project to an organization that cannot answer is
+    /// refused by name, because rendering it would write a directory called
+    /// `{org_root}` or a path with a segment missing.
+    pub fn work_root(&self, template: &str) -> std::result::Result<std::path::PathBuf, String> {
+        if let Some(why) = organization_gap(template, &self.item.project, self.organization) {
+            return Err(why);
+        }
+        Ok(crate::paths::resolve_path(&render(
+            template,
+            &self.placeholders(),
+        )))
     }
 
     /// The item as data rather than as prose, for the programs in a state
@@ -174,6 +214,48 @@ impl Subject<'_> {
     }
 }
 
+/// Why a template reaching above the project cannot be rendered into a path
+/// for it (§FS-005-dispatch.6.1), naming the placeholder that has no answer
+/// and the organization that did not give one. None where the template names
+/// neither organization placeholder, and none where the organization answers
+/// what the template asked of it — `{org}` needs only the membership, and
+/// `{org_root}` needs the root as well.
+pub fn organization_gap(
+    template: &str,
+    project: &str,
+    organization: Option<&Organization>,
+) -> Option<String> {
+    let names = named(template);
+    let asked: Vec<&str> = ORGANIZATION_PLACEHOLDERS
+        .into_iter()
+        .filter(|name| names.iter().any(|held| held == name))
+        .collect();
+    if asked.is_empty() {
+        return None;
+    }
+    let spelled = asked
+        .iter()
+        .map(|name| format!("{{{name}}}"))
+        .collect::<Vec<_>>()
+        .join(" and ");
+    let Some(organization) = organization else {
+        return Some(format!(
+            "{project}: the work root names {spelled}, and no registry row places {project} \
+             in an organization — give its row an 'organization', or write a work root that \
+             stays inside the project."
+        ));
+    };
+    if asked.contains(&"org_root") && organization.root.is_none() {
+        return Some(format!(
+            "{project}: the work root names {{org_root}}, and organization {} declares no \
+             root — give '{}' a root in the registry, or write a work root that stays inside \
+             the project.",
+            organization.id, organization.id
+        ));
+    }
+    None
+}
+
 /// Render `{placeholder}` occurrences; an unknown name is left as written so a
 /// typo shows up in the ticket rather than becoming an empty line.
 pub fn render(template: &str, values: &BTreeMap<&'static str, String>) -> String {
@@ -203,6 +285,24 @@ pub fn render(template: &str, values: &BTreeMap<&'static str, String>) -> String
     }
     out.push_str(rest);
     out
+}
+
+/// Every `{placeholder}` a template names, in the order it names them. The
+/// same grammar [`render`] reads, asked before the rendering rather than
+/// after it: a template is answered for what it says, not for what its
+/// rendering happened to look like.
+pub fn named(template: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut rest = template;
+    while let Some(open) = rest.find('{') {
+        let after = &rest[open + 1..];
+        let Some(close) = after.find('}') else {
+            return names;
+        };
+        names.push(after[..close].to_string());
+        rest = &after[close + 1..];
+    }
+    names
 }
 
 fn render_gate(gate: &Gate) -> String {
@@ -425,6 +525,7 @@ mod tests {
             item: &item,
             checkout: &checkout,
             root: Path::new("/w"),
+            organization: None,
         }
         .dossier()
     }
@@ -561,6 +662,7 @@ mod tests {
             item: &status,
             checkout: &checkout,
             root: Path::new("/w"),
+            organization: None,
         }
         .dossier();
         assert!(!text.contains("The conversation"), "{text}");
@@ -582,6 +684,138 @@ mod tests {
         assert_eq!(fences.last(), Some(&"````"), "{text}");
     }
 
+    fn organization(id: &str, root: Option<&str>) -> Organization {
+        Organization {
+            id: id.to_string(),
+            root: root.map(PathBuf::from),
+        }
+    }
+
+    fn subject<'a>(
+        item: &'a Item,
+        checkout: &'a Checkout,
+        org: Option<&'a Organization>,
+    ) -> Subject<'a> {
+        Subject {
+            item,
+            checkout,
+            root: Path::new("/w"),
+            organization: org,
+        }
+    }
+
+    /// A work root may reach above the project to the organization the
+    /// registry places it in (§FS-005-dispatch.6.1): `{org}` is the
+    /// organization's id and `{org_root}` where it is rooted, so an
+    /// organization-tier template lands the plan under the organization's own
+    /// root rather than inside any one checkout.
+    #[test]
+    fn a_work_root_can_reach_above_the_project_to_its_organization() {
+        let item = item(json!({}));
+        let checkout = checkout();
+        let org = organization("foundation", Some("/f"));
+        let subject = subject(&item, &checkout, Some(&org));
+        assert_eq!(
+            subject.work_root("{org_root}/panta").unwrap(),
+            PathBuf::from("/f/panta")
+        );
+        assert_eq!(
+            subject
+                .work_root("{org_root}/panta/{org}/{project}")
+                .unwrap(),
+            PathBuf::from("/f/panta/foundation/widget")
+        );
+        // The names are the dossier's too, so a brief may say where its work
+        // went.
+        assert_eq!(
+            render("work in {org_root} for {org}", &subject.placeholders()),
+            "work in /f for foundation"
+        );
+    }
+
+    /// An organization that declares no root cannot answer `{org_root}`, and a
+    /// project no registry row places in an organization cannot answer either
+    /// name. Both refuse at dispatch, naming the placeholder and the
+    /// organization, because what they would otherwise write is a directory
+    /// called `{org_root}` or a path with a segment missing
+    /// (§FS-005-dispatch.6.1).
+    #[test]
+    fn a_work_root_above_a_project_that_cannot_answer_it_refuses_by_name() {
+        let item = item(json!({}));
+        let checkout = checkout();
+
+        let rootless = organization("personal", None);
+        let why = subject(&item, &checkout, Some(&rootless))
+            .work_root("{org_root}/panta")
+            .expect_err("an organization with no root cannot place work");
+        assert!(
+            why.contains("organization personal declares no root"),
+            "{why}"
+        );
+        assert!(why.contains("{org_root}"), "{why}");
+
+        let why = subject(&item, &checkout, None)
+            .work_root("{org_root}/panta")
+            .expect_err("a project in no organization cannot place work either");
+        assert!(why.contains("widget"), "{why}");
+        assert!(
+            why.contains("no registry row places widget in an organization"),
+            "{why}"
+        );
+
+        let why = subject(&item, &checkout, None)
+            .work_root("{root}/work/{org}")
+            .expect_err("the id alone has no answer either");
+        assert!(why.contains("{org}"), "{why}");
+
+        // Nothing that refuses may also have rendered: no literal
+        // `{org_root}` directory, and no empty segment where the answer was.
+        // The tiers a template can be written at are all the same render, so
+        // a site or project template naming an organization is held to this
+        // exactly as an organization-tier one is.
+        for (template, org) in [
+            ("{org_root}/panta", Some(&rootless)),
+            ("{org_root}/panta", None),
+            ("{root}/work/{org}", None),
+            ("{org}/{org_root}/panta", Some(&rootless)),
+        ] {
+            match subject(&item, &checkout, org).work_root(template) {
+                Ok(dir) => panic!(
+                    "{template} rendered to {} instead of refusing",
+                    dir.display()
+                ),
+                Err(why) => assert!(!why.is_empty()),
+            }
+        }
+    }
+
+    /// The refusal is about the *path*. The membership alone answers `{org}`,
+    /// so an organization with no root still places work that does not ask for
+    /// one — and prose carries an absent organization the way it carries any
+    /// other field a matter has not got (§FS-005-dispatch.6.1).
+    #[test]
+    fn only_the_name_with_no_answer_refuses_and_prose_carries_the_gap() {
+        let item = item(json!({}));
+        let checkout = checkout();
+        let rootless = organization("personal", None);
+        assert_eq!(
+            subject(&item, &checkout, Some(&rootless))
+                .work_root("{root}/work/{org}")
+                .unwrap(),
+            PathBuf::from("/w/work/personal"),
+            "the id is answered even where the root is not"
+        );
+        assert_eq!(
+            subject(&item, &checkout, Some(&rootless))
+                .work_root("{root}/panta")
+                .unwrap(),
+            PathBuf::from("/w/panta"),
+            "a template that never reaches above the project is untouched"
+        );
+        let values = subject(&item, &checkout, None).placeholders();
+        assert_eq!(render("for {org}{org_root}!", &values), "for !");
+    }
+
     #[test]
     fn a_brief_is_rendered_with_the_items_own_words() {
         let item = item(json!({}));
@@ -590,6 +824,7 @@ mod tests {
             item: &item,
             checkout: &checkout,
             root: Path::new("/w"),
+            organization: None,
         };
         let values = subject.placeholders();
         assert_eq!(

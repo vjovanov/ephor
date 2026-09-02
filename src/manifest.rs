@@ -660,6 +660,7 @@ mod row_tests {
             aliases: Vec::new(),
             territory: Vec::new(),
             trust,
+            organization: None,
         }
     }
 

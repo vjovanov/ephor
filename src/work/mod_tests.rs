@@ -5,7 +5,7 @@
 //! `use super::*`.
 
 use super::*;
-use crate::branches::BranchInfo;
+use crate::branches::{BranchInfo, Organization};
 use std::fs;
 use std::path::Path;
 
@@ -20,6 +20,7 @@ fn placement(project: &str, root: &Path, template: Option<&str>) -> Placement {
         aliases: Vec::new(),
         territory: Vec::new(),
         trust: Default::default(),
+        organization: None,
     }
 }
 
@@ -83,6 +84,7 @@ fn the_roots_are_the_configured_places_and_the_ledger_keeps_its_matter() {
 
     let groups = enumerate_roots(
         &WorkConfig::default(),
+        &BTreeMap::new(),
         &BTreeMap::new(),
         std::slice::from_ref(&widget),
         &ledger,
@@ -469,6 +471,7 @@ fn a_shared_root_is_listed_once_and_an_item_template_is_skipped() {
     };
     let groups = enumerate_roots(
         &WorkConfig::default(),
+        &BTreeMap::new(),
         &projects,
         std::slice::from_ref(&widget),
         &ledger,
@@ -487,6 +490,7 @@ fn a_shared_root_is_listed_once_and_an_item_template_is_skipped() {
     );
     let groups = enumerate_roots(
         &WorkConfig::default(),
+        &BTreeMap::new(),
         &projects,
         std::slice::from_ref(&widget),
         &ledger,
@@ -518,11 +522,133 @@ fn an_aliased_workspace_is_one_root_not_two() {
     let groups = enumerate_roots(
         &WorkConfig::default(),
         &BTreeMap::new(),
+        &BTreeMap::new(),
         std::slice::from_ref(&widget),
         &ledger,
     );
     assert_eq!(groups.len(), 1, "{:?}", roots_of(&groups));
     assert_eq!(groups[0].plans.len(), 1);
+}
+
+/// The work root is read at three scopes and the innermost one written
+/// answers (§FS-005-dispatch.6.1): a project's template displaces its
+/// organization's, an organization's displaces the site's, and a scope that
+/// writes none is not consulted. `ephor checkout` resolves through this same
+/// function, so the tier lands once for both.
+#[test]
+fn the_innermost_work_root_written_answers_and_the_scopes_above_it_are_not_asked() {
+    let site = WorkConfig {
+        root: "{workspace}/site".to_string(),
+        ..WorkConfig::default()
+    };
+    let organization = OrganizationWorkConfig {
+        root: Some("{org_root}/org".to_string()),
+        ..OrganizationWorkConfig::default()
+    };
+    let project = ProjectWorkConfig {
+        root: Some("{root}/project".to_string()),
+        ..ProjectWorkConfig::default()
+    };
+
+    assert_eq!(root_template(&site, None, None), "{workspace}/site");
+    assert_eq!(
+        root_template(&site, Some(&organization), None),
+        "{org_root}/org",
+        "an organization displaces the site"
+    );
+    assert_eq!(
+        root_template(&site, Some(&organization), Some(&project)),
+        "{root}/project",
+        "a project displaces both"
+    );
+    assert_eq!(root_template(&site, None, Some(&project)), "{root}/project");
+    // A tier that writes nothing is not an answer of its own.
+    assert_eq!(
+        root_template(
+            &site,
+            Some(&OrganizationWorkConfig::default()),
+            Some(&ProjectWorkConfig::default())
+        ),
+        "{workspace}/site",
+        "empty tiers leave the site's answer in force"
+    );
+}
+
+/// A work root reaching above the project is written to *and* found: the
+/// organization's root is one of the places the walk probes, so a plan laid
+/// under an organization-tier `work.root` lands on the board and is swept
+/// (§FS-005-dispatch.15.1). It is inside no checkout, which is why the
+/// project's own places cannot answer for it.
+#[test]
+fn a_plan_under_an_organization_root_is_enumerated_and_one_with_no_answer_is_skipped() {
+    let tmp = tempfile::tempdir().unwrap();
+    let org_root = tmp.path().join("f");
+    let mut widget = placement("widget", &tmp.path().join("widget"), None);
+    widget.organization = Some(Organization {
+        id: "foundation".to_string(),
+        root: Some(org_root.clone()),
+    });
+    // Nothing of the project is on disk — only the organization's root is.
+    plant(&org_root.join("panta"), "release.rhei.md", "The release");
+
+    let mut organizations = BTreeMap::new();
+    organizations.insert(
+        "foundation".to_string(),
+        OrganizationWorkConfig {
+            root: Some("{org_root}/panta".to_string()),
+            ..OrganizationWorkConfig::default()
+        },
+    );
+    let ledger = Ledger {
+        version: 1,
+        entries: BTreeMap::new(),
+        starts: BTreeMap::new(),
+    };
+    let groups = enumerate_roots(
+        &WorkConfig::default(),
+        &organizations,
+        &BTreeMap::new(),
+        std::slice::from_ref(&widget),
+        &ledger,
+    );
+    assert_eq!(groups.len(), 1, "{:?}", roots_of(&groups));
+    assert_eq!(
+        groups[0].root,
+        fs::canonicalize(org_root.join("panta")).unwrap()
+    );
+    assert_eq!(groups[0].plans.len(), 1);
+    assert_eq!(groups[0].plans[0].plan_id, "release");
+    assert_eq!(groups[0].plans[0].project, "widget");
+
+    // One organization root reached through two of its projects is one
+    // execution root, not two: the runtime's lock is on the directory.
+    let mut gadget = placement("gadget", &tmp.path().join("gadget"), None);
+    gadget.organization = widget.organization.clone();
+    let groups = enumerate_roots(
+        &WorkConfig::default(),
+        &organizations,
+        &BTreeMap::new(),
+        &[widget.clone(), gadget],
+        &ledger,
+    );
+    assert_eq!(groups.len(), 1, "{:?}", roots_of(&groups));
+    assert_eq!(groups[0].plans.len(), 1, "one directory, one listing");
+
+    // An organization that declares no root answers no `{org_root}`, so
+    // nothing was written through this template and nothing is looked for.
+    let mut rootless = widget.clone();
+    rootless.organization = Some(Organization {
+        id: "foundation".to_string(),
+        root: None,
+    });
+    let groups = enumerate_roots(
+        &WorkConfig::default(),
+        &organizations,
+        &BTreeMap::new(),
+        std::slice::from_ref(&rootless),
+        &ledger,
+    );
+    assert!(groups.is_empty(), "{:?}", roots_of(&groups));
 }
 
 fn ticket(id: &str, state: &str) -> TicketStatus {

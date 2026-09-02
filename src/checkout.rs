@@ -109,7 +109,7 @@ pub fn make(
             // all, or made by the project's own checkout command, holds every
             // repository it should and has nowhere for a plan to land
             // (§FS-004-quick-actions.7.1). Asking again is what repairs it.
-            let store = init_store(project, &target, &placement.root);
+            let store = init_store(placement, project, &target);
             return Ok((
                 Made {
                     target: target.clone(),
@@ -164,7 +164,7 @@ pub fn make(
     // workspace is refused by the caller, and a work root inside one would be a
     // place for plans that cannot be worked (§FS-006-project-interface.7).
     let store = (outcome.refused().is_empty() && !outcome.repos.is_empty())
-        .then(|| init_store(project, &target, &placement.root));
+        .then(|| init_store(placement, project, &target));
     Ok((
         Made {
             target,
@@ -306,7 +306,7 @@ pub fn checkout(args: &CheckoutArgs) -> Result<ExitCode> {
 /// fail. Where no site configuration can be read, the shipped default answers
 /// — this is `ephor checkout` working on a machine that has a registry and
 /// nothing else.
-fn init_store(project: &str, workspace: &std::path::Path, root: &std::path::Path) -> Store {
+fn init_store(placement: &Placement, project: &str, workspace: &std::path::Path) -> Store {
     let config = load_config().ok();
     let global = config
         .as_ref()
@@ -316,7 +316,24 @@ fn init_store(project: &str, workspace: &std::path::Path, root: &std::path::Path
         .as_ref()
         .and_then(|config| config.projects.get(project))
         .map(|project| &project.work);
-    match crate::work::ensure_store(&global, per_project, project, workspace, root) {
+    // The organization tier of the work root, read through the membership the
+    // registry declares (§FS-005-dispatch.6.1) — the same resolution dispatch
+    // makes, because the work root is one answer for both.
+    let placed_in = placement.organization.as_ref();
+    let per_organization = config
+        .as_ref()
+        .zip(placed_in)
+        .and_then(|(config, org)| config.organizations.get(&org.id))
+        .map(|organization| &organization.work);
+    match crate::work::ensure_store(
+        &global,
+        per_organization,
+        per_project,
+        project,
+        placed_in,
+        workspace,
+        &placement.root,
+    ) {
         Ok(store) => Store {
             dir: Some(store.dir),
             made: store.made,

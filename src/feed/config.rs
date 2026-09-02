@@ -557,9 +557,10 @@ pub struct OrganizationFeedConfig {
 mod tests {
     use super::*;
 
-    /// §FS-005-dispatch.24: the organization block is a ceiling and nothing
-    /// else, it is optional under `deny_unknown_fields`, and an omitted map is
-    /// an omitted ceiling for every organization.
+    /// §FS-005-dispatch.24: the organization block carries a ceiling and
+    /// §FS-005-dispatch.6.1 a work root, each optional under
+    /// `deny_unknown_fields`, and an omitted map is an omitted ceiling and an
+    /// omitted root for every organization.
     #[test]
     fn parses_the_organization_autorun_ceiling_and_defaults_it_to_nothing() {
         let config: StatusConfig = serde_json::from_str(
@@ -571,12 +572,33 @@ mod tests {
             Some(3),
             "the ceiling is read from the organization's own block"
         );
+        assert_eq!(
+            config.organizations["acme"].work.root, None,
+            "a block that writes no root leaves the site's answer in force"
+        );
+        let placed: StatusConfig = serde_json::from_str(
+            r#"{ "organizations": { "acme": { "work": { "root": "{org_root}/panta" } } } }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            placed.organizations["acme"].work.root.as_deref(),
+            Some("{org_root}/panta"),
+            "the organization tier of the work root is read from the same block"
+        );
+        assert_eq!(placed.organizations["acme"].work.max_concurrent, None);
         let without: StatusConfig = serde_json::from_str("{}").unwrap();
         assert!(without.organizations.is_empty());
         assert!(serde_json::from_str::<StatusConfig>(
             r#"{ "organizations": { "acme": { "projects": ["widget"] } } }"#
         )
         .is_err());
+        assert!(
+            serde_json::from_str::<StatusConfig>(
+                r#"{ "organizations": { "acme": { "work": { "roots": "x" } } } }"#
+            )
+            .is_err(),
+            "a misspelled key in the organization's work block is refused, not ignored"
+        );
     }
 
     #[test]

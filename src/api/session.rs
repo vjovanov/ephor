@@ -1100,8 +1100,12 @@ impl Session {
         let placement = self.placements.get(&item.project)?;
         let checkout = crate::branches::placed_through(placement, item, branch);
         let root = self.root(&item.project)?.to_path_buf();
+        let organization = placement.organization.as_ref();
         let template = crate::work::root_template(
             &self.work_config,
+            organization
+                .and_then(|org| self.config.organizations.get(&org.id))
+                .map(|organization| &organization.work),
             self.config
                 .projects
                 .get(&item.project)
@@ -1111,10 +1115,12 @@ impl Session {
             item,
             checkout: &checkout,
             root: &root,
+            organization,
         };
-        Some(std::path::PathBuf::from(crate::paths::resolve_path(
-            &crate::work::dossier::render(&template, &subject.placeholders()),
-        )))
+        // Nothing where the dispatch would refuse: this reading is a preview
+        // of that write, and a preview that guessed past a refusal would name
+        // a directory nothing will ever be in (§FS-005-dispatch.6.1).
+        subject.work_root(&template).ok()
     }
 
     /// The work root the picker over one matter's menu reads its roster at

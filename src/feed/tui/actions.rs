@@ -707,6 +707,7 @@ mod tests {
             aliases: Vec::new(),
             territory: Vec::new(),
             trust: crate::manifest::Trust::Full,
+            organization: None,
         };
         std::fs::write(tmp.path().join("check.sh"), "#!/bin/sh\n").unwrap();
         std::fs::create_dir_all(tmp.path().join("panta")).unwrap();

@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
@@ -856,6 +856,26 @@ pub fn organization_of_each_project(registry: &Value) -> BTreeMap<String, String
             Some((id_of(project).to_string(), organization.to_string()))
         })
         .collect()
+}
+
+/// The organization a project's own registry row places it in
+/// (§FS-005-dispatch.6.1), and the root that organization declares — None
+/// where the row names no organization, and a `None` root where the
+/// organization is declared without one. Both are read here and never written
+/// back: membership and the place an organization is rooted are identity, and
+/// only the binding written over them is configuration's
+/// (§REQ-001-boundary.2).
+pub fn organization_of(registry: &Value, project: &str) -> Option<(String, Option<PathBuf>)> {
+    let entry = array_field(registry, "projects")
+        .iter()
+        .find(|candidate| id_of(candidate) == project)?;
+    let organization = str_field(entry, "organization")?.to_string();
+    let root = array_field(registry, "organizations")
+        .iter()
+        .find(|candidate| id_of(candidate) == organization)
+        .and_then(|candidate| str_field(candidate, "root"))
+        .map(paths::resolve_path);
+    Some((organization, root))
 }
 
 /// The organization ids named here that no registry row places a project

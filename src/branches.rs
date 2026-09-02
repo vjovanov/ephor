@@ -194,6 +194,23 @@ pub struct Placement {
     /// How much of the project's own manifest the row is willing to believe
     /// (§FS-006-project-interface.2).
     pub trust: crate::manifest::Trust,
+    /// The organization the registry row places this project in, where it
+    /// names one (§FS-005-dispatch.6.1). A work root may reach above the
+    /// project to it, so the answer belongs beside the project's own place
+    /// rather than being read again wherever a template is rendered.
+    pub organization: Option<Organization>,
+}
+
+/// An organization a project belongs to, as the registry declares it: its id,
+/// and where it is rooted (§FS-005-dispatch.6.1).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Organization {
+    pub id: String,
+    /// The organization's `root`, resolved the way every registry path is.
+    /// None where the organization declares none — which a placement reaching
+    /// above the project refuses on by name, rather than rendering the gap
+    /// into a path.
+    pub root: Option<PathBuf>,
 }
 
 /// The placeholders a `branch` template may not name, because they are what
@@ -239,7 +256,7 @@ pub fn minted(
     if let Some(name) = missing_field(template, &values) {
         return Err(not_served_reason(template, &name));
     }
-    for name in named(template) {
+    for name in crate::work::dossier::named(template) {
         if DECIDED.contains(&name.as_str()) {
             return Err(format!(
                 "the branch template '{template}' names {{{name}}}, which is what it decides: a \
@@ -303,6 +320,7 @@ fn placeholder_values(
         item,
         checkout: &here,
         root: &placement.root,
+        organization: placement.organization.as_ref(),
     }
     .placeholders()
 }
@@ -313,7 +331,7 @@ fn missing_field(
     template: &str,
     values: &std::collections::BTreeMap<&'static str, String>,
 ) -> Option<String> {
-    let names = named(template);
+    let names = crate::work::dossier::named(template);
     // A template with an author error must stay visible and refuse loudly,
     // even where another name in it is a real field this matter lacks.
     if names
@@ -430,24 +448,6 @@ pub fn placed_through(placement: &Placement, item: &Item, branch: Option<&str>) 
     }
 }
 
-/// Every `{placeholder}` a template names, in the order it names them. The
-/// same grammar [`crate::work::dossier::render`] reads, asked before the
-/// rendering rather than after it: a template is refused for what it says,
-/// not for what its refusal happened to look like.
-fn named(template: &str) -> Vec<String> {
-    let mut names = Vec::new();
-    let mut rest = template;
-    while let Some(open) = rest.find('{') {
-        let after = &rest[open + 1..];
-        let Some(close) = after.find('}') else {
-            return names;
-        };
-        names.push(after[..close].to_string());
-        rest = &after[close + 1..];
-    }
-    names
-}
-
 /// Where one item's work belongs.
 #[derive(Clone, Debug)]
 pub struct Checkout {
@@ -504,10 +504,13 @@ impl Placement {
                 });
             }
         }
+        let organization = registry::organization_of(registry_doc, project)
+            .map(|(id, root)| Organization { id, root });
         let mut placement = Placement {
             project: project.to_string(),
             root,
             template,
+            organization,
             branches,
             main_branch: registry::str_field(entry, "main_branch").map(String::from),
             repos: declarations(registry_doc, entry),
@@ -1008,6 +1011,7 @@ mod tests {
             aliases: Vec::new(),
             territory: Vec::new(),
             trust: crate::manifest::Trust::Full,
+            organization: None,
         }
     }
 
@@ -1084,6 +1088,43 @@ mod tests {
                 ]
             }]
         })
+    }
+
+    /// A work root may reach above the project, so the placement carries the
+    /// organization the registry puts the project in and where that
+    /// organization is rooted, resolved the way every registry path is
+    /// (§FS-005-dispatch.6.1). A row naming no organization carries none, and
+    /// an organization declaring no root carries the membership without one —
+    /// the two gaps a placement above the project refuses on separately.
+    #[test]
+    fn the_placement_carries_the_organization_the_registry_puts_it_in() {
+        let doc = json!({
+            "organizations": [
+                { "id": "foundation", "name": "Foundation", "root": "$HOME/f" },
+                { "id": "personal", "name": "Personal" }
+            ],
+            "projects": [
+                { "id": "widget", "root": "/w/widget", "organization": "foundation" },
+                { "id": "gadget", "root": "/w/gadget", "organization": "personal" },
+                { "id": "sprocket", "root": "/w/sprocket" }
+            ]
+        });
+        let widget = Placement::load(&doc, "widget").expect("a row");
+        let organization = widget.organization.expect("the row names one");
+        assert_eq!(organization.id, "foundation");
+        assert_eq!(
+            organization.root,
+            Some(crate::paths::resolve_path("$HOME/f")),
+            "the organization's root is resolved, not carried raw"
+        );
+
+        let gadget = Placement::load(&doc, "gadget").expect("a row");
+        let organization = gadget.organization.expect("the row names one");
+        assert_eq!(organization.id, "personal");
+        assert_eq!(organization.root, None, "it declares no root");
+
+        let sprocket = Placement::load(&doc, "sprocket").expect("a row");
+        assert_eq!(sprocket.organization, None, "the row names no organization");
     }
 
     #[test]
