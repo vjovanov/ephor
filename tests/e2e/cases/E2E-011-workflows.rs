@@ -365,6 +365,46 @@ fn the_listing_alone_says_which_inputs_name_who_does_the_work() {
     );
 }
 
+/// An empty execution target is nobody choosing: laying proceeds, preserves
+/// that written value, and renders no hand into its place. The same reading
+/// holds for an empty position among several targets (§FS-005-dispatch.19).
+#[test]
+fn an_empty_execution_target_lays_as_nobody() {
+    let world = watching();
+    std::fs::write(
+        world.path().join("empty-target.yaml"),
+        "intake_target: ''\n",
+    )
+    .expect("the empty target values file");
+
+    world
+        .ephor()
+        .current_dir(world.path())
+        .args([
+            "work",
+            "lay",
+            "venue-intake",
+            "--item",
+            "acmeforge:app/101",
+            "--set",
+            "conference=ECOOP 2027",
+            "--values",
+            "empty-target.yaml",
+            "--set",
+            r#"harvest_targets=["","luna:high"]"#,
+        ])
+        .assert()
+        .success();
+
+    let laid = work_root(&world).join("acmeforge-app-101-venue-intake");
+    let given = read_json(&laid.join("values-as-given.json"));
+    assert_eq!(given["intake_target"], json!(""));
+    assert_eq!(
+        given["harvest_targets"],
+        json!(["", "claude-code[high]:anthropic:opus"])
+    );
+}
+
 /// Explicit values files are merged in invocation order, while `--set` wins;
 /// the answer account and the runtime's values file receive the same
 /// structured project inputs (§FS-005-dispatch.19).
