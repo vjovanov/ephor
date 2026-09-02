@@ -224,6 +224,77 @@ fn a_scoped_fetch_fetches_the_scoped_projects() {
     assert!(!tmp.path().join("state/ephor/feed/ephor.json").exists());
 }
 
+/// The other half of the same decision, with a shared source declared so the
+/// fixture cannot pass by having none: a source that asks about no project in
+/// particular is fetched once per site and placed by the engine
+/// (§AR-008-pipeline.1), so a scoped fetch still runs it and still writes its
+/// slot in every watched project's file — including the projects the selector
+/// left out. Placing it inside the scope alone would file what a shared source
+/// found about another project under what nothing claimed
+/// (§FS-011-command-line.9).
+#[test]
+fn a_scoped_fetch_still_runs_the_sources_shared_across_the_site() {
+    let tmp = tempdir();
+    two_orgs(tmp.path());
+    let mut config: Value =
+        serde_json::from_str(&fs::read_to_string(tmp.path().join("status.json")).unwrap()).unwrap();
+    config["sources"] = json!([{ "provider": "github-notifications" }]);
+    fs::write(
+        tmp.path().join("status.json"),
+        serde_json::to_string_pretty(&config).unwrap(),
+    )
+    .unwrap();
+
+    let out = ephor(tmp.path())
+        .args(["refresh", "--org", "graal", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let tally = json_of(&out);
+    let fetched: Vec<&str> = tally["projects"]
+        .as_array()
+        .expect("one row per project, and one for the shared sources")
+        .iter()
+        .map(|row| row["project"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        fetched,
+        vec!["graal", "sources"],
+        "the shared leg is not narrowed by a selector: {tally:#}"
+    );
+
+    // Every home keeps a slot for the shared source, the two outside the
+    // scope included: the engine decides where a finding belongs, so a slot
+    // it may fill has to be rewritten even where nothing landed this time.
+    for home in ["ephor", "rhei", "graal", "unattributed"] {
+        let path = tmp.path().join(format!("state/ephor/feed/{home}.json"));
+        let feed: Value = serde_json::from_str(
+            &fs::read_to_string(&path)
+                .unwrap_or_else(|_| panic!("the shared source left {home} no feed file at all")),
+        )
+        .unwrap();
+        assert_eq!(
+            feed["providers"]["github-notifications"]["ok"],
+            json!(true),
+            "{home} has no slot for the shared source: {feed:#}"
+        );
+    }
+
+    // And the project fetch itself stayed inside the scope: the projects the
+    // selector left out were written by the shared leg alone, never asked
+    // their own providers.
+    let outside: Value = serde_json::from_str(
+        &fs::read_to_string(tmp.path().join("state/ephor/feed/ephor.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        outside["providers"]["custom-status"].is_null(),
+        "a project outside the scope was fetched: {outside:#}"
+    );
+}
+
 /// §FS-011-command-line.9 through the branch reading: `ephor branches` opens
 /// the same scoped session the screen does.
 #[test]
@@ -248,9 +319,10 @@ fn the_branch_rows_are_the_scoped_projects_rows() {
     assert!(!owners.contains(&"graal"), "{owners:?}");
 }
 
-/// A verb that names one target refuses each selector by name, exits non-zero,
-/// and under `--json` says so on standard output as an outcome
-/// (§REQ-002-parity.3) — the same shape every other refusal takes.
+/// A verb that names one target refuses each selector by name, exits 2 like
+/// every other refusal of the same rule, and under `--json` says so on
+/// standard output as an outcome (§REQ-002-parity.3) — the same shape every
+/// other refusal takes.
 #[test]
 fn a_verb_that_names_one_target_refuses_the_selector() {
     let tmp = tempdir();
@@ -290,7 +362,7 @@ fn a_verb_that_names_one_target_refuses_the_selector() {
         ephor(tmp.path())
             .args(&args)
             .assert()
-            .code(1)
+            .code(2)
             .stderr(predicate::str::contains(format!(
                 "{named} does not take --org"
             )));
@@ -309,7 +381,7 @@ fn a_verb_that_names_one_target_refuses_the_selector() {
             "--json",
         ])
         .assert()
-        .code(1)
+        .code(2)
         .get_output()
         .stdout
         .clone();
@@ -333,7 +405,7 @@ fn refusing_needs_no_registry() {
     ephor(tmp.path())
         .args(["schema", "views", "--org", "foundation"])
         .assert()
-        .code(1)
+        .code(2)
         .stderr(predicate::str::contains("schema does not take --org"));
     ephor(tmp.path())
         .args([
@@ -344,7 +416,7 @@ fn refusing_needs_no_registry() {
             "rust",
         ])
         .assert()
-        .code(1)
+        .code(2)
         .stderr(predicate::str::contains(
             "validate --manifest does not take --tag",
         ));

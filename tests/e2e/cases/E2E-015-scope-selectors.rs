@@ -137,9 +137,10 @@ fn a_scoped_dispatch_stays_inside_its_organization() {
 }
 
 /// The ticket's fourth reproducer: `rebase` advertised the selectors and read
-/// none of them. It now refuses by name, exits non-zero, and answers a program
-/// the way every other refusal does — an outcome on standard output
-/// (§FS-011-command-line.7).
+/// none of them. It now refuses by name, exits 2 — the code an empty selection
+/// and every other usage-shaped refusal takes, so "the scope was refused" is
+/// one comparison — and answers a program the way every other refusal does: an
+/// outcome on standard output (§FS-011-command-line.7).
 #[test]
 fn a_verb_that_will_not_scope_says_so() {
     let world = two_organizations();
@@ -148,7 +149,7 @@ fn a_verb_that_will_not_scope_says_so() {
         .ephor()
         .args(["rebase", "--org", "foundation"])
         .assert()
-        .code(1)
+        .code(2)
         .stderr(predicate::str::contains("rebase does not take --org"));
 
     let refused = world
@@ -156,7 +157,7 @@ fn a_verb_that_will_not_scope_says_so() {
         .args(["rebase", "--org", "foundation", "--json"])
         .output()
         .expect("ran");
-    assert_eq!(refused.status.code(), Some(1));
+    assert_eq!(refused.status.code(), Some(2));
     let outcome = json_of(&refused);
     assert_eq!(outcome["ok"], json!(false));
     assert!(
