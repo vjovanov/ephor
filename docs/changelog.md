@@ -32,7 +32,7 @@ ships, the previous "latest" section moves verbatim to
 
 - **The functional specification is one document per declaration.** The twelve
   `§FS` declarations now live under `docs/functional-spec/`, so each subject
-  has its own file and the obsolete whole-file size exceptions are gone. (PR #N)
+  has its own file and the obsolete whole-file size exceptions are gone. (PR #52)
 
 - **`ephor work lay` loads repeatable workflow values files**
   ([§FS-005-dispatch.19](functional-spec/FS-005-dispatch.md#19-a-workflow-the-runtime-offers-is-an-action-and-its-inputs-are-answered-here)).
