@@ -44,12 +44,15 @@ ships, the previous "latest" section moves verbatim to
   `mark-read`, `branches`, `tui`, `work list`, `work dispatch`, `work sync`,
   `work run`, `validate`, `ensure-agents` and `update` scope their reading by
   the selectors, and every other verb refuses each one it was given, naming
-  itself and the flag and exiting non-zero — under `--json` as an outcome on
-  standard output like any other refusal. Because the feed-side verbs pick
-  their projects from `status.json` while the selectors name registry rows, a
-  selector is resolved against the registry and intersected with what the site
-  watches; a selection that comes out empty is refused rather than printed as
-  an empty table. **Callers who passed a selector that was silently ignored
+  itself and the flag and exiting 2 — the code an empty selection and every
+  other configuration refusal already took — and under `--json` saying so as an
+  outcome on standard output like any other refusal. Because the feed-side
+  verbs pick their projects from `status.json` while the selectors name
+  registry rows, a selector is resolved against the registry and intersected
+  with what the site watches; a selection that comes out empty is refused
+  rather than printed as an empty table. The screen scopes with them too: a
+  `tui` opened under a selector shows those projects and its `r` key now
+  fetches only them. **Callers who passed a selector that was silently ignored
   now get an error, and that is the point.** (PR #N)
 
 - **`--all` belongs to the verbs that read it.** It was a global flag with two

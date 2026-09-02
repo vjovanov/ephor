@@ -163,9 +163,14 @@ The three project selectors — `--workspace`, `--tag`, `--org` — name a set o
 projects, read from the registry. The verbs that read a set of projects honour
 them: `list`, `status`, `feed`, `refresh`, `mark-read`, `branches`, the screen,
 `work list`, `work dispatch`, `work sync`, `work run`, and the managed-workspace
-verbs `validate`, `ensure-agents` and `update`. Every other verb names one
-target or reads no project set at all, and refuses each selector it was given,
-naming itself and the flag and saying which selectors it does take. The
+verbs `validate`, `ensure-agents` and `update`. Every other verb refuses each
+selector it was given, naming itself and the flag and saying which selectors it
+does take. Most of them refuse because they are about what they are given — one
+item, one checkout, one file — and have no set of projects for a selector to
+narrow. `doctor`, `capabilities` and `operations` refuse for the other reason:
+they *do* read every project the site is configured with, but they answer for
+the site itself rather than for a group the registry names, and their refusal
+says so instead of denying the project set their own output prints. The
 classification is total: every verb is on one side of it or the other.
 
 The registry and the site's watch list are two different files, and the
@@ -174,6 +179,16 @@ selectors name rows of the first while `status`, `feed`, `refresh`,
 selector is therefore resolved against the registry and then intersected with
 what the site watches, and the intersection is applied where each verb picks
 its projects rather than in a helper beside them.
+
+What a selector narrows is which projects a verb **reads**, not everything the
+run does behind them. The sources that ask about no project in particular are
+fetched once for the whole site and placed by ephor's own engine rather than by
+the source ([§FS-008-attribution.2](FS-008-attribution.md#2-two-stages-one-engine)), so a scoped `refresh` still fetches
+them and still writes their slot in every watched project's file — the projects
+the selector left out included. Placing them inside the scope alone would file
+what one of them found about a project outside it under what nothing claimed
+([§FS-008-attribution.4](FS-008-attribution.md#4-unattributed-is-a-place-not-a-fate)), which is a wrong answer written to disk rather
+than a narrower one.
 
 A selection that comes out empty is **said**, never left looking like a quiet
 site: a mistyped organization and an organization with nothing in it otherwise
@@ -199,4 +214,7 @@ A refusal is an answer like any other: under `--json` it lands on standard
 output as an outcome with `ok` false ([§7](#7---json-is-the-same-answer-not-a-second-one),
 [§REQ-002-parity.3](../requirements/REQ-002-parity.md#3-every-reading-answers-a-program)). It is decided before any registry is read, so the
 verbs that need no registry — `schema`, `check`, `validate --manifest` — still
-need none in order to refuse.
+need none in order to refuse. Both halves of the rule exit **2**, the code this
+command line gives a configuration refusal: a refused selector and a selection
+that came out empty are one rule answering, and a caller learns "the scope was
+refused" from one comparison rather than two.

@@ -265,20 +265,32 @@ because it asks about branch entries rather than about projects
 ([§FS-011-command-line.9](functional-spec/FS-011-command-line.md#9-a-scope-selector-is-honoured-or-refused)).
 
 The three selectors are declared once and reach every command's help, so every
-command either honours them or refuses them by name with a non-zero exit: no
-verb parses a selector and changes nothing. The verbs that honour them are
-`list`, `status`, `feed`, `refresh`, `mark-read`, `branches`, `tui`, `work
-list`, `work dispatch`, `work sync`, `work run`, and these four. Everything
-else names one target, or reads no set of projects, and says so:
+command either honours them or refuses them by name with exit 2: no verb parses
+a selector and changes nothing. The verbs that honour them are `list`,
+`status`, `feed`, `refresh`, `mark-read`, `branches`, `tui`, `work list`, `work
+dispatch`, `work sync`, `work run`, and these four. Everything else refuses, and
+says which of the two reasons it is:
 
 ```console
 $ ephor rebase --org foundation
 ERROR: rebase does not take --org. rebase takes no scope selector: it is
 about what it is given, not about a set of projects.
+
+$ ephor doctor --org foundation
+ERROR: doctor does not take --org. doctor takes no scope selector: it reads
+every project the site is configured with and answers for the site itself,
+not for a group the registry names.
 ```
 
+`doctor`, `capabilities` and `operations` are the second kind: they read every
+watched project, but what they answer is about the site rather than about a
+group the registry names — `doctor --project P` and `ephor capabilities P` are
+how one project is named to them.
+
 A selection that comes out empty is refused rather than printed as an empty
-reading, so a mistyped organization is a message rather than a quiet table.
+reading, so a mistyped organization is a message rather than a quiet table —
+and with the same exit 2, so one comparison tells a script that its scope was
+refused.
 
 `ensure-agents` also renders an ad-hoc workspace that is in no registry:
 
@@ -336,7 +348,12 @@ ephor doctor [--project P] [--skip-self|--self-only] [--json]
 ```
 
 - **`refresh`** is the only command that fetches by default. It is what the
-  timer runs.
+  timer runs. A scope selector narrows which projects it asks; the sources
+  shared across the site ([§4.2](#42-shared-sources)) are fetched whatever the scope, and their
+  findings are placed across the whole watch list — so a scoped run still
+  rewrites the shared slot in an out-of-scope project's feed file
+  ([§FS-011-command-line.9](functional-spec/FS-011-command-line.md#9-a-scope-selector-is-honoured-or-refused)). Placing them inside the scope instead would
+  file what one of them found about another project under *unattributed*.
 - **`status`** with no project prints one row per project (items, unread,
   needs-response, failing). With a project, it prints that project's feed.
   It refetches anything staler than the TTL — pass `--cached` when you want
@@ -1079,7 +1096,7 @@ does not report one simply never shows it.
 | `;` | the operations board (§8.13) — from any screen |
 | `[` `]` | previous / next project (Detail) |
 | `Esc` `h` | back |
-| `r` | refresh underneath the screen (in Detail, only that project) |
+| `r` | refresh underneath the screen — the projects it was opened over, and in Detail only that project |
 | `q`, `^C` | quit |
 
 **On a work row the keys are the work's**, and they displace the ones they
