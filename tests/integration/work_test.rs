@@ -1750,6 +1750,230 @@ fn the_autorun_sweep_caps_live_roots_and_reports_every_capacity_pass_over() {
         .stdout(predicate::str::contains("passed over"));
 }
 
+/// Park a duplicated work root on a person: teach its machine a poll that
+/// declares whose answer it waits for, move its only ticket into that state,
+/// and hold the root's run lock. What is left is a live root spending
+/// nothing — the shape the ticket measured for six and a half hours.
+fn park_on_a_person(root: &Path) -> fs::File {
+    let states = root.join("states.yaml");
+    let machine = fs::read_to_string(&states).unwrap();
+    assert!(machine.contains("\n  done:\n"), "{machine}");
+    fs::write(
+        &states,
+        machine.replace(
+            "\n  done:\n",
+            "\n  plan-approval:\n    program: [\"bash\", \"await.sh\"]\n    \
+             poll:\n      interval: 15m\n      max_attempts: 96\n      \
+             waiting_on: author\n\n  done:\n",
+        ),
+    )
+    .unwrap();
+    for plan in fs::read_dir(root).unwrap().flatten() {
+        let path = plan.path();
+        if path.extension().is_some_and(|ext| ext == "md") {
+            let text = fs::read_to_string(&path).unwrap();
+            fs::write(
+                &path,
+                text.replace("**State:** fix", "**State:** plan-approval"),
+            )
+            .unwrap();
+        }
+    }
+    hold_the_run_lock(root)
+}
+
+fn hold_the_run_lock(root: &Path) -> fs::File {
+    fs::create_dir_all(root.join(".rhei")).unwrap();
+    fs::write(root.join(".rhei/run.lock"), "").unwrap();
+    let holder = fs::File::open(root.join(".rhei/run.lock")).unwrap();
+    holder.lock().unwrap();
+    holder
+}
+
+/// Rewrite the site's two autorun ceilings between sweeps, so one fixture
+/// answers for every combination of them.
+fn set_ceilings(tmp: &Path, concurrent: Value, active: Value) {
+    let path = tmp.join("status.json");
+    let mut config: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    config["work"]["max_concurrent"] = concurrent;
+    config["work"]["max_active"] = active;
+    fs::write(&path, serde_json::to_string_pretty(&config).unwrap()).unwrap();
+}
+
+/// §FS-005-dispatch.24, §AR-007-runtime.1: two ceilings count two different
+/// things. A root parked on a person's answer is live — it holds a
+/// `max_concurrent` slot — and is not working, so it holds no `max_active`
+/// one; a refusal names the key it refused on; and a site that never names
+/// the second key is bounded exactly as it was.
+#[test]
+fn a_root_parked_on_a_person_costs_a_flight_slot_and_no_agent_slot() {
+    let tmp = tempdir();
+    fixture(
+        tmp.path(),
+        json!({
+            // Zero while the tickets are written, so dispatch starts nothing
+            // and every start below is this test's own.
+            "max_concurrent": 0,
+            "recipes": [{
+                "id": "fix-gate",
+                "icon": "🔧",
+                "description": "fix the red gate",
+                "brief": "fix {title}",
+                "autorun": true,
+                "when": { "kinds": ["pr"], "gate": "red" }
+            }]
+        }),
+    );
+    let log = tmp.path().join("runner.log");
+    detaching_runner(tmp.path(), &log);
+    ephor(tmp.path())
+        .args(["refresh", "demo"])
+        .assert()
+        .success();
+    ephor(tmp.path())
+        .args(["work", "dispatch"])
+        .assert()
+        .success();
+    assert_eq!(starts(&log), 0);
+    duplicate_work_root(tmp.path(), "github-prs:acme/widget#second", "demo-second");
+    duplicate_work_root(tmp.path(), "github-prs:acme/widget#third", "demo-third");
+
+    let sweep = |tmp: &Path| -> Value {
+        let output = ephor(tmp)
+            .args(["work", "run", "--due", "--json"])
+            .output()
+            .unwrap();
+        let reading: Value = serde_json::from_slice(&output.stdout).unwrap();
+        let problems = ephor::api::schema::holds("work-run", &reading);
+        assert!(problems.is_empty(), "{problems:?}\n{reading}");
+        reading
+    };
+
+    // Nothing live yet, and zero admits nothing under the new key either.
+    set_ceilings(tmp.path(), json!(9), json!(0));
+    let none = sweep(tmp.path());
+    assert_eq!(none["failed"], 0, "{none}");
+    assert!(
+        none["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|run| run["outcome"] == "passed-over"),
+        "{none}"
+    );
+    assert!(
+        none["runs"][0]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("global work.max_active 0"),
+        "{none}"
+    );
+    assert_eq!(none["capacity"]["live"], 0, "{none}");
+    assert_eq!(starts(&log), 0);
+
+    // One root working, one parked on its author. Both are live; only one of
+    // them is spending anything.
+    let working = hold_the_run_lock(&tmp.path().join("demo-second/panta"));
+    let parked = park_on_a_person(&tmp.path().join("demo-third/panta"));
+
+    set_ceilings(tmp.path(), json!(9), json!(1));
+    let full = sweep(tmp.path());
+    assert_eq!(full["capacity"]["live"], 2, "{full}");
+    assert_eq!(full["capacity"]["active"], 1, "{full}");
+    assert_eq!(full["capacity"]["parked"], 1, "{full}");
+    assert_eq!(full["runs"][0]["outcome"], "passed-over", "{full}");
+    assert_eq!(full["failed"], 0, "{full}");
+    assert_eq!(
+        full["runs"][0]["reason"], "global work.max_active 1 is full (1 active run(s), 1 parked)",
+        "the refusal names its key and says what the other slot is doing"
+    );
+    assert_eq!(starts(&log), 0);
+
+    // The parked root still holds a roots-in-flight slot: it exists, and that
+    // is what the older key counts. Its wording is untouched.
+    set_ceilings(tmp.path(), json!(2), json!(9));
+    let flight = sweep(tmp.path());
+    assert_eq!(
+        flight["runs"][0]["reason"], "global work.max_concurrent 2 is full (2 live run(s))",
+        "{flight}"
+    );
+    assert_eq!(starts(&log), 0);
+
+    // And with room for one more agent, the parked root's freed slot is what
+    // the remaining root starts in — which is the whole point of the second
+    // number.
+    set_ceilings(tmp.path(), json!(9), json!(2));
+    let started = sweep(tmp.path());
+    assert_eq!(started["runs"][0]["outcome"], "started", "{started}");
+    assert_eq!(started["failed"], 0, "{started}");
+    assert_eq!(starts(&log), 1);
+    drop((working, parked));
+}
+
+/// §FS-005-dispatch.24: a site that never names the second key behaves as it
+/// did before there was one — same starts, same wording — and its reading
+/// still says how much of what is live is a person rather than an agent.
+#[test]
+fn a_site_that_names_only_the_flight_ceiling_is_bounded_exactly_as_before() {
+    let tmp = tempdir();
+    fixture(
+        tmp.path(),
+        json!({
+            "max_concurrent": 1,
+            "recipes": [{
+                "id": "fix-gate",
+                "icon": "🔧",
+                "description": "fix the red gate",
+                "brief": "fix {title}",
+                "autorun": true,
+                "when": { "kinds": ["pr"], "gate": "red" }
+            }]
+        }),
+    );
+    let log = tmp.path().join("runner.log");
+    detaching_runner(tmp.path(), &log);
+    ephor(tmp.path())
+        .args(["refresh", "demo"])
+        .assert()
+        .success();
+    ephor(tmp.path())
+        .args(["work", "dispatch"])
+        .assert()
+        .success();
+    duplicate_work_root(tmp.path(), "github-prs:acme/widget#second", "demo-second");
+    let parked = park_on_a_person(&tmp.path().join("demo-second/panta"));
+
+    let output = ephor(tmp.path())
+        .args(["work", "run", "--due", "--json"])
+        .output()
+        .unwrap();
+    let reading: Value = serde_json::from_slice(&output.stdout).unwrap();
+    // The parked root fills the one aggregate slot exactly as any live root
+    // did before, in the words it always used.
+    assert_eq!(reading["failed"], 0, "{reading}");
+    assert_eq!(reading["runs"][0]["outcome"], "passed-over", "{reading}");
+    assert_eq!(
+        reading["runs"][0]["reason"], "global work.max_concurrent 1 is full (1 live run(s))",
+        "{reading}"
+    );
+    assert_eq!(reading["capacity"]["max_active"], Value::Null, "{reading}");
+    // And the reading says what the old wording could not: the slot holding
+    // the sweep back is a person.
+    assert_eq!(reading["capacity"]["live"], 1, "{reading}");
+    assert_eq!(reading["capacity"]["parked"], 1, "{reading}");
+
+    // The prose carries the same split beside the pass-over it explains.
+    ephor(tmp.path())
+        .args(["work", "run", "--due"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("passed over"))
+        .stdout(predicate::str::contains(
+            "capacity: 1 live root(s) — 0 active, 1 parked",
+        ));
+    drop(parked);
+}
+
 #[test]
 fn a_project_autorun_ceiling_remains_inside_the_cli_aggregate_override() {
     let tmp = tempdir();

@@ -254,6 +254,91 @@ fn an_organization_ceiling_passes_due_work_over_and_names_the_organization() {
     );
 }
 
+/// The second ceiling is a knob of its own: it bounds the work an agent is
+/// doing rather than the roots in flight, it refuses under its own name, and
+/// the reading beside the refusal says how much of what is live is a person
+/// (§FS-005-dispatch.24).
+#[test]
+fn the_agent_ceiling_refuses_under_its_own_name_and_the_reading_splits_what_is_live() {
+    let world = watching();
+    world.stub("acme-runtime", ACME_RUNTIME);
+    let with_ceilings = |active: serde_json::Value| {
+        json!({
+            "projects": { PROJECT: { "providers": [
+                { "provider": "acmeforge", "user": "you", "repos": ["app"] }
+            ] } },
+            "work": {
+                "runner": "acme-runtime",
+                "max_concurrent": 4,
+                "max_active": active,
+                "recipes": [{
+                    "id": "fix-gate",
+                    "icon": "🛠",
+                    "description": "fix the red gate",
+                    "state": "fix",
+                    "needs_checkout": true,
+                    "autorun": true,
+                    "when": { "kinds": ["pr"], "roles": ["author"], "gate": "failing" },
+                    "brief": "Fix the gate on {title}."
+                }]
+            }
+        })
+    };
+    world.configure(with_ceilings(json!(0)));
+
+    // Nothing an agent may do, so the ticket is written and nothing runs —
+    // and the reason says which of the two ceilings said so.
+    world
+        .ephor()
+        .args(["work", "dispatch"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("passed over"));
+    let output = world
+        .ephor()
+        .args(["work", "run", "--due", "--json"])
+        .output()
+        .expect("the capped sweep runs");
+    assert!(output.status.success());
+    let reading = json_of(&output);
+    assert_eq!(reading["failed"], 0, "{reading}");
+    assert_eq!(reading["runs"][0]["outcome"], "passed-over", "{reading}");
+    assert!(
+        reading["runs"][0]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("global work.max_active 0"),
+        "{reading}"
+    );
+    // Both ceilings are said back, so a reader can see which one bit.
+    assert_eq!(reading["capacity"]["max_concurrent"], 4, "{reading}");
+    assert_eq!(reading["capacity"]["max_active"], 0, "{reading}");
+    assert_eq!(reading["capacity"]["live"], 0, "{reading}");
+    assert_eq!(reading["capacity"]["parked"], 0, "{reading}");
+
+    // Omitting the key is unlimited, which is what every site had before
+    // there was one: the same work is no longer refused for this reason.
+    world.configure(with_ceilings(serde_json::Value::Null));
+    let output = world
+        .ephor()
+        .args(["work", "run", "--due", "--json"])
+        .output()
+        .expect("the sweep runs");
+    let reading = json_of(&output);
+    assert_eq!(
+        reading["capacity"]["max_active"],
+        serde_json::Value::Null,
+        "{reading}"
+    );
+    assert!(
+        !reading["runs"][0]["reason"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("max_active"),
+        "{reading}"
+    );
+}
+
 /// Tickets are written whether or not anything can run them, and the run says
 /// so in the one sentence the whole of ephor refuses with
 /// (§AR-005-capabilities.2).

@@ -642,6 +642,9 @@ fn due_root(root: &Path, tickets: &str) -> runtime::watch::RootPlans {
             "  collect:\n    agent: x\n",
             "  fix:\n    agent: x\n",
             "  needs-human:\n    gating: true\n",
+            // A poll that resumes itself the moment a person answers: not
+            // gating, and not agent work either (§FS-005-dispatch.24).
+            "  plan-approval:\n    poll:\n      interval: 15m\n      waiting_on: author\n",
             "  done:\n    final: true\n",
         ),
     )
@@ -1066,6 +1069,202 @@ fn a_live_root_spanning_two_projects_of_one_organization_spends_one_slot() {
     // … and the one organization holding both spends one, not two.
     assert_eq!(live.organizations.get("acme"), Some(&1));
     drop(holder);
+}
+
+/// The ticket's measured case: two roots live, one of them a script waiting
+/// on an author. It fills a roots-in-flight slot, because it exists, and
+/// leaves the agent slot for work that would actually spend something
+/// (§FS-005-dispatch.24).
+#[test]
+fn a_root_parked_on_a_person_holds_its_flight_slot_and_frees_its_agent_slot() {
+    let tmp = tempfile::tempdir().unwrap();
+    let hold = |root: &Path| {
+        fs::create_dir_all(root.join(".rhei")).unwrap();
+        fs::write(root.join(".rhei/run.lock"), "").unwrap();
+        let holder = fs::File::open(root.join(".rhei/run.lock")).unwrap();
+        holder.lock().unwrap();
+        holder
+    };
+    let waiting = due_root(
+        &tmp.path().join("waiting/panta"),
+        &ticket_at("fix-gate-1", "plan-approval"),
+    );
+    let working = due_root(
+        &tmp.path().join("working/panta"),
+        &ticket_at("fix-gate-1", "fix"),
+    );
+    // The working root's run says which ticket it holds; the parked one's
+    // says nothing, because its poll takes no slot.
+    fs::create_dir_all(working.root.join("runtime")).unwrap();
+    fs::write(
+        working.root.join("runtime/transitions.log"),
+        "2026-08-14T10:00:00Z  fix-gate-1  start@fix  runtime/logs/task-fix-gate-1-fix.log\n",
+    )
+    .unwrap();
+    let held = [hold(&waiting.root), hold(&working.root)];
+
+    let live = LiveRuns::read(&work_config(), &[waiting, working], &BTreeMap::new());
+    assert_eq!(live.global, Counts { live: 2, active: 1 });
+    assert_eq!(live.global.parked(), 1);
+    assert_eq!(
+        live.projects.get("widget"),
+        Some(&Counts { live: 2, active: 1 })
+    );
+
+    // Two ceilings of one, and they answer differently: the flight ceiling
+    // is full and the agent ceiling has the parked root's slot to give.
+    let both = Capacity::new(
+        Ceilings {
+            site: Limits {
+                concurrent: Some(2),
+                active: Some(2),
+            },
+            site_as_configured: Some(2),
+            ..Ceilings::default()
+        },
+        LiveRuns::read(&work_config(), &[], &BTreeMap::new()),
+    );
+    assert!(both.refusal(&["widget".to_string()]).is_none());
+    let full = Capacity::new(
+        Ceilings {
+            site: Limits {
+                concurrent: Some(2),
+                active: Some(2),
+            },
+            site_as_configured: Some(2),
+            ..Ceilings::default()
+        },
+        live,
+    );
+    assert!(full
+        .refusal(&["widget".to_string()])
+        .is_some_and(|why| why.contains("global work.max_concurrent 2 is full (2 live run(s))")));
+    let roomier = Capacity::new(
+        Ceilings {
+            site: Limits {
+                concurrent: Some(4),
+                active: Some(2),
+            },
+            site_as_configured: Some(4),
+            ..Ceilings::default()
+        },
+        LiveRuns::read(&work_config(), &[], &BTreeMap::new()),
+    );
+    assert!(roomier.refusal(&["widget".to_string()]).is_none());
+    drop(held);
+}
+
+/// A start refused by the agent ceiling says which ceiling refused it: with
+/// more than one to hit, "the ceiling is full" no longer says which
+/// (§FS-005-dispatch.24).
+#[test]
+fn a_refusal_names_the_ceiling_it_refused_on() {
+    let live = LiveRuns {
+        global: Counts { live: 3, active: 1 },
+        projects: BTreeMap::from([("widget".to_string(), Counts { live: 2, active: 2 })]),
+        ..LiveRuns::default()
+    };
+    let capacity = Capacity::new(
+        Ceilings {
+            site: Limits {
+                concurrent: Some(9),
+                active: Some(1),
+            },
+            site_as_configured: Some(9),
+            ..Ceilings::default()
+        },
+        live,
+    );
+    assert_eq!(
+        capacity.refusal(&["widget".to_string()]).as_deref(),
+        Some("global work.max_active 1 is full (1 active run(s), 2 parked)")
+    );
+
+    // The project pair says the same thing about the project's own scope.
+    let project = Capacity::new(
+        Ceilings {
+            projects: BTreeMap::from([(
+                "widget".to_string(),
+                Limits {
+                    concurrent: Some(9),
+                    active: Some(2),
+                },
+            )]),
+            ..Ceilings::default()
+        },
+        LiveRuns {
+            global: Counts { live: 2, active: 2 },
+            projects: BTreeMap::from([("widget".to_string(), Counts { live: 2, active: 2 })]),
+            ..LiveRuns::default()
+        },
+    );
+    assert_eq!(
+        project.refusal(&["widget".to_string()]).as_deref(),
+        Some("projects.widget.work.max_active 2 is full (2 active run(s), 0 parked)")
+    );
+    assert!(project.refusal(&["another".to_string()]).is_none());
+}
+
+/// The second key reads exactly as the first: omitted is unlimited, zero
+/// admits nothing, and a fresh start is working (§FS-005-dispatch.24).
+#[test]
+fn zero_admits_no_agent_work_and_omission_is_unlimited() {
+    let unlimited = Capacity::new(
+        site_and_projects(Some(4), BTreeMap::new()),
+        LiveRuns::default(),
+    );
+    assert!(unlimited.refusal(&["widget".to_string()]).is_none());
+
+    let paused = Capacity::new(
+        Ceilings {
+            site: Limits {
+                concurrent: None,
+                active: Some(0),
+            },
+            site_as_configured: None,
+            ..Ceilings::default()
+        },
+        LiveRuns::default(),
+    );
+    assert_eq!(
+        paused.refusal(&["widget".to_string()]).as_deref(),
+        Some("global work.max_active 0 is full (0 active run(s), 0 parked)")
+    );
+
+    // A run that has just begun is working, so the agent ceiling closes
+    // behind it exactly as the flight ceiling does.
+    let mut one = Capacity::new(
+        Ceilings {
+            site: Limits {
+                concurrent: None,
+                active: Some(1),
+            },
+            site_as_configured: None,
+            ..Ceilings::default()
+        },
+        LiveRuns::default(),
+    );
+    let projects = ["widget".to_string()];
+    assert!(one.refusal(&projects).is_none());
+    one.started(&projects, false);
+    assert!(one.refusal(&projects).is_none());
+    one.started(&projects, true);
+    assert!(one.refusal(&projects).is_some());
+    assert_eq!(
+        one.standing(),
+        Standing {
+            live: 1,
+            active: 1,
+            parked: 0,
+            max_concurrent: None,
+            max_active: Some(1),
+        }
+    );
+    assert_eq!(
+        one.standing().says(),
+        "capacity: 1 live root(s) — 1 active, 0 parked \
+         (work.max_concurrent unlimited, work.max_active 1)"
+    );
 }
 
 #[test]
