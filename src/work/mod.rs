@@ -32,7 +32,7 @@ use crate::paths::for_shell;
 
 use dossier::Subject;
 use ledger::{Dispatch, Entry, Ledger, Snapshot};
-use recipe::{ProjectWorkConfig, Recipe, WorkConfig};
+use recipe::{OrganizationWorkConfig, ProjectWorkConfig, Recipe, WorkConfig};
 use runtime::plan::{self, Plan, Ticket, WorkRoot};
 
 /// What one dispatch did.
@@ -693,6 +693,10 @@ pub struct Dispatcher {
     registry_doc: Value,
     global: WorkConfig,
     projects: BTreeMap<String, ProjectWorkConfig>,
+    /// The ceiling each organization's projects share, by organization id
+    /// (§FS-005-dispatch.24). Which projects those are is the registry's to
+    /// say, so this half of the tier is only the numbers.
+    organizations: BTreeMap<String, OrganizationWorkConfig>,
     placements: BTreeMap<String, Option<Placement>>,
     /// What the checkout of each (project, branch) says about itself —
     /// both distances, from one fold — measured on demand.
@@ -726,6 +730,11 @@ impl Dispatcher {
                 .projects
                 .iter()
                 .map(|(id, project)| (id.clone(), project.work.clone()))
+                .collect(),
+            organizations: config
+                .organizations
+                .iter()
+                .map(|(id, organization)| (id.clone(), organization.work.clone()))
                 .collect(),
             placements: BTreeMap::new(),
             behind: BTreeMap::new(),
@@ -901,6 +910,26 @@ impl Dispatcher {
             &template,
             &subject.placeholders(),
         )))
+    }
+
+    /// Which organization each project belongs to, as the registry declares
+    /// it (§FS-005-dispatch.24). Membership is identity and lives in the
+    /// registry row; the ceiling over it is a binding and lives in the site's
+    /// configuration, so this reads the registry and writes nothing back to
+    /// it (§REQ-001-boundary.2). A project whose row names no organization is
+    /// absent here, which is how it comes to be under no organization
+    /// ceiling.
+    fn organization_of_each_project(&self) -> BTreeMap<String, String> {
+        crate::registry::array_field(&self.registry_doc, "projects")
+            .iter()
+            .filter_map(|project| {
+                let organization = project.get("organization").and_then(Value::as_str)?;
+                Some((
+                    crate::registry::id_of(project).to_string(),
+                    organization.to_string(),
+                ))
+            })
+            .collect()
     }
 
     /// Every execution root beneath the watch, with the plans it holds
@@ -2682,14 +2711,34 @@ impl Dispatcher {
         let _autorun = autorun_lock()?;
         self.ledger = ledger::load()?;
         let roots = self.work_roots();
-        let live = LiveRuns::read(&self.global, &roots);
-        let global_limit = max_concurrent.or(self.global.max_concurrent);
-        let project_limits = self
-            .projects
-            .iter()
-            .filter_map(|(project, work)| work.max_concurrent.map(|limit| (project.clone(), limit)))
-            .collect();
-        let mut capacity = Capacity::new(global_limit, project_limits, live);
+        let ceilings = Ceilings {
+            site: max_concurrent.or(self.global.max_concurrent),
+            site_as_configured: self.global.max_concurrent,
+            organizations: self
+                .organizations
+                .iter()
+                .filter_map(|(organization, work)| {
+                    work.max_concurrent
+                        .map(|limit| (organization.clone(), limit))
+                })
+                .collect(),
+            projects: self
+                .projects
+                .iter()
+                .filter_map(|(project, work)| {
+                    work.max_concurrent.map(|limit| (project.clone(), limit))
+                })
+                .collect(),
+            membership: self.organization_of_each_project(),
+        };
+        // Said where the ceilings are read, so a pair written the wrong way
+        // round is seen at the sweep it costs something rather than only by
+        // whoever runs a check over the file (§FS-005-dispatch.24).
+        for inversion in ceilings.inversions() {
+            self.note_once(&inversion);
+        }
+        let live = LiveRuns::read(&self.global, &roots, &ceilings.membership);
+        let mut capacity = Capacity::new(ceilings, live);
         let launched = self
             .due_in(&roots, now)
             .into_iter()
@@ -2907,11 +2956,16 @@ impl Launched {
 #[derive(Debug, Default)]
 struct LiveRuns {
     global: usize,
+    organizations: BTreeMap<String, usize>,
     projects: BTreeMap<String, usize>,
 }
 
 impl LiveRuns {
-    fn read(global: &WorkConfig, roots: &[runtime::watch::RootPlans]) -> LiveRuns {
+    fn read(
+        global: &WorkConfig,
+        roots: &[runtime::watch::RootPlans],
+        membership: &BTreeMap<String, String>,
+    ) -> LiveRuns {
         let mut live = LiveRuns::default();
         for root in roots {
             if !runtime::watch::live(global, &root.root) {
@@ -2923,57 +2977,158 @@ impl LiveRuns {
                 .iter()
                 .map(|plan| plan.project.as_str())
                 .collect();
+            // One live root is one slot in each organization it reaches, even
+            // where two of that organization's projects hold plans on it: the
+            // slot is the run, and there is one of those (§FS-005-dispatch.24).
+            let organizations: BTreeSet<&str> = projects
+                .iter()
+                .filter_map(|project| membership.get(*project).map(String::as_str))
+                .collect();
             for project in projects {
                 *live.projects.entry(project.to_string()).or_default() += 1;
+            }
+            for organization in organizations {
+                *live
+                    .organizations
+                    .entry(organization.to_string())
+                    .or_default() += 1;
             }
         }
         live
     }
 }
 
-/// Remaining aggregate and per-project slots. Missing ceilings stay missing:
+/// The three nested ceilings one sweep reads, and who is inside which
+/// organization (§FS-005-dispatch.24). Missing ceilings stay missing:
 /// omission is unlimited, while `Some(0)` is deliberately no capacity.
+#[derive(Debug, Default)]
+struct Ceilings {
+    /// The site ceiling in force for this sweep: the configured one, or the
+    /// number `--max-concurrent` put in its place for this invocation.
+    site: Option<usize>,
+    /// The site ceiling as configuration writes it. A pair written the wrong
+    /// way round is a fact about the configuration, so it is measured against
+    /// this rather than against a flag that narrowed one sweep on purpose.
+    site_as_configured: Option<usize>,
+    organizations: BTreeMap<String, usize>,
+    projects: BTreeMap<String, usize>,
+    /// Which organization each project belongs to, as the registry declares
+    /// it. A project absent here belongs to none and is under no organization
+    /// ceiling (§FS-005-dispatch.24).
+    membership: BTreeMap<String, String>,
+}
+
+impl Ceilings {
+    /// The organization a project is in, where the registry named one.
+    fn organization_of(&self, project: &str) -> Option<&str> {
+        self.membership.get(project).map(String::as_str)
+    }
+
+    /// Every pair written the wrong way round — a project ceiling above the
+    /// organization's or the site's — said by name and left alone. Nothing
+    /// here rewrites a number; it says which project, which ceiling it is
+    /// above, and both of them (§FS-005-dispatch.24).
+    fn inversions(&self) -> Vec<String> {
+        let mut said = Vec::new();
+        for (project, inner) in &self.projects {
+            let above = self
+                .organization_of(project)
+                .and_then(|organization| {
+                    self.organizations
+                        .get(organization)
+                        .map(|outer| (format!("organizations.{organization}.work"), *outer))
+                })
+                .into_iter()
+                .chain(
+                    self.site_as_configured
+                        .map(|site| ("global work".to_string(), site)),
+                );
+            for (named, outer) in above {
+                if *inner > outer {
+                    said.push(format!(
+                        "projects.{project}.work.max_concurrent {inner} is above \
+                         {named}.max_concurrent {outer}: the project number stands, and the \
+                         ceiling above it still bounds its total"
+                    ));
+                }
+            }
+        }
+        said
+    }
+}
+
+/// Remaining slots at each of the three scopes, as one sweep spends them.
 #[derive(Debug)]
 struct Capacity {
-    global_limit: Option<usize>,
+    ceilings: Ceilings,
     global_live: usize,
-    project_limits: BTreeMap<String, usize>,
+    organization_live: BTreeMap<String, usize>,
     project_live: BTreeMap<String, usize>,
 }
 
 impl Capacity {
-    fn new(
-        global_limit: Option<usize>,
-        project_limits: BTreeMap<String, usize>,
-        live: LiveRuns,
-    ) -> Capacity {
+    fn new(ceilings: Ceilings, live: LiveRuns) -> Capacity {
         Capacity {
-            global_limit,
+            ceilings,
             global_live: live.global,
-            project_limits,
+            organization_live: live.organizations,
             project_live: live.projects,
         }
     }
 
+    /// The organizations a root's projects put it in, each once and in the
+    /// order the root names its projects.
+    fn organizations_of(&self, projects: &[String]) -> Vec<&str> {
+        let mut found: Vec<&str> = Vec::new();
+        for project in projects {
+            if let Some(organization) = self.ceilings.organization_of(project) {
+                if !found.contains(&organization) {
+                    found.push(organization);
+                }
+            }
+        }
+        found
+    }
+
+    /// Why this root may not start, asked outermost first so the reason names
+    /// the widest ceiling that was actually full (§FS-005-dispatch.24).
     fn refusal(&self, projects: &[String]) -> Option<String> {
-        if self
-            .global_limit
-            .is_some_and(|limit| self.global_live >= limit)
+        if let Some(limit) = self
+            .ceilings
+            .site
+            .filter(|limit| self.global_live >= *limit)
         {
-            let limit = self.global_limit.expect("checked");
             return Some(format!(
                 "global work.max_concurrent {limit} is full ({} live run(s))",
                 self.global_live
             ));
         }
-        for project in projects {
-            if self
-                .project_limits
-                .get(project)
-                .is_some_and(|limit| self.project_live.get(project).copied().unwrap_or(0) >= *limit)
+        for organization in self.organizations_of(projects) {
+            let count = self
+                .organization_live
+                .get(organization)
+                .copied()
+                .unwrap_or(0);
+            if let Some(limit) = self
+                .ceilings
+                .organizations
+                .get(organization)
+                .filter(|limit| count >= **limit)
             {
-                let limit = self.project_limits[project];
-                let count = self.project_live.get(project).copied().unwrap_or(0);
+                return Some(format!(
+                    "organizations.{organization}.work.max_concurrent {limit} is full \
+                     ({count} live run(s))"
+                ));
+            }
+        }
+        for project in projects {
+            let count = self.project_live.get(project).copied().unwrap_or(0);
+            if let Some(limit) = self
+                .ceilings
+                .projects
+                .get(project)
+                .filter(|limit| count >= **limit)
+            {
                 return Some(format!(
                     "projects.{project}.work.max_concurrent {limit} is full ({count} live run(s))"
                 ));
@@ -2987,6 +3142,14 @@ impl Capacity {
             return;
         }
         self.global_live += 1;
+        let organizations: Vec<String> = self
+            .organizations_of(projects)
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        for organization in organizations {
+            *self.organization_live.entry(organization).or_default() += 1;
+        }
         for project in projects {
             *self.project_live.entry(project.clone()).or_default() += 1;
         }

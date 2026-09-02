@@ -90,9 +90,24 @@ pub struct ProjectWorkConfig {
     /// repository under a policy about which models may see its code needs.
     #[serde(default)]
     pub permitted_hands: Vec<String>,
-    /// This project's ceiling inside the site's aggregate autorun ceiling.
-    /// Omitted leaves only the aggregate ceiling in force
-    /// (§FS-005-dispatch.24).
+    /// This project's ceiling, inside its organization's and inside the
+    /// site's aggregate autorun ceiling. Omitted leaves the ceilings above it
+    /// in force and adds none of its own (§FS-005-dispatch.24).
+    #[serde(default)]
+    pub max_concurrent: Option<usize>,
+}
+
+/// Work for every project of one organization: the ceiling they share, inside
+/// the site's aggregate one and outside each project's own
+/// (§FS-005-dispatch.24). Which projects that is comes from the registry's
+/// `organization` field, never from here — the ceiling is a binding, the
+/// membership is identity (§REQ-001-boundary.2).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OrganizationWorkConfig {
+    /// The most autorun roots that may be live across this organization's
+    /// projects. Omitted is unlimited; zero pauses new autorun starts under
+    /// it (§FS-005-dispatch.24).
     #[serde(default)]
     pub max_concurrent: Option<usize>,
 }
@@ -1133,15 +1148,23 @@ mod tests {
     }
 
     #[test]
-    fn autorun_concurrency_caps_parse_globally_and_per_project() {
+    fn autorun_concurrency_caps_parse_at_all_three_scopes() {
         let site: WorkConfig = serde_json::from_value(json!({ "max_concurrent": 3 })).unwrap();
+        let organization: OrganizationWorkConfig =
+            serde_json::from_value(json!({ "max_concurrent": 2 })).unwrap();
         let project: ProjectWorkConfig =
             serde_json::from_value(json!({ "max_concurrent": 0 })).unwrap();
         assert_eq!(site.max_concurrent, Some(3));
+        assert_eq!(organization.max_concurrent, Some(2));
         assert_eq!(project.max_concurrent, Some(0));
         assert_eq!(WorkConfig::default().max_concurrent, None);
+        assert_eq!(OrganizationWorkConfig::default().max_concurrent, None);
         assert_eq!(ProjectWorkConfig::default().max_concurrent, None);
         assert!(serde_json::from_value::<WorkConfig>(json!({ "max_concurrant": 1 })).is_err());
+        assert!(
+            serde_json::from_value::<OrganizationWorkConfig>(json!({ "max_concurrant": 1 }))
+                .is_err()
+        );
         assert!(
             serde_json::from_value::<ProjectWorkConfig>(json!({ "max_concurrant": 1 })).is_err()
         );

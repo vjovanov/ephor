@@ -294,7 +294,7 @@
         }
       }
     },
-    "note": { "type": "string", "description": "Something the reader is owed about who got the work: an effort nothing offers, a hand nobody can be asked for (FS-005-dispatch.14). On the error stream in prose, and here in the reading — the two forms know the same things (REQ-002-parity.3)." },
+    "note": { "type": "string", "description": "Something the reader is owed about the work this command read: an effort nothing offers, a hand nobody can be asked for (FS-005-dispatch.14), or a project autorun ceiling written above the organization's or the site's, named with both numbers and neither rewritten (FS-005-dispatch.24). On the error stream in prose, and here in the reading — the two forms know the same things (REQ-002-parity.3)." },
     "diagnosis": {
       "type": "object",
       "description": "One project's ladder (FS-006-project-interface.10): the rungs it holds, and the ones it does not with the reason each is missing.",
@@ -818,6 +818,10 @@
         "items": {
           "type": "array",
           "items": { "$ref": "#/$defs/landing" }
+        },
+        "notes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/note" }
         }
       }
     },
@@ -879,17 +883,21 @@
               "hand": { "type": "string", "description": "Who the run was given to, where the tickets agreed on one (FS-005-dispatch.14)." },
               "outcome": {
                 "enum": ["started", "done", "parked", "failed", "passed-over"],
-                "description": "`started` is a run that went beneath the screen, watched afterwards by attaching (FS-005-dispatch.20); `passed-over` is an otherwise eligible autorun root omitted because an aggregate or project concurrency ceiling is full and is not a failure (FS-005-dispatch.24); the other three are a run watched here, with `parked` the runtime declining for now, which is not a failed run (FS-006-project-interface.3)."
+                "description": "`started` is a run that went beneath the screen, watched afterwards by attaching (FS-005-dispatch.20); `passed-over` is an otherwise eligible autorun root omitted because an aggregate, organization, or project concurrency ceiling is full and is not a failure (FS-005-dispatch.24); the other three are a run watched here, with `parked` the runtime declining for now, which is not a failed run (FS-006-project-interface.3)."
               },
               "id": { "type": "string", "description": "What the run is called, where it named itself \u2014 the id the board prints and the runner's own attach command takes (FS-005-dispatch.20)." },
-              "reason": { "type": "string", "description": "The aggregate or project ceiling that caused a `passed-over` autorun outcome (FS-005-dispatch.24)." },
+              "reason": { "type": "string", "description": "The aggregate, organization, or project ceiling that caused a `passed-over` autorun outcome, named as it is written in the configuration (FS-005-dispatch.24)." },
               "says": {
                 "type": ["string", "null"]
               }
             }
           }
         },
-        "failed": { "type": "integer" }
+        "failed": { "type": "integer" },
+        "notes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/note" }
+        }
       }
     },
     "work-lay": {
