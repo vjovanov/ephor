@@ -1940,10 +1940,10 @@ which the command was invoked, and mappings are merged left to right: a later
 file replaces an earlier value for the same input. Arrays, records, numbers,
 and flags remain their structured types; they are not flattened into words.
 Values supplied this way are reader answers and appear as such in the human
-and JSON answer accounts, distinct from an explicit `--set` answer. A value
-for an input naming who does the work still resolves as a hand id through
-ephor's roster, narrowing, and permitted-hand checks; a values file never
-provides a way around that policy.
+and JSON answer accounts, distinct from an explicit `--set` answer. A
+non-empty value for an input naming who does the work still resolves as a hand
+id through ephor's roster, narrowing, and permitted-hand checks; a values file
+never provides a way around that policy.
 
 What the entry says is data, not prose: a string is rendered with the item's
 fields where it names them, exactly as a brief is
@@ -2016,6 +2016,11 @@ and is rendered into the binding's words in the one place that renders them
 input wanting several is answered with several. A hand a narrowing does not
 permit is refused with that reason wherever it was named — the workflow's own
 default included, since a default is a naming — and never quietly replaced.
+An empty answer, including an empty element in an input wanting several,
+resolves to nobody: it passes to the workflow as written, no hand is rendered
+into it, and no narrowing binds it because nothing was chosen. The workflow's
+own fallback can therefore stand. This is the input-side spelling of the
+roster's `Choice::Unasked`, which keeps nobody choosing apart from a refusal.
 
 **What it writes is a plan beside the item's, not a ticket inside it.** A
 workflow lays down a plan of its own; it cannot be appended to the item's

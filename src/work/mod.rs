@@ -1906,6 +1906,9 @@ impl Dispatcher {
         names.dedup();
         names
             .into_iter()
+            // Empty means nobody chose, so there is neither a hand pin to
+            // parse nor a roster choice to make (§FS-005-dispatch.19).
+            .filter(|name| !name.trim().is_empty())
             .map(|name| {
                 let rendered = match recipe::HandPin::parse(&name) {
                     Err(why) => Err(why),

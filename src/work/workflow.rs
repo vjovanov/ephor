@@ -349,6 +349,12 @@ fn answer_one(
 /// (§FS-005-dispatch.14), so this is the only spelling accepted here.
 fn hands(written: &Value, input: &Input, named: Rendering<'_>) -> Result<Value, String> {
     let one = |name: &str| -> Result<Value, String> {
+        // An empty answer is nobody choosing, not a hand name: preserve its
+        // spelling and do not let the resolved hand below it take its place
+        // (§FS-005-dispatch.19).
+        if name.trim().is_empty() {
+            return Ok(Value::String(name.to_string()));
+        }
         match named(name)? {
             Some(rendered) => Ok(Value::String(rendered)),
             None => Err(format!(
@@ -647,6 +653,93 @@ mod tests {
         );
         assert_eq!(out.values.get("smart_target"), None);
         assert!(out.refusals[0].contains("not permitted"));
+    }
+
+    /// An empty execution target is the reader saying nobody chose, not a
+    /// hand name. It remains a values-file answer and must not fall through
+    /// to ephor's resolved hand (§FS-005-dispatch.19).
+    #[test]
+    fn an_empty_values_file_execution_target_resolves_to_nobody() {
+        let flow = workflow(vec![input("smart_target", Kind::Text, false, true)]);
+        let ask = WorkflowAsk {
+            name: flow.id.clone(),
+            ..WorkflowAsk::default()
+        };
+        let file_values = serde_json::Map::from_iter([(
+            "smart_target".to_string(),
+            Value::String(String::new()),
+        )]);
+        let named = |_: &str| -> Result<Option<String>, String> {
+            panic!("nobody must not be resolved as a named hand")
+        };
+        let out = answer_with_values(
+            &flow,
+            &ask,
+            &BTreeMap::new(),
+            &file_values,
+            &matter(),
+            Some("claude-code[high]:anthropic:opus"),
+            &named,
+        );
+
+        assert_eq!(out.values["smart_target"], Value::String(String::new()));
+        assert_eq!(out.answer("smart_target").unwrap().from, From::Values);
+        assert!(out.refusals.is_empty());
+    }
+
+    /// An explicit empty line has the same nobody reading as an empty value
+    /// from a file, while retaining its stronger provenance
+    /// (§FS-005-dispatch.19).
+    #[test]
+    fn an_empty_set_execution_target_resolves_to_nobody() {
+        let flow = workflow(vec![input("smart_target", Kind::Text, false, true)]);
+        let ask = WorkflowAsk {
+            name: flow.id.clone(),
+            ..WorkflowAsk::default()
+        };
+        let typed = BTreeMap::from([("smart_target".to_string(), String::new())]);
+        let named = |_: &str| -> Result<Option<String>, String> {
+            panic!("nobody must not be resolved as a named hand")
+        };
+        let out = answer(
+            &flow,
+            &ask,
+            &typed,
+            &matter(),
+            Some("claude-code[high]:anthropic:opus"),
+            &named,
+        );
+
+        assert_eq!(out.values["smart_target"], Value::String(String::new()));
+        assert_eq!(out.answer("smart_target").unwrap().from, From::Reader);
+        assert!(out.refusals.is_empty());
+    }
+
+    /// Nobody can occupy one position in a list without changing the other
+    /// positions: empty names pass as written and non-empty names still
+    /// resolve through the roster (§FS-005-dispatch.19).
+    #[test]
+    fn an_empty_execution_target_list_element_resolves_to_nobody() {
+        let flow = workflow(vec![input("review_targets", Kind::List, false, true)]);
+        let ask = WorkflowAsk {
+            name: flow.id.clone(),
+            inputs: BTreeMap::from([(
+                "review_targets".to_string(),
+                serde_json::json!(["", "  ", "luna"]),
+            )]),
+            ..WorkflowAsk::default()
+        };
+        let named = |name: &str| -> Result<Option<String>, String> {
+            assert_eq!(name, "luna", "nobody must not be resolved as a named hand");
+            roster(name)
+        };
+        let out = answer(&flow, &ask, &BTreeMap::new(), &matter(), None, &named);
+
+        assert_eq!(
+            out.values["review_targets"],
+            serde_json::json!(["", "  ", "claude-code[high]:anthropic:opus"])
+        );
+        assert!(out.refusals.is_empty());
     }
 
     /// An input wanting several hands is answered with several, said on one
