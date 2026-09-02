@@ -1494,18 +1494,34 @@ the same start, and the answer is the first *no*.
 organization's number is expected to be the larger of the pair, because it is
 the budget its projects share, so a project ceiling above its organization's
 — or above the site's — is almost always a mistake. It is warned about by
-name wherever the ceilings are read, and the warning says which project,
-which ceiling it is above, and both numbers, so it is seen when it bites
-rather than only when someone runs a check over the file. It is not refused
-and the project's number is not rewritten: whoever configured the one project
-is closer to it than whoever set the number above it, and a tool that
+name at each sweep that reads the ceilings — `ephor work run --due`,
+`ephor work dispatch` and `ephor work sync` — and the warning says which
+project, which ceiling it is above, and both numbers, so it is seen when it
+bites rather than only when someone runs a check over the file. It is not
+refused and the project's number is not rewritten: whoever configured the one
+project is closer to it than whoever set the number above it, and a tool that
 silently clamped them would be deciding something it does not know. Nor is
 the warning a licence — the organization's total still binds, because a pair
 written the wrong way round is not permission to exceed a ceiling somebody
 set on purpose. The site number a pair is measured against is the configured
 one: `--max-concurrent` narrows a single sweep deliberately, so a project
 ceiling above it is the reader's own choice rather than a configuration
-contradicting itself, and nothing is said about it.
+contradicting itself, and nothing is said about it. A ceiling of `0` above is
+not a pair at all: it admits no new starts under it, so it is a pause the
+reader wrote on purpose rather than a budget a project could be above, and
+the numbers beneath a paused site or organization are said nothing about
+either — a configuration that pauses the site and leaves its project numbers
+where they were is not thereby a configuration that contradicts itself.
+
+**A ceiling over nobody is said out loud.** Which organizations exist is the
+registry's alone, so `organizations.<org-id>` naming an id no registry row
+declares bounds nothing whatever it says. That is a typo removing the bound
+its author believes they set, which is the one thing a ceiling may never be,
+so it is named — by `ephor doctor`, in the same words an unknown project id
+is named in, and at the sweep where the missing bound would have been read.
+It is not an error and nothing is refused for it: the runs that would have
+happened without the key still happen, and the reader is told why the key
+they wrote is not the one biting.
 
 **Capacity is live work, not attempts.** One root snapshot supplies both the
 due candidates and the live counts. Every already-live root consumes one
