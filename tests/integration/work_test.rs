@@ -1294,6 +1294,11 @@ fn work_dispatched_through_an_organization_root_lands_there_and_is_found_there()
             }]
         }),
     );
+    // The sweep asks for the runtime before it walks, so a runner has to be
+    // on PATH for the walk to be reached at all — every sibling sweep test
+    // plants this one, and the ceiling above keeps it from ever being called.
+    let log = tmp.path().join("runner.log");
+    detaching_runner(tmp.path(), &log);
     let org_root = tmp.path().join("foundation");
     fs::create_dir_all(&org_root).unwrap();
     in_organization(tmp.path(), "foundation", Some(&org_root));
@@ -1337,6 +1342,11 @@ fn work_dispatched_through_an_organization_root_lands_there_and_is_found_there()
         reading["runs"][0]["root"].as_str(),
         Some(panta.to_string_lossy().as_ref()),
         "the organization root is swept: {reading}"
+    );
+    assert_eq!(
+        starts(&log),
+        0,
+        "the paused ceiling passed over it, so the root was found and not run"
     );
 }
 
