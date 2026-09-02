@@ -212,6 +212,41 @@ Finished work is never dispatched. An item under Recent
 ([§FS-003-feed-categories.2](FS-003-feed-categories.md#2-recent)) is news, and asking an agent to fix a
 merged pull request is asking it to invent something to do.
 
+### 6.1 The work root is a template, and it may reach above the project
+
+Where a plan is written is configuration rather than a constant. `work.root` is
+a template, rendered from the vocabulary the ticket itself is rendered from
+([§2](#2-the-ticket-carries-what-ephor-knows-not-a-link-to-it)) — the item's
+own fields, the checkout it resolves to, the project root — and it is read at
+three scopes, the same nesting the autorun ceilings are read at
+([§24](#24-work-nobody-has-to-start-starts-itself)): `projects.<id>.work.root`
+first, then `organizations.<org-id>.work.root`, then the site's `work.root`.
+The innermost one written answers and the others are not consulted; none of
+them merges with another, because a path is one answer and a half-overridden
+one is nobody's.
+
+**Two of the names reach above the project.** `{org}` is the organization the
+project's registry row places it in and `{org_root}` is where that organization
+is rooted — the registry has always known both, and it was the placement that
+could not reach them. With them, an organization tier writing
+`"root": "{org_root}/panta"` gives a whole organization one work root, which is
+where work that belongs to no single repository goes: a release that moves
+several projects' gates, a sweep across all of them. Membership and the root
+are the registry's own facts, read here and never written back
+([§REQ-001-boundary.2](../requirements/REQ-001-boundary.md#2-three-homes-one-resolution-order)); only the tier that names them is
+configuration's.
+
+**A name with no answer refuses, and says which name and which
+organization.** A project the registry places in no organization has no
+`{org}` to render, and an organization that declares no `root` has no
+`{org_root}`. Dispatch refuses both, by name — *organization acme declares no
+root* — because what it would otherwise write is a directory literally called
+`{org_root}`, or a path with a segment missing where the answer should have
+been, and either one is work laid down somewhere nobody meant. The refusal is
+about the *path*: the dossier and a recipe's brief are prose, and carry an
+empty organization the way they carry any other field a matter has not got
+([§2](#2-the-ticket-carries-what-ephor-knows-not-a-link-to-it)).
+
 ## 7. Handing over work is the reader's move, and stays inside the machine
 
 Dispatch writes files and nothing else. It opens no pull request, posts no
@@ -564,7 +599,10 @@ world, not about the ledger: the work roots themselves are enumerated —
 the place a project's work is configured to live, resolved at the
 project's own checkout and again in each branch workspace on disk, since
 the work root is per branch workspace and each one is its own execution
-root — and every plan found in one is watched, whoever wrote it. A plan
+root, and again at its organization's root where the template reaches
+above the project
+([§6.1](#61-the-work-root-is-a-template-and-it-may-reach-above-the-project))
+— and every plan found in one is watched, whoever wrote it. A plan
 written by hand, a project's own planning tickets, and a run somebody
 started in another terminal on a root ephor never dispatched into are
 operations exactly as dispatched work is, judged row-worthy by the same
@@ -699,8 +737,16 @@ something move, or a refresh landing — and never merely because time
 passed. The walk is bounded by where work is configured to live, not by
 what the disk holds: it visits the project checkouts and the branch
 workspaces ephor already resolves, to the fixed depth a branch name can
-nest, and costs one directory listing per candidate work root — it never
-descends into a repository, and it never reads a plan to find it.
+nest, and — where the template names an organization
+([§6.1](#61-the-work-root-is-a-template-and-it-may-reach-above-the-project))
+— the root of the organization the project belongs to, which lies inside
+no checkout and would otherwise be written to and never looked at again.
+It costs one directory listing per candidate work root — it never
+descends into a repository, and it never reads a plan to find it. What
+has no answer here is skipped rather than refused, the way a template
+naming a field only an item can fill is: an organization placeholder
+nothing answers is a template no dispatch could have written through
+either, so there is nothing under it to have missed.
 
 ### 15.2 What a run is doing is read from the run's own stream
 
@@ -1481,6 +1527,15 @@ the reader's move. `ephor work run --due --max-concurrent N` replaces the
 site's configured aggregate ceiling for that invocation, including when `N`
 is zero; every organization and project ceiling still applies inside the
 command-line ceiling.
+
+**The organization tier carries more than a ceiling.** `work.root` is read at
+these same three scopes and by the same registry membership
+([§6.1](#61-the-work-root-is-a-template-and-it-may-reach-above-the-project)),
+so an organization block is where both the budget its projects share and the
+place their work goes are written. The two are read differently and have to
+be: every ceiling is evaluated and the outermost full one refuses, while a
+root is a single answer, so the innermost scope that writes one is the whole
+answer and nothing above it is asked.
 
 **Every ceiling is evaluated, and the outermost full one is the reason.** A
 start is refused by whichever is full first, asked outermost scope inward —
