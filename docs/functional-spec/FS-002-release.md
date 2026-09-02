@@ -5,7 +5,7 @@ version in `Cargo.toml` and the tag agree or the release refuses to run.
 
 ## 1. Changelog
 
-[docs/changelog.md](docs/changelog.md) holds `## Unreleased` and the most
+[docs/changelog.md](../changelog.md) holds `## Unreleased` and the most
 recent release inline; older releases move one-per-file under
 `docs/changelog/` with a one-line pointer, so the common question — what
 changed lately — is one file deep. Sections per release are the
