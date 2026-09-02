@@ -905,11 +905,12 @@ impl Dispatcher {
             item,
             checkout: &checkout,
             root: &placement.root,
+            organization: placement.organization.as_ref(),
         };
-        Some(crate::paths::resolve_path(&dossier::render(
-            &template,
-            &subject.placeholders(),
-        )))
+        // A template the dispatch would refuse on has no preview to give: the
+        // surface asking "who would get this" is told nothing rather than a
+        // path with a gap in it (§FS-005-dispatch.6.1).
+        subject.work_root(&template).ok()
     }
 
     /// Every autorun ceiling written over an organization no registry row
@@ -957,7 +958,13 @@ impl Dispatcher {
             .iter()
             .filter_map(|id| self.placement(id).cloned())
             .collect();
-        enumerate_roots(&self.global, &self.projects, &placements, &self.ledger)
+        enumerate_roots(
+            &self.global,
+            &self.organizations,
+            &self.projects,
+            &placements,
+            &self.ledger,
+        )
     }
 
     /// What this ticket pins, and what the reader is told about it. Refuses
@@ -1141,7 +1148,21 @@ impl Dispatcher {
     }
 
     fn root_template(&self, project: &str) -> String {
-        root_template(&self.global, self.projects.get(project))
+        root_template(
+            &self.global,
+            self.organization_work(project),
+            self.projects.get(project),
+        )
+    }
+
+    /// The work configuration written over the organization this project's
+    /// registry row places it in, where one is written there
+    /// (§FS-005-dispatch.6.1). The membership is the registry's and the
+    /// binding is the site configuration's, which is the one direction this
+    /// ever reads in (§REQ-001-boundary.2).
+    fn organization_work(&self, project: &str) -> Option<&OrganizationWorkConfig> {
+        let (organization, _) = crate::registry::organization_of(&self.registry_doc, project)?;
+        self.organizations.get(&organization)
     }
 
     /// Where an item's work belongs, refusing where it would not run
@@ -1292,6 +1313,7 @@ impl Dispatcher {
             item,
             checkout: &checkout,
             root: &placement.root,
+            organization: placement.organization.as_ref(),
         };
         let mut values = subject.placeholders();
         // Laying the plan is a write, and a write resolves through the
@@ -1307,8 +1329,13 @@ impl Dispatcher {
             item,
             checkout: &placed,
             root: &placement.root,
+            organization: placement.organization.as_ref(),
         };
-        let dir = crate::paths::resolve_path(&dossier::render(&template, &laid.placeholders()));
+        // Refusing here is what keeps a work root that reaches above the
+        // project from becoming a directory called `{org_root}`, or a path
+        // with the organization's segment simply missing
+        // (§FS-005-dispatch.6.1).
+        let dir = laid.work_root(&template).map_err(EphorError::Command)?;
         // Where a proposed reply belongs, named absolutely: the runtime runs
         // from the checkout, not from the work root, so a brief that asks for
         // a file has to say which one (§FS-005-dispatch.13).
@@ -3640,13 +3667,20 @@ pub fn cancel_ticket(
     })
 }
 
-/// Where an item's work goes for a project: its own template, or the global
-/// one. A free function because `ephor checkout` resolves the same place
+/// Where an item's work goes for a project: its own template, its
+/// organization's, or the site's — the innermost one written answers, and the
+/// scopes above it are not consulted (§FS-005-dispatch.6.1). A free function
+/// because `ephor checkout` resolves the same place
 /// (§FS-006-project-interface.7) and two answers to "where does work live"
 /// would eventually disagree.
-pub fn root_template(global: &WorkConfig, project: Option<&ProjectWorkConfig>) -> String {
+pub fn root_template(
+    global: &WorkConfig,
+    organization: Option<&OrganizationWorkConfig>,
+    project: Option<&ProjectWorkConfig>,
+) -> String {
     project
         .and_then(|work| work.root.clone())
+        .or_else(|| organization.and_then(|work| work.root.clone()))
         .unwrap_or_else(|| global.root.clone())
 }
 
@@ -3663,6 +3697,7 @@ pub fn root_template(global: &WorkConfig, project: Option<&ProjectWorkConfig>) -
 /// asked (§FS-005-dispatch.15.1, §AR-007-runtime.3).
 pub fn enumerate_roots(
     global: &WorkConfig,
+    organizations: &BTreeMap<String, OrganizationWorkConfig>,
     projects: &BTreeMap<String, ProjectWorkConfig>,
     placements: &[Placement],
     ledger: &Ledger,
@@ -3714,10 +3749,28 @@ pub fn enumerate_roots(
         }
     }
     for placement in placements {
-        let template = root_template(global, projects.get(&placement.project));
+        let organization = placement.organization.as_ref();
+        let template = root_template(
+            global,
+            organization.and_then(|org| organizations.get(&org.id)),
+            projects.get(&placement.project),
+        );
         let mut places = vec![placement.root.clone()];
         for branch in &placement.branches {
             places.extend(placement.workspace_for(&branch.branch));
+        }
+        // An organization's root is a place of its own: a work root reaching
+        // above the project sits inside no checkout, so every place the
+        // project offers can be absent while the root the template names is
+        // there (§FS-005-dispatch.6.1). Seeded only where the template
+        // actually reaches for it, so a site naming no organization
+        // placeholder enumerates exactly the roots it enumerated before
+        // (§FS-005-dispatch.15.1).
+        if dossier::named(&template)
+            .iter()
+            .any(|name| dossier::ORGANIZATION_PLACEHOLDERS.contains(&name.as_str()))
+        {
+            places.extend(organization.and_then(|org| org.root.clone()));
         }
         places.sort();
         places.dedup();
@@ -3728,11 +3781,22 @@ pub fn enumerate_roots(
             if !place.is_dir() {
                 continue;
             }
-            let values = BTreeMap::from([
+            let mut values = BTreeMap::from([
                 ("workspace", place.to_string_lossy().into_owned()),
                 ("root", placement.root.to_string_lossy().into_owned()),
                 ("project", placement.project.clone()),
             ]);
+            // Only what the registry answers goes in. An organization
+            // placeholder nothing answers is left standing and skipped by the
+            // guard below, exactly as a field only an item can fill is: a
+            // template dispatch would have refused wrote nothing to find
+            // (§FS-005-dispatch.15.1).
+            if let Some(organization) = organization {
+                values.insert("org", organization.id.clone());
+                if let Some(root) = &organization.root {
+                    values.insert("org_root", root.to_string_lossy().into_owned());
+                }
+            }
             let rendered = dossier::render(&template, &values);
             if rendered.contains('{') {
                 continue;
@@ -3816,18 +3880,33 @@ pub struct Store {
 /// that happens to live in a checkout.
 pub fn ensure_store(
     global: &WorkConfig,
+    organization: Option<&OrganizationWorkConfig>,
     project: Option<&ProjectWorkConfig>,
     project_id: &str,
+    placed_in: Option<&crate::branches::Organization>,
     workspace: &std::path::Path,
     root: &std::path::Path,
 ) -> Result<Store> {
-    let values = BTreeMap::from([
+    let template = root_template(global, organization, project);
+    // The same refusal the dispatch makes, in the same words: a work root
+    // reaching above the project has no answer here either, and a checkout
+    // must not make a directory called `{org_root}` for a plan to land in
+    // (§FS-005-dispatch.6.1).
+    if let Some(why) = dossier::organization_gap(&template, project_id, placed_in) {
+        return Err(EphorError::Command(why));
+    }
+    let mut values = BTreeMap::from([
         ("workspace", workspace.to_string_lossy().into_owned()),
         ("root", root.to_string_lossy().into_owned()),
         ("project", project_id.to_string()),
     ]);
-    let dir =
-        crate::paths::resolve_path(&dossier::render(&root_template(global, project), &values));
+    if let Some(placed_in) = placed_in {
+        values.insert("org", placed_in.id.clone());
+        if let Some(root) = &placed_in.root {
+            values.insert("org_root", root.to_string_lossy().into_owned());
+        }
+    }
+    let dir = crate::paths::resolve_path(&dossier::render(&template, &values));
     let states = states_yaml(global, project)?;
     let made = !dir.is_dir();
     // The directory first: the runner is asked to make a place that is there,

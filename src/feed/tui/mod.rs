@@ -2254,6 +2254,7 @@ mod tests {
             aliases: Vec::new(),
             territory: Vec::new(),
             trust: crate::manifest::Trust::Full,
+            organization: None,
         };
         Ctx {
             feeds: Vec::new(),

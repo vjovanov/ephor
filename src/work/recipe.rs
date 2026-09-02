@@ -18,8 +18,18 @@ use crate::feed::model::{Item, ItemKind, ItemRole};
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkConfig {
-    /// Where an item's plan is written. `{workspace}` is the checkout the item
-    /// resolves to, `{root}` the project root, `{project}` its id.
+    /// Where an item's plan is written, as a template over the whole
+    /// vocabulary the ticket itself is rendered from
+    /// ([`crate::work::dossier::Subject::placeholders`]) rather than the three
+    /// names this said for a long time: `{workspace}` is the checkout the item
+    /// resolves to, `{root}` the project root, `{project}` its id, and
+    /// `{title}`, `{branch}`, `{ticket}`, `{number}`, `{org}`, `{org_root}`
+    /// and the rest are nameable here too (§FS-005-dispatch.6.1). The site's
+    /// answer; an organization's displaces it, and a project's displaces both.
+    ///
+    /// Enumeration resolves this without an item in hand, so a template naming
+    /// a field only an item can fill is written to at dispatch and skipped by
+    /// the board's walk (§FS-005-dispatch.15.1).
     #[serde(default = "default_root")]
     pub root: String,
     /// A states YAML to install into a work root that has none, instead of the
@@ -114,9 +124,10 @@ pub struct ProjectWorkConfig {
 
 /// Work for every project of one organization: the ceiling they share, inside
 /// the site's aggregate one and outside each project's own
-/// (§FS-005-dispatch.24). Which projects that is comes from the registry's
-/// `organization` field, never from here — the ceiling is a binding, the
-/// membership is identity (§REQ-001-boundary.2).
+/// (§FS-005-dispatch.24), and the work root they share, outside the site's and
+/// inside each project's own (§FS-005-dispatch.6.1). Which projects that is
+/// comes from the registry's `organization` field, never from here — both keys
+/// are bindings, the membership is identity (§REQ-001-boundary.2).
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OrganizationWorkConfig {
@@ -125,6 +136,14 @@ pub struct OrganizationWorkConfig {
     /// it (§FS-005-dispatch.24).
     #[serde(default)]
     pub max_concurrent: Option<usize>,
+    /// Where the work of every project in this organization is written, unless
+    /// the project names its own: the tier between the site's
+    /// [`WorkConfig::root`] and [`ProjectWorkConfig::root`]
+    /// (§FS-005-dispatch.6.1). This is the tier `{org_root}` is written at —
+    /// one work root for a whole organization, for work that belongs to no
+    /// single repository. Omitted leaves the site's answer in force.
+    #[serde(default)]
+    pub root: Option<String>,
 }
 
 /// The key a hands table answers every unnamed action with
