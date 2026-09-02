@@ -1753,14 +1753,16 @@ impl App {
 
     /// Start a refresh and give the screen straight back
     /// (§FS-001-forge-interface.7). What it asks for is what the view shows:
-    /// one project in Detail, every configured project otherwise.
+    /// one project in Detail, and otherwise every project this screen was
+    /// opened over — which is the scope's list where a selector narrowed one
+    /// (§FS-011-command-line.9), not the whole watch list.
     fn start_refresh(&mut self, config: &StatusConfig) {
         if self.refresh.is_some() {
             self.message = "Already refreshing".to_string();
             return;
         }
-        let only = self.navigator.refresh_filter(&self.ctx);
-        match crate::feed::refresh::BackgroundRefresh::start(config, only.as_deref()) {
+        let over = self.navigator.refresh_over(&self.ctx);
+        match crate::feed::refresh::BackgroundRefresh::start(config, &over) {
             Ok(refresh) => {
                 // The header carries the run from here; what it says about the
                 // last thing that happened is finished with.

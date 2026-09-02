@@ -214,11 +214,17 @@ impl NavigatorState {
         !self.stream_entries.is_empty()
     }
 
-    /// In Detail mode, refresh only the shown project.
-    pub fn refresh_filter(&self, ctx: &Ctx) -> Option<String> {
+    /// Which projects the refresh key asks about: the one project Detail
+    /// shows, and otherwise every project this screen was opened over.
+    ///
+    /// The screen's own list, never the site's watch list: a screen opened
+    /// under `--org` shows that organization, and a key that fetched the
+    /// others would reach forges the reader narrowed away and show nothing
+    /// for it (§FS-011-command-line.9).
+    pub fn refresh_over(&self, ctx: &Ctx) -> Vec<String> {
         match self.mode {
-            Mode::Detail => Some(ctx.projects[self.detail_project].clone()),
-            _ => None,
+            Mode::Detail => vec![ctx.projects[self.detail_project].clone()],
+            _ => ctx.projects.clone(),
         }
     }
 
@@ -1331,6 +1337,27 @@ mod tests {
             .map(|(header, _)| *header)
             .collect();
         assert_eq!(landed, ["Recent"]);
+    }
+
+    /// §FS-011-command-line.9: the refresh key asks about the projects this
+    /// screen was opened over, so a screen opened under a scope selector
+    /// fetches its organization and not the site. Detail keeps its own
+    /// narrowing to the one project it shows.
+    #[test]
+    fn the_refresh_key_asks_the_screens_own_projects() {
+        let ctx = Ctx {
+            projects: vec!["ephor".to_string(), "rhei".to_string()],
+            ..Ctx::default()
+        };
+        let mut navigator = NavigatorState::new();
+        assert_eq!(navigator.refresh_over(&ctx), ctx.projects);
+
+        navigator.mode = Mode::Projects;
+        assert_eq!(navigator.refresh_over(&ctx), ctx.projects);
+
+        navigator.mode = Mode::Detail;
+        navigator.detail_project = 1;
+        assert_eq!(navigator.refresh_over(&ctx), vec!["rhei".to_string()]);
     }
 
     fn on(entries: &[Entry], index: usize) -> ListState {

@@ -334,26 +334,35 @@ pub struct BackgroundRefresh {
     failed: Option<String>,
 }
 
+/// The projects a background run will ask, in the configuration's own order.
+///
+/// `over` is the list the screen was opened over rather than the whole watch
+/// list: a screen opened under a scope selector fetches what it shows and
+/// nothing else, or the key would reach organizations the reader narrowed
+/// away and the run would cost what the scope was meant to save
+/// (§FS-011-command-line.9).
+fn jobs_over(config: &StatusConfig, over: &[String]) -> Vec<(String, ProjectFeedConfig)> {
+    config
+        .projects
+        .iter()
+        .filter(|(project, _)| over.contains(project))
+        .map(|(project, project_config)| (project.clone(), project_config.clone()))
+        .collect()
+}
+
 impl BackgroundRefresh {
-    /// Start a run and give the screen straight back. `only` narrows it to a
-    /// single project, as the detail view does.
+    /// Start a run and give the screen straight back. `over` is which projects
+    /// to ask: the one the detail view shows, or every project the screen was
+    /// opened over.
     ///
     /// The registry is read here, on the caller's thread: it is a local file,
     /// and a registry that will not parse is an answer the keystroke can have
     /// rather than one that arrives later looking like a refresh that lost
     /// everything.
-    pub fn start(config: &StatusConfig, only: Option<&str>) -> Result<Self> {
+    pub fn start(config: &StatusConfig, over: &[String]) -> Result<Self> {
         let registry_doc = crate::feed::commands::load_registry_doc()?;
         let defaults = config.defaults.clone();
-        let jobs: Vec<(String, ProjectFeedConfig)> = config
-            .projects
-            .iter()
-            .filter(|(project, _)| match only {
-                Some(one) => project.as_str() == one,
-                None => true,
-            })
-            .map(|(project, project_config)| (project.clone(), project_config.clone()))
-            .collect();
+        let jobs = jobs_over(config, over);
         let queue: Vec<String> = jobs.iter().map(|(project, _)| project.clone()).collect();
 
         let (sender, landed) = mpsc::channel();
@@ -741,6 +750,38 @@ fn fetch_one(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// §FS-011-command-line.9: a run started from the screen asks the
+    /// projects it was handed — the ones that screen was opened over — so a
+    /// screen narrowed to one organization does not reach the others when
+    /// the reader presses the refresh key.
+    #[test]
+    fn a_background_run_asks_only_the_projects_it_was_given() {
+        let config: StatusConfig = serde_json::from_value(serde_json::json!({
+            "projects": {
+                "ephor": { "providers": [] },
+                "graal": { "providers": [] },
+                "rhei": { "providers": [] }
+            }
+        }))
+        .expect("a watch list");
+        let asked = |over: &[&str]| -> Vec<String> {
+            let over: Vec<String> = over.iter().map(|id| id.to_string()).collect();
+            jobs_over(&config, &over)
+                .into_iter()
+                .map(|(project, _)| project)
+                .collect()
+        };
+
+        assert_eq!(asked(&["ephor", "rhei"]), ["ephor", "rhei"]);
+        // Detail's single project, and the whole watch list where the screen
+        // was opened over all of it.
+        assert_eq!(asked(&["graal"]), ["graal"]);
+        assert_eq!(
+            asked(&["ephor", "graal", "rhei"]),
+            ["ephor", "graal", "rhei"]
+        );
+    }
 
     #[test]
     fn a_clean_run_says_only_that_it_refreshed() {
