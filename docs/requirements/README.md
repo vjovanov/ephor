@@ -14,6 +14,8 @@ here.
 |---|---|
 | [REQ-001-boundary](REQ-001-boundary.md) | every capacity ephor lacks crosses a seam |
 | [REQ-002-parity](REQ-002-parity.md) | every ability is reachable without the screen |
+| [§REQ-001-boundary](REQ-001-boundary.md#req-001-boundary-every-capacity-ephor-lacks-crosses-a-seam-and-the-seam-has-one-anatomy) | every capacity ephor lacks crosses a seam, and the seam has one anatomy |
+| [§REQ-002-parity](REQ-002-parity.md#req-002-parity-every-ability-is-reachable-without-the-screen-and-every-answer-has-a-machine-form) | every ability is reachable without the screen, and every answer has a machine form |
 
 This index is navigational — citations should target the law's ID directly,
 never this file.

@@ -30,6 +30,12 @@ ships, the previous "latest" section moves verbatim to
 
 ### Changed
 
+- **Every declaration is listed in its folder's index.** `grund check` warned
+  that thirty-two declarations — across `§FS`, `§AR`, `§REQ` and the decision
+  folders — were absent from their index README, and that the warning becomes an
+  error in grund 0.13.0. The entries are added now, and the two decision folders
+  that had no index at all have one. (PR #55)
+
 - [§FS-002-release.5](functional-spec/FS-002-release.md#5-between-releases-main-carries-a-dev-version):
   after a release, main opens the next patch as `X.Y.Z-dev` instead of keeping
   the version it just published. A build from main previously reported the tag it
