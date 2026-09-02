@@ -912,6 +912,23 @@ impl Dispatcher {
         )))
     }
 
+    /// Every autorun ceiling written over an organization the registry does
+    /// not declare, said in the note the sweep carries (§FS-005-dispatch.24).
+    /// Such a key bounds nothing at all, which is the one thing a ceiling may
+    /// never quietly be, so the reader hears it where the bound they meant to
+    /// set would have been read.
+    fn ceilings_over_nobody(&self) -> Vec<String> {
+        crate::registry::unknown_organizations(&self.registry_doc, self.organizations.keys())
+            .into_iter()
+            .map(|organization| {
+                format!(
+                    "organizations.{organization} names no organization the registry \
+                     declares: the ceiling written there bounds nothing"
+                )
+            })
+            .collect()
+    }
+
     /// Which organization each project belongs to, as the registry declares
     /// it (§FS-005-dispatch.24). Membership is identity and lives in the
     /// registry row; the ceiling over it is a binding and lives in the site's
@@ -2732,8 +2749,12 @@ impl Dispatcher {
             membership: self.organization_of_each_project(),
         };
         // Said where the ceilings are read, so a pair written the wrong way
-        // round is seen at the sweep it costs something rather than only by
+        // round — or a ceiling over an organization the registry never heard
+        // of — is seen at the sweep it costs something rather than only by
         // whoever runs a check over the file (§FS-005-dispatch.24).
+        for unbound in self.ceilings_over_nobody() {
+            self.note_once(&unbound);
+        }
         for inversion in ceilings.inversions() {
             self.note_once(&inversion);
         }
@@ -3027,7 +3048,9 @@ impl Ceilings {
     /// Every pair written the wrong way round — a project ceiling above the
     /// organization's or the site's — said by name and left alone. Nothing
     /// here rewrites a number; it says which project, which ceiling it is
-    /// above, and both of them (§FS-005-dispatch.24).
+    /// above, and both of them (§FS-005-dispatch.24). A ceiling of `0` above
+    /// is a pause the reader wrote on purpose rather than a budget anything
+    /// can be above, so no pair is read out of it.
     fn inversions(&self) -> Vec<String> {
         let mut said = Vec::new();
         for (project, inner) in &self.projects {
@@ -3044,7 +3067,7 @@ impl Ceilings {
                         .map(|site| ("global work".to_string(), site)),
                 );
             for (named, outer) in above {
-                if *inner > outer {
+                if outer > 0 && *inner > outer {
                     said.push(format!(
                         "projects.{project}.work.max_concurrent {inner} is above \
                          {named}.max_concurrent {outer}: the project number stands, and the \

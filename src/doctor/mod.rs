@@ -510,6 +510,19 @@ fn site(args: &DoctorArgs, style: &Style, say: &Narrator) -> Result<(Health, Opt
             Err(err) => format!("could not be asked — {err}"),
         });
     }
+    // A ceiling written over an organization the registry does not declare
+    // bounds nothing, and is named here in the same words an unknown project
+    // id is named in — a typo that removes a bound is not a shrug
+    // (§FS-005-dispatch.24).
+    for organization in
+        crate::registry::unknown_organizations(&registry_doc, config.organizations.keys())
+    {
+        say.starting(&format!("{organization} (an autorun ceiling)"));
+        say.done(&format!(
+            "bounds nobody — Feed config references unknown organization \
+             '{organization}' (not in the registry)."
+        ));
+    }
     say.pass("reading each project's ladder …");
 
     let mut rows = Vec::new();
