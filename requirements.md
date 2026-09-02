@@ -2482,17 +2482,23 @@ replaces the shipped recipe and chooses its own branch behavior.
 and three of them it may not name, because they are what it produces:
 `{branch}`, `{workspace}` and `{reply}`.
 
-**A template that will not render is refused by name**, where it is read and
-rather than turned into a directory nobody meant, and the refusal says which
-of the four things is wrong with it: it names one of the three fields it
-decides; it names something that is no field of a matter at all, and the
-refusal lists the ones it may name; it names a field this matter has not got,
-so that every matter missing that field would land on one shared branch; or
-what it renders is not a name git will take as a branch. The last of those is
-answered here rather than left to the checkout: git's own refusal arrives from
-inside the making, by which time the directories leading to the workspace are
-there, so a template git will not take is held to that before anything is
-made.
+**A template that is wrong for every matter is refused by name**, where it is
+read and rather than turned into a directory nobody meant, and the refusal
+says which of the three things is wrong with it: it names one of the three
+fields it decides; it names something that is no field of a matter at all, and
+the refusal lists the ones it may name; or what it renders is not a name git
+will take as a branch. The last of those is answered here rather than left to
+the checkout: git's own refusal arrives from inside the making, by which time
+the directories leading to the workspace are there, so a template git will
+not take is held to that before anything is made.
+
+**A template that names a field this matter has not got means the entry does
+not serve this matter.** It is withheld from the menu and its readings, and
+from dispatch selection — including unattended sweeps — rather than selected
+and refused, because another matter can carry the field and render the same
+template correctly. The `work offers` reading names the excluded entry and
+the field it needed, as §27 requires; a silent disappearance would leave the
+reader unable to distinguish an incompatible matter from no configured work.
 
 **The matter's own branch always wins — but the project's main branch is
 never a matter's own.** A pull request keeps the branch the forge recorded
@@ -2677,10 +2683,11 @@ though an empty offers list has always told them apart with the one sentence
 loosen the selector, or learn that the matter simply does not carry the field
 it asked about — and the second is nothing to act on at all.
 
-So **a recipe considered for the matter and refused by its selector is named,
-beside the field that refused it**, in the reading `ephor work offers`
-returns: which of `roles`, `gate`, `needs_response`, or `sources` did not
-hold, and what the matter carried instead of what the selector asked for.
+So **a recipe considered for the matter and refused by its selector or its
+branch template is named, beside what refused it**, in the reading `ephor work
+offers` returns: which of `roles`, `gate`, `needs_response`, or `sources` did
+not hold and what the matter carried instead of what the selector asked for,
+or which field its branch template needed and this matter did not carry.
 "Considered" is narrower than every recipe the project has. A recipe whose
 `kinds` refused was never about a matter of this shape at all — a `pr`
 recipe has nothing to say about a task — so it names nothing, the same as a

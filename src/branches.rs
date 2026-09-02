@@ -201,6 +201,20 @@ pub struct Placement {
 /// template's own question with the answer it has not given yet.
 const DECIDED: [&str; 3] = ["branch", "workspace", "reply"];
 
+/// Why an entry's branch template does not serve this matter, where it names a
+/// real field the matter has empty (§FS-005-dispatch.25). None where the
+/// matter already owns a branch — the template does not apply then — or where
+/// every field it names has a value. Unknown and decided fields are author
+/// errors for [`minted`] to refuse on every matter, not reasons to withhold an
+/// entry from only this one.
+pub fn why_not_served(placement: &Placement, item: &Item, template: &str) -> Option<String> {
+    if placement.own_branch(item).is_some() {
+        return None;
+    }
+    let values = placeholder_values(placement, item);
+    missing_field(template, &values).map(|name| not_served_reason(template, &name))
+}
+
 /// What an entry's `branch` template comes to on one matter
 /// (§FS-005-dispatch.25): the branch it names, and where that branch's
 /// workspace stands — [`WorkspaceState::Ready`] where it is already on disk,
@@ -211,22 +225,20 @@ const DECIDED: [&str; 3] = ["branch", "workspace", "reply"];
 /// The caller applies it only where the matter has no branch of its own: the
 /// forge's answer is never displaced by a template ([`Placement::checkout`]).
 ///
-/// Refused rather than rendered where the template names what it produces,
-/// where it names a field this matter has not got — a branch with a hole in
-/// it would be one directory shared by every matter missing that field — and
-/// where the project keeps no workspace per branch to put it in.
+/// Refused rather than rendered where the template names what it produces or
+/// where the project keeps no workspace per branch to put it in. An entry
+/// naming a field this matter has not got does not serve it and is normally
+/// withheld before this point; direct resolution keeps the same answer rather
+/// than rendering a branch with a hole in it (§FS-005-dispatch.25).
 pub fn minted(
     placement: &Placement,
     item: &Item,
     template: &str,
 ) -> std::result::Result<Checkout, String> {
-    let here = placement.checkout(item);
-    let subject = crate::work::dossier::Subject {
-        item,
-        checkout: &here,
-        root: &placement.root,
-    };
-    let values = subject.placeholders();
+    let values = placeholder_values(placement, item);
+    if let Some(name) = missing_field(template, &values) {
+        return Err(not_served_reason(template, &name));
+    }
     for name in named(template) {
         if DECIDED.contains(&name.as_str()) {
             return Err(format!(
@@ -239,18 +251,11 @@ pub fn minted(
         // A name the vocabulary has not got at all: `render` would leave it
         // standing and the branch would be refused for holding a brace, which
         // points at the rendering rather than at the typo (§FS-005-dispatch.25).
-        let Some(value) = values.get(name.as_str()) else {
+        if !values.contains_key(name.as_str()) {
             return Err(format!(
                 "the branch template '{template}' names {{{name}}}, which is not a field a branch \
                  template may name; it may name: {}.",
                 nameable(&values).join(", ")
-            ));
-        };
-        if value.is_empty() {
-            return Err(format!(
-                "the branch template '{template}' names {{{name}}}, and {} has none — every \
-                 matter missing it would land on one branch.",
-                item.id
             ));
         }
     }
@@ -286,6 +291,63 @@ pub fn minted(
         branch: Some(branch),
         state,
     })
+}
+
+/// The one placeholder vocabulary branch rendering and serving both read.
+fn placeholder_values(
+    placement: &Placement,
+    item: &Item,
+) -> std::collections::BTreeMap<&'static str, String> {
+    let here = placement.checkout(item);
+    crate::work::dossier::Subject {
+        item,
+        checkout: &here,
+        root: &placement.root,
+    }
+    .placeholders()
+}
+
+/// The first real field a template names that this matter has empty. Author
+/// errors are deliberately absent: they are refused wherever they are read.
+fn missing_field(
+    template: &str,
+    values: &std::collections::BTreeMap<&'static str, String>,
+) -> Option<String> {
+    let names = named(template);
+    // A template with an author error must stay visible and refuse loudly,
+    // even where another name in it is a real field this matter lacks.
+    if names
+        .iter()
+        .any(|name| DECIDED.contains(&name.as_str()) || !values.contains_key(name.as_str()))
+    {
+        return None;
+    }
+    let missing: Vec<_> = names
+        .into_iter()
+        .filter(|name| values[name.as_str()].is_empty())
+        .collect();
+    let first = missing.first()?.clone();
+
+    // Fill only the absent fields with a Git-safe value. If the rest of the
+    // rendering is already invalid, that is still an author error to refuse,
+    // not a matter-specific reason to withhold the entry.
+    let mut complete = values.clone();
+    for name in missing {
+        if let Some(value) = complete.get_mut(name.as_str()) {
+            *value = "field".to_string();
+        }
+    }
+    let branch = crate::work::dossier::render(template, &complete)
+        .trim()
+        .to_string();
+    if !crate::forest::is_branch_name(&branch) || why_git_refuses(&branch).is_some() {
+        return None;
+    }
+    Some(first)
+}
+
+fn not_served_reason(template: &str, name: &str) -> String {
+    format!("the branch template '{template}' needs {{{name}}}, and this matter has none")
 }
 
 /// The fields a branch template may name, spelled as it would name them: every
@@ -1297,9 +1359,9 @@ mod tests {
     }
 
     /// The three placeholders a branch template produces are refused inside it
-    /// by name, and so is a field this matter has not got — a branch with a
-    /// hole in it would be one directory every such matter shared
-    /// (§FS-005-dispatch.25).
+    /// by name. A field this matter has not got makes an entry not serve it,
+    /// while direct rendering still refuses rather than minting a branch with a
+    /// hole in it (§FS-005-dispatch.25).
     #[test]
     fn a_template_naming_what_it_decides_is_refused_by_name() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1311,6 +1373,13 @@ mod tests {
             assert!(why.contains(&format!("{{{name}}}")), "{why}");
         }
         // A field the matter has not got. This issue carries no ticket key.
+        assert_eq!(
+            why_not_served(&placement, &issue, "fix/{ticket}"),
+            Some(
+                "the branch template 'fix/{ticket}' needs {ticket}, and this matter has none"
+                    .to_string()
+            )
+        );
         let why = minted(&placement, &issue, "fix/{ticket}").unwrap_err();
         assert!(why.contains("{ticket}"), "{why}");
         // And one nobody has heard of: not a bad branch, a name that is no
@@ -1324,6 +1393,15 @@ mod tests {
         // And never as one of the three it decides, which have their own
         // refusal above.
         assert!(!why.contains("{workspace}"), "{why}");
+        // Those author errors keep winning where the same template also names
+        // the missing field, and a statically invalid rendering does too.
+        for template in [
+            "fix/{ticket}/{sprint}",
+            "fix/{ticket}/{branch}",
+            "bad name/{ticket}",
+        ] {
+            assert_eq!(why_not_served(&placement, &issue, template), None);
+        }
     }
 
     /// A template that renders a name git will not take is refused by name

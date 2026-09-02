@@ -347,11 +347,12 @@ pub struct Thread {
     pub draft: Option<Draft>,
 }
 
-/// A recipe considered for this matter whose selector refused it, and which
-/// field refused (§FS-005-dispatch.27). Additive beside `offers`: naming a
-/// refused recipe is a different fact from offering nothing, and a reader —
-/// or a program — told only the second cannot tell "nothing is configured for
-/// this" from "something is, and this matter did not fit it".
+/// A recipe considered for this matter whose selector or branch template
+/// refused it, and which field refused (§FS-005-dispatch.27). Additive beside
+/// `offers`: naming a refused recipe is a different fact from offering
+/// nothing, and a reader — or a program — told only the second cannot tell
+/// "nothing is configured for this" from "something is, and this matter did
+/// not fit it".
 #[derive(Debug, Clone, Serialize)]
 pub struct Exclusion {
     /// The recipe's own id, the same one an offer for it would carry.
