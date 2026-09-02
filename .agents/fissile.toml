@@ -36,7 +36,6 @@ include = [
   "systemd",
   ".github",
   ".claude",
-  "requirements.md",
   "README.md",
   "CLAUDE.md",
   "Cargo.toml",
@@ -269,20 +268,18 @@ count_comment_lines = false
 priority = 20
 message = "split-python-tests"
 
-# The citable tree: `requirements.md` (the `§FS` home) and the `§GRUND`,
-# `§GOAL`, `§REQ`, `§AR`, `§DF`, `§DA` and `§RM` documents under `docs/`. It
+# The citable tree: the `§FS`, `§GRUND`, `§GOAL`, `§REQ`, `§AR`, `§DF`, `§DA`
+# and `§RM` documents under `docs/`. It
 # gets two to three times the code budgets because grund changes who pays for a
 # document's length: a reader arrives through a citation and `grund <ID>` gives
 # them a lead, a section, or a map — never the file — so length here is not
 # charged to every read the way it is for a source file an agent opens whole.
 #
-# 750 soft is the number grund's own docs rule carries, and it is about three
-# times the p95 of the spec trees in this set; this tree's own p95 outside
-# `requirements.md` is 150. 2000 hard is the ceiling `rhei`'s
-# §AR-source-file-size.1 declares, and here it is doing real work:
-# `requirements.md` is 2860 lines holding twelve `§FS` declarations in one file,
-# which is a document that has stopped being one. It is recorded in
-# `docs/file-size-human-exceptions.toml` with the split it is owed.
+# 750 soft is the number grund's own docs rule carries, and it leaves most of
+# this tree below the suggestion. `FS-005-dispatch.md` remains over that soft
+# budget and deliberately reports the next worthwhile split. 2000 hard is the
+# ceiling `rhei`'s §AR-source-file-size.1 declares; every `§FS` document is
+# below it, so the old exception for their combined home is retired outright.
 #
 # `count_comment_lines` is true because in Markdown a `#` line is a heading, not
 # a comment: counting them out would stop measuring the document's structure,
@@ -298,7 +295,7 @@ message = "split-python-tests"
 [[rules]]
 id = "specs"
 include = [
-  "requirements.md",
+  "docs/functional-spec/**/*.md",
   "docs/grund.md",
   "docs/goals.md",
   "docs/roadmap.md",

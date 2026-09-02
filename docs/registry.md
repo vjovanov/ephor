@@ -65,7 +65,7 @@ depart from its type without forking the type.
 
 A row does not only say where a project is; it says what the project *is*, and
 that is what places a conversation nobody addressed to a repository
-([§FS-008-attribution.1](../requirements.md#1-identity-is-declared-and-the-row-has-the-last-word)).
+([§FS-008-attribution.1](functional-spec/FS-008-attribution.md#1-identity-is-declared-and-the-row-has-the-last-word)).
 
 - `aliases[]` — other names the project answers to. A polyrepo whose
   repositories have their own names lists them here.
@@ -88,7 +88,7 @@ someone else's row silently.
 ## What the row believes about a checkout
 
 A project may describe itself in an `ephor.json` at its forest root
-([§FS-006-project-interface.2](../requirements.md#2-the-manifest-is-offered-never-required)),
+([§FS-006-project-interface.2](functional-spec/FS-006-project-interface.md#2-the-manifest-is-offered-never-required)),
 and the row decides what that is worth:
 
 - Identity fields in a manifest are **hints**. The row adopts one where it says

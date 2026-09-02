@@ -32,7 +32,7 @@ title = "Where: project direction and outcomes"
 
 [[kinds]]
 kind = "FS"
-file = "requirements.md"
+folder = "docs/functional-spec"
 title = "What: behavior, requirements, and constraints"
 
 [[kinds]]
@@ -78,7 +78,7 @@ title = "Planned milestones and sequencing"
 [scan]
 # Every `[[kinds]]` home is walked by construction, so `tests/e2e` and
 # `tests/integration` are not repeated here.
-include = ["requirements.md", "docs", "src", ".github", "assets"]
+include = ["docs", "src", ".github", "assets"]
 exclude = ["target", "node_modules", ".git", "dist", "build", ".venv"]
 extensions = ["md", "rs", "go", "java", "kt", "ts", "tsx", "js", "py", "c", "cpp", "swift", "scala", "rb", "php", "cs", "yml", "yaml"]
 comment_prefixes = ["//", "#", ";", "--", "*", "/*"]

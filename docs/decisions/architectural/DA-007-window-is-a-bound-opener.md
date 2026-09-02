@@ -4,8 +4,8 @@
 **Date:** 2026-08-22
 
 A run of the runtime starts detached and is watched by attaching
-([§FS-005-dispatch.20](../../../requirements.md#20-a-run-of-the-runtime-starts-beneath-the-screen-and-is-watched-by-attaching)); a program an entry *is* may run beside ephor rather
-than in its place ([§FS-005-dispatch.22](../../../requirements.md#22-a-window-of-the-readers-own-where-one-is-bound)). Both need a terminal that is not
+([§FS-005-dispatch.20](../../functional-spec/FS-005-dispatch.md#20-a-run-of-the-runtime-starts-beneath-the-screen-and-is-watched-by-attaching)); a program an entry *is* may run beside ephor rather
+than in its place ([§FS-005-dispatch.22](../../functional-spec/FS-005-dispatch.md#22-a-window-of-the-readers-own-where-one-is-bound)). Both need a terminal that is not
 the one ephor is drawing in, and where that terminal comes from is a choice
 ephor cannot make for the reader. This record fixes it as a seam
 ([§AR-002-summons.6](../../architecture/AR-002-summons.md#6-windowed-the-readers-own-window)) and names what the alternatives would have cost.
@@ -31,7 +31,7 @@ saying so, not a guess.
 
 A windowed program is recorded as a job ([§AR-002-summons.5](../../architecture/AR-002-summons.md#5-detached-the-job)) because the
 thing the menu needs — is it still going, and how do I get to it
-([§FS-005-dispatch.21](../../../requirements.md#21-what-is-already-going-is-shown-where-it-could-be-started-again)) — is exactly what a job already answers, and the only
+([§FS-005-dispatch.21](../../functional-spec/FS-005-dispatch.md#21-what-is-already-going-is-shown-where-it-could-be-started-again)) — is exactly what a job already answers, and the only
 change is that the inspection is a handle rather than a log. Attaching to a
 run is windowed the same way but is *not* a job: the run is the operation,
 and a surface on it is not a second one.

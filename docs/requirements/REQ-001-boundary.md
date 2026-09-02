@@ -62,4 +62,4 @@ The name of a forge, vendor CLI, runtime, or task store appears only in
 its own adapter, in shipped assets and examples, and in documentation —
 never in core source. This is checked mechanically, not observed as a
 convention: the check fails the build, the same way the site-word check
-guards [§FS-001-forge-interface.5](../../requirements.md#5-no-site-specific-data-in-the-repository).
+guards [§FS-001-forge-interface.5](../functional-spec/FS-001-forge-interface.md#5-no-site-specific-data-in-the-repository).

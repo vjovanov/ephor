@@ -8,22 +8,22 @@ citation does not dangle.
 
 ## RM-001-forge-interface: put every forge behind the interface
 
-Implements [§FS-001-forge-interface](../requirements.md#fs-001-forge-interface-ephor-reaches-every-forge-and-issue-tracker-through-one-provider-interface).
+Implements [§FS-001-forge-interface](functional-spec/FS-001-forge-interface.md#fs-001-forge-interface-ephor-reaches-every-forge-and-issue-tracker-through-one-provider-interface).
 Most of it has landed — see `## Unreleased` in [docs/changelog.md](changelog.md)
 — and what remains is the last mile before anything is published.
 
 ### 1. What
 
 **Landed.** The `Forge` trait carries the capability set of
-[§FS-001-forge-interface.1](../requirements.md#1-capabilities) and both
+[§FS-001-forge-interface.1](functional-spec/FS-001-forge-interface.md#1-capabilities) and both
 transports answer it: GitHub in the default build as the reference
 implementation, and anything else as an executable on `PATH`
-([§FS-001-forge-interface.2](../requirements.md#2-two-transports-one-interface)),
+([§FS-001-forge-interface.2](functional-spec/FS-001-forge-interface.md#2-two-transports-one-interface)),
 with policy above both. The committed registry and feed configuration are
 examples, the packaging exclude keeps the real ones out of any artifact, the
 inherited `docs/` set is gone, and no employer or vendor identifier remains in
 source, tests, examples, or documentation
-([§FS-001-forge-interface.5](../requirements.md#5-no-site-specific-data-in-the-repository)) —
+([§FS-001-forge-interface.5](functional-spec/FS-001-forge-interface.md#5-no-site-specific-data-in-the-repository)) —
 `scripts/check-no-site-specific.sh` passes both halves today. The vendor CLI
 name is confined to its own adapter and held there by the build
 ([§REQ-001-boundary.5](requirements/REQ-001-boundary.md#5-no-product-literal-outside-its-adapter)).
@@ -32,7 +32,7 @@ name is confined to its own adapter and held there by the build
 configuration, against a public GitHub repository, producing a feed — which is
 what says the examples are a starting point rather than a shape. And the first
 release itself, which has to be tagged by hand before the bump workflows have
-anything to count from ([§FS-002-release](../requirements.md#fs-002-release-ephor-releases-from-a-tag-with-a-changelog-entry-per-change)).
+anything to count from ([§FS-002-release](functional-spec/FS-002-release.md#fs-002-release-ephor-releases-from-a-tag-with-a-changelog-entry-per-change)).
 
 The boundary half of the same law — the seams a capability is reached across,
 rather than the forges reached through them — is
@@ -49,7 +49,7 @@ transport differs.
 
 `scripts/check-no-site-specific.sh` passes on a clean tree (it does today), the
 GitHub implementation answers every capability in
-[§FS-001-forge-interface.1](../requirements.md#1-capabilities), and a run
+[§FS-001-forge-interface.1](functional-spec/FS-001-forge-interface.md#1-capabilities), and a run
 configured with only example configuration produces a working feed against a
 public GitHub repository.
 
@@ -80,11 +80,11 @@ is the forge half of the same law.
   and the inbox's failures view still ask the provider that reported the item,
   so a project with an internal gate is not yet indistinguishable from a
   forge-hosted one where a person actually looks
-  ([§FS-006-project-interface.6](../requirements.md#6-the-gate-is-the-projects-in-three-verbs),
+  ([§FS-006-project-interface.6](functional-spec/FS-006-project-interface.md#6-the-gate-is-the-projects-in-three-verbs),
   [tests/e2e/cases/E2E-003-gate-verbs.rs](../tests/e2e/cases/E2E-003-gate-verbs.rs)).
 - **One task store is recognized and unread.** `beads` is probed and reports
   nothing rather than pretending
-  ([§FS-006-project-interface.7](../requirements.md#7-the-projects-own-tasks-are-read-where-they-live)).
+  ([§FS-006-project-interface.7](functional-spec/FS-006-project-interface.md#7-the-projects-own-tasks-are-read-where-they-live)).
   That is an honest degrade and still a reader nobody wrote.
 
 ### 2. Why now
@@ -105,13 +105,13 @@ and a `.beads` store in a checkout produces matters in the feed.
 
 ## RM-002-dossier-description: an item's own words belong in its dossier
 
-Serves [§FS-005-dispatch.2](../requirements.md#2-the-ticket-carries-what-ephor-knows-not-a-link-to-it).
+Serves [§FS-005-dispatch.2](functional-spec/FS-005-dispatch.md#2-the-ticket-carries-what-ephor-knows-not-a-link-to-it).
 
 ### 1. What
 
 No provider records the text an item opens with — a pull request's description,
 an issue's report. The interface's `PullRequest` and `Issue`
-([§FS-001-forge-interface.1](../requirements.md#1-capabilities)) carry a title
+([§FS-001-forge-interface.1](functional-spec/FS-001-forge-interface.md#1-capabilities)) carry a title
 and a conversation but no body, so ephor has never had it to give.
 
 ### 2. Why now
@@ -132,8 +132,8 @@ and saying so where it cut.
 
 ## RM-004-windows: ephor runs where there is no POSIX shell
 
-Serves [§FS-001-forge-interface.2](../requirements.md#2-two-transports-one-interface)
-and [§FS-006-project-interface.3](../requirements.md#3-a-summons-environment-in-exit-code-and-answer-out).
+Serves [§FS-001-forge-interface.2](functional-spec/FS-001-forge-interface.md#2-two-transports-one-interface)
+and [§FS-006-project-interface.3](functional-spec/FS-006-project-interface.md#3-a-summons-environment-in-exit-code-and-answer-out).
 The CI matrix carried `windows-latest` from the first commit and it was never
 once green: every test binary failed to compile, so nothing behind that had
 ever been looked at. Compiling it was one line, and what came out from behind
@@ -154,7 +154,7 @@ helper built bindings the same way.
 
 ### 2. What is left
 
-- **An out-of-process forge extension is a shell script.** [§FS-001-forge-interface.2](../requirements.md#2-two-transports-one-interface)
+- **An out-of-process forge extension is a shell script.** [§FS-001-forge-interface.2](functional-spec/FS-001-forge-interface.md#2-two-transports-one-interface)
   says a shell script with `jq` is a complete implementation, and on Windows it
   is not one: `CreateProcess` cannot exec a file whose executability is a
   `#!` line. Either ephor reads the shebang and runs the extension through the
@@ -168,8 +168,8 @@ helper built bindings the same way.
 
 ### 3. Measurable
 
-`windows-latest` is back in the matrix and green, or [§FS-001-forge-interface.2](../requirements.md#2-two-transports-one-interface)
-and [§FS-006-project-interface.3](../requirements.md#3-a-summons-environment-in-exit-code-and-answer-out) say plainly which platforms they hold on and
+`windows-latest` is back in the matrix and green, or [§FS-001-forge-interface.2](functional-spec/FS-001-forge-interface.md#2-two-transports-one-interface)
+and [§FS-006-project-interface.3](functional-spec/FS-006-project-interface.md#3-a-summons-environment-in-exit-code-and-answer-out) say plainly which platforms they hold on and
 this entry is closed as decided rather than done. A port half finished, with a
 leg red and a promise that reads as universal, is the outcome this entry
 exists to avoid.

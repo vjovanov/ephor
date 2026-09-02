@@ -4,7 +4,7 @@
 **Date:** 2026-08-23
 
 Work a recipe marks as needing nobody to start it has to get a run without a
-reader pressing anything ([§FS-005-dispatch.24](../../../requirements.md#24-work-nobody-has-to-start-starts-itself)). Two shapes give that: keep a
+reader pressing anything ([§FS-005-dispatch.24](../../functional-spec/FS-005-dispatch.md#24-work-nobody-has-to-start-starts-itself)). Two shapes give that: keep a
 runner alive per branch, waiting for work to appear in the root it watches;
 or leave the runtime exactly as it is — started, finite, over when nothing
 is schedulable — and make *starting* it reflexive. This record fixes the
@@ -15,12 +15,12 @@ second and names what the first would have cost.
 Autorun is a **sweep**: `work run --due` asks which roots hold a ticket that
 is open, unclaimed, not gating, and from a recipe that asked to run itself,
 and where no run is live on that root it starts the detached run
-[§FS-005-dispatch.20](../../../requirements.md#20-a-run-of-the-runtime-starts-beneath-the-screen-and-is-watched-by-attaching) already describes. Nothing about the run changes — the
+[§FS-005-dispatch.20](../../functional-spec/FS-005-dispatch.md#20-a-run-of-the-runtime-starts-beneath-the-screen-and-is-watched-by-attaching) already describes. Nothing about the run changes — the
 same launcher, the same identity beside the same lock, the same attach and
 the same stop in the runner's own words. The only new thing is who says go.
 
 The sweep is **idempotent by construction and stateless about its own past**.
-It re-reads the world every time ([§FS-005-dispatch.15](../../../requirements.md#15-every-operation-is-visible-in-one-place)), and the live-run
+It re-reads the world every time ([§FS-005-dispatch.15](../../functional-spec/FS-005-dispatch.md#15-every-operation-is-visible-in-one-place)), and the live-run
 check is the runtime's own lock, so running it twice in a second starts one
 run, and running it on a root that is already busy starts none. That is what
 lets every trigger be the same call: the dispatch that just wrote an
@@ -37,7 +37,7 @@ being called at the right moment, only on being called.
 
 The one thing it must remember is **failure**, and it remembers it in the
 ledger, which is ephor's record of what ephor did and never the truth about
-the work ([§FS-005-dispatch.4](../../../requirements.md#4-the-ledger-is-ephors-record-and-never-the-truth-about-the-work)). A root whose start failed is skipped for a
+the work ([§FS-005-dispatch.4](../../functional-spec/FS-005-dispatch.md#4-the-ledger-is-ephors-record-and-never-the-truth-about-the-work)). A root whose start failed is skipped for a
 back-off that grows with consecutive failures, so a runner that refuses
 cannot turn every sweep into a spawn. The record is about ephor's own act;
 the work's state stays where it has always been read from.
@@ -55,7 +55,7 @@ per branch, always up" means either a runner ephor asks for a mode it does
 not have, or a supervisor ephor writes and keeps alive per branch workspace:
 a process per branch on every project, each holding its root's lock for its
 whole lifetime rather than for the length of a run. That lock is the
-liveness signal every surface here reads ([§FS-005-dispatch.15](../../../requirements.md#15-every-operation-is-visible-in-one-place)). A supervisor
+liveness signal every surface here reads ([§FS-005-dispatch.15](../../functional-spec/FS-005-dispatch.md#15-every-operation-is-visible-in-one-place)). A supervisor
 holding it while idle would make *live* mean *supervised*, and the board —
 which exists to say what is actually going on — would report a machine full
 of runs that are doing nothing. Every reading downstream of the lock would
@@ -80,10 +80,10 @@ by hand to an autorun recipe's plan starts on the next sweep, not on the
 keystroke that saved the file — the sweep is not a file watcher, and the
 timer's period is the bound. That is accepted: the case is rare, the reader
 who wrote the ticket can start it themselves, and a watcher over every work
-root is the walk [§FS-005-dispatch.15.1](../../../requirements.md#151-the-board-keeps-itself-current) rules out on every tick.
+root is the walk [§FS-005-dispatch.15.1](../../functional-spec/FS-005-dispatch.md#151-the-board-keeps-itself-current) rules out on every tick.
 
 A run started by a sweep has nobody watching its first moments. Where the
-launcher itself fails this is reported ([§FS-005-dispatch.24](../../../requirements.md#24-work-nobody-has-to-start-starts-itself)), but a run that
+launcher itself fails this is reported ([§FS-005-dispatch.24](../../functional-spec/FS-005-dispatch.md#24-work-nobody-has-to-start-starts-itself)), but a run that
 starts and then goes wrong is seen when the reader next looks, exactly as a
 detached run somebody started by hand is. Nothing regressed here — a
 detached run never had a watcher — but autorun makes it the common case

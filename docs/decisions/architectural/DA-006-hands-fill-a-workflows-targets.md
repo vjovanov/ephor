@@ -3,13 +3,13 @@
 **Status:** Accepted
 **Date:** 2026-08-21
 
-A workflow the runtime offers is mostly a list of agents ([§FS-005-dispatch.19](../../../requirements.md#19-a-workflow-the-runtime-offers-is-an-action-and-its-inputs-are-answered-here)):
+A workflow the runtime offers is mostly a list of agents ([§FS-005-dispatch.19](../../functional-spec/FS-005-dispatch.md#19-a-workflow-the-runtime-offers-is-an-action-and-its-inputs-are-answered-here)):
 which one reviews, which one adjudicates, which one writes the tests. Each of
 those is an input, and each carries a default its author happened to be running
 — a model name, at an effort, spelled in the binding's own selector grammar.
 When ephor instantiates such a workflow it has to decide whose answer those
-inputs take: the workflow's, or its own ([§FS-005-dispatch.14](../../../requirements.md#14-who-does-the-work-is-chosen-and-defaulted-per-project),
-[§FS-006-project-interface.9](../../../requirements.md#9-offers-the-projects-actions)). This record fixes ephor's and names what the
+inputs take: the workflow's, or its own ([§FS-005-dispatch.14](../../functional-spec/FS-005-dispatch.md#14-who-does-the-work-is-chosen-and-defaulted-per-project),
+[§FS-006-project-interface.9](../../functional-spec/FS-006-project-interface.md#9-offers-the-projects-actions)). This record fixes ephor's and names what the
 other would have cost.
 
 ## 1. The decision
@@ -23,7 +23,7 @@ person says "this input is a hand" about a workflow whose author never marked
 it.
 
 The narrowing binds here exactly as it binds everywhere else
-([§FS-006-project-interface.9](../../../requirements.md#9-offers-the-projects-actions)): a hand a project does not permit is refused with
+([§FS-006-project-interface.9](../../functional-spec/FS-006-project-interface.md#9-offers-the-projects-actions)): a hand a project does not permit is refused with
 that reason wherever it was named, and a workflow's own default is a naming. A
 project that narrows the roster and instantiates a workflow whose defaults sit
 outside the narrowing is told so, before anything is written.
@@ -44,7 +44,7 @@ stopped applying. A repository under a policy about which models may read it
 would be observing that policy right up to the keystroke that mattered. And
 the failure is quiet: the reader who narrowed the roster sees a workflow
 instantiate cleanly, and learns which models actually ran it from the other
-side, which is the exact confusion [§FS-006-project-interface.9](../../../requirements.md#9-offers-the-projects-actions) refuses for
+side, which is the exact confusion [§FS-006-project-interface.9](../../functional-spec/FS-006-project-interface.md#9-offers-the-projects-actions) refuses for
 configured hands.
 
 ## 3. The cost

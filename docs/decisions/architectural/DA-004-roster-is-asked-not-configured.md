@@ -4,7 +4,7 @@
 **Date:** 2026-08-14
 
 ephor needs to know which agent/model combinations exist, so a reader can
-choose one and a project can default one per action ([§FS-005-dispatch.14](../../../requirements.md#14-who-does-the-work-is-chosen-and-defaulted-per-project)).
+choose one and a project can default one per action ([§FS-005-dispatch.14](../../functional-spec/FS-005-dispatch.md#14-who-does-the-work-is-chosen-and-defaulted-per-project)).
 Two places could hold that knowledge: ephor's own configuration — a list of
 agents and models in `status.json` — or the binding's, read at the moment of
 asking. This record fixes the second and names what the first would have

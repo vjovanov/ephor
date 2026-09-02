@@ -3,14 +3,14 @@
 **Status:** Accepted
 **Date:** 2026-08-13
 
-The old [§FS-005-dispatch](../../../requirements.md#fs-005-dispatch-what-ephor-watches-it-can-hand-to-an-agent-runtime) lead named rhei outright — "named here rather than
+The old [§FS-005-dispatch](../../functional-spec/FS-005-dispatch.md#fs-005-dispatch-what-ephor-watches-it-can-hand-to-an-agent-runtime) lead named rhei outright — "named here rather than
 hidden behind an interface" — on the argument that a forge is a property of
 a person's employer and may not be named, while the runtime that executes
 their work is a property of how they choose to work. [§REQ-001-boundary](../../requirements/REQ-001-boundary.md#req-001-boundary-every-capacity-ephor-lacks-crosses-a-seam-and-the-seam-has-one-anatomy)
 reverses that stance: the runtime is a **binding** like every other
 capacity ephor does not embody, with rhei as the shipped default
 ([§REQ-001-boundary.1](../../requirements/REQ-001-boundary.md#1-the-anatomy)), confined to one module by [§AR-007-runtime](../../architecture/AR-007-runtime.md#ar-007-runtime-the-runtime-adapter-and-rhei-as-its-shipped-binding). The
-rewritten [§FS-005-dispatch](../../../requirements.md#fs-005-dispatch-what-ephor-watches-it-can-hand-to-an-agent-runtime) lead states the new position; this record keeps
+rewritten [§FS-005-dispatch](../../functional-spec/FS-005-dispatch.md#fs-005-dispatch-what-ephor-watches-it-can-hand-to-an-agent-runtime) lead states the new position; this record keeps
 the old one visible and names what the reversal costs.
 
 ## 1. Why it reversed
@@ -30,7 +30,7 @@ with the configured runner named).
 
 Choosing a runtime remains a property of how a person works, which is why
 one ships wired and ready — requiring a person to pick before dispatch
-works would be something else ([§FS-005-dispatch](../../../requirements.md#fs-005-dispatch-what-ephor-watches-it-can-hand-to-an-agent-runtime)). Nothing rhei-shaped is
+works would be something else ([§FS-005-dispatch](../../functional-spec/FS-005-dispatch.md#fs-005-dispatch-what-ephor-watches-it-can-hand-to-an-agent-runtime)). Nothing rhei-shaped is
 taken away: the default is bound, not removed.
 
 ## 3. The cost
@@ -42,4 +42,4 @@ plan language is now a public contract: once any runner can be bound, the
 plan file format, the runner invocation, and the verdict read-back stop
 being an implementation detail shared with one tool and become the seam's
 documented surface — the entire coupling, stated as such in the
-[§FS-005-dispatch](../../../requirements.md#fs-005-dispatch-what-ephor-watches-it-can-hand-to-an-agent-runtime) lead, to be kept compatible like any published interface.
+[§FS-005-dispatch](../../functional-spec/FS-005-dispatch.md#fs-005-dispatch-what-ephor-watches-it-can-hand-to-an-agent-runtime) lead, to be kept compatible like any published interface.

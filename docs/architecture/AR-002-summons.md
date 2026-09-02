@@ -1,12 +1,12 @@
 # AR-002-summons: one executor runs everything ephor asks of the world
 
 `Summons { verb, binding, place, dossier } → Answer { exit_code, answer, output }`
-— the single operational primitive of [§FS-006-project-interface.3](../../requirements.md#3-a-summons-environment-in-exit-code-and-answer-out). Configured
+— the single operational primitive of [§FS-006-project-interface.3](../functional-spec/FS-006-project-interface.md#3-a-summons-environment-in-exit-code-and-answer-out). Configured
 actions, offers, quick actions, custom-status, check verbs, gate verbs, the
 checkout command, ticket-store CLIs, and the runtime's run are all instances.
 One executor means one refusal path, one environment contract, and one answer
 reader — and that the same operation invoked from a menu key and from a state
-machine cannot drift apart ([§FS-005-dispatch.12](../../requirements.md#12-work-an-algorithm-can-finish-does-not-start-with-a-model)).
+machine cannot drift apart ([§FS-005-dispatch.12](../functional-spec/FS-005-dispatch.md#12-work-an-algorithm-can-finish-does-not-start-with-a-model)).
 
 ## 1. Resolving the place
 
@@ -15,12 +15,12 @@ branch workspace where one resolves (the same resolution the tree's grouping
 uses), the project's forest root otherwise, or the repository of the forest a
 binding names (`cwd: repo:<name>`). A place that does not exist is a refusal
 with the reason, or an offer to chain the checkout first
-([§FS-004-quick-actions.7](../../requirements.md#7-a-workspace-that-is-not-there-is-offered-the-checkout)) — never a command run somewhere surprising.
+([§FS-004-quick-actions.7](../functional-spec/FS-004-quick-actions.md#7-a-workspace-that-is-not-there-is-offered-the-checkout)) — never a command run somewhere surprising.
 
 ## 2. The invocation
 
 The command runs via `sh -c` in the resolved place with the dossier exported
-as `EPHOR_*` — one vocabulary for every caller ([§FS-005-dispatch.8](../../requirements.md#8-the-ticket-carries-the-item-as-data-not-only-as-prose)). The
+as `EPHOR_*` — one vocabulary for every caller ([§FS-005-dispatch.8](../functional-spec/FS-005-dispatch.md#8-the-ticket-carries-the-item-as-data-not-only-as-prose)). The
 executor either hands over the terminal (interactive callers: menu actions,
 the runtime) or captures output (verbs called during refresh and verify);
 which, is a property of the call site, not of the binding. Exit semantics are
@@ -34,7 +34,7 @@ Before spawning, the executor names a fresh file in `$EPHOR_ANSWER`; after
 exit, it reads the file if the command wrote it, validates against the
 envelope schema, normalizes the conveniences (`failures`, `features`) into
 events and facts, and discards the file. No answer file is a complete answer
-— the exit code stands alone ([§FS-006-project-interface.4](../../requirements.md#4-the-answer-envelope)). Stdout is never
+— the exit code stands alone ([§FS-006-project-interface.4](../functional-spec/FS-006-project-interface.md#4-the-answer-envelope)). Stdout is never
 parsed for structure; custom-status's legacy stdout-JSON is honored by that
 one binding, marked as such.
 
@@ -49,7 +49,7 @@ output, not as ephor's.
 
 ## 5. Detached: the job
 
-A summons the reader is not watching runs as a **job** ([§FS-005-dispatch.17](../../requirements.md#17-a-move-that-needs-nobody-runs-beneath-the-screen)):
+A summons the reader is not watching runs as a **job** ([§FS-005-dispatch.17](../functional-spec/FS-005-dispatch.md#17-a-move-that-needs-nobody-runs-beneath-the-screen)):
 its own process, started and left. The executor is unchanged — the same `sh
 -c`, the same place resolution, the same `EPHOR_*` dossier, the same exit
 semantics — and what differs is only who holds the other end of the streams.
@@ -66,7 +66,7 @@ are the log rather than a terminal, which is why no third mode is needed —
 and writes `outcome.json` on the way out. The interface starts it with
 `Command::process_group(0)` and does not wait: a new process group is what
 keeps the reader's Ctrl-C and the terminal's hangup off a job that was
-started precisely because nobody has to stay ([§FS-005-dispatch.17](../../requirements.md#17-a-move-that-needs-nobody-runs-beneath-the-screen)).
+started precisely because nobody has to stay ([§FS-005-dispatch.17](../functional-spec/FS-005-dispatch.md#17-a-move-that-needs-nobody-runs-beneath-the-screen)).
 
 **Liveness is the lock, never the record.** The supervisor holds an exclusive
 flock on `lock` for exactly its own lifetime, and the operating system frees
@@ -78,14 +78,14 @@ lock is one that died — reported as that, never as running.
 **Steps, because the move was a sequence.** An entry that needs the branch
 workspace carries its checkout as the job's first step, with the directory
 verified between steps exactly as the interface verified it
-([§FS-006-project-interface.8](../../requirements.md#8-the-checkout-contract)); a step that fails ends the job there, and
+([§FS-006-project-interface.8](../functional-spec/FS-006-project-interface.md#8-the-checkout-contract)); a step that fails ends the job there, and
 `outcome.json` names the step that did it.
 
 ## 6. Windowed: the reader's own window
 
 A summons the reader types into has, until now, had one place to run: the
 terminal ephor is in, handed over for the duration (§2). The **window
-opener** is a second place ([§FS-005-dispatch.22](../../requirements.md#22-a-window-of-the-readers-own-where-one-is-bound),
+opener** is a second place ([§FS-005-dispatch.22](../functional-spec/FS-005-dispatch.md#22-a-window-of-the-readers-own-where-one-is-bound),
 [§DA-007-window-is-a-bound-opener](../decisions/architectural/DA-007-window-is-a-bound-opener.md#da-007-window-is-a-bound-opener-a-window-of-the-readers-own-is-a-bound-opener-with-the-terminal-as-the-floor)): a binding that opens a
 window of the reader's own with a command in it and hands back a handle, and
 later brings that handle forward. The executor is unchanged — the same
@@ -118,7 +118,7 @@ is not duplicated into a file ([§DA-007-window-is-a-bound-opener.3](../decision
 is `focus <handle>`, not a pager.
 
 **Attaching to a run is a windowed summons of the runtime's attach verb**
-([§AR-007-runtime.1](AR-007-runtime.md#1-what-the-module-owns), [§FS-005-dispatch.20](../../requirements.md#20-a-run-of-the-runtime-starts-beneath-the-screen-and-is-watched-by-attaching)), with the terminal as its fallback.
+([§AR-007-runtime.1](AR-007-runtime.md#1-what-the-module-owns), [§FS-005-dispatch.20](../functional-spec/FS-005-dispatch.md#20-a-run-of-the-runtime-starts-beneath-the-screen-and-is-watched-by-attaching)), with the terminal as its fallback.
 It is not recorded as a job: the run's identity is the binding's and is read
 from the run's own descriptor, and a surface on a run is not an operation —
 the run is.

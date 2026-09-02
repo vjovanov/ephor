@@ -4,7 +4,7 @@
 **Date:** 2026-08-13
 
 A project that chooses to speak places one file, `ephor.json`, at its
-forest root ([§FS-006-project-interface.2](../../../requirements.md#2-the-manifest-is-offered-never-required)); a project that places nothing
+forest root ([§FS-006-project-interface.2](../../functional-spec/FS-006-project-interface.md#2-the-manifest-is-offered-never-required)); a project that places nothing
 is fully watchable exactly as it stands. This record fixes the manifest's
 character: an offer, never a requirement — every field optional, an empty
 manifest valid, and nothing in it able to gate a capability that probing
@@ -26,7 +26,7 @@ enough.
 
 Offers are in the manifest; recipes are not. The line between them is who
 spends: an offer is a menu entry a person invokes, costing nothing until
-chosen, while a recipe ([§FS-005-dispatch.1](../../../requirements.md#1-a-recipe-decides-which-items-deserve-work-and-what-to-ask-for)) spends the person's agent time
+chosen, while a recipe ([§FS-005-dispatch.1](../../functional-spec/FS-005-dispatch.md#1-a-recipe-decides-which-items-deserve-work-and-what-to-ask-for)) spends the person's agent time
 on its own match — and a repository does not get to spend the person's
-agent time ([§FS-006-project-interface.2](../../../requirements.md#2-the-manifest-is-offered-never-required)). What dispatches on its own is
+agent time ([§FS-006-project-interface.2](../../functional-spec/FS-006-project-interface.md#2-the-manifest-is-offered-never-required)). What dispatches on its own is
 site configuration only, written by the person who pays.

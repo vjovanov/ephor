@@ -13,11 +13,11 @@ no IO, no vendor, no product.
   ([§AR-002-summons](AR-002-summons.md#ar-002-summons-one-executor-runs-everything-ephor-asks-of-the-world)), the ledger's types, fingerprints. Pure data and pure
   functions; testable without a filesystem.
 - **sources** — what fetches: remote providers behind the
-  [§FS-001-forge-interface](../../requirements.md#fs-001-forge-interface-ephor-reaches-every-forge-and-issue-tracker-through-one-provider-interface) capability set, and checkout sources (the git
+  [§FS-001-forge-interface](../functional-spec/FS-001-forge-interface.md#fs-001-forge-interface-ephor-reaches-every-forge-and-issue-tracker-through-one-provider-interface) capability set, and checkout sources (the git
   prober, custom-status, task-store readers). Each adapter owns its vendor
   literal; nothing else does.
 - **seams** — what binds and runs: binding resolution
-  (site configuration over manifest over probe, [§FS-006-project-interface.1](../../requirements.md#1-the-three-homes)),
+  (site configuration over manifest over probe, [§FS-006-project-interface.1](../functional-spec/FS-006-project-interface.md#1-the-three-homes)),
   the summons executor and answer reader, its detached form — the job
   ([§AR-002-summons.5](AR-002-summons.md#5-detached-the-job)) — and the verb modules: checks, gate, checkout, task
   stores, runtime ([§AR-007-runtime](AR-007-runtime.md#ar-007-runtime-the-runtime-adapter-and-rhei-as-its-shipped-binding)).
@@ -34,7 +34,7 @@ documentation — never in core, engine, or surfaces ([§REQ-001-boundary.5](../
 
 This is a build failure, not a review comment. `scripts/check_boundary.py`
 runs in `just check` and in CI, beside the site-word check that guards
-[§FS-001-forge-interface.5](../../requirements.md#5-no-site-specific-data-in-the-repository), and it holds the two halves of this page at once:
+[§FS-001-forge-interface.5](../functional-spec/FS-001-forge-interface.md#5-no-site-specific-data-in-the-repository), and it holds the two halves of this page at once:
 
 1. **No product name outside its adapter.** Every name is declared with the
    files allowed to spell it, and the Rust sources under `src/` are read with

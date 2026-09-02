@@ -10,7 +10,7 @@ run, not navigated to, so no file here carries an ID. `[citations.e2e]` in
 `.agents/grund.toml` says the home must cite `FS` and should not cite `AR` —
 every case still opens with the module doc-comment naming the scenario and the
 `§FS` point it holds ephor to, the way `E2E-001-forge-extension.rs` names
-`ephor`'s one provider interface ([§FS-001-forge-interface.2](../../requirements.md#2-two-transports-one-interface)). A case that cites
+`ephor`'s one provider interface ([§FS-001-forge-interface.2](../../docs/functional-spec/FS-001-forge-interface.md#2-two-transports-one-interface)). A case that cites
 nothing is a test; a case that cites its spec point is a scenario, and the spec
 point can be traced back to it with `grund refs`.
 
