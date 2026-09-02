@@ -132,7 +132,7 @@ ships, the previous "latest" section moves verbatim to
   prose and under `--json`, so a full ceiling never hides that a person is
   holding one of the slots. Ceilings gate starts, so parked runs resuming
   together can carry working roots above `max_active` until one finishes.
-  (PR #N)
+  (PR #56)
 
 - **Autorun sweeps can cap live work globally and per project**
   ([§FS-005-dispatch.24](functional-spec/FS-005-dispatch.md#24-work-nobody-has-to-start-starts-itself)).
