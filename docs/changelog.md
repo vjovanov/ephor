@@ -1568,7 +1568,7 @@ ships, the previous "latest" section moves verbatim to
   and workflow entries, dispatch sweeps step over recipes and autorunning
   workflows without recording a refusal, and `ephor work offers` explains
   which field the branch template needed. Templates with author errors remain
-  visible and refuse by name. (PR #N)
+  visible and refuse by name. (PR #51)
 
 - **`ephor checkout` no longer claims a local-only branch tracks the branch
   the forge has**
