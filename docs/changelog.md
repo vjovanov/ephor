@@ -103,7 +103,7 @@ ships, the previous "latest" section moves verbatim to
   written through it. `ephor checkout` resolves the work root through the
   same three tiers, so the placement is one answer for both. Nothing changes
   for a configuration that names no organization placeholder and no
-  organization-tier root. (PR #N)
+  organization-tier root. (PR #59)
 
 - **Autorun capacity has an organization tier between the site's and each
   project's**
