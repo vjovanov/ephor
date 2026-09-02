@@ -1,6 +1,12 @@
 use clap::{Args, Parser, Subcommand};
 
 /// Manage project workspaces, root AGENTS.md files, and per-project status feeds.
+///
+/// The three scope selectors below are declared once and carried into every
+/// subcommand's help, so a verb that will not read one refuses it by name
+/// rather than parsing it and changing nothing (§FS-011-command-line.9).
+/// `--all` is not among them: it is declared by the verbs that read it, so
+/// nothing advertises it where it would mean nothing.
 #[derive(Parser, Debug)]
 #[command(name = "ephor", version, about)]
 pub struct Cli {
@@ -15,10 +21,6 @@ pub struct Cli {
     /// Project id or derived workspace id to operate on. May be passed multiple times.
     #[arg(long, global = true)]
     pub workspace: Vec<String>,
-
-    /// Operate on every branch entry instead of only active ones.
-    #[arg(long, global = true)]
-    pub all: bool,
 
     /// Restrict operations to projects containing this tag.
     #[arg(long, global = true)]
@@ -37,14 +39,26 @@ pub enum Command {
     /// List registered projects.
     List(ListArgs),
     /// Validate the project registry, or a project's own manifest.
+    ///
+    /// Selects managed workspaces with the scope selectors `--workspace`,
+    /// `--tag` and `--org`; its own `--all` walks every branch entry rather
+    /// than only the active ones (§FS-011-command-line.9).
     Validate(ValidateArgs),
     /// Run a project's own check verbs, from its checkout alone.
     Check(CheckArgs),
     /// Print one of the published schemas (manifest, answer, registry, forge, views).
     Schema(SchemaArgs),
     /// Render root AGENTS.md files.
+    ///
+    /// Selects managed workspaces with the scope selectors `--workspace`,
+    /// `--tag` and `--org`; its own `--all` walks every branch entry rather
+    /// than only the active ones (§FS-011-command-line.9).
     EnsureAgents(EnsureAgentsArgs),
     /// Update selected managed branches and regenerate their AGENTS.md files.
+    ///
+    /// Selects managed workspaces with the scope selectors `--workspace`,
+    /// `--tag` and `--org`; its own `--all` walks every branch entry rather
+    /// than only the active ones (§FS-011-command-line.9).
     Update(UpdateArgs),
     /// Show the cached information stream for a project (or a summary of all).
     Status(StatusArgs),
@@ -491,6 +505,13 @@ pub struct WorkForgetArgs {
 
 #[derive(Args, Debug)]
 pub struct EnsureAgentsArgs {
+    /// Operate on every branch entry instead of only the active ones. Declared
+    /// here rather than globally: it is a question about branch entries, and
+    /// only the three verbs that walk managed workspaces ask it
+    /// (§FS-011-command-line.9).
+    #[arg(long)]
+    pub all: bool,
+
     /// Project type id for an ad hoc workspace.
     #[arg(long = "type")]
     pub project_type: Option<String>,
@@ -514,6 +535,13 @@ pub struct EnsureAgentsArgs {
 
 #[derive(Args, Debug)]
 pub struct UpdateArgs {
+    /// Operate on every branch entry instead of only the active ones. Declared
+    /// here rather than globally: it is a question about branch entries, and
+    /// only the three verbs that walk managed workspaces ask it
+    /// (§FS-011-command-line.9).
+    #[arg(long)]
+    pub all: bool,
+
     /// Pass debug mode through to hook implementations.
     #[arg(long)]
     pub debug: bool,
@@ -580,6 +608,13 @@ pub struct FeedArgs {
 
 #[derive(Args, Debug, Default)]
 pub struct ValidateArgs {
+    /// Operate on every branch entry instead of only the active ones. Declared
+    /// here rather than globally: it is a question about branch entries, and
+    /// only the three verbs that walk managed workspaces ask it
+    /// (§FS-011-command-line.9).
+    #[arg(long)]
+    pub all: bool,
+
     /// Validate a project manifest (`ephor.json`) instead of the registry.
     /// Pass the file, or the forest root it sits at.
     #[arg(long, value_name = "PATH")]
@@ -824,8 +859,16 @@ pub struct CheckoutArgs {
 
 #[derive(Args, Debug)]
 pub struct MarkReadArgs {
-    /// Project whose items should be marked read (or pass the global --all).
+    /// Project whose items should be marked read.
     pub project: Option<String>,
+
+    /// Every watched project's items, not one project's. `mark-read`'s own
+    /// flag, declared here for the reason the managed-workspace verbs declare
+    /// theirs: a flag belongs to the verbs that read it
+    /// (§FS-011-command-line.9). Narrowed by `--org`, `--tag` and
+    /// `--workspace` like every other project selection.
+    #[arg(long)]
+    pub all: bool,
 
     /// Mark a single item id as read.
     #[arg(long)]

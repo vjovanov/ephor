@@ -17,26 +17,45 @@ use crate::feed::cache;
 use crate::feed::config::{load_config, StatusConfig};
 use crate::feed::model::{Item, ItemKind};
 use crate::feed::render::Style;
+use crate::scope::Projects;
 use crate::seams::summons::{self, Outcome as SummonsOutcome};
 use crate::work::ledger::Entry;
 use crate::work::runtime;
 
 use crate::work::{Dispatcher, Outcome};
 
-pub fn work(args: &WorkArgs) -> Result<ExitCode> {
+/// `scope` is what the project selectors left (§FS-011-command-line.9). The
+/// four verbs that read a set of projects take it as the `--project`
+/// restriction they already knew how to apply, so the scope is felt where each
+/// one picks its projects rather than in a helper beside them; the rest were
+/// refused before this was called and are handed the whole site.
+pub fn work(args: &WorkArgs, scope: &Projects) -> Result<ExitCode> {
     let config = load_config()?;
+    let watched = || config.projects.keys();
     match args
         .command
         .as_ref()
         .unwrap_or(&WorkCommand::List(crate::cli::WorkListArgs::default()))
     {
-        WorkCommand::List(list) => list_work(&config, list),
+        WorkCommand::List(list) => {
+            let projects = scope.narrow(&list.project, watched())?;
+            list_work(&config, list, &projects)
+        }
         WorkCommand::Offers(offers) => work_offers(&config, offers),
-        WorkCommand::Dispatch(dispatch) => dispatch_work(&config, dispatch),
+        WorkCommand::Dispatch(dispatch) => {
+            let projects = scope.narrow(&dispatch.project, watched())?;
+            dispatch_work(&config, dispatch, &projects)
+        }
         WorkCommand::Ask(ask) => ask_work(&config, ask),
-        WorkCommand::Sync(sync) => sync_work(&config, sync),
+        WorkCommand::Sync(sync) => {
+            let projects = scope.narrow(&sync.project, watched())?;
+            sync_work(&config, sync, &projects)
+        }
         WorkCommand::Cancel(cancel) => cancel_work(&config, cancel),
-        WorkCommand::Run(run) => run_work(&config, run),
+        WorkCommand::Run(run) => {
+            let projects = scope.narrow(&run.project, watched())?;
+            run_work(&config, run, &projects)
+        }
         WorkCommand::Workflows(workflows) => list_workflows(&config, workflows),
         WorkCommand::Lay(lay) => lay_workflow(&config, lay),
         WorkCommand::Forget(forget) => forget_work(&config, forget),
@@ -147,12 +166,16 @@ fn selected_items(config: &StatusConfig, projects: &[String]) -> Result<Vec<Item
     Ok(items)
 }
 
-fn list_work(config: &StatusConfig, args: &crate::cli::WorkListArgs) -> Result<ExitCode> {
+fn list_work(
+    config: &StatusConfig,
+    args: &crate::cli::WorkListArgs,
+    projects: &[String],
+) -> Result<ExitCode> {
     let dispatcher = Dispatcher::load(config)?;
     let style = Style::detect();
     // The items are only needed to say whether an entry has gone stale; work
     // whose item has left the feed is still work, and still listed.
-    let items: BTreeMap<String, Item> = selected_items(config, &args.project)?
+    let items: BTreeMap<String, Item> = selected_items(config, projects)?
         .into_iter()
         .map(|item| (item.id.clone(), item))
         .collect();
@@ -161,7 +184,7 @@ fn list_work(config: &StatusConfig, args: &crate::cli::WorkListArgs) -> Result<E
         .ledger
         .entries
         .iter()
-        .filter(|(_, entry)| args.project.is_empty() || args.project.contains(&entry.project))
+        .filter(|(_, entry)| projects.is_empty() || projects.contains(&entry.project))
         .collect();
 
     if args.json {
@@ -384,9 +407,13 @@ fn order_by_ranking(
     ordered
 }
 
-fn dispatch_work(config: &StatusConfig, args: &crate::cli::WorkDispatchArgs) -> Result<ExitCode> {
+fn dispatch_work(
+    config: &StatusConfig,
+    args: &crate::cli::WorkDispatchArgs,
+    projects: &[String],
+) -> Result<ExitCode> {
     let mut dispatcher = Dispatcher::load(config)?;
-    let items = selected_items(config, &args.project)?;
+    let items = selected_items(config, projects)?;
     let items = order_by_ranking(&mut dispatcher, config, args, items);
     let kind = kind_filter(&args.kind)?;
     // Who does it, for this dispatch alone — the first of the seven steps
@@ -581,7 +608,7 @@ fn dispatch_work(config: &StatusConfig, args: &crate::cli::WorkDispatchArgs) -> 
         // as the ticket (§FS-005-dispatch.24). The sweep decides what that
         // is, so this starts nothing where nothing asked for it and nothing
         // on a root a run already holds.
-        started(&mut dispatcher, &args.project, args.json)?;
+        started(&mut dispatcher, projects, args.json)?;
     }
     // What the reader should know about who got the work: a hand nobody could
     // be named to, a pair ephor cannot check, an agent with no model of its
@@ -1253,9 +1280,13 @@ fn cancel_work(config: &StatusConfig, args: &crate::cli::WorkCancelArgs) -> Resu
     Ok(ExitCode::SUCCESS)
 }
 
-fn sync_work(config: &StatusConfig, args: &crate::cli::WorkSyncArgs) -> Result<ExitCode> {
+fn sync_work(
+    config: &StatusConfig,
+    args: &crate::cli::WorkSyncArgs,
+    projects: &[String],
+) -> Result<ExitCode> {
     let mut dispatcher = Dispatcher::load(config)?;
-    let items = selected_items(config, &args.project)?;
+    let items = selected_items(config, projects)?;
     let mut reopened = 0usize;
     let mut landed: Vec<serde_json::Value> = Vec::new();
     for item in &items {
@@ -1314,7 +1345,7 @@ fn sync_work(config: &StatusConfig, args: &crate::cli::WorkSyncArgs) -> Result<E
         // The same continuation dispatch makes: work reopened because its
         // item moved is work again, and where it needs nobody to start it,
         // nobody has to (§FS-005-dispatch.24, §FS-005-dispatch.5).
-        started(&mut dispatcher, &args.project, args.json)?;
+        started(&mut dispatcher, projects, args.json)?;
     }
     if args.json {
         println!(
@@ -1348,7 +1379,11 @@ fn sync_work(config: &StatusConfig, args: &crate::cli::WorkSyncArgs) -> Result<E
 /// Run the runtime over every work root that still has something to do. One
 /// root at a time: the tickets in a root are about one checkout, and two
 /// agents in one working tree are two agents editing the same files.
-fn run_work(config: &StatusConfig, args: &crate::cli::WorkRunArgs) -> Result<ExitCode> {
+fn run_work(
+    config: &StatusConfig,
+    args: &crate::cli::WorkRunArgs,
+    projects: &[String],
+) -> Result<ExitCode> {
     let mut dispatcher = Dispatcher::load(config)?;
     // The runtime is a rung like every other capacity ephor leans on, and the
     // refusal is the table's sentence rather than this command's own
@@ -1361,7 +1396,7 @@ fn run_work(config: &StatusConfig, args: &crate::cli::WorkRunArgs) -> Result<Exi
         .entries
         .iter()
         .filter(|(id, entry)| {
-            (args.project.is_empty() || args.project.contains(&entry.project))
+            (projects.is_empty() || projects.contains(&entry.project))
                 && args.item.as_ref().is_none_or(|item| item == *id)
         })
         .map(|(_, entry)| entry.clone())
@@ -1387,7 +1422,7 @@ fn run_work(config: &StatusConfig, args: &crate::cli::WorkRunArgs) -> Result<Exi
     // this command, the timer, and a dispatch that just wrote a ticket cannot
     // drift into three ways of doing one thing (§AR-009-surfaces.1).
     if args.due {
-        return swept(config, &mut dispatcher, args);
+        return swept(config, &mut dispatcher, args, projects);
     }
     let mut roots: Vec<Group> = Vec::new();
     for entry in &entries {
@@ -1622,14 +1657,11 @@ fn swept(
     config: &StatusConfig,
     dispatcher: &mut Dispatcher,
     args: &crate::cli::WorkRunArgs,
+    projects: &[String],
 ) -> Result<ExitCode> {
     let style = Style::detect();
-    let swept = dispatcher.start_due(
-        Utc::now(),
-        &args.project,
-        &args.runner_args,
-        args.max_concurrent,
-    )?;
+    let swept =
+        dispatcher.start_due(Utc::now(), projects, &args.runner_args, args.max_concurrent)?;
     let launched = &swept.runs;
     let failed = launched.iter().filter(|run| run.failed.is_some()).count();
     // What the ceilings are holding, split into work being done and work

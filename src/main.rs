@@ -1,4 +1,6 @@
-use ephor::{agents, checkout, cli, error, feed, paths, rebase, registry, table, update, work};
+use ephor::{
+    agents, checkout, cli, error, feed, paths, rebase, registry, scope, table, update, work,
+};
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -142,20 +144,34 @@ fn run(cli: Cli) -> Result<ExitCode> {
         paths::set_registry_override(PathBuf::from(path));
     }
 
+    // A verb honours a scope selector or refuses it (§FS-011-command-line.9).
+    // Held before anything dispatches, and before any registry is read: the
+    // verbs below that need no registry — `schema`, `check`, `validate
+    // --manifest` — must not need one in order to refuse either.
+    let scope = scope::Scope::of(&cli);
+    let (verb, honours) = scope::honoured(&cli.command);
+    scope.held_to(&verb, honours)?;
+    // Resolved only where a verb reads a set of projects: resolving asks the
+    // registry, and the verbs that refuse have nothing to ask it about.
+    let projects = match honours {
+        scope::Honours::Watched => scope.projects()?,
+        _ => scope::Projects::every(),
+    };
+
     match &cli.command {
-        Command::Status(args) => return feed::commands::status(args),
-        Command::Feed(args) => return feed::commands::feed(args),
-        Command::Refresh(args) => return feed::commands::refresh(args),
-        Command::MarkRead(args) => return feed::commands::mark_read(args, cli.all),
+        Command::Status(args) => return feed::commands::status(args, &projects),
+        Command::Feed(args) => return feed::commands::feed(args, &projects),
+        Command::Refresh(args) => return feed::commands::refresh(args, &projects),
+        Command::MarkRead(args) => return feed::commands::mark_read(args, &projects),
         Command::Failures(args) => return feed::commands::failures(args),
         Command::Restart(args) => return feed::commands::restart(args),
         Command::Rebase(args) => return rebase::rebase(args),
         Command::Checkout(args) => return checkout::checkout(args),
-        Command::Work(args) => return work::commands::work(args),
+        Command::Work(args) => return work::commands::work(args, &projects),
         // The abilities the screen used to hold alone (§FS-011-command-line).
         // Each opens the same session a key would have (§AR-009-surfaces.2).
         Command::Actions(args) => return ephor::commands::actions(args),
-        Command::Branches(args) => return ephor::commands::branches(args),
+        Command::Branches(args) => return ephor::commands::branches(args, &projects),
         Command::Operations(args) => return ephor::commands::operations(args),
         Command::Thread(args) => return ephor::commands::thread(args),
         Command::React(args) => return ephor::commands::react(args),
@@ -169,7 +185,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         // (§FS-010-doctor).
         Command::Capabilities(args) => return ephor::doctor::capabilities(args),
         Command::Doctor(args) => return ephor::doctor::doctor(args),
-        Command::Tui => return feed::tui::run(),
+        Command::Tui => return feed::tui::run(&projects),
         // The schemas are the interface's stability surface, printable without
         // a registry to read (§FS-006-project-interface.11).
         Command::Schema(args) => return print_schema(&args.name),
@@ -241,10 +257,18 @@ fn run(cli: Cli) -> Result<ExitCode> {
             ))
         }
         Command::Validate(_) | Command::EnsureAgents(_) | Command::Update(_) => {
+            // `--all` belongs to the three verbs that read it rather than to
+            // every verb that must then ignore it (§FS-011-command-line.9).
+            let all = match &cli.command {
+                Command::Validate(args) => args.all,
+                Command::EnsureAgents(args) => args.all,
+                Command::Update(args) => args.all,
+                _ => unreachable!(),
+            };
             let workspaces = registry::select_managed_workspaces(
                 &registry,
                 &cli.workspace,
-                cli.all,
+                all,
                 &cli.tag,
                 cli.organization.as_deref(),
             )?;

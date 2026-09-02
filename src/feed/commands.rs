@@ -13,6 +13,7 @@ use crate::feed::model::ItemKind;
 use crate::feed::refresh::refresh_project;
 use crate::feed::render::{self, Style};
 use crate::registry;
+use crate::scope::Projects;
 
 /// What the registry says, read once per run and remembered for as long as
 /// the file has not moved under us.
@@ -260,19 +261,26 @@ fn check_exit(
     }
 }
 
-pub fn status(args: &StatusArgs) -> Result<ExitCode> {
+/// `ephor status` — one project's feed, or a row per watched project.
+///
+/// `scope` is what `--workspace`, `--tag` and `--org` selected: the summary
+/// walks the projects it holds rather than every configured one, and a project
+/// named beside a selector that excludes it is refused by name
+/// (§FS-011-command-line.9).
+pub fn status(args: &StatusArgs, scope: &Projects) -> Result<ExitCode> {
     let config = load_config()?;
     let seen = cache::load_seen()?;
     let style = Style::detect();
 
     let feeds: Vec<ProjectFeed> = match &args.project {
         Some(project) => {
+            scope.admit(project)?;
             known_project(&config, project)?;
             vec![ensure_fresh(&config, project, args)?]
         }
         None => {
             let mut feeds = Vec::new();
-            for project in config.projects.keys() {
+            for project in scope.over(config.projects.keys())? {
                 feeds.push(ensure_fresh(&config, project, args)?);
             }
             feeds
@@ -307,7 +315,9 @@ pub fn status(args: &StatusArgs) -> Result<ExitCode> {
     Ok(check_exit(&feeds, &seen, args.check, recent_days))
 }
 
-pub fn feed(args: &FeedArgs) -> Result<ExitCode> {
+/// `ephor feed` — the flat stream across the watched projects
+/// (§FS-011-command-line.9 for what `scope` narrows it to).
+pub fn feed(args: &FeedArgs, scope: &Projects) -> Result<ExitCode> {
     let config = load_config()?;
     let seen = cache::load_seen()?;
     let style = Style::detect();
@@ -330,8 +340,11 @@ pub fn feed(args: &FeedArgs) -> Result<ExitCode> {
         }
     } else {
         let selected: Vec<&String> = if args.project.is_empty() {
-            config.projects.keys().collect()
+            scope.over(config.projects.keys())?
         } else {
+            for project in &args.project {
+                scope.admit(project)?;
+            }
             args.project.iter().collect()
         };
         for project in selected {
@@ -384,12 +397,19 @@ pub fn feed(args: &FeedArgs) -> Result<ExitCode> {
 /// were lost and others survived. A partial refresh had been reported as
 /// success, which is how a forge stayed uninstalled without anyone noticing —
 /// the timer that runs this saw exit 0 every time.
-pub fn refresh(args: &RefreshArgs) -> Result<ExitCode> {
+pub fn refresh(args: &RefreshArgs, scope: &Projects) -> Result<ExitCode> {
     let config = load_config()?;
+    // The selectors narrow which projects are fetched and nothing else: the
+    // shared sources are fetched once for the whole site and placed by the
+    // engine (§AR-008-pipeline.1), so the configuration they are placed
+    // against stays the whole one — a scoped fetch must not file another
+    // project's conversation under what nothing claimed
+    // (§FS-011-command-line.9).
+    let selected = scope.narrow(&args.projects, config.projects.keys())?;
     // Under `--json` the per-project lines would land on standard output
     // beside the reading (§FS-011-command-line.7), so they are withheld and
     // the whole tally is printed at the end instead.
-    let tally = refresh_projects(&config, &args.projects, args.quiet || args.json)?;
+    let tally = refresh_projects(&config, &selected, args.quiet || args.json)?;
     if args.json {
         println!(
             "{}",
@@ -653,7 +673,16 @@ pub fn restart(args: &crate::cli::RestartArgs) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-pub fn mark_read(args: &MarkReadArgs, all: bool) -> Result<ExitCode> {
+/// `ephor mark-read` — what has been read, per version rather than per item
+/// (§FS-007-matters.5).
+///
+/// The sweep across every watched project is `mark-read`'s own `--all`, after
+/// the verb, rather than the global one it used to read: that flag says which
+/// *branch entries* a managed-workspace verb walks, and one flag meaning two
+/// things is exactly what a caller cannot tell from the output
+/// (§FS-011-command-line.9). The project selectors narrow the sweep like
+/// every other project selection.
+pub fn mark_read(args: &MarkReadArgs, scope: &Projects) -> Result<ExitCode> {
     let config = load_config()?;
     let mut seen = cache::load_seen()?;
     let kind_filter = match &args.kind {
@@ -665,10 +694,21 @@ pub fn mark_read(args: &MarkReadArgs, all: bool) -> Result<ExitCode> {
         None => None,
     };
 
-    let selected: Vec<String> = match (&args.project, all) {
-        (Some(project), _) => vec![project.clone()],
-        (None, true) => config.projects.keys().cloned().collect(),
-        (None, false) if args.id.is_some() => config.projects.keys().cloned().collect(),
+    let selected: Vec<String> = match (&args.project, args.all) {
+        (Some(project), _) => {
+            scope.admit(project)?;
+            vec![project.clone()]
+        }
+        (None, true) => scope
+            .over(config.projects.keys())?
+            .into_iter()
+            .cloned()
+            .collect(),
+        (None, false) if args.id.is_some() => scope
+            .over(config.projects.keys())?
+            .into_iter()
+            .cloned()
+            .collect(),
         (None, false) => {
             return Err(registry_error(
                 "mark-read needs a project, --all, or --id.".to_string(),
@@ -714,10 +754,11 @@ pub fn mark_read(args: &MarkReadArgs, all: bool) -> Result<ExitCode> {
     }
 
     // Prune seen entries for items that no longer exist in any cached feed.
-    if args.id.is_none()
-        && kind_filter.is_none()
-        && (all || config.projects.len() == selected.len())
-    {
+    // Only where the sweep really covered every watched project: a run
+    // narrowed by `--org` read some of the feeds, and pruning from those
+    // would forget that another organization's items were ever read
+    // (§FS-011-command-line.9).
+    if args.id.is_none() && kind_filter.is_none() && config.projects.len() == selected.len() {
         seen.retain(|id, _| live_ids.contains(id));
     }
 

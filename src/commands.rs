@@ -438,11 +438,12 @@ fn dry_run_of(request: &crate::api::act::Run) -> views::Outcome {
 }
 
 /// `ephor branches` (§FS-011-command-line.2).
-pub fn branches(args: &BranchesArgs) -> Result<ExitCode> {
+pub fn branches(args: &BranchesArgs, scope: &crate::scope::Projects) -> Result<ExitCode> {
     let config = load_config()?;
-    let session = Session::open(&config)?;
+    let session = Session::open_over(&config, scope)?;
     let projects: Vec<String> = match &args.project {
         Some(project) => {
+            scope.admit(project)?;
             if !config.projects.contains_key(project) {
                 return Err(registry_error(format!(
                     "Project '{project}' has no feed configuration."
@@ -450,6 +451,8 @@ pub fn branches(args: &BranchesArgs) -> Result<ExitCode> {
             }
             vec![project.clone()]
         }
+        // Already the scoped list: the session was opened over it
+        // (§FS-011-command-line.9).
         None => session.projects.clone(),
     };
     let rows: Vec<views::Branch> = projects
