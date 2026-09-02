@@ -147,3 +147,56 @@ started in another terminal is reachable by its id alone.
 ([§FS-005-dispatch.20](FS-005-dispatch.md#20-a-run-of-the-runtime-starts-beneath-the-screen-and-is-watched-by-attaching)); `--watch` keeps the terminal and watches the run as
 before, which is also what a runner that cannot detach does unasked, saying so.
 
+
+## 9. A scope selector is honoured or refused
+
+`--workspace`, `--tag` and `--org` are declared once and carried by every
+command, so every command's help advertises all three. A command therefore
+either **honours** the selector it was given or **refuses** it by name and
+exits non-zero. A flag that parses, prints in its help and changes
+nothing is worse than one that errors, because the caller cannot tell the two
+apart from the output: a sweep that believes it is scoped to one organization
+runs over the whole site and nothing in what it prints says so
+([§GRUND-001-overseer.2](../grund.md#2-what-this-project-does-about-it)).
+
+The three project selectors — `--workspace`, `--tag`, `--org` — name a set of
+projects, read from the registry. The verbs that read a set of projects honour
+them: `list`, `status`, `feed`, `refresh`, `mark-read`, `branches`, the screen,
+`work list`, `work dispatch`, `work sync`, `work run`, and the managed-workspace
+verbs `validate`, `ensure-agents` and `update`. Every other verb names one
+target or reads no project set at all, and refuses each selector it was given,
+naming itself and the flag and saying which selectors it does take. The
+classification is total: every verb is on one side of it or the other.
+
+The registry and the site's watch list are two different files, and the
+selectors name rows of the first while `status`, `feed`, `refresh`,
+`mark-read`, `branches` and the screen pick their projects from the second. A
+selector is therefore resolved against the registry and then intersected with
+what the site watches, and the intersection is applied where each verb picks
+its projects rather than in a helper beside them.
+
+A selection that comes out empty is **said**, never left looking like a quiet
+site: a mistyped organization and an organization with nothing in it otherwise
+print the same empty table, and that table is the failure this rule exists to
+end. The verbs that read the watched projects refuse it, naming which end came
+out empty — no such project in the registry, or none of the selected ones
+watched here — and `ephor list`, whose whole reading is the rows, says in words
+that no project matched.
+
+`--all` is not one of them, and that is the second half of this rule: a flag
+belongs to the verbs that read it. It was global, it meant **every branch
+entry rather than only the active ones** to `validate`, `ensure-agents` and
+`update`, and it meant "every project" to `mark-read` — one flag, two
+meanings, and no way to tell from the output which one a run had used. It is
+now declared by each verb that reads it and says there what that verb means by
+it: the three managed-workspace verbs keep the branch-entry meaning, and
+`mark-read --all` sweeps every watched project the way `work offers --all`
+shows the tickets that are over. A verb that would ignore it does not declare
+it, so it is refused before ephor is asked rather than advertised in help that
+has nothing behind it.
+
+A refusal is an answer like any other: under `--json` it lands on standard
+output as an outcome with `ok` false ([§7](#7---json-is-the-same-answer-not-a-second-one),
+[§REQ-002-parity.3](../requirements/REQ-002-parity.md#3-every-reading-answers-a-program)). It is decided before any registry is read, so the
+verbs that need no registry — `schema`, `check`, `validate --manifest` — still
+need none in order to refuse.
