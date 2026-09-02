@@ -912,18 +912,21 @@ impl Dispatcher {
         )))
     }
 
-    /// Every autorun ceiling written over an organization the registry does
-    /// not declare, said in the note the sweep carries (§FS-005-dispatch.24).
-    /// Such a key bounds nothing at all, which is the one thing a ceiling may
-    /// never quietly be, so the reader hears it where the bound they meant to
-    /// set would have been read.
+    /// Every autorun ceiling written over an organization no registry row
+    /// places a project inside, said in the note the sweep carries
+    /// (§FS-005-dispatch.24). Such a key bounds nothing at all, which is the
+    /// one thing a ceiling may never quietly be, so the reader hears it where
+    /// the bound they meant to set would have been read. It asks the same
+    /// membership [`Dispatcher::organization_of_each_project`] resolves the
+    /// ceilings through, so a key that is refusing starts is never announced
+    /// here.
     fn ceilings_over_nobody(&self) -> Vec<String> {
-        crate::registry::unknown_organizations(&self.registry_doc, self.organizations.keys())
+        crate::registry::organizations_over_nobody(&self.registry_doc, self.organizations.keys())
             .into_iter()
             .map(|organization| {
                 format!(
-                    "organizations.{organization} names no organization the registry \
-                     declares: the ceiling written there bounds nothing"
+                    "organizations.{organization}: no registry row places a project in it, \
+                     so the ceiling written there bounds nothing"
                 )
             })
             .collect()
@@ -933,20 +936,9 @@ impl Dispatcher {
     /// it (§FS-005-dispatch.24). Membership is identity and lives in the
     /// registry row; the ceiling over it is a binding and lives in the site's
     /// configuration, so this reads the registry and writes nothing back to
-    /// it (§REQ-001-boundary.2). A project whose row names no organization is
-    /// absent here, which is how it comes to be under no organization
-    /// ceiling.
+    /// it (§REQ-001-boundary.2).
     fn organization_of_each_project(&self) -> BTreeMap<String, String> {
-        crate::registry::array_field(&self.registry_doc, "projects")
-            .iter()
-            .filter_map(|project| {
-                let organization = project.get("organization").and_then(Value::as_str)?;
-                Some((
-                    crate::registry::id_of(project).to_string(),
-                    organization.to_string(),
-                ))
-            })
-            .collect()
+        crate::registry::organization_of_each_project(&self.registry_doc)
     }
 
     /// Every execution root beneath the watch, with the plans it holds
@@ -2749,9 +2741,9 @@ impl Dispatcher {
             membership: self.organization_of_each_project(),
         };
         // Said where the ceilings are read, so a pair written the wrong way
-        // round — or a ceiling over an organization the registry never heard
-        // of — is seen at the sweep it costs something rather than only by
-        // whoever runs a check over the file (§FS-005-dispatch.24).
+        // round — or a ceiling over an organization holding no project — is
+        // seen at the sweep it costs something rather than only by whoever
+        // runs a check over the file (§FS-005-dispatch.24).
         for unbound in self.ceilings_over_nobody() {
             self.note_once(&unbound);
         }

@@ -308,18 +308,33 @@ fn it_says_what_it_is_doing_while_it_does_it_without_saying_it_to_a_parser() {
     );
 }
 
-/// §FS-005-dispatch.24: an autorun ceiling written over an organization the
-/// registry does not declare bounds nothing, so `doctor` names it in the same
-/// words an unknown project id is named in. It is not an error — the site is
-/// as healthy as it was — but the bound its author believes they set is not
-/// there, and a ceiling may never quietly be nothing.
+/// §FS-005-dispatch.24: an autorun ceiling written over an organization no
+/// registry row places a project inside bounds nothing, so `doctor` names it
+/// in the same words an unknown project id is named in. It is not an error —
+/// the site is as healthy as it was — but the bound its author believes they
+/// set is not there, and a ceiling may never quietly be nothing. An id the
+/// registry declares that no project has joined is the same emptiness by
+/// another route and is named the same way; the report itself is unchanged,
+/// because this is narration and not a project's health.
 #[test]
-fn a_ceiling_over_an_organization_the_registry_does_not_declare_is_named() {
+fn a_ceiling_over_an_organization_holding_no_project_is_named() {
     let tmp = tempdir();
     fixture(tmp.path(), json!([{ "provider": "demo" }]));
+    let registry_path = tmp.path().join("workspaces.json");
+    let mut registry: Value =
+        serde_json::from_str(&fs::read_to_string(&registry_path).unwrap()).unwrap();
+    registry["organizations"] = json!([{ "id": "emptyguild", "name": "The Empty Guild" }]);
+    fs::write(
+        &registry_path,
+        serde_json::to_string_pretty(&registry).unwrap(),
+    )
+    .unwrap();
     let path = tmp.path().join("status.json");
     let mut config: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-    config["organizations"] = json!({ "nosuchorg": { "work": { "max_concurrent": 1 } } });
+    config["organizations"] = json!({
+        "emptyguild": { "work": { "max_concurrent": 1 } },
+        "nosuchorg": { "work": { "max_concurrent": 1 } }
+    });
     fs::write(&path, serde_json::to_string_pretty(&config).unwrap()).unwrap();
 
     let out = ephor(tmp.path())
@@ -327,12 +342,58 @@ fn a_ceiling_over_an_organization_the_registry_does_not_declare_is_named() {
         .output()
         .unwrap();
     let narration = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        narration.contains(
-            "Feed config references unknown organization 'nosuchorg' (not in the registry)."
-        ),
-        "{narration}"
-    );
+    for organization in ["emptyguild", "nosuchorg"] {
+        assert!(
+            narration.contains(&format!(
+                "Feed config references organization '{organization}' \
+                 (no registry row places a project in it)."
+            )),
+            "{narration}"
+        );
+    }
+    assert!(out.status.success(), "{narration}");
+
+    // Narration only: the ceiling is nobody's health, so `--json` carries the
+    // report and nothing else and the exit stays 0.
+    let json_out = ephor(tmp.path())
+        .args(["doctor", "--skip-self", "--project", "widget", "--json"])
+        .output()
+        .unwrap();
+    let report: Value = serde_json::from_slice(&json_out.stdout).unwrap();
+    assert!(!report.to_string().contains("emptyguild"), "{report}");
+    assert!(json_out.status.success(), "{report}");
+}
+
+/// §FS-005-dispatch.24: membership is the project row's `organization` field
+/// and nothing else, so a registry that declares no `organizations` array —
+/// which the validator permits, and which this fixture writes — still puts its
+/// project inside the organization its row names. `doctor` reads that same
+/// membership, so it never calls such a ceiling empty: the line and the
+/// ceiling cannot disagree about who a key binds.
+#[test]
+fn a_ceiling_an_organizations_own_row_joins_is_not_called_empty() {
+    let tmp = tempdir();
+    fixture(tmp.path(), json!([{ "provider": "demo" }]));
+    let registry_path = tmp.path().join("workspaces.json");
+    let mut registry: Value =
+        serde_json::from_str(&fs::read_to_string(&registry_path).unwrap()).unwrap();
+    registry["projects"][0]["organization"] = json!("acme");
+    fs::write(
+        &registry_path,
+        serde_json::to_string_pretty(&registry).unwrap(),
+    )
+    .unwrap();
+    let path = tmp.path().join("status.json");
+    let mut config: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    config["organizations"] = json!({ "acme": { "work": { "max_concurrent": 1 } } });
+    fs::write(&path, serde_json::to_string_pretty(&config).unwrap()).unwrap();
+
+    let out = ephor(tmp.path())
+        .args(["doctor", "--skip-self", "--project", "widget"])
+        .output()
+        .unwrap();
+    let narration = String::from_utf8_lossy(&out.stderr);
+    assert!(!narration.contains("bounds nobody"), "{narration}");
     assert!(out.status.success(), "{narration}");
 }
 
