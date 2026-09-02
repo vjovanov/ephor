@@ -1621,7 +1621,7 @@ Add your own, or replace a shipped one by reusing its id:
 ```jsonc
 {
   "work": {
-    "root": "{workspace}/panta",       // where plans go
+    "root": "{workspace}/panta",       // where plans go; a template (§8.4)
     "states": "~/my/states.yaml",      // a machine of your own, instead of the shipped one
     "ranking": "~/my/ranking.txt",     // item ids, one per line, most important first (§8.9)
     "max_concurrent": 4,                // aggregate ceiling on roots in flight; omitted is unlimited
@@ -1649,7 +1649,8 @@ Add your own, or replace a shipped one by reusing its id:
 
 Per project, `projects.<id>.work` takes the same `root`, `states`, `recipes`,
 `max_concurrent` and `max_active` keys, and its recipes are appended to the
-global ones. A project ceiling is additional to the site's aggregate ceiling of
+global ones. A project's `root` displaces its organization's, and an
+organization's displaces the site's (§8.4). A project ceiling is additional to the site's aggregate ceiling of
 the same name, not a replacement for it. The two ceilings count different
 things: `max_concurrent` counts every live root, and `max_active` counts only
 the live roots that are working — a root is *parked*, and outside `max_active`,
@@ -1665,7 +1666,12 @@ machine:
 ```jsonc
 {
   "organizations": {
-    "acme": { "work": { "max_concurrent": 3 } }   // the budget acme's projects share
+    "acme": {
+      "work": {
+        "max_concurrent": 3,             // the budget acme's projects share
+        "root": "{org_root}/panta"       // and where their work goes (§8.4)
+      }
+    }
   }
 }
 ```
@@ -1757,6 +1763,24 @@ with it (§8.18).
 
 `work.root` — default `{workspace}/panta` — is a rhei project directory in the
 item's checkout, one plan per item, named for the item.
+
+It is a template over the same vocabulary a brief is rendered from (§8.2), and
+it is read at three scopes: `projects.<id>.work.root` first, then
+`organizations.<org-id>.work.root`, then the site's `work.root`. The innermost
+one written is the whole answer — a root is one path, so nothing above it is
+consulted and nothing merges.
+
+Two of the names reach above the project. `{org}` is the organization the
+project's registry row places it in and `{org_root}` is where that organization
+is rooted (§3), so `"root": "{org_root}/panta"` on the organization tier gives
+a whole organization one work root — for work that belongs to no single
+repository, a release moving several projects' gates, a sweep across all of
+them. The board finds a plan there like any other (§8.13). An organization that
+declares no `root`, or a project whose registry row names no organization, has
+nothing to render: the dispatch refuses by name — `demo: the work root names
+{org_root}, and organization acme declares no root` — rather than making a
+directory called `{org_root}` or a path with the segment missing
+([§FS-005-dispatch.6.1](functional-spec/FS-005-dispatch.md#61-the-work-root-is-a-template-and-it-may-reach-above-the-project)).
 
 `work.runner` is what runs a plan there. It comes bound: unset, it is the
 runtime ephor ships wired and ready, and naming another is how somebody who
@@ -2674,7 +2698,9 @@ stays on the operation it was on, not on the line number that operation had.
 
 **The rows are found by looking, never by remembering.** The board
 enumerates the work roots themselves — the configured `work.root`, resolved
-at each project's checkout and again in every branch workspace on disk — so
+at each project's checkout, again in every branch workspace on disk, and
+again at its organization's root where the template reaches above the
+project (§8.4) — so
 a plan written by hand, a project's own planning tickets, and a run somebody
 started in another terminal on a root ephor never dispatched into all appear,
 judged by the same artifacts as dispatched work
