@@ -63,7 +63,7 @@ ships, the previous "latest" section moves verbatim to
   alike: membership is the project row's `organization` field and nothing
   else, so the ceiling and the note read the same thing. Note that the feed
   configuration refuses unknown keys, so a `status.json` carrying
-  `organizations` needs this version. (PR #TBD)
+  `organizations` needs this version. (PR #54)
 
 - **The functional specification is one document per declaration.** The twelve
   `§FS` declarations now live under `docs/functional-spec/`, so each subject
