@@ -758,10 +758,21 @@ impl Dispatcher {
         recipe::resolve(&self.global.recipes, per_project)
     }
 
-    /// The recipes that apply to one item.
+    /// The recipes that apply to one item. A branch template requiring a field
+    /// this matter has empty does not serve it, so it is withheld from dispatch
+    /// selection rather than selected and refused (§FS-005-dispatch.25).
     pub fn offers(&mut self, item: &Item) -> Vec<Recipe> {
         let facts = self.facts(item);
-        recipe::applicable(&self.recipes(&item.project), item, &facts)
+        let mut offers = recipe::applicable(&self.recipes(&item.project), item, &facts);
+        let Some(placement) = self.placement(&item.project).cloned() else {
+            return offers;
+        };
+        offers.retain(|recipe| {
+            recipe.branch.as_deref().is_none_or(|template| {
+                crate::branches::why_not_served(&placement, item, template).is_none()
+            })
+        });
+        offers
     }
 
     /// What a selector needs to know about the checkout
@@ -1734,7 +1745,15 @@ impl Dispatcher {
         }
         let facts = self.facts(item);
         let mut entries = self.workflow_actions(&item.project);
-        entries.retain(|entry| entry.matches(item, &facts));
+        let placement = self.placement(&item.project).cloned();
+        entries.retain(|entry| {
+            entry.matches(item, &facts)
+                && entry.branch.as_deref().is_none_or(|template| {
+                    placement.as_ref().is_none_or(|placement| {
+                        crate::branches::why_not_served(placement, item, template).is_none()
+                    })
+                })
+        });
         entries
     }
 

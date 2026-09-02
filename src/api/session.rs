@@ -235,20 +235,34 @@ impl Session {
         // all, where there is nothing for a template to displace and no
         // workspace for work that edits the change to run in. Such an entry
         // says which branch it belongs on and dispatch makes it, so it is
-        // offered rather than withheld (§FS-005-dispatch.25) — and what its
-        // template comes to here is the gate's answer, not this one's.
+        // offered where its template can render (§FS-005-dispatch.25) — and
+        // what a valid template comes to here is the gate's answer, not this
+        // one's. A real field this matter has empty means the entry does not
+        // serve it, so it is withheld before naming (§FS-005-dispatch.27).
         let branchless = matches!(placed, Some(WorkspaceState::Unmatched));
         let offered = |needs_checkout: bool, branch: &Option<String>| {
             here || !needs_checkout || (branchless && branch.is_some())
         };
+        let placement = self.placement(&item.project);
+        let serves = |branch: &Option<String>| {
+            branch.as_deref().is_none_or(|template| {
+                placement.is_none_or(|placement| {
+                    crate::branches::why_not_served(placement, item, template).is_none()
+                })
+            })
+        };
         menu.retain(|entry| match (&entry.agent, &entry.workflow) {
             (Some(recipe), _) => {
-                !item.is_finished() && offered(recipe.needs_checkout, &recipe.branch)
+                !item.is_finished()
+                    && offered(recipe.needs_checkout, &recipe.branch)
+                    && serves(&recipe.branch)
             }
             // A workflow hands work over too, so it is gated the same way
             // (§FS-005-dispatch.19).
             (None, Some(_)) => {
-                !item.is_finished() && offered(entry.requires_checkout, &entry.branch)
+                !item.is_finished()
+                    && offered(entry.requires_checkout, &entry.branch)
+                    && serves(&entry.branch)
             }
             _ => true,
         });
@@ -309,8 +323,8 @@ impl Session {
             .unwrap_or_default()
     }
 
-    /// Recipes considered for this matter and refused, and which selector
-    /// field refused each one (§FS-005-dispatch.27).
+    /// Recipes considered for this matter and refused, and which selector or
+    /// branch-template field refused each one (§FS-005-dispatch.27).
     ///
     /// "Considered" narrows [`crate::work::recipe::Selector::explain`]'s full
     /// generality to what a reader can act on. A recipe whose `kinds` refused
@@ -344,6 +358,7 @@ impl Session {
             .as_ref()
             .map(offers::Trailing::facts)
             .unwrap_or_default();
+        let placement = self.placement(&item.project);
         recipes
             .iter()
             .filter_map(|recipe| {
@@ -355,7 +370,12 @@ impl Session {
                     .into_iter()
                     .filter(|refusal| !matches!(refusal.field, "behind" | "behind_upstream"))
                     .collect();
-                if worth_reading.is_empty() {
+                let branch = recipe.branch.as_deref().and_then(|template| {
+                    placement.and_then(|placement| {
+                        crate::branches::why_not_served(placement, item, template)
+                    })
+                });
+                if worth_reading.is_empty() && branch.is_none() {
                     return None;
                 }
                 Some(super::views::Exclusion {
@@ -363,6 +383,7 @@ impl Session {
                     reason: worth_reading
                         .into_iter()
                         .map(|refusal| refusal.reason)
+                        .chain(branch)
                         .collect::<Vec<_>>()
                         .join("; "),
                 })

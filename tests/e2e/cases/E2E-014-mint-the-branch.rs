@@ -225,6 +225,10 @@ fn watching(branch_template: Option<&str>, branch_root: bool) -> World {
 
 const ITEM: &str = "acmeforge:acme/widget#95";
 
+/// A project-owned task carries no forge number. A `{number}` branch template
+/// therefore cannot describe work about it (§FS-005-dispatch.25).
+const NUMBERLESS_TASK: &str = "fixture:task-without-number";
+
 /// An issue whose title carries the word `main` — the one piece of evidence
 /// that attributes it to the project's configured main branch by registry
 /// match, the shape this project's `main` checkout is discovered under
@@ -243,6 +247,32 @@ fn plan(world: &World) -> PathBuf {
     workspace(world)
         .join("panta")
         .join("acmeforge-acme-widget-95-fix-issue")
+}
+
+/// Add the project-owned task shape the ticket reports to the cached feed.
+/// It has no forge fields from which a number could be recovered.
+fn add_numberless_task(world: &World) {
+    let path = world
+        .path()
+        .join("state/ephor/feed")
+        .join(format!("{PROJECT}.json"));
+    let mut feed = world.feed();
+    feed["providers"]["fixture"] = json!({
+        "fetched_at": "2026-09-02T00:00:00Z",
+        "ok": true,
+        "stale": false,
+        "matters": [{
+            "key": NUMBERLESS_TASK,
+            "kind": "task",
+            "placement": { "on": { "project": PROJECT } },
+            "source": "fixture",
+            "title": "A task with no forge number",
+            "needs_response": false,
+            "updated_at": "2026-09-01T00:00:00Z",
+            "fingerprint": {}
+        }]
+    });
+    write_json(&path, &feed);
 }
 
 /// The same, for [`MAIN_ITEM`].
@@ -723,6 +753,142 @@ fn a_template_that_will_not_do_is_refused_by_name_and_makes_nothing() {
     );
 }
 
+/// A valid branch template can still be wrong for one matter: a project-owned
+/// task has no `{number}` to render. The entry does not serve that task, so the
+/// menu and its readings withhold it, `work offers` explains the exclusion,
+/// and neither a recipe sweep nor a workflow autorun turns the mismatch into a
+/// refusal (§FS-005-dispatch.25, §FS-005-dispatch.27).
+#[test]
+fn a_template_missing_a_matter_field_does_not_serve_that_matter() {
+    let world = watching(Some("fix/issue-{number}"), true);
+    add_numberless_task(&world);
+    world.configure(json!({
+        "actions": [{
+            "id": "lay-by-number",
+            "icon": "⛬",
+            "description": "lay the task workflow",
+            "workflow": "supervised-ticket-fix",
+            "autorun": true,
+            "when": { "kinds": ["task"] },
+            "branch": "fix/issue-{number}",
+            "inputs": { "ticket": "{title}" }
+        }],
+        "projects": { PROJECT: {
+            "providers": [ { "provider": "acmeforge", "user": "you", "repos": ["widget"] } ],
+            "work": { "recipes": [{
+                "id": "branch-by-number",
+                "description": "make the branch from the number",
+                "when": { "kinds": ["issue", "task"] },
+                "branch": "fix/issue-{number}",
+                "state": "fix",
+                "brief": "Do {title}."
+            }] }
+        } },
+        "work": { "runner": "acme-runtime" }
+    }));
+
+    let said = world
+        .ephor()
+        .args(["work", "offers", "--item", NUMBERLESS_TASK, "--json"])
+        .assert()
+        .success();
+    let view = json_of(said.get_output());
+    for id in ["branch-by-number", "lay-by-number"] {
+        assert!(
+            !view["offers"]
+                .as_array()
+                .expect("offers")
+                .iter()
+                .any(|offer| offer["id"] == id),
+            "'{id}' was offered on a matter with no number: {view}"
+        );
+    }
+    let exclusion = view["excluded"]
+        .as_array()
+        .expect("excluded recipes")
+        .iter()
+        .find(|exclusion| exclusion["recipe"] == "branch-by-number")
+        .unwrap_or_else(|| panic!("the withheld recipe was not explained: {view}"));
+    assert_eq!(
+        exclusion["reason"],
+        json!("the branch template 'fix/issue-{number}' needs {number}, and this matter has none")
+    );
+
+    // The action reading is the same menu, even though only `work offers`
+    // carries the diagnostic `excluded` reading (§FS-005-dispatch.27).
+    let actions = json_of(
+        world
+            .ephor()
+            .args(["actions", "--item", NUMBERLESS_TASK, "--json"])
+            .assert()
+            .success()
+            .get_output(),
+    );
+    assert!(
+        !actions["offers"]
+            .as_array()
+            .expect("offers")
+            .iter()
+            .any(|offer| matches!(
+                offer["id"].as_str(),
+                Some("branch-by-number" | "lay-by-number")
+            )),
+        "an incompatible entry remained on the action reading: {actions}"
+    );
+
+    // With no item named, neither the recipe nor the autorunning workflow is
+    // selected. A sweep steps over the matter without recording a refusal.
+    let swept = world
+        .ephor()
+        .args([
+            "work",
+            "dispatch",
+            "--project",
+            PROJECT,
+            "--kind",
+            "task",
+            "--dry-run",
+            "--json",
+        ])
+        .assert()
+        .success();
+    let sweep = json_of(swept.get_output());
+    assert_eq!(sweep["opened"], json!(0), "{sweep}");
+    assert_eq!(sweep["laid"], json!(0), "{sweep}");
+    assert_eq!(sweep["refused"], json!(0), "{sweep}");
+    assert_eq!(sweep["items"], json!([]), "{sweep}");
+
+    // Naming the incompatible recipe behaves like naming any recipe whose
+    // selector does not match: it opens nothing and the explicit request fails.
+    let explicit = world
+        .ephor()
+        .args([
+            "work",
+            "dispatch",
+            "--project",
+            PROJECT,
+            "--item",
+            NUMBERLESS_TASK,
+            "--recipe",
+            "branch-by-number",
+            "--kind",
+            "task",
+            "--dry-run",
+            "--json",
+        ])
+        .assert()
+        .failure();
+    let dispatch = json_of(explicit.get_output());
+    assert_eq!(dispatch["opened"], json!(0), "{dispatch}");
+    assert_eq!(dispatch["laid"], json!(0), "{dispatch}");
+    assert_eq!(dispatch["refused"], json!(0), "{dispatch}");
+    assert_eq!(dispatch["items"], json!([]), "{dispatch}");
+    assert!(
+        !world.forest().join("fix").exists(),
+        "withheld work left a workspace behind"
+    );
+}
+
 /// A matter that has a branch of its own keeps it: the template applies only
 /// where there is none, so a pull request is placed exactly where it was
 /// before the key existed (§FS-005-dispatch.25).
@@ -831,7 +997,8 @@ fn a_recipe_may_say_the_branch_its_work_belongs_on() {
 /// carrying the same template are two entries in one situation, and an entry
 /// that answers differently because its template is written somewhere else is
 /// the parity this rule is about. A template that will not render is refused on
-/// the row rather than on the keystroke (§FS-004-quick-actions.2).
+/// the row rather than on the keystroke, while one that names a real field the
+/// matter lacks is withheld (§FS-004-quick-actions.2).
 #[test]
 fn the_offer_follows_the_template_on_both_surfaces() {
     let world = watching(Some("fix/issue-{number}"), true);
@@ -850,6 +1017,7 @@ fn the_offer_follows_the_template_on_both_surfaces() {
             "work": { "recipes": [
                 recipe("do-issue", "fix/issue-{number}"),
                 recipe("by-sprint", "fix/{sprint}"),
+                recipe("by-ticket", "fix/{ticket}"),
             ] }
         } },
         "work": { "runner": "acme-runtime" }
@@ -881,6 +1049,29 @@ fn the_offer_follows_the_template_on_both_surfaces() {
                 .unwrap_or_else(|| panic!("'{id}' is offered on an issue with no branch: {view}"))
                 .clone()
         };
+        assert!(
+            !view["offers"]
+                .as_array()
+                .expect("offers")
+                .iter()
+                .any(|offer| offer["id"] == "by-ticket"),
+            "a template requiring a missing matter field was offered: {view}"
+        );
+        if reading[0] == "work" {
+            let exclusion = view["excluded"]
+                .as_array()
+                .expect("excluded recipes")
+                .iter()
+                .find(|exclusion| exclusion["recipe"] == "by-ticket")
+                .unwrap_or_else(|| panic!("the withheld recipe was not explained: {view}"));
+            assert!(
+                exclusion["reason"]
+                    .as_str()
+                    .expect("the reason")
+                    .contains("needs {ticket}"),
+                "{exclusion}"
+            );
+        }
         // The entry beside the workflow, and the recipe saying the same thing
         // in its own home: one shape, because it is one situation.
         for id in ["fix-issue", "do-issue"] {
