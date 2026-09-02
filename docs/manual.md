@@ -2318,8 +2318,8 @@ ephor work states
   still bounds its total, and the site number a pair is measured against is
   the configured one. A ceiling of `0` above is a pause rather than a budget,
   so the numbers under a paused site or organization are not noted. An
-  `organizations` id the registry does not declare is a `note:` too: it bounds
-  nobody, and a ceiling may not quietly be nothing. On this command,
+  `organizations` id no registry row places a project in is a `note:` too: it
+  bounds nobody, and a ceiling may not quietly be nothing. On this command,
   `--max-concurrent N` replaces the configured aggregate ceiling for this one
   sweep while organization and project ceilings remain in force; a project
   ceiling above that one-sweep number is your own choice and is not noted.
