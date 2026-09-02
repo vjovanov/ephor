@@ -1483,12 +1483,14 @@ is zero; every organization and project ceiling still applies inside the
 command-line ceiling.
 
 **Every ceiling is evaluated, and the outermost full one is the reason.** A
-start is refused by whichever of the three is full first, asked in that
-order — site, then organization, then project. So no root begins because an
-inner ceiling had room while an outer one did not, and the reason a reader is
-given names the widest thing that was actually full. None of the three
-replaces another and none clamps another: they are three questions asked of
-the same start, and the answer is the first *no*.
+start is refused by whichever is full first, asked outermost scope inward —
+site, then organization, then project — and within one scope by roots in
+flight before working roots. So no root begins because an inner ceiling had
+room while an outer one did not, the reason a reader is given names the widest
+thing that was actually full, and a scope that declared no working ceiling
+answers exactly as it did before there was one. None of them replaces another
+and none clamps another: they are questions asked of the same start, and the
+answer is the first *no*.
 
 **A ceiling written the wrong way round is named, not corrected.** An
 organization's number is expected to be the larger of the pair, because it is
@@ -1529,6 +1531,36 @@ nothing is refused for it: the runs that would have happened without the key
 still happen, and the reader is told why the key they wrote is not the one
 biting.
 
+**A second ceiling bounds the work an agent is actually doing.** The three
+above bound roots in flight — worktrees, processes, and the burst when several
+resume at once — which is not the question *how much may be spent at once*. So
+`work.max_active` is a second aggregate ceiling over the live roots that are
+**active**, and `projects.<id>.work.max_active` is that project's ceiling
+inside it. Both read exactly as their `max_concurrent` counterparts: omitted is
+unlimited, `0` admits no new autorun starts under it, the project number sits
+inside the site one, and a run the reader started by hand is outside both. The
+organization tier bounds roots in flight only — an organization is a budget of
+machine, and the working ceiling is deliberately left to the site and the one
+project until a reader asks for the middle of it. Omission is the default
+everywhere, so a configuration naming only `max_concurrent` is bounded exactly
+as it was, in behaviour and in wording, and `--max-concurrent N` replaces the
+site's roots-in-flight ceiling alone.
+
+**A live root is parked when what it waits for is a person.** Every live root
+counts toward the flight ceilings — it exists, and that is what those numbers
+count — and toward `max_active` too *unless* nothing in it is being worked and
+something in it is somebody's turn: no open ticket witnessed held by the run,
+and at least one open ticket in a state the machine in force calls gating
+([§9](#9-work-that-stops-for-a-person-says-so-where-the-person-is-looking)) or
+whose poll declares whose answer it waits for — one fact, differing only in who
+resumes it. It is judged per plan by the machine answering for that plan, as
+every reading of what a ticket is doing is
+([§15](#15-every-operation-is-visible-in-one-place)); a plan whose machine
+cannot be read makes its root active, because a misreading must cost a slot
+rather than hand one out. And the ceilings gate starts, not what is under way
+already: parked roots resuming together can carry active work above
+`max_active` until one finishes, capacity here being live work, not attempts.
+
 **Capacity is live work, not attempts.** One root snapshot supplies both the
 due candidates and the live counts. Every already-live root consumes one
 aggregate slot, one slot in each project whose plan it holds, and one slot in
@@ -1536,7 +1568,8 @@ each organization holding such a project, whether or not that root is due or
 selected by a command's `--project`. A root holding plans from two projects
 of one organization spends one of that organization's slots rather than two:
 the slot is the live run, and there is one of those. A successful start
-consumes those same slots only while its runtime lock remains held. A start
+consumes those same slots, as active work, only while its runtime lock remains
+held. A start
 that fails, reports itself finished during the launch handshake, or has
 already released its lock leaves the slot for the next candidate in the same
 sweep. The failed-start back-off still applies independently.
@@ -1547,8 +1580,10 @@ file's order before the rest; roots the ranking does not distinguish retain
 the deterministic root-path order the sweep already had. The ranking orders
 and never filters. Every otherwise eligible root not started solely because
 an aggregate, organization, or project ceiling is full is returned as one
-`passed-over` outcome with the ceiling as its reason, in prose and `--json`.
-Passing a root over is not a failed launch and does not increase the
+`passed-over` outcome whose reason names the key it refused on, in prose and
+`--json`; and the reading says how many roots are live and how many of those
+are parked, so a full ceiling never hides that a person holds one of the
+slots. Passing a root over is not a failed launch and does not increase the
 reading's `failed` count.
 
 **The sweep is safe where the key was.** Everything dispatch refuses before

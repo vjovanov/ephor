@@ -1583,7 +1583,8 @@ Add your own, or replace a shipped one by reusing its id:
     "root": "{workspace}/panta",       // where plans go
     "states": "~/my/states.yaml",      // a machine of your own, instead of the shipped one
     "ranking": "~/my/ranking.txt",     // item ids, one per line, most important first (§8.9)
-    "max_concurrent": 4,                // aggregate autorun ceiling; omitted is unlimited
+    "max_concurrent": 4,                // aggregate ceiling on roots in flight; omitted is unlimited
+    "max_active": 2,                    // aggregate ceiling on the ones an agent is working
     "recipes": [
       {
         "id": "fix-gate",
@@ -1605,11 +1606,17 @@ Add your own, or replace a shipped one by reusing its id:
 }
 ```
 
-Per project, `projects.<id>.work` takes the same `root`, `states`, `recipes`
-and `max_concurrent` keys, and its recipes are appended to the global ones.
-A project concurrency ceiling is additional to the site's aggregate ceiling,
-not a replacement for it. `ranking` is read only from the site's own `work`
-block — the sweep it orders already spans every configured project.
+Per project, `projects.<id>.work` takes the same `root`, `states`, `recipes`,
+`max_concurrent` and `max_active` keys, and its recipes are appended to the
+global ones. A project ceiling is additional to the site's aggregate ceiling of
+the same name, not a replacement for it. The two ceilings count different
+things: `max_concurrent` counts every live root, and `max_active` counts only
+the live roots that are working — a root is *parked*, and outside `max_active`,
+when nothing in it is being worked and an open ticket in it waits on a person,
+either gating or a poll declaring `waiting_on` (§8.9). Omitting `max_active` is
+unlimited, so a configuration that never names it is bounded exactly as before.
+`ranking` is read only from the site's own `work` block — the sweep it orders
+already spans every configured project.
 
 Between those two there is a third, over the projects that actually share a
 machine:
@@ -2306,8 +2313,8 @@ ephor work states
   cannot become a spawn loop. Where the runner has no detached shape the sweep
   starts nothing and says so: a run nobody asked for must not take a terminal.
   Nothing is due unless a recipe or a laying entry asked for it — silence
-  still means you press the key. Three nested ceilings bound it:
-  `work.max_concurrent` across the whole site,
+  still means you press the key. Three nested ceilings bound the roots in
+  flight: `work.max_concurrent` across the whole site,
   `organizations.<org-id>.work.max_concurrent` across the projects the registry
   puts in that organization, and `projects.<id>.work.max_concurrent` inside
   both. Omitted ceilings are unlimited and zero starts no new runs. All three
@@ -2319,18 +2326,29 @@ ephor work states
   the configured one. A ceiling of `0` above is a pause rather than a budget,
   so the numbers under a paused site or organization are not noted. An
   `organizations` id no registry row places a project in is a `note:` too: it
-  bounds nobody, and a ceiling may not quietly be nothing. On this command,
-  `--max-concurrent N` replaces the configured aggregate ceiling for this one
-  sweep while organization and project ceilings remain in force; a project
-  ceiling above that one-sweep number is your own choice and is not noted.
-  Already-live roots consume capacity,
+  bounds nobody, and a ceiling may not quietly be nothing. Beside those,
+  `work.max_active` and `projects.<id>.work.max_active` bound only the live
+  roots that are *working*: a root whose only open tickets wait on a person —
+  gating, or a poll declaring `waiting_on` — is parked and costs a
+  `max_concurrent` slot but no `max_active` one, while a root whose machine
+  cannot be read counts as working, since a misreading must not hand out
+  capacity. They read exactly as the ceilings above: omitted is unlimited and
+  zero starts no new runs. On this command, `--max-concurrent N` replaces the
+  configured aggregate roots-in-flight ceiling for this one sweep while
+  organization and project ceilings remain in force; a project ceiling above
+  that one-sweep number is your own choice and is not noted, and there is no
+  flag for `max_active`. Already-live roots consume capacity,
   including roots outside a `--project` filter. New starts consume a
   slot only while their runtime lock remains held, so a refused or immediately
   completed start leaves room for the next root. Candidates follow
   `work.ranking`, with every unranked root retaining the previous deterministic
   order. An eligible root omitted only because a ceiling is full is printed as
-  `passed-over` with the reason (also under `--json`) and does not increase
-  `failed`.
+  `passed-over` with the reason naming the key it hit (also under `--json`) and
+  does not increase `failed`. The reading says how many roots are live and how
+  many of those are parked, in prose and under `--json`, so a full ceiling never
+  hides that a person is holding one of the slots. Ceilings gate starts, not
+  runs already under way: several parked roots resuming at once can carry
+  working roots above `max_active` until one finishes.
 - **`workflows`** and **`lay`** are the runtime's own workflows, offered as
   actions (§8.15). `lay` writes a plan of its own beside the matter's and runs
   nothing; `--dry-run` shows what would answer every input first. Where the
