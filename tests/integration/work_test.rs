@@ -1246,6 +1246,165 @@ fn a_rebase_conflict_is_handed_to_the_picked_hand() {
 
 /// Rewrite `projects.demo.work` with a hands table and a narrowing, the way a
 /// person editing status.json would.
+/// Put the fixture's project in an organization, and give that organization a
+/// root in the registry where `root` is a path — the registry is where
+/// membership and placement live (§REQ-001-boundary.2).
+fn in_organization(tmp: &Path, organization: &str, root: Option<&Path>) {
+    let path = tmp.join("workspaces.json");
+    let mut registry: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    let mut entry = json!({ "id": organization, "name": "Foundation" });
+    if let Some(root) = root {
+        entry["root"] = json!(root.to_string_lossy());
+    }
+    registry["organizations"] = json!([entry]);
+    registry["projects"][0]["organization"] = json!(organization);
+    fs::write(&path, serde_json::to_string_pretty(&registry).unwrap()).unwrap();
+}
+
+/// Write the organization tier of the work configuration.
+fn organization_work(tmp: &Path, organization: &str, work: Value) {
+    let path = tmp.join("status.json");
+    let mut config: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    config["organizations"] = json!({ organization: { "work": work } });
+    fs::write(&path, serde_json::to_string_pretty(&config).unwrap()).unwrap();
+}
+
+/// A work root may reach above the project (§FS-005-dispatch.6.1): an
+/// organization-tier `work.root` naming `{org_root}` dispatches a member
+/// project's item into the organization's own root, and the board finds the
+/// plan there — written to *and* swept, which is the pair the placement never
+/// had before.
+#[test]
+fn work_dispatched_through_an_organization_root_lands_there_and_is_found_there() {
+    let tmp = tempdir();
+    // An autorun recipe under a paused ceiling: the sweep enumerates the
+    // roots and passes over what it finds, which is discovery reported
+    // without a runner being spent on it.
+    fixture(
+        tmp.path(),
+        json!({
+            "max_concurrent": 0,
+            "recipes": [{
+                "id": "fix-gate",
+                "icon": "🔧",
+                "description": "fix the red gate",
+                "brief": "fix {title}",
+                "autorun": true,
+                "when": { "kinds": ["pr"], "gate": "red" }
+            }]
+        }),
+    );
+    let org_root = tmp.path().join("foundation");
+    fs::create_dir_all(&org_root).unwrap();
+    in_organization(tmp.path(), "foundation", Some(&org_root));
+    organization_work(
+        tmp.path(),
+        "foundation",
+        json!({ "root": "{org_root}/panta" }),
+    );
+    ephor(tmp.path())
+        .args(["refresh", "demo"])
+        .assert()
+        .success();
+
+    ephor(tmp.path())
+        .args(["work", "dispatch"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1 ticket(s) opened"));
+
+    // The plan is under the organization's root, not under the project's.
+    let panta = org_root.join("panta");
+    assert!(
+        panta.join("github-prs-acme-widget-42.rhei.md").is_file(),
+        "the plan belongs under the organization root"
+    );
+    assert!(
+        !tmp.path().join("demo/panta").exists(),
+        "and not under the project's own"
+    );
+
+    // And the sweep, which walks the configured places rather than the
+    // ledger, finds the root there (§FS-005-dispatch.15.1) — a root that is
+    // not enumerated is never swept, which is the half the placement never
+    // had.
+    let output = ephor(tmp.path())
+        .args(["work", "run", "--due", "--json"])
+        .output()
+        .unwrap();
+    let reading: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        reading["runs"][0]["root"].as_str(),
+        Some(panta.to_string_lossy().as_ref()),
+        "the organization root is swept: {reading}"
+    );
+}
+
+/// An organization that declares no root cannot answer `{org_root}`, and the
+/// dispatch says so by name rather than writing a directory called
+/// `{org_root}` (§FS-005-dispatch.6.1). A project in no organization is
+/// refused just as explicitly.
+#[test]
+fn a_work_root_above_a_project_with_no_answer_refuses_and_writes_nothing() {
+    let tmp = tempdir();
+    fixture(tmp.path(), Value::Null);
+    in_organization(tmp.path(), "foundation", None);
+    organization_work(
+        tmp.path(),
+        "foundation",
+        json!({ "root": "{org_root}/panta" }),
+    );
+    ephor(tmp.path())
+        .args(["refresh", "demo"])
+        .assert()
+        .success();
+
+    ephor(tmp.path())
+        .args(["work", "dispatch"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "0 ticket(s) opened, 1 item(s) could not be",
+        ))
+        .stderr(predicate::str::contains(
+            "organization foundation declares no root",
+        ));
+
+    // A project in no organization at all is refused the same way — here
+    // through the site tier, so the refusal is about the template and not
+    // about which scope wrote it.
+    let path = tmp.path().join("workspaces.json");
+    let mut registry: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    registry["organizations"] = json!([]);
+    registry["projects"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("organization");
+    fs::write(&path, serde_json::to_string_pretty(&registry).unwrap()).unwrap();
+    let path = tmp.path().join("status.json");
+    let mut config: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    config["organizations"] = json!({});
+    config["work"] = json!({ "root": "{org_root}/panta" });
+    fs::write(&path, serde_json::to_string_pretty(&config).unwrap()).unwrap();
+
+    ephor(tmp.path())
+        .args(["work", "dispatch"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "0 ticket(s) opened, 1 item(s) could not be",
+        ))
+        .stderr(predicate::str::contains(
+            "no registry row places demo in an organization",
+        ));
+
+    // Nothing was written under either refusal — no literal `{org_root}`
+    // directory anywhere, and no plan in the project's own root.
+    assert!(!tmp.path().join("{org_root}").exists());
+    assert!(!tmp.path().join("demo/{org_root}").exists());
+    assert!(!tmp.path().join("demo/panta").exists());
+}
+
 fn project_hands(tmp: &Path, hands: Value, permitted: &[&str]) {
     let path = tmp.join("status.json");
     let mut config: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
