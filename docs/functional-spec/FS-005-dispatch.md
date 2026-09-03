@@ -1526,10 +1526,23 @@ a plan whose checkout a live run holds starts nothing and says *a run is live
 in this checkout*, naming the run — its own id where it published one
 ([§20](#20-a-run-of-the-runtime-starts-beneath-the-screen-and-is-watched-by-attaching)),
 the root holding it where it did not — so the reader is sent to the run that
-is in the way rather than to a guess. `--force` starts anyway, for the reader
-who knows what that other run is doing; it lifts this refusal and nothing
-else. A refusal is a non-launch outcome of a command that was understood, not
-a failure of it.
+is in the way rather than to a guess. A run this same invocation has just
+started counts: one command over two work roots in one tree starts one of
+them and refuses the rest, naming the run it made a moment ago, because a
+tree is as busy from a run one second old as from one that was there all
+along. `--force` starts anyway, for the reader who knows what that other run
+is doing; it lifts this refusal and nothing else, on the run asked for by
+name — the sweep below is not a run anybody asked for by name and is never
+forced. A refusal is a non-launch outcome of a command that was understood,
+not a failure of it.
+
+**The key in the interface is a place a run starts, so it is guarded there
+too.** Pressing it on a matter whose checkout a live run holds starts nothing
+and says the same sentence, naming the same run: the invariant is over the
+tree the agent edits, and it cannot depend on which surface the reader
+reached for. There is no forcing it from the screen — the reader who means
+to start a second run in a busy tree says so on the command line, where the
+flag is.
 
 This is why the sweep can be run as often as anything cares to run it and asks
 nothing about what it did last time — a due root gets a run, a root whose
@@ -1538,6 +1551,15 @@ same as running it once. Inside one sweep the same holds without a second
 look at the world: a checkout a launch has just taken is taken for the rest of
 that sweep, and a later due root over the same tree is passed over with the
 reason, which is a successful non-launch outcome and not a failed start.
+
+**A root held back by another root's run is passed over, not dropped.** The
+sweep says so in the same words and in the same kind of row as the tree it
+took mid-sweep: a reader told only that nothing started would go looking for
+a ceiling that is not full, and an empty sweep is exactly what a quiet
+machine looks like. The root whose *own* run is live is the one exception and
+stays silent — it has its run, that run reaches the tickets written beneath
+it, and saying so every sweep would report on the ordinary case for as long
+as the work takes.
 
 **Autorun may be bounded at three nested scopes without changing the manual
 key.** The site's `work.max_concurrent` is the aggregate ceiling on live runs

@@ -23,10 +23,10 @@ the same stop in the runner's own words. The only new thing is who says go.
 The sweep is **idempotent by construction and stateless about its own past**.
 It re-reads the world every time ([§FS-005-dispatch.15](../../functional-spec/FS-005-dispatch.md#15-every-operation-is-visible-in-one-place)), and the live-run
 check is the runtime's own lock, so running it twice in a second starts one
-run, and running it on a root whose working tree is already busy starts none. That is what
-lets every trigger be the same call: the dispatch that just wrote an
-autorun ticket, the timer, and a reader typing it all invoke one verb, and
-none of them has to know what the others did.
+run, and running it on a root whose working tree is already busy starts
+none. That is what lets every trigger be the same call: the dispatch that
+just wrote an autorun ticket, the timer, and a reader typing it all invoke
+one verb, and none of them has to know what the others did.
 
 Triggers are therefore cheap and layered rather than exact. Dispatch runs the
 sweep in the same breath as writing the ticket, because that is the moment
