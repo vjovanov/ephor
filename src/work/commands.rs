@@ -1457,7 +1457,10 @@ fn run_work(
     }
     if roots.is_empty() {
         if args.json {
-            println!("{}", serde_json::json!({ "runs": [], "failed": 0 }));
+            println!(
+                "{}",
+                serde_json::json!({ "runs": [], "failed": 0, "refused": 0 })
+            );
             return Ok(ExitCode::SUCCESS);
         }
         println!("Nothing to run: no dispatched ticket is still open.");
@@ -1465,7 +1468,18 @@ fn run_work(
     }
 
     let mut failed = 0usize;
+    // Refusals are counted apart from failed runs: nothing went wrong, the
+    // command was understood and answered — but the reader asked for a run and
+    // got none, which the exit code has to say (§FS-005-dispatch.24).
+    let mut refused = 0usize;
     let mut runs: Vec<serde_json::Value> = Vec::new();
+    // Which trees a run already holds, read from the same `work_roots()`
+    // snapshot the sweep reads, so the swept and the hand-started path cannot
+    // drift into two answers about one working tree (§AR-009-surfaces.1). Read
+    // once: a probe per root, and the answer is the world's as of now
+    // (§FS-005-dispatch.15).
+    let snapshot = dispatcher.work_roots();
+    let busy = crate::work::live_checkouts(&config.work, &snapshot, &dispatcher.ledger);
     // A run starts beneath the screen unless the reader asked to watch it
     // (§FS-005-dispatch.20) — and unless the binding has no detached shape, in
     // which case it runs attached as it always did and this says so rather
@@ -1483,20 +1497,6 @@ fn run_work(
         }
     }
     for (root, checkout, hand, plans) in &roots {
-        if !args.json {
-            println!(
-                "\n▶ {} {} ({} plan(s){})",
-                runtime::label(&config.work),
-                root.display(),
-                plans.len(),
-                match hand {
-                    // The same phrase the key in the interface shows: one run,
-                    // one sentence about who is getting it (§FS-005-dispatch.14).
-                    Some(hand) => format!(", {}", hand.describe()),
-                    None => String::new(),
-                }
-            );
-        }
         let landed = |outcome: &str, says: Option<String>, id: Option<&str>| {
             let mut row = serde_json::json!({
                 "root": root,
@@ -1519,6 +1519,35 @@ fn run_work(
             }
             row
         };
+        // One live run per checkout, whichever root that run was started from:
+        // two runs in one working tree are two agents editing the same files.
+        // Refused by name, so the reader is sent to the run in the way, and
+        // lifted by `--force` for the reader who knows what that run is doing
+        // (§FS-005-dispatch.24).
+        if let Some(held_by) = (!args.force)
+            .then(|| crate::work::holding(&busy, checkout))
+            .flatten()
+        {
+            let says = crate::work::live_in_this_checkout(&config.work, held_by);
+            refused += 1;
+            runs.push(landed("refused", Some(says.clone()), None));
+            eprintln!("error: {says} — {}", root.display());
+            continue;
+        }
+        if !args.json {
+            println!(
+                "\n▶ {} {} ({} plan(s){})",
+                runtime::label(&config.work),
+                root.display(),
+                plans.len(),
+                match hand {
+                    // The same phrase the key in the interface shows: one run,
+                    // one sentence about who is getting it (§FS-005-dispatch.14).
+                    Some(hand) => format!(", {}", hand.describe()),
+                    None => String::new(),
+                }
+            );
+        }
         if detaching {
             // Started and left: the launcher waits for the child to publish
             // its descriptor and returns, and what comes back is the one line
@@ -1611,11 +1640,12 @@ fn run_work(
             serde_json::to_string_pretty(&serde_json::json!({
                 "runs": runs,
                 "failed": failed,
+                "refused": refused,
             }))
             .unwrap_or_else(|_| "null".to_string())
         );
     }
-    if failed > 0 {
+    if failed > 0 || refused > 0 {
         return Ok(ExitCode::from(1));
     }
     Ok(ExitCode::SUCCESS)

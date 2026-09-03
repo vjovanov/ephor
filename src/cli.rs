@@ -481,6 +481,13 @@ pub struct WorkRunArgs {
     #[arg(long)]
     pub watch: bool,
 
+    /// Start a run in a working tree a live run already holds. Without it such
+    /// a plan is refused by name: one live run per checkout, because a second
+    /// run there is a second agent editing the same files. This lifts that
+    /// refusal and nothing else (§FS-005-dispatch.24).
+    #[arg(long)]
+    pub force: bool,
+
     /// Arguments passed through to the runtime, after `--`.
     #[arg(last = true)]
     pub runner_args: Vec<String>,

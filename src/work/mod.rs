@@ -2492,13 +2492,19 @@ pub fn due_among(
                 })
         })
         .collect();
+    // Which trees are being worked, taken over the whole snapshot before
+    // anything here is judged due (§FS-005-dispatch.24). The run that holds a
+    // tree usually holds no due ticket of its own, so this cannot be folded
+    // into the loop below.
+    let busy = live_checkouts(global, roots, ledger);
     let nothing: BTreeSet<String> = BTreeSet::new();
     let mut due = Vec::new();
     for group in roots {
-        // A root a run already holds is left alone: the live run reaches
-        // a ticket written beneath it, and a second run there would only
-        // wait for the first (§FS-005-dispatch.24).
-        if runtime::watch::live(global, &group.root) {
+        // A tree a run already holds is left alone, whichever root that run
+        // was started from: the live run reaches a ticket written beneath it,
+        // and a second run in the same working tree is a second agent editing
+        // the same files (§FS-005-dispatch.24).
+        if holding(&busy, &checkout_of(ledger, &group.root)).is_some() {
             continue;
         }
         // A root that could not be started is passed over for a while,
@@ -2614,9 +2620,7 @@ pub fn due_among(
             .entries
             .values()
             .find(|entry| entry.root == group.root);
-        let checkout = known
-            .map(Entry::checkout)
-            .unwrap_or_else(|| root_checkout(&group.root));
+        let checkout = checkout_of(ledger, &group.root);
         if let Some(wanted) = known.and_then(|entry| entry.branch.as_deref()) {
             // Only a branch that can be read and disagrees refuses: an
             // unreadable or detached HEAD is a fact nobody can establish,
@@ -2790,6 +2794,13 @@ impl Dispatcher {
         }
         let live = LiveRuns::read(&self.global, &roots, &ceilings.membership);
         let mut capacity = Capacity::new(ceilings, live);
+        // The trees this sweep's own launches have taken, checkout to the root
+        // the run was started from. The due list was read from a snapshot
+        // older than every launch below, so two due roots over one working
+        // tree are both in it; without this they would both start
+        // (§FS-005-dispatch.24). Roots a run held *before* the sweep are
+        // already gone from the list — [`due_among`] took them out.
+        let mut taken: BTreeMap<PathBuf, PathBuf> = BTreeMap::new();
         let runs = self
             .due_in(&roots, now)
             .into_iter()
@@ -2801,6 +2812,15 @@ impl Dispatcher {
                         .any(|project| projects.contains(project))
             })
             .map(|root| {
+                // A tree a launch in this same sweep has just taken is taken
+                // for the rest of it. Passed over with the run that has it,
+                // never raced: this is a successful non-launch outcome, and a
+                // reader told only that nothing started would go looking for a
+                // ceiling that is not full (§FS-005-dispatch.24).
+                if let Some(held_by) = holding(&taken, &root.checkout) {
+                    let why = live_in_this_checkout(&self.global, held_by);
+                    return Launched::passed_over(&root, why);
+                }
                 if let Some(why) = capacity.refusal(&root.projects) {
                     return Launched::passed_over(&root, why);
                 }
@@ -2840,6 +2860,9 @@ impl Dispatcher {
                         // the next ranked root (§FS-005-dispatch.24).
                         let remains_live =
                             !started.finished && runtime::watch::live(&self.global, &root.root);
+                        if remains_live {
+                            taken.insert(canonical(&root.checkout), root.root.clone());
+                        }
                         capacity.started(&root.projects, remains_live);
                         Launched {
                             id: started.id,
@@ -3358,6 +3381,71 @@ fn root_checkout(root: &std::path::Path) -> PathBuf {
     root.parent()
         .map(std::path::Path::to_path_buf)
         .unwrap_or_else(|| root.to_path_buf())
+}
+
+/// The working tree one root's work runs in: what the ledger recorded for
+/// that root, and the directory holding it where nothing recorded anything
+/// (§FS-005-dispatch.3). One definition, because the sweep and the manual key
+/// both guard on it and two spellings of "which tree is this" would be two
+/// guards (§AR-009-surfaces.1).
+fn checkout_of(ledger: &Ledger, root: &std::path::Path) -> PathBuf {
+    ledger
+        .entries
+        .values()
+        .find(|entry| entry.root == root)
+        .map(Entry::checkout)
+        .unwrap_or_else(|| root_checkout(root))
+}
+
+/// Every working tree a live run holds right now, each mapped to the work
+/// root that run was started from (§FS-005-dispatch.24).
+///
+/// Read over the whole snapshot rather than over the roots something is
+/// waiting to happen on: the root a run holds is usually not one of those —
+/// it is working through what it already has — so a guard that only looked
+/// among candidates would never see the run it is meant to keep out of the
+/// way of.
+///
+/// Trees as the file system resolves them, because the guard is about one
+/// directory and two roots may reach it by two spellings — a relative path, a
+/// symbolic link — which must not come out as two answers.
+pub fn live_checkouts(
+    global: &WorkConfig,
+    roots: &[runtime::watch::RootPlans],
+    ledger: &Ledger,
+) -> BTreeMap<PathBuf, PathBuf> {
+    roots
+        .iter()
+        .filter(|group| runtime::watch::live(global, &group.root))
+        .map(|group| {
+            (
+                canonical(&checkout_of(ledger, &group.root)),
+                group.root.clone(),
+            )
+        })
+        .collect()
+}
+
+/// The root a live run holds this working tree from, where one does
+/// (§FS-005-dispatch.24). The lookup belongs beside [`live_checkouts`] rather
+/// than at each call site: a caller that forgot to resolve the tree the same
+/// way would have a guard that passes on a spelling.
+pub fn holding<'a>(
+    busy: &'a BTreeMap<PathBuf, PathBuf>,
+    checkout: &std::path::Path,
+) -> Option<&'a PathBuf> {
+    busy.get(&canonical(checkout))
+}
+
+/// The one sentence said wherever a start is held back because a live run
+/// already holds the tree (§FS-005-dispatch.24): the run in the way by the
+/// name it published, and by the root holding it where it published none, so
+/// the reader is sent to the run rather than to a guess (§AR-009-surfaces.1).
+pub fn live_in_this_checkout(global: &WorkConfig, held_by: &std::path::Path) -> String {
+    let named = runtime::watch::identity(global, held_by)
+        .and_then(|run| run.id)
+        .unwrap_or_else(|| held_by.display().to_string());
+    format!("a run is live in this checkout: {named}")
 }
 
 /// The recipe a ticket id was written from. Ids are `<recipe>-<n>`

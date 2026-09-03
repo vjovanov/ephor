@@ -960,11 +960,11 @@
               },
               "hand": { "type": "string", "description": "Who the run was given to, where the tickets agreed on one (FS-005-dispatch.14)." },
               "outcome": {
-                "enum": ["started", "done", "parked", "failed", "passed-over"],
-                "description": "`started` is a run that went beneath the screen, watched afterwards by attaching (FS-005-dispatch.20); `passed-over` is an otherwise eligible autorun root omitted because an aggregate, organization, or project concurrency ceiling is full and is not a failure (FS-005-dispatch.24); the other three are a run watched here, with `parked` the runtime declining for now, which is not a failed run (FS-006-project-interface.3)."
+                "enum": ["started", "done", "parked", "failed", "passed-over", "refused"],
+                "description": "`started` is a run that went beneath the screen, watched afterwards by attaching (FS-005-dispatch.20); `passed-over` is an otherwise eligible autorun root omitted because a concurrency ceiling is full, or because a launch earlier in the same sweep already took its checkout, and is not a failure; `refused` is a plan named by hand whose checkout a live run holds, which starts nothing and is lifted by `--force` (FS-005-dispatch.24); the other three are a run watched here, with `parked` the runtime declining for now, which is not a failed run (FS-006-project-interface.3)."
               },
               "id": { "type": "string", "description": "What the run is called, where it named itself \u2014 the id the board prints and the runner's own attach command takes (FS-005-dispatch.20)." },
-              "reason": { "type": "string", "description": "The aggregate, organization, or project ceiling that caused a `passed-over` autorun outcome, named as it is written in the configuration and by the key it refused on \u2014 `max_concurrent` over roots in flight, `max_active` over the ones being worked (FS-005-dispatch.24)." },
+              "reason": { "type": "string", "description": "Why a `passed-over` autorun root got no run: the aggregate, organization, or project ceiling that was full, named as it is written in the configuration and by the key it refused on \u2014 `max_concurrent` over roots in flight, `max_active` over the ones being worked \u2014 or the run a launch earlier in the same sweep left live in that root's checkout (FS-005-dispatch.24)." },
               "says": {
                 "type": ["string", "null"]
               }
@@ -972,6 +972,7 @@
           }
         },
         "failed": { "type": "integer" },
+        "refused": { "type": "integer", "description": "How many plans named by hand got no run because a live run holds their checkout (FS-005-dispatch.24). A non-zero count exits non-zero: nothing went wrong, but the reader asked for a run and got none. Printed by the hand-started form, which is the only one that refuses." },
         "notes": {
           "type": "array",
           "items": { "$ref": "#/$defs/note" }
