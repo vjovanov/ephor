@@ -54,6 +54,8 @@ fn project(work_root: &str) -> World {
     let origin = world.path().join("origin");
     std::fs::create_dir_all(&origin).expect("the remote");
     git(&origin, &["init", "-q", "--initial-branch=main"]);
+    git(&origin, &["config", "user.email", "t@example.com"]);
+    git(&origin, &["config", "user.name", "t"]);
     std::fs::write(origin.join("README.md"), "the project\n").expect("a file");
     git(&origin, &["add", "README.md"]);
     git(&origin, &["commit", "-q", "-m", "the project"]);
