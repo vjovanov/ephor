@@ -716,6 +716,10 @@ fn clipped(name: &str, width: usize) -> String {
     }
 }
 
+/// How many live sessions the prose form lists before it says how many more
+/// there are. `--json` is never cut: a program reads every row.
+const STRIP: usize = 6;
+
 /// `ephor burn` (§FS-013-burn.8): what this machine is spending on agents.
 ///
 /// It refreshes the store before reading it, and only where the store has
@@ -742,7 +746,11 @@ pub fn burn(args: &BurnArgs) -> Result<ExitCode> {
         render::rate(reading.now.rate),
         render::spark(&spans)
     );
-    for row in &reading.now.live {
+    // The busiest sessions, and then how many more there are. Prose is read by
+    // a person and a machine running two dozen agents at once would otherwise
+    // bury the table under the strip that introduces it; `--json` is read by a
+    // program and carries every row.
+    for row in reading.now.live.iter().take(STRIP) {
         println!(
             "  {:<22} {:<14} {:>10}  live{}",
             row.model,
@@ -750,6 +758,9 @@ pub fn burn(args: &BurnArgs) -> Result<ExitCode> {
             render::rate(row.rate),
             if row.subagent { " · sub-agent" } else { "" }
         );
+    }
+    if let Some(rest) = reading.now.live.len().checked_sub(STRIP).filter(|n| *n > 0) {
+        println!("  and {rest} more going — `--json` has every one");
     }
     println!();
     println!(
