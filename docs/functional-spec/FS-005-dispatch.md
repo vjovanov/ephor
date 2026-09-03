@@ -1493,18 +1493,51 @@ deciding what exists, which is the one thing it never does
 but the same looking every other reading here does
 ([§15](#15-every-operation-is-visible-in-one-place)): a root is **due** when
 a plan in it holds a ticket that is open, unclaimed, not parked on a
-question, and from a recipe that asked to run itself — and no run is live on
-that root. A ticket a hand wrote into such a plan is due exactly as a
-dispatched one is; the recipe is a fact about the ticket, not about who
-appended it.
+question, and from a recipe that asked to run itself — and no run is live in
+the checkout that root's work would run in. A ticket a hand wrote into such a
+plan is due exactly as a dispatched one is; the recipe is a fact about the
+ticket, not about who appended it.
 
-**One run per root, because that is what the runtime schedules.** A root a
-run already holds is left alone: the live run reaches a ticket written
-beneath it, and a second run there would only wait for the first
-([§15](#15-every-operation-is-visible-in-one-place)). This is why the sweep
-can be run as often as anything cares to run it and asks nothing about what
-it did last time — a due root gets a run, a live root gets nothing, and
-running the sweep twice in a second is the same as running it once.
+**One live run per checkout, because a run is an agent editing a working
+tree.** A root a run already holds is left alone: the runtime schedules one
+run per root, the live run reaches a ticket written beneath it, and a second
+run there would only wait for the first
+([§15](#15-every-operation-is-visible-in-one-place)). But the root is not what
+is really being shared. A run is made *in a checkout*
+([§3](#3-one-rhei-per-item-one-ticket-per-dispatch)), and two work roots over
+one tree — a second panta beside the first, or a root somebody pointed
+elsewhere — are two agents editing the same files. So the invariant is over
+the checkout, not the root: a root is left alone when a run holds it **or**
+when a live run holds the tree its work would run in, whichever root that run
+was started from. The trees are compared as the file system resolves them
+rather than as somebody spelled them, so a symbolic link or a relative
+spelling does not defeat the guard.
+
+**The guard is where runs start, never where plans are written.** Laying a
+ticket into a busy checkout's work root stays legal — writing a file is all
+ephor does there, and the ticket simply waits in the plan until the tree is
+free. That is what makes handing one down safe: a conflict written into the
+very tree that is stopped mid-rebase is a note for whoever gets there next,
+not a second agent in it. Nothing refuses at dispatch, at lay, or at sync for
+this reason.
+
+**A run the reader asks for by name is refused by name.** `ephor work run` on
+a plan whose checkout a live run holds starts nothing and says *a run is live
+in this checkout*, naming the run — its own id where it published one
+([§20](#20-a-run-of-the-runtime-starts-beneath-the-screen-and-is-watched-by-attaching)),
+the root holding it where it did not — so the reader is sent to the run that
+is in the way rather than to a guess. `--force` starts anyway, for the reader
+who knows what that other run is doing; it lifts this refusal and nothing
+else. A refusal is a non-launch outcome of a command that was understood, not
+a failure of it.
+
+This is why the sweep can be run as often as anything cares to run it and asks
+nothing about what it did last time — a due root gets a run, a root whose
+checkout is busy gets nothing, and running the sweep twice in a second is the
+same as running it once. Inside one sweep the same holds without a second
+look at the world: a checkout a launch has just taken is taken for the rest of
+that sweep, and a later due root over the same tree is passed over with the
+reason, which is a successful non-launch outcome and not a failed start.
 
 **Autorun may be bounded at three nested scopes without changing the manual
 key.** The site's `work.max_concurrent` is the aggregate ceiling on live runs
