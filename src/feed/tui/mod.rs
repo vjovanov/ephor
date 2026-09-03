@@ -703,7 +703,18 @@ impl App {
                 // not offer the key at all when nothing can run, so this is the
                 // second line of defence: a screen built before the runtime
                 // left `PATH` can still send the action.
-                if let Some(refusal) = crate::work::runtime::refusal(&config.work) {
+                //
+                // Beside it, the other reason this key starts nothing: one
+                // live run per checkout, wherever a run starts
+                // (§FS-005-dispatch.24). Both are refusals of the run and
+                // neither is a failure of the session, so they are one arm.
+                // The screen ahead already answers `R` with the same sentence
+                // off the reading it was built from; this is the probe at the
+                // moment of the start, because a run can take the tree
+                // between the two.
+                if let Some(refusal) = crate::work::runtime::refusal(&config.work)
+                    .or_else(|| self.held_run(&config.work, &item, &checkout))
+                {
                     self.message = refusal;
                     return Ok(false);
                 }
@@ -1044,15 +1055,16 @@ impl App {
                 crate::work::runtime::stop_command(&self.work, &id)
             ))
         });
-        self.screen = Screen::Work(WorkScreen::new(
-            item,
-            status,
-            offers,
-            unavailable,
-            refusal,
-            jobs,
-            run,
-        ));
+        // And whether a live run holds the tree this item's plan would be run
+        // in — its own root's run, or one in another work root over the same
+        // checkout (§FS-005-dispatch.24). Answered before the key is pressed,
+        // as the runtime rung above is.
+        let held = status
+            .as_ref()
+            .and_then(|status| self.held_run(&self.work, &item.id, &status.checkout));
+        self.screen = Screen::Work(
+            WorkScreen::new(item, status, offers, unavailable, refusal, jobs, run).held_by(held),
+        );
     }
 
     /// Enter on a work-screen row. The entry is looked up in the same list the

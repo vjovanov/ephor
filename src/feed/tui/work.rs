@@ -60,12 +60,53 @@ pub(crate) struct WorkScreen {
     /// (§FS-005-dispatch.20). Read from the descriptor beside the lock when the
     /// screen was built, never remembered from a keypress.
     run: Option<String>,
+    /// Why `R` cannot start a run in this matter's working tree right now: a
+    /// live run holds it, from this root or from another work root over the
+    /// same tree (§FS-005-dispatch.24). One live run per checkout is an
+    /// invariant about the files an agent edits, so it holds wherever a run
+    /// starts — this key as much as the command line. Unlike `refusal` it
+    /// withholds nothing: a busy tree is a fact about this minute, not a rung
+    /// this machine lacks, so the key stays taught and answers when pressed.
+    held: Option<String>,
     /// Tickets that are over are collected behind one line until the reader
     /// asks for them (§FS-005-dispatch.18). A reading, never a change to the
     /// plan: `z` shows every one of them, in their place in the order.
     folded: bool,
     scroll: u16,
     viewport: u16,
+}
+
+impl super::App {
+    /// The sentence to answer a run with while a live run holds the working
+    /// tree it would be made in, from this item's own work root or from
+    /// another root over the same tree (§FS-005-dispatch.24).
+    ///
+    /// One live run per checkout is an invariant about the files an agent
+    /// edits, so it holds wherever a run starts and cannot depend on which
+    /// surface the reader reached for — the same reading, lookup and wording
+    /// the command line refuses with (§AR-009-surfaces.1). The roots are the
+    /// ones the board was built from; the locks are probed now, because that
+    /// is the part that changes while the reader reads.
+    ///
+    /// It ends in the way past it, which is the command line's `--force`:
+    /// there is none on the screen, where a keystroke is too cheap to mean *I
+    /// know what that other run is doing*.
+    pub(super) fn held_run(
+        &self,
+        work: &crate::work::recipe::WorkConfig,
+        item: &str,
+        checkout: &std::path::Path,
+    ) -> Option<String> {
+        let busy = crate::work::live_checkouts(
+            work,
+            &self.work_groups,
+            &self.ctx.dispatcher.as_ref()?.ledger,
+        );
+        let said = crate::work::live_in_this_checkout(work, crate::work::holding(&busy, checkout)?);
+        Some(format!(
+            "{said} · to start one anyway: ephor work run --item {item} --force"
+        ))
+    }
 }
 
 impl WorkScreen {
@@ -89,10 +130,20 @@ impl WorkScreen {
             picking: None,
             jobs,
             run,
+            held: None,
             folded: true,
             scroll: 0,
             viewport: 0,
         }
+    }
+
+    /// The sentence to answer `R` with while a live run holds this matter's
+    /// working tree (§FS-005-dispatch.24). Handed in after the screen is
+    /// built, because it is the one thing here that is about a tree rather
+    /// than about this item's own work.
+    pub fn held_by(mut self, said: Option<String>) -> Self {
+        self.held = said;
+        self
     }
 
     /// The tickets `c` may take back: every one that is not over
@@ -223,16 +274,21 @@ impl WorkScreen {
             // terminal over to a command that cannot start: the footer already
             // stopped teaching the key, and this is what answers a reader who
             // knew it anyway (§AR-005-capabilities.2).
-            KeyCode::Char('R') => match (&self.refusal, &self.status) {
-                (Some(refusal), _) => Action::SetMessage(refusal.clone()),
-                (None, Some(status)) => Action::RunWork {
+            KeyCode::Char('R') => match (&self.refusal, &self.held, &self.status) {
+                (Some(refusal), _, _) => Action::SetMessage(refusal.clone()),
+                // One live run per checkout, wherever a run starts — a second
+                // run in this tree is a second agent editing the same files,
+                // and the key is a place a run starts (§FS-005-dispatch.24).
+                // The run in the way is named, as the command line names it.
+                (None, Some(held), _) => Action::SetMessage(held.clone()),
+                (None, None, Some(status)) => Action::RunWork {
                     item: self.item.id.clone(),
                     root: status.root.clone(),
                     checkout: status.checkout.clone(),
                     plan_id: status.plan_id.clone(),
                     label: self.item.title.clone(),
                 },
-                (None, None) => Action::SetMessage("No work to run yet".to_string()),
+                (None, None, None) => Action::SetMessage("No work to run yet".to_string()),
             },
             KeyCode::Char('e') => match self.plan() {
                 Some(plan) => Action::ReadPlan(plan),
@@ -1163,6 +1219,63 @@ mod tests {
         assert!(bound.footer().contains("R run"), "{}", bound.footer());
         assert!(matches!(
             bound.handle_key(KeyCode::Char('R')),
+            Action::RunWork { .. }
+        ));
+    }
+
+    /// One live run per checkout holds wherever a run starts, and this key is
+    /// one of the places it starts (§FS-005-dispatch.24). Pressed on a matter
+    /// whose working tree a run already holds, it hands the terminal to
+    /// nobody and says which run has the tree — the sentence `ephor work run`
+    /// says. The key is still taught: a busy tree is a fact about this
+    /// minute, not a rung this machine lacks (§FS-004-quick-actions.2).
+    #[test]
+    fn the_run_key_is_refused_by_name_while_a_run_holds_this_working_tree() {
+        let held = "a run is live in this checkout: live-run".to_string();
+        let mut screen = WorkScreen::new(
+            item(),
+            Some(status_with_open_tickets()),
+            offers(),
+            None,
+            None,
+            Vec::new(),
+            None,
+        )
+        .held_by(Some(held.clone()));
+
+        assert!(screen.footer().contains("R run"), "{}", screen.footer());
+        match screen.handle_key(KeyCode::Char('R')) {
+            Action::SetMessage(said) => assert_eq!(said, held),
+            _ => panic!("a second run in that tree is a second agent in the same files"),
+        }
+        // The rest of the screen is untouched: the tree is busy, and writing,
+        // reading and taking work back are not runs (§FS-005-dispatch.24).
+        assert!(matches!(
+            screen.handle_key(KeyCode::Char('e')),
+            Action::ReadPlan(_)
+        ));
+        assert!(matches!(
+            screen.handle_key(KeyCode::Char('1')),
+            Action::DispatchWork { .. }
+        ));
+        assert!(matches!(
+            screen.handle_key(KeyCode::Char('c')),
+            Action::None | Action::SetMessage(_)
+        ));
+
+        // Nothing holding it: the key acts, as it always did.
+        let mut free = WorkScreen::new(
+            item(),
+            Some(status_with_open_tickets()),
+            offers(),
+            None,
+            None,
+            Vec::new(),
+            None,
+        )
+        .held_by(None);
+        assert!(matches!(
+            free.handle_key(KeyCode::Char('R')),
             Action::RunWork { .. }
         ));
     }
