@@ -292,6 +292,41 @@ reading, so a mistyped organization is a message rather than a quiet table —
 and with the same exit 2, so one comparison tells a script that its scope was
 refused.
 
+### A sweep that writes reports first — `--act`
+
+Which projects a verb reads is one question; what it writes in them is
+another. Reading at any width is free, so a wide `status` is only a longer
+table. Writing is not: **a mutating verb whose resolved scope names more than
+one project reports what it would do and writes nothing, and acts only under
+`--act`** ([§FS-011-command-line.10](functional-spec/FS-011-command-line.md#10-a-mutating-verb-above-one-project-reports-and-acts-under---act)).
+
+```console
+$ ephor work dispatch --org foundation
+would open vjovanov/grund#172 init --dry-run detects same-version drift
+  …
+0 ticket(s) would be opened, 4 plan(s) would be laid down
+Nothing was written: work dispatch reaches 4 projects, and above one it
+reports what it would do. Pass --act to do it.
+```
+
+The three verbs it applies to are `work dispatch`, `work sync` and `work run`.
+The report is each verb's own dry run — `work run`, which has none, prints the
+work roots and the tickets it would run — and under `--json` it is that
+reading with `gated` and `says` added to it.
+
+The width is what the scope *resolved* to, counted after `--project` and
+`--item`. One project reached is what this command line always did, byte for
+byte, and so is one matter: `--item` names a matter and not a sweep. A bare
+sweep at a site watching one project is unchanged; a bare sweep at a site
+watching four is a sweep over four, which is why
+`systemd/ephor-work-sync.service` passes `--act` on the verbs it runs.
+
+`--act` is global, beside the selectors, and refused by name with exit 2
+wherever the gate cannot fire — including `update` and `ensure-agents`, which
+rewrite every managed workspace their scope reaches and are deliberately
+outside the gate for now. Their refusal says so rather than pretending they
+sweep nothing.
+
 `ensure-agents` also renders an ad-hoc workspace that is in no registry:
 
 ```bash
@@ -1526,14 +1561,14 @@ no comment, no push, no pull request — and then keeps the ledger
 ```bash
 ephor refresh                                     # what happened
 ephor work dispatch --dry-run --updated-within 14 # what would be handed over
-ephor work dispatch --updated-within 14           # hand it over
-ephor work run                                    # let the runtime work it
+ephor work dispatch --updated-within 14 --act     # hand it over (--act above one project)
+ephor work run --act                              # let the runtime work it
 ephor work                                        # what it made of it
 ```
 
 and afterwards, whenever the world moves — a new comment, a gate that turned
-red — `ephor refresh && ephor work sync` writes the next round and
-`ephor work run` works it.
+red — `ephor refresh && ephor work sync --act` writes the next round and
+`ephor work run --act` works it.
 
 ### 8.2 What a ticket carries
 
@@ -2324,11 +2359,11 @@ ephor work                                  # = work list
 ephor work list [--project P] [--open] [--json]
 ephor work dispatch [--project P] [--item ID] [--recipe R] [--kind K]
                     [--again] [--hand H] [--updated-within DAYS]
-                    [--ranking PATH] [--limit N] [--dry-run]
+                    [--ranking PATH] [--limit N] [--dry-run] [--act]
 ephor work ask --item ID [WORDS…] [--state S] [--dry-run]
-ephor work sync [--project P] [--dry-run]
+ephor work sync [--project P] [--dry-run] [--act]
 ephor work cancel --item ID TICKET… [--why WORDS] [--dry-run]
-ephor work run [--project P] [--item ID] [--due [--max-concurrent N]] [--watch] [-- RHEI_ARGS…]
+ephor work run [--project P] [--item ID] [--due [--max-concurrent N]] [--watch] [--act] [-- RHEI_ARGS…]
 ephor work workflows [--project P] [WORKFLOW] [--json]
 ephor work lay ENTRY --item ID [--values FILE]… [--set INPUT=VALUE]… [--hand H] [--dry-run]
 ephor work forget [--item ID | --done | --missing]

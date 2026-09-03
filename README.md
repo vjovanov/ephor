@@ -380,11 +380,11 @@ push, no pull request — and then keeps the ledger.
 ephor work                                  # what has been dispatched, and what it reached
 ephor work dispatch --dry-run               # what would be opened, and where
 ephor work dispatch [--project P] [--recipe R] [--item ID] [--kind pr]
-                    [--updated-within DAYS] [--again] [--ranking PATH] [--limit N]
+                    [--updated-within DAYS] [--again] [--ranking PATH] [--limit N] [--act]
 ephor work ask --item ID "…"                # a ticket in your own words
-ephor work sync [--dry-run]                 # reopen work whose item has moved
+ephor work sync [--dry-run] [--act]         # reopen work whose item has moved
 ephor work cancel --item ID TICKET… [--why "…"]   # take a ticket back; the plan keeps it
-ephor work run [--project P] [--item ID] [-- --parallel 2]   # rhei run, per work root
+ephor work run [--project P] [--item ID] [--act] [-- --parallel 2]   # rhei run, per work root
 ephor work forget [--item ID | --done | --missing]
 ephor work states                           # the state machine the tickets run under
 ```
@@ -394,14 +394,21 @@ The loop, whole:
 ```bash
 ephor refresh                                     # what happened
 ephor work dispatch --dry-run --updated-within 14 # what would be handed over
-ephor work dispatch --updated-within 14           # hand it over
-ephor work run                                    # let the runtime work it
+ephor work dispatch --updated-within 14 --act     # hand it over
+ephor work run --act                              # let the runtime work it
 ephor work                                        # what it made of it
 ```
 
 and then, whenever the world moves — a new comment, a gate that turned red —
-`ephor refresh && ephor work sync` writes the next round of tickets and
-`ephor work run` works them.
+`ephor refresh && ephor work sync --act` writes the next round of tickets and
+`ephor work run --act` works them.
+
+`--act` is the second half of the scope rule
+([§FS-011-command-line.10](docs/functional-spec/FS-011-command-line.md#10-a-mutating-verb-above-one-project-reports-and-acts-under---act)): a verb that writes and whose resolved scope names more
+than one project reports what it would do and writes nothing until it is told
+to act. Reading at any width is free; the first sweep over a whole organization
+is not the moment to discover what it reaches. A turn that resolves to one
+project or one `--item` is unchanged.
 
 A recipe that says `"autorun": true` does not wait for that last command: the
 ticket gets its run in the same breath it is written, and a timer running
