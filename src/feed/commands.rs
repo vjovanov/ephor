@@ -1,5 +1,6 @@
 //! `ephor status | feed | refresh | mark-read` command implementations.
 
+use std::collections::BTreeSet;
 use std::process::ExitCode;
 
 use chrono::Utc;
@@ -399,13 +400,24 @@ pub fn feed(args: &FeedArgs, scope: &Projects) -> Result<ExitCode> {
 /// the timer that runs this saw exit 0 every time.
 pub fn refresh(args: &RefreshArgs, scope: &Projects) -> Result<ExitCode> {
     let config = load_config()?;
+    // The compatible positional spelling and the repeatable named spelling
+    // are one direct-project set. Keep positional inputs first and preserve
+    // each spelling's order, so existing callers keep their output order while
+    // a repeated name never runs its providers twice (§FS-011-command-line.9).
+    let mut seen = BTreeSet::new();
+    let mut projects = Vec::with_capacity(args.projects.len() + args.project.len());
+    for project in args.projects.iter().chain(&args.project) {
+        if seen.insert(project.as_str()) {
+            projects.push(project.clone());
+        }
+    }
     // The selectors narrow which projects are fetched and nothing else: the
     // shared sources are fetched once for the whole site and placed by the
     // engine (§AR-008-pipeline.1), so the configuration they are placed
     // against stays the whole one — a scoped fetch must not file another
     // project's conversation under what nothing claimed
     // (§FS-011-command-line.9).
-    let selected = scope.narrow(&args.projects, config.projects.keys())?;
+    let selected = scope.narrow(&projects, config.projects.keys())?;
     // Under `--json` the per-project lines would land on standard output
     // beside the reading (§FS-011-command-line.7), so they are withheld and
     // the whole tally is printed at the end instead.
