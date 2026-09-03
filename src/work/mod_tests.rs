@@ -1624,7 +1624,8 @@ fn a_root_over_a_checkout_another_roots_run_holds_is_left_alone() {
     assert_eq!(
         due[0].held_by.as_ref(),
         Some(&held),
-        "a second run in that tree is a second agent editing the same files,          and the row names the run in the way"
+        "a second run in that tree is a second agent editing the same files, \
+         and the row names the run in the way",
     );
 
     // And once the tree is free, the root beside it is due as it always was.

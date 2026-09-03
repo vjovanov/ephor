@@ -463,8 +463,9 @@ pub struct WorkRunArgs {
 
     /// Start a run on every work root that holds work asking to run itself
     /// and has none (§FS-005-dispatch.24). The sweep behind autorun: it reads
-    /// the world rather than the ledger, starts nothing on a root a run
-    /// already holds, and is safe to invoke as often as anything cares to.
+    /// the world rather than the ledger, starts nothing where a live run holds
+    /// the checkout — that root's own run, or one in another work root over the
+    /// same working tree — and is safe to invoke as often as anything cares to.
     #[arg(long)]
     pub due: bool,
 
