@@ -67,7 +67,12 @@ pub fn work(args: &WorkArgs, scope: &Projects, act: crate::scope::Act) -> Result
         WorkCommand::Cancel(cancel) => cancel_work(&config, cancel),
         WorkCommand::Run(run) => {
             let projects = scope.narrow(&run.project, watched())?;
-            let gate = gate(&config, "work run", &projects, run.item.is_some(), act);
+            // `--item` narrows to one matter only where the verb honours it. The
+            // `--due` sweep ignores it and walks every project, so treating it as
+            // one matter there let a wide sweep run unheld and write the ledger.
+            // §FS-011-command-line.10
+            let one_matter = run.item.is_some() && !run.due;
+            let gate = gate(&config, "work run", &projects, one_matter, act);
             run_work(&config, run, &projects, &gate)
         }
         WorkCommand::Workflows(workflows) => list_workflows(&config, workflows),

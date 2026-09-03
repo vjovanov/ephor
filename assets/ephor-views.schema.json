@@ -879,6 +879,8 @@
       "type": "object",
       "required": ["opened", "laid", "settled", "refused", "dry_run", "items"],
       "properties": {
+        "gated": { "type": "boolean", "description": "Present when the verb reached wider than one project without `--act`: the reading is a report and nothing was written (FS-011-command-line.10)." },
+        "says": { "type": "string", "description": "Why the gated reading wrote nothing, naming the scope it reached and what `--act` would do (FS-011-command-line.10)." },
         "opened": { "type": "integer" },
         "laid": { "type": "integer", "description": "Plans laid down by a workflow entry that asked to run itself, for matters no recipe covers (FS-005-dispatch.28). Counted apart from tickets, and against `--limit` beside them." },
         "settled": { "type": "integer", "description": "Deterministic opening moves that finished, so nothing was handed over (FS-005-dispatch.12)." },
@@ -914,6 +916,8 @@
       "type": "object",
       "required": ["reopened", "dry_run", "items"],
       "properties": {
+        "gated": { "type": "boolean", "description": "Present when the verb reached wider than one project without `--act`: the reading is a report and nothing was written (FS-011-command-line.10)." },
+        "says": { "type": "string", "description": "Why the gated reading wrote nothing, naming the scope it reached and what `--act` would do (FS-011-command-line.10)." },
         "reopened": { "type": "integer" },
         "dry_run": { "type": "boolean" },
         "items": {
@@ -960,6 +964,8 @@
       "type": "object",
       "required": ["runs", "failed"],
       "properties": {
+        "gated": { "type": "boolean", "description": "Present when the verb reached wider than one project without `--act`: the reading is a report and nothing was written (FS-011-command-line.10)." },
+        "says": { "type": "string", "description": "Why the gated reading wrote nothing, naming the scope it reached and what `--act` would do (FS-011-command-line.10)." },
         "runs": {
           "type": "array",
           "items": {
@@ -983,8 +989,8 @@
               },
               "hand": { "type": "string", "description": "Who the run was given to, where the tickets agreed on one (FS-005-dispatch.14)." },
               "outcome": {
-                "enum": ["started", "done", "parked", "failed", "passed-over", "refused"],
-                "description": "`started` is a run that went beneath the screen, watched afterwards by attaching (FS-005-dispatch.20); `passed-over` is an otherwise eligible autorun root omitted because a concurrency ceiling is full, or because a live run holds the checkout its work would run in — one another work root over the same working tree already held when the sweep began, or one a launch earlier in the same sweep took — and is not a failure; `refused` is a plan named by hand whose checkout a live run holds, which starts nothing and is lifted by `--force` (FS-005-dispatch.24); the other three are a run watched here, with `parked` the runtime declining for now, which is not a failed run (FS-006-project-interface.3)."
+                "enum": ["started", "done", "parked", "failed", "passed-over", "refused", "would-run"],
+                "description": "`started` is a run that went beneath the screen, watched afterwards by attaching (FS-005-dispatch.20); `passed-over` is an otherwise eligible autorun root omitted because a concurrency ceiling is full, or because a live run holds the checkout its work would run in \u2014 one another work root over the same working tree already held when the sweep began, or one a launch earlier in the same sweep took \u2014 and is not a failure; `refused` is a plan named by hand whose checkout a live run holds, which starts nothing and is lifted by `--force` (FS-005-dispatch.24); the other three are a run watched here, with `parked` the runtime declining for now, which is not a failed run (FS-006-project-interface.3); `would-run` is the gated report a sweep at wide scope prints instead of acting, which writes nothing (FS-011-command-line.10)."
               },
               "id": { "type": "string", "description": "What the run is called, where it named itself \u2014 the id the board prints and the runner's own attach command takes (FS-005-dispatch.20)." },
               "reason": { "type": "string", "description": "Why a `passed-over` autorun root got no run: the aggregate, organization, or project ceiling that was full, named as it is written in the configuration and by the key it refused on \u2014 `max_concurrent` over roots in flight, `max_active` over the ones being worked \u2014 or the run that holds that root's checkout, named as the refusal names it — one another work root over the same working tree already held when the sweep began, or one a launch earlier in the same sweep left live there (FS-005-dispatch.24)." },
