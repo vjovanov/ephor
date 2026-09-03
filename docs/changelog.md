@@ -115,7 +115,7 @@ ships, the previous "latest" section moves verbatim to
   three parts of itself nothing yet enforces, and
   [§RM-005-scopes](roadmap.md#rm-005-scopes-a-plans-scope-is-enforced-not-merely-written-down)
   carries what each is waiting on. Documentation only: no command, code path or
-  output changes. (PR #N)
+  output changes. (PR #67)
 - **Work placement can reach above a project, and discovery can find it there**
   ([§FS-005-dispatch.6.1](functional-spec/FS-005-dispatch.md#61-the-work-root-is-a-template-and-it-may-reach-above-the-project)).
   The registry has always given an organization a `root`, and nothing in work
