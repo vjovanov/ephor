@@ -173,3 +173,100 @@ and [§FS-006-project-interface.3](functional-spec/FS-006-project-interface.md#3
 this entry is closed as decided rather than done. A port half finished, with a
 leg red and a promise that reads as universal, is the outcome this entry
 exists to avoid.
+
+## RM-005-scopes: a plan's scope is enforced, not merely written down
+
+Serves [§FS-014-work-root-scopes](functional-spec/FS-014-work-root-scopes.md#fs-014-work-root-scopes-a-plan-lives-in-the-smallest-scope-that-can-see-everything-it-touches).
+A work root exists at three scopes — organization, project, checkout — and a
+plan belongs in the smallest one that can see everything the work touches. The
+rule is written down now, and the mechanism under most of it has shipped
+([`## Unreleased`](changelog.md#unreleased)). What is missing is any
+construction that holds a reader to it:
+[§FS-014-work-root-scopes.7](functional-spec/FS-014-work-root-scopes.md#7-what-is-not-yet-held)
+names three parts of the rule that are stated there and enforced nowhere, and
+this entry is where they are tracked.
+
+Roughly half of what it tracks is not in this repository at all. That half is
+listed anyway, because an entry that hides its other half reads as stalled when
+it is only split.
+
+### 1. What
+
+**Landed.** A scope selector is honoured or refused rather than ignored, so a
+verb addressed at one organization can no longer reach into another
+(#41, PR #58). The organization is a placement tier of its own, with `{org}`
+and `{org_root}` as placeholders and a work-root walk that finds what was laid
+there — which is what makes an organization root a dispatch target rather than
+a directory written to and never read (#42, PR #59). And one live run per
+checkout is enforced over the tree rather than over the root (#45, PR #62),
+which is the guard
+[§FS-014-work-root-scopes.3](functional-spec/FS-014-work-root-scopes.md#3-upper-scopes-decide-the-checkout-scope-executes)
+rests on: it is what makes handing a ticket *down* into a busy checkout a file
+that waits, instead of a second agent in a working tree somebody is already in.
+
+**Owed here.** Four, of which three are the ones the declaration names against
+itself:
+
+- **Placement is chosen per project, not per entry** (#43). One project's
+  dispatches are placed by one answer, so a project cannot send fixes to minted
+  checkouts and sweeps to its own root at the same time. Until it can,
+  [§FS-014-work-root-scopes.2](functional-spec/FS-014-work-root-scopes.md#2-reach-places-and-nothing-else-does)
+  is a rule a person applies by configuring one scope at a time.
+- **A mutating verb above a checkout does not report before it acts** (#44).
+  [§FS-014-work-root-scopes.3](functional-spec/FS-014-work-root-scopes.md#3-upper-scopes-decide-the-checkout-scope-executes)
+  says upper scopes decide and hand down; nothing refuses a verb that would act
+  at organization or project scope instead, so the division holds only because
+  whoever configured the work kept to it.
+- **A handed-down ticket does not name where it came from, and no issue tracks
+  that.**
+  [§FS-014-work-root-scopes.4](functional-spec/FS-014-work-root-scopes.md#4-a-handed-down-ticket-names-where-it-came-from-and-the-trail-runs-both-ways)
+  is owed in both directions — neither the origin on the ticket nor the spawned
+  ids on the result is written by anything — and it is the one part of the rule
+  with no ticket behind it. Opening that issue is part of this entry, not a
+  precondition for it.
+- **`ephor checkout` accepts any branch name** (#46), `panta` included — which
+  puts a working tree exactly on top of the work root whose plans that branch's
+  work reads — and `../`, which leaves the project altogether. It is not one of
+  the three, and it belongs here anyway: a placement rule whose checkout verb
+  can land a tree on a work root is a rule the program itself can break.
+
+**Owed elsewhere.** The other half is the workspace a set of projects is checked
+out in, which is a repository of its own and not this one. Four things there
+are what make the three scopes real rather than describable: an organization
+root has to exist as an ordinary flat runtime project; the project-scope plans
+parked in checkouts have to move to the project roots they describe; those
+project roots have to be tracked by the workspace's own repository, since a root
+nothing tracks is a root that does not survive a clean; and the script that
+reclaims a finished worktree has to fold that run's plan and result up into a
+longer-lived scope before removing the tree, which is
+[§FS-014-work-root-scopes.5](functional-spec/FS-014-work-root-scopes.md#5-nothing-durable-lives-in-a-checkout-work-root)
+with nothing implementing it today. None of the four is a change to ephor, and
+none of them can be closed from here.
+
+### 2. Why now
+
+Three open issues have been citing "the three-pantas plan" with nothing in the
+tree to point at, and the rule they were citing is the kind that decays quietly:
+a plan in the wrong root is not an error anybody sees, it is work whose reach
+stops being readable off where it sits. Writing it down is what makes the drift
+nameable; the items above are what would make it impossible.
+
+It is last in this file rather than first because most of what it is waiting on
+is not here — not because the rule is optional.
+[§FS-014-work-root-scopes.7](functional-spec/FS-014-work-root-scopes.md#7-what-is-not-yet-held)
+is the honest reading of where it stands, and it is written into the
+declaration itself so that the gap travels with the rule.
+
+### 3. Measurable
+
+In this repository: #43, #44 and #46 close, and an issue exists for the origin
+trail and closes with it, so a handed-down ticket names the plan and ticket
+that laid it and the handing-down work's result names the ids it spawned. On
+the workspace side: an organization root exists and holds org-scope work, no
+project-scope plan is parked in a checkout, the project roots are tracked where
+they live, and a reclaimed worktree's record is found in a longer-lived scope
+after the tree is gone.
+
+When only that second set is left, this entry closes here and says where the
+rest lives. Half of what it tracks is not this repository's to close, and an
+entry that waits forever on another tree is an entry nobody reads.
