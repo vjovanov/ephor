@@ -530,3 +530,257 @@ fn all_is_still_the_managed_workspace_verbs_flag() {
         .code(2)
         .stderr(predicate::str::contains("unexpected argument"));
 }
+
+/// §FS-011-command-line.10: the second axis of the same rule. A sweep that
+/// writes reaches two projects here, so it reports what it would do, writes
+/// nothing at all, and names the word that acts — and with that word it acts
+/// exactly as it did before the rule.
+#[test]
+fn a_wide_dispatch_reports_and_writes_nothing() {
+    let tmp = tempdir();
+    refreshed(tmp.path());
+    let ledger = tmp.path().join("state/ephor/work.json");
+
+    let out = ephor(tmp.path())
+        .args(["work", "dispatch", "--org", "foundation", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let reading = json_of(&out);
+    assert_eq!(reading["gated"], json!(true), "{reading:#}");
+    assert_eq!(reading["dry_run"], json!(true), "{reading:#}");
+    let says = reading["says"].as_str().unwrap_or_default();
+    assert!(
+        says.contains("work dispatch reaches 2 projects") && says.contains("--act"),
+        "a gated report must say how to act: {says}"
+    );
+    assert!(
+        !reading["items"].as_array().expect("items").is_empty(),
+        "the report said nothing about what it would do: {reading:#}"
+    );
+    assert!(
+        !ledger.exists(),
+        "a gated sweep wrote the ledger at {}",
+        ledger.display()
+    );
+
+    // The prose form says it too, because a reader who meant to act needs the
+    // word and not only the news that nothing happened.
+    ephor(tmp.path())
+        .args(["work", "dispatch", "--org", "foundation"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Pass --act to do it."));
+    assert!(!ledger.exists());
+
+    // And with the word, today's behaviour.
+    let acted = ephor(tmp.path())
+        .args(["work", "dispatch", "--org", "foundation", "--act", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let acted = json_of(&acted);
+    assert_eq!(acted["dry_run"], json!(false), "{acted:#}");
+    assert!(acted["gated"].is_null(), "{acted:#}");
+    assert!(acted["says"].is_null(), "{acted:#}");
+    assert!(ledger.exists(), "--act wrote nothing");
+}
+
+/// §FS-011-command-line.10: the width is the *resolved* project set. One
+/// project reached — by a selector or by `--project` — is what this command
+/// line always did, byte for byte, and `--item` names a matter rather than a
+/// sweep however wide the site is.
+#[test]
+fn one_project_or_one_matter_is_unchanged() {
+    let tmp = tempdir();
+    refreshed(tmp.path());
+    let ledger = tmp.path().join("state/ephor/work.json");
+
+    // One project by selector: it acts, with nothing said about a gate.
+    let one = ephor(tmp.path())
+        .args(["work", "dispatch", "--org", "graal", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let one = json_of(&one);
+    assert!(one["gated"].is_null(), "{one:#}");
+    assert_eq!(one["dry_run"], json!(false), "{one:#}");
+    assert!(ledger.exists(), "a single-project dispatch wrote nothing");
+
+    // One project by `--project`, under no selector at all: the same.
+    let named = ephor(tmp.path())
+        .args(["work", "dispatch", "--project", "ephor", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let named = json_of(&named);
+    assert!(named["gated"].is_null(), "{named:#}");
+    assert_eq!(named["dry_run"], json!(false), "{named:#}");
+
+    // And one matter, named across the whole site.
+    let items = ephor(tmp.path())
+        .args(["feed", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let item = json_of(&items)[0]["id"]
+        .as_str()
+        .expect("a cached item")
+        .to_string();
+    let matter = ephor(tmp.path())
+        .args(["work", "dispatch", "--item", &item, "--again", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let matter = json_of(&matter);
+    assert!(matter["gated"].is_null(), "{matter:#}");
+    assert_eq!(matter["dry_run"], json!(false), "{matter:#}");
+}
+
+/// §FS-011-command-line.10: a bare invocation at a site watching more than one
+/// project is a sweep over all of them, whether or not a selector said so —
+/// which is what the shipped work-sync unit's `--act` is for.
+#[test]
+fn a_bare_sweep_at_a_multi_project_site_is_held_too() {
+    let tmp = tempdir();
+    refreshed(tmp.path());
+
+    for verb in [
+        vec!["work", "dispatch", "--json"],
+        vec!["work", "sync", "--json"],
+    ] {
+        let out = ephor(tmp.path())
+            .args(&verb)
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        let reading = json_of(&out);
+        assert_eq!(reading["gated"], json!(true), "{verb:?}: {reading:#}");
+        assert_eq!(reading["dry_run"], json!(true), "{verb:?}: {reading:#}");
+        assert!(
+            reading["says"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("reaches 3 projects"),
+            "{verb:?}: {reading:#}"
+        );
+    }
+    assert!(!tmp.path().join("state/ephor/work.json").exists());
+}
+
+/// §FS-011-command-line.10: `work run` had no dry run to reuse, so its gated
+/// form is built — the roots it would run, named, with the runtime never
+/// summoned. Both of its shapes answer: the plain sweep and `--due`.
+#[test]
+fn a_wide_run_names_the_roots_it_would_run() {
+    let tmp = tempdir();
+    refreshed(tmp.path());
+    ephor(tmp.path())
+        .args(["work", "dispatch", "--act"])
+        .assert()
+        .success();
+
+    for verb in [
+        vec!["work", "run", "--json"],
+        vec!["work", "run", "--due", "--json"],
+    ] {
+        let out = ephor(tmp.path())
+            .args(&verb)
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        let reading = json_of(&out);
+        assert_eq!(reading["gated"], json!(true), "{verb:?}: {reading:#}");
+        assert!(
+            reading["says"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("work run reaches 3 projects"),
+            "{verb:?}: {reading:#}"
+        );
+        for row in reading["runs"].as_array().expect("the runs it would make") {
+            assert_eq!(row["outcome"], json!("would-run"), "{row:#}");
+        }
+    }
+
+    ephor(tmp.path())
+        .args(["work", "run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("would run"))
+        .stdout(predicate::str::contains("Pass --act to do it."));
+}
+
+/// §FS-011-command-line.10: `--act` is taken where the gate can fire and
+/// refused by name everywhere else, exit 2 and a JSON outcome — the parity a
+/// refused selector already has. The two sweeps left outside the gate refuse
+/// it too, and their sentence says why rather than denying that they sweep.
+#[test]
+fn act_is_refused_where_it_would_mean_nothing() {
+    let tmp = tempdir();
+    two_orgs(tmp.path());
+
+    for (named, argv) in [
+        ("rebase", vec!["rebase"]),
+        ("status", vec!["status", "--cached"]),
+        ("mark-read", vec!["mark-read", "--all"]),
+        ("work list", vec!["work"]),
+        ("work lay", vec!["work", "lay", "--item", "x", "entry"]),
+        ("update", vec!["update"]),
+        ("ensure-agents", vec!["ensure-agents"]),
+    ] {
+        let mut args = argv.clone();
+        args.push("--act");
+        ephor(tmp.path())
+            .args(&args)
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains(format!(
+                "{named} does not take --act"
+            )));
+    }
+
+    // The deferral says what it is: these two act at every width, which is
+    // what makes the flag meaningless on them rather than unimplemented.
+    ephor(tmp.path())
+        .args(["update", "--act"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "it acts at every width, as it always has",
+        ));
+
+    // And a refusal answers a program like every other outcome.
+    let out = ephor(tmp.path())
+        .args(["rebase", "--act", "--json"])
+        .assert()
+        .code(2)
+        .get_output()
+        .stdout
+        .clone();
+    let outcome = json_of(&out);
+    assert_eq!(outcome["ok"], json!(false));
+    assert!(
+        outcome["says"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("rebase does not take --act"),
+        "{outcome:#}"
+    );
+}
