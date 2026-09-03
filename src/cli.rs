@@ -88,6 +88,12 @@ pub enum Command {
     /// Every operation beneath the reading, in one place.
     #[command(visible_alias = "ops")]
     Operations(OperationsArgs),
+    /// What this machine is spending on agents, over a window.
+    ///
+    /// Reads every project the site is configured with, to say which one a
+    /// session was working in, so the scope selectors narrow nothing here
+    /// (§FS-011-command-line.9).
+    Burn(BurnArgs),
     /// A matter's recorded conversation, and the reply a run drafted.
     Thread(ThreadArgs),
     /// Post a reaction on one message of a matter.
@@ -1034,6 +1040,30 @@ pub struct OperationsArgs {
     pub live: bool,
 
     /// Emit raw JSON instead of a listing.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// `ephor burn` (§FS-013-burn.8): the Burn page as a command. The window and
+/// the grouping are the page's two keys, spelled as arguments — which is the
+/// whole of the difference between the two surfaces (§REQ-002-parity.2).
+#[derive(Args, Debug)]
+pub struct BurnArgs {
+    /// How far back to look.
+    #[arg(long, value_enum, default_value_t = crate::burn::query::Window::Hour)]
+    pub window: crate::burn::query::Window,
+
+    /// What to group by. `project`, `model` and `session` read what this
+    /// machine burned; `plan` and `matter` read what the runtime metered, and
+    /// the two are never added together (§FS-013-burn.1).
+    #[arg(long = "by", value_enum, default_value_t = crate::burn::query::By::Project)]
+    pub by: crate::burn::query::By,
+
+    /// Read the transcripts before answering, however fresh the store is.
+    #[arg(long)]
+    pub rescan: bool,
+
+    /// Emit raw JSON instead of a reading.
     #[arg(long)]
     pub json: bool,
 }

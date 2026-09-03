@@ -135,6 +135,10 @@ pub fn honoured(command: &Command) -> (String, Honours) {
         Command::Actions(_) => said("actions", Honours::Nothing),
         Command::Branches(_) => said("branches", Honours::Watched),
         Command::Operations(_) => said("operations", Honours::NothingOverTheSite),
+        // It reads every configured project in order to say which one a
+        // session was working in, and then answers for the machine rather
+        // than for a group (§FS-013-burn.4).
+        Command::Burn(_) => said("burn", Honours::NothingOverTheSite),
         Command::Thread(_) => said("thread", Honours::Nothing),
         Command::React(_) => said("react", Honours::Nothing),
         Command::Tick(_) => said("tick", Honours::Nothing),

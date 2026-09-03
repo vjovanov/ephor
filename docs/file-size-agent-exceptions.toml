@@ -37,7 +37,7 @@ path = "src/feed/tui/mod.rs"
 match = "exact"
 rules = ["source"]
 kind = "deferred"
-max_accepted = { value = 2400, unit = "lines" }
+max_accepted = { value = 2000, unit = "lines" }
 until = "the entry for this path in docs/file-size-human-exceptions.toml is retired"
 reason = """
 Soft twin of this path's entry in docs/file-size-human-exceptions.toml, which carries the argument. This entry holds no judgment of its own: same ceiling, retires with its twin. Edit the reason there, not here.

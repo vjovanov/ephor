@@ -509,6 +509,17 @@ const SWEEP: &[(&str, &[&str])] = &[
     ),
     ("branches", &["branches", "--json"]),
     ("operations", &["operations", "--json"]),
+    ("burn", &["burn", "--json"]),
+    (
+        "burn",
+        &["burn", "--window", "7d", "--by", "model", "--json"],
+    ),
+    (
+        "burn",
+        &["burn", "--window", "24h", "--by", "session", "--json"],
+    ),
+    ("burn", &["burn", "--by", "plan", "--json"]),
+    ("burn", &["burn", "--by", "matter", "--json"]),
     ("thread", &["thread", ITEM, "--json"]),
     (
         "outcome",

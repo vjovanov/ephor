@@ -342,6 +342,59 @@
         }
       }
     },
+    "spend": {
+      "type": "object",
+      "description": "Four counters, their sum, and dollars where anything knew them (FS-013-burn.3, FS-013-burn.7).",
+      "required": ["input", "output", "cache_read", "cache_write", "tokens", "cost_usd", "priced"],
+      "properties": {
+        "input": { "type": "integer", "description": "Input tokens that were not served from cache. Where a log reports its cached counters inside the input total, they are taken out here (FS-013-burn.3)." },
+        "output": { "type": "integer" },
+        "cache_read": { "type": "integer" },
+        "cache_write": { "type": "integer" },
+        "tokens": { "type": "integer", "description": "The four counters added up." },
+        "cost_usd": { "type": ["number", "null"], "description": "Dollars where the log carried them already, and null where nothing priced it. Never a zero standing in for an unknown (FS-013-burn.7)." },
+        "priced": { "type": "boolean", "description": "Whether cost_usd is a figure at all. This is what tells a zero nobody knew from a zero that was actually spent (FS-013-burn.7)." }
+      }
+    },
+    "burn_group": {
+      "type": "object",
+      "description": "One row of a grouped burn reading (FS-013-burn.6). It carries the spend fields inline rather than under a nested object, so a row is one flat record.",
+      "required": ["key", "input", "output", "cache_read", "cache_write", "tokens", "cost_usd", "priced"],
+      "properties": {
+        "key": { "type": "string", "description": "A project id, a model, a session id, a plan, or a matter. The project `other` is every directory under no registered root (FS-013-burn.4)." },
+        "detail": { "type": "string", "description": "The second thing worth knowing about the row, where there is one: a model's provider, a session's project, a matter's title." },
+        "input": { "type": "integer" },
+        "output": { "type": "integer" },
+        "cache_read": { "type": "integer" },
+        "cache_write": { "type": "integer" },
+        "tokens": { "type": "integer" },
+        "cost_usd": { "type": ["number", "null"], "description": "Null where nothing priced this row, never a zero (FS-013-burn.7)." },
+        "priced": { "type": "boolean" }
+      }
+    },
+    "burn_live": {
+      "type": "object",
+      "description": "One session that is still going (FS-013-burn.6).",
+      "required": ["session", "project", "model", "source", "subagent", "tokens", "rate"],
+      "properties": {
+        "session": { "type": "string" },
+        "project": { "type": "string" },
+        "model": { "type": "string" },
+        "source": { "type": "string", "description": "Which agent tool is writing the transcript it was read from." },
+        "subagent": { "type": "boolean", "description": "It is a sub-agent's transcript rather than a session's own. Real spend, tagged so it can be told apart (FS-013-burn.3)." },
+        "tokens": { "type": "integer" },
+        "rate": { "type": "integer", "description": "Tokens a minute over the spans it has been seen in." }
+      }
+    },
+    "burn_span": {
+      "type": "object",
+      "description": "One five-minute span of the window. Empty spans are present: a gap is a fact about the window, and closing them up would draw a steady burn over an hour nothing ran in (FS-013-burn.5).",
+      "required": ["at", "tokens"],
+      "properties": {
+        "at": { "type": "string", "format": "date-time" },
+        "tokens": { "type": "integer" }
+      }
+    },
     "roster": {
       "type": "object",
       "description": "Who the runtime can be asked for (FS-005-dispatch.14). An unavailable hand stays on the list with its reason rather than being hidden (DA-004-roster-is-asked-not-configured).",
@@ -425,6 +478,31 @@
           "items": { "type": "integer", "description": "How many of the project's matters are on it." },
           "url": { "type": "string" }
         }
+      }
+    },
+    "burn": {
+      "description": "`ephor burn --json` (FS-013-burn.8) — what this machine spent on agents over one window, grouped one way. `groups` and `totals` belong to one lens and one lens only: the machine lens for `project`, `model` and `session`, the work lens for `plan` and `matter`. The two are never added together, because a run the runtime started is measured by both and summing them would double-count it (FS-013-burn.1). `now` is always the machine lens, because what is going on right now has one answer.",
+      "type": "object",
+      "required": ["window", "by", "lens", "from", "to", "totals", "groups", "now"],
+      "properties": {
+        "window": { "type": "string", "enum": ["1h", "6h", "24h", "7d"] },
+        "by": { "type": "string", "enum": ["project", "model", "session", "plan", "matter"] },
+        "lens": { "type": "string", "enum": ["machine", "work"], "description": "Which record the groups were built from (FS-013-burn.1)." },
+        "from": { "type": "string", "format": "date-time" },
+        "to": { "type": "string", "format": "date-time" },
+        "totals": { "$ref": "#/$defs/spend" },
+        "groups": { "type": "array", "items": { "$ref": "#/$defs/burn_group" } },
+        "now": {
+          "type": "object",
+          "description": "The machine's own now: the current rate, what is still going, and the window drawn as its five-minute spans (FS-013-burn.6).",
+          "required": ["rate", "live", "spans"],
+          "properties": {
+            "rate": { "type": "integer", "description": "Tokens a minute over the span in progress and the one before it." },
+            "live": { "type": "array", "items": { "$ref": "#/$defs/burn_live" } },
+            "spans": { "type": "array", "items": { "$ref": "#/$defs/burn_span" } }
+          }
+        },
+        "says": { "type": "string", "description": "What this lens could not measure or could not attribute, and that the window is empty where it is. An absence means there was nothing to say, which is why it is said rather than left to a low number (FS-013-burn.2)." }
       }
     },
     "operations": {

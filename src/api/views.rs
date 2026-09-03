@@ -497,3 +497,93 @@ pub struct Step {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refusal: Option<String>,
 }
+
+/// `ephor burn --json` (§FS-013-burn.8): what this machine spent, over one
+/// window, grouped one way.
+///
+/// `groups` and `totals` belong to one lens and one lens only — the two are
+/// never added together (§FS-013-burn.1) — while `now` is always the machine
+/// lens, because "what is going on right now" has one answer.
+#[derive(Debug, Clone, Serialize)]
+pub struct Burn {
+    /// `1h`, `6h`, `24h`, `7d`.
+    pub window: String,
+    /// `project`, `model`, `session`, `plan`, `matter`.
+    pub by: String,
+    /// Which record the groups were built from: `machine` or `work`.
+    pub lens: String,
+    pub from: DateTime<Utc>,
+    pub to: DateTime<Utc>,
+    pub totals: Spend,
+    pub groups: Vec<BurnGroup>,
+    /// What is going on right now, whichever lens the groups are
+    /// (§FS-013-burn.6).
+    pub now: BurnNow,
+    /// What this lens could not measure, where it could not
+    /// (§FS-013-burn.2) — and what is not there at all, where the store has
+    /// nothing yet.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub says: Option<String>,
+}
+
+/// Four counters, their sum, and dollars where anything knew them.
+///
+/// `cost_usd` is null where nothing priced it, and `priced` says which of the
+/// two a zero is: unknown and nothing are different facts and stay different
+/// (§FS-013-burn.7).
+#[derive(Debug, Clone, Serialize)]
+pub struct Spend {
+    pub input: u64,
+    pub output: u64,
+    pub cache_read: u64,
+    pub cache_write: u64,
+    pub tokens: u64,
+    pub cost_usd: Option<f64>,
+    pub priced: bool,
+}
+
+/// One row of a grouped reading (§FS-013-burn.6).
+#[derive(Debug, Clone, Serialize)]
+pub struct BurnGroup {
+    /// A project id, a model, a session id, a plan, or a matter.
+    pub key: String,
+    /// The second thing worth knowing about it, where there is one: a
+    /// model's provider, a session's project, a matter's title.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(flatten)]
+    pub spend: Spend,
+}
+
+/// The machine's own now: the current rate, what is still going, and the
+/// window drawn as its five-minute spans (§FS-013-burn.6).
+#[derive(Debug, Clone, Serialize)]
+pub struct BurnNow {
+    /// Tokens a minute.
+    pub rate: u64,
+    pub live: Vec<BurnLive>,
+    pub spans: Vec<BurnSpan>,
+}
+
+/// One session that is still going.
+#[derive(Debug, Clone, Serialize)]
+pub struct BurnLive {
+    pub session: String,
+    pub project: String,
+    pub model: String,
+    /// Which agent tool is writing it.
+    pub source: String,
+    /// It is a sub-agent's rather than a session's own (§FS-013-burn.3).
+    pub subagent: bool,
+    pub tokens: u64,
+    /// Tokens a minute over the spans it has been seen in.
+    pub rate: u64,
+}
+
+/// One five-minute span of the window. Empty spans are present: a gap is a
+/// fact about the window (§FS-013-burn.5).
+#[derive(Debug, Clone, Serialize)]
+pub struct BurnSpan {
+    pub at: DateTime<Utc>,
+    pub tokens: u64,
+}
