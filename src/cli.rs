@@ -30,6 +30,15 @@ pub struct Cli {
     #[arg(long = "org", visible_alias = "organization", global = true)]
     pub organization: Option<String>,
 
+    /// Act on a sweep that reaches more than one project. A mutating verb at
+    /// that width reports what it would do and writes nothing; this is the
+    /// word that does it (§FS-011-command-line.10). Declared here beside the
+    /// selectors for their reason: a flag each verb had to remember is a flag
+    /// the next mutating verb forgets. It is taken by `work dispatch`, `work
+    /// sync` and `work run`, and refused by name everywhere else.
+    #[arg(long, global = true)]
+    pub act: bool,
+
     #[command(subcommand)]
     pub command: Command,
 }
