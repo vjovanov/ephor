@@ -117,6 +117,13 @@ pub fn rebase(args: &RebaseArgs) -> Result<ExitCode> {
         )
     };
 
+    // Read where the command starts rather than where it is written: a value
+    // this command will not act on is refused instead of the branch being
+    // replayed and the refusal arriving afterwards, which left the replay
+    // standing and took the exit code the conflict needs
+    // (§FS-011-command-line.9).
+    let report = given::value(&args.report, "REPORT")?;
+
     let outcome = git::rebase(&forest, &onto);
     let conflicted = outcome.conflicted().len();
     // Everything the algorithm could do, it did; the rest is a question about
@@ -199,7 +206,7 @@ pub fn rebase(args: &RebaseArgs) -> Result<ExitCode> {
     // (§FS-005-dispatch.12). Writing it only on the happy path made the
     // conflict report disappear on ordinary conditions — an unwritable ledger,
     // an unconfigured recipe — which is the absence §REQ-001-boundary.1 forbids.
-    if let Some(path) = given::value(&args.report, "REPORT")? {
+    if let Some(path) = report {
         write_report(&path, &outcome.report())?;
     }
     if let Some(err) = refused {

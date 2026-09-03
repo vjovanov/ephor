@@ -51,6 +51,22 @@ fn workspace(root: &Path) -> PathBuf {
     checkout
 }
 
+/// Where the branch stands, so a run that must not move it can be held to it.
+fn head(dir: &Path) -> String {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "git rev-parse HEAD in {}",
+        dir.display()
+    );
+    String::from_utf8(out.stdout).unwrap().trim().to_string()
+}
+
 fn advance_master(root: &Path, file: &str, contents: &str) {
     commit(&root.join("origin.git"), file, contents, "master moves");
 }
@@ -253,4 +269,32 @@ fn an_empty_checkout_still_means_the_current_directory() {
         .assert()
         .success()
         .stdout(predicates::str::contains("Replayed onto `origin/master`"));
+}
+
+/// A `REPORT` nothing filled is refused **instead of** the replay rather than
+/// after it. The read used to sit beside `write_report`, past the rebase, so
+/// this run replayed the branch, printed that it had, and then exited 2 — and
+/// on a conflict that 2 stood where the 3 a machine routes `resolve-conflicts`
+/// off belongs (§FS-011-command-line.9).
+#[test]
+fn an_unresolved_report_is_refused_before_the_branch_is_replayed() {
+    let tmp = tempdir();
+    let checkout = workspace(tmp.path());
+    commit(&checkout, "mine.txt", "mine\n", "mine");
+    advance_master(tmp.path(), "theirs.txt", "theirs\n");
+    let before = head(&checkout);
+
+    ephor_cmd()
+        .args(["rebase", "--onto", "master", "--checkout"])
+        .arg(&checkout)
+        .env("REPORT", "{output.rebase.path}")
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains("REPORT"))
+        .stderr(predicates::str::contains("{output.rebase.path}"));
+
+    // The branch is where it was, and what master moved on to never arrived:
+    // the refusal happened instead of the work, not on top of it.
+    assert_eq!(head(&checkout), before);
+    assert!(!checkout.join("theirs.txt").exists());
 }
