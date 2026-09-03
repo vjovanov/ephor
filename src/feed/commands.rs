@@ -106,6 +106,12 @@ fn refresh_projects(
     } else {
         projects.iter().collect()
     };
+    let selected = selected
+        .into_iter()
+        .map(|project| {
+            known_project(config, project).map(|project_config| (project, project_config))
+        })
+        .collect::<Result<Vec<_>>>()?;
 
     // Shared sources are fetched once for the whole site and placed by the
     // engine (§AR-008-pipeline.1). Where one is still declared under a
@@ -121,8 +127,7 @@ fn refresh_projects(
     let mut degraded = 0usize;
     let mut refreshed = 0usize;
     let mut per_project: Vec<serde_json::Value> = Vec::new();
-    for project in selected {
-        let project_config = known_project(config, project)?;
+    for (project, project_config) in selected {
         let outcome = refresh_project(&registry_doc, project, project_config, &config.defaults)?;
         refreshed += 1;
         // A provider that did not deliver is an error, not a warning: its
