@@ -51,6 +51,15 @@ pub struct Carry {
     /// (§FS-013-burn.3).
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub models: BTreeSet<String>,
+    /// The response whose counters were last charged, by the request id the
+    /// records name it with. One response is written as one record per
+    /// content block, each restating the same `usage`, so the records
+    /// repeating this id are read for everything but their counters
+    /// (§FS-013-burn.3). It is carried because a scan can stop between two
+    /// blocks of one response, and the next pass would otherwise charge the
+    /// rest of it again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub charged: Option<String>,
     /// The newest timestamp seen in the file, RFC 3339. A record that carries
     /// no time of its own is attributed to this one — it was written after
     /// everything before it.
