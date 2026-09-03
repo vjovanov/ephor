@@ -86,6 +86,10 @@ name = "e2e_015_scope_selectors"
 path = "tests/e2e/cases/E2E-015-scope-selectors.rs"
 
 [[test]]
+name = "e2e_016_act_above_one_project"
+path = "tests/e2e/cases/E2E-016-act-above-one-project.rs"
+
+[[test]]
 name = "agents_test"
 path = "tests/integration/agents_test.rs"
 

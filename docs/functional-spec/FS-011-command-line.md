@@ -218,3 +218,55 @@ need none in order to refuse. Both halves of the rule exit **2**, the code this
 command line gives a configuration refusal: a refused selector and a selection
 that came out empty are one rule answering, and a caller learns "the scope was
 refused" from one comparison rather than two.
+
+
+## 10. A mutating verb above one project reports, and acts under `--act`
+
+A selector that is honoured decides which projects a verb **reads**
+([§9](#9-a-scope-selector-is-honoured-or-refused)); it says nothing about what the verb then does to them, and
+those are two questions rather than one. Reading at any width is free: a
+summary of two projects and a summary of forty are the same act, larger.
+Writing is not. A verb that hands work over, reopens it, or starts the runtime
+changes a work root in every project the scope reaches, so the first invocation
+that reaches a whole organization is a different kind of act from the one that
+reaches a single checkout — not a bigger one
+([§GRUND-001-overseer.2](../grund.md#2-what-this-project-does-about-it)).
+
+The rule is that asymmetry: **a mutating verb whose resolved scope names more
+than one project reports what it would do and writes nothing, and acts only
+when the caller says `--act`.** The report is the verb's own dry run rather
+than a second rendering beside it — `work dispatch` and `work sync` have one
+already, and a dry run resolves everything and writes nothing
+([§FS-005-dispatch.26](FS-005-dispatch.md#26-an-ordering-already-made-can-be-read-and-a-limit-bounds-what-runs)) — while `work run`, which had none, prints the work roots
+and the tickets it would run. Every gated report names `--act` in what it
+prints, because a reader who meant to act needs the word that does it and not
+only the news that something was withheld.
+
+The width is the **resolved** project set, counted after `--project` and
+`--item` have narrowed it. One project resolved is what this command line did
+before the rule, byte for byte, and so is one matter: `--item` names a matter
+and not a sweep. A bare invocation at a site watching one project is therefore
+unchanged, and a bare invocation at a site watching four is a sweep over four
+whether or not a selector said so — which is why the shipped work-sync unit,
+whose whole purpose is to sweep with nobody watching, passes `--act` on the
+verbs it runs.
+
+`--act` is global, declared beside the selectors and for their reason: a flag
+each verb had to remember is a flag the next mutating verb forgets, and in the
+selector forgetting is impossible. It is accepted exactly where the gate can
+fire — `work dispatch`, `work sync`, `work run` — and refused **by name**
+everywhere else, exiting **2** like a refused selector. A flag that parses,
+prints in its help and changes nothing is the fault [§9](#9-a-scope-selector-is-honoured-or-refused) exists to end, and it
+does not become acceptable one rule later.
+
+The classification is total on the command tree, as [§9](#9-a-scope-selector-is-honoured-or-refused)'s is: every verb
+says whether it sweeps, and a variant added without a line does not compile.
+`update` and `ensure-agents` rewrite files in every managed workspace their
+scope reaches and are deliberately **not** gated here; they are recorded as the
+sweep they are, outside the gate, so joining it later is one word on a line
+that already exists rather than a rediscovery of the whole rule.
+
+A gated report is an answer like any other: under `--json` it is the dry run's
+own reading with the gate named in it, and a refused `--act` lands on standard
+output as an outcome with `ok` false ([§7](#7---json-is-the-same-answer-not-a-second-one),
+[§REQ-002-parity.3](../requirements/REQ-002-parity.md#3-every-reading-answers-a-program)).

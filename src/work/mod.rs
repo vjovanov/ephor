@@ -2791,15 +2791,8 @@ impl Dispatcher {
         let live = LiveRuns::read(&self.global, &roots, &ceilings.membership);
         let mut capacity = Capacity::new(ceilings, live);
         let runs = self
-            .due_in(&roots, now)
+            .due_over(&roots, now, projects)
             .into_iter()
-            .filter(|root| {
-                projects.is_empty()
-                    || root
-                        .projects
-                        .iter()
-                        .any(|project| projects.contains(project))
-            })
             .map(|root| {
                 if let Some(why) = capacity.refusal(&root.projects) {
                     return Launched::passed_over(&root, why);
@@ -2860,6 +2853,39 @@ impl Dispatcher {
             runs,
             capacity: capacity.standing(),
         })
+    }
+
+    /// The roots a sweep would start a run on, narrowed to the projects it was
+    /// asked about (§FS-005-dispatch.24).
+    ///
+    /// Split out of [`Dispatcher::start_due`] and shared with it, because a
+    /// `work run --due` held at the gate has to report the sweep it is
+    /// reporting on rather than a second opinion about it
+    /// (§FS-011-command-line.10).
+    fn due_over(
+        &mut self,
+        roots: &[runtime::watch::RootPlans],
+        now: DateTime<Utc>,
+        projects: &[String],
+    ) -> Vec<Due> {
+        self.due_in(roots, now)
+            .into_iter()
+            .filter(|root| {
+                projects.is_empty()
+                    || root
+                        .projects
+                        .iter()
+                        .any(|project| projects.contains(project))
+            })
+            .collect()
+    }
+
+    /// The same reading for a caller that will only say what it found: which
+    /// roots are due now, with nothing started, nothing locked and nothing
+    /// written (§FS-011-command-line.10).
+    pub fn due_now(&mut self, now: DateTime<Utc>, projects: &[String]) -> Vec<Due> {
+        let roots = self.work_roots();
+        self.due_over(&roots, now, projects)
     }
 
     /// Remember that starting a run on this root did not work, so the next

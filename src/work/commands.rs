@@ -29,7 +29,12 @@ use crate::work::{Dispatcher, Outcome};
 /// restriction they already knew how to apply, so the scope is felt where each
 /// one picks its projects rather than in a helper beside them; the rest were
 /// refused before this was called and are handed the whole site.
-pub fn work(args: &WorkArgs, scope: &Projects) -> Result<ExitCode> {
+///
+/// `act` is the other axis (§FS-011-command-line.10). The gate is decided here
+/// rather than inside each verb because this is the one place that knows both
+/// halves of the width: the projects the selectors and `--project` left, and
+/// the watch list an empty answer still means.
+pub fn work(args: &WorkArgs, scope: &Projects, act: crate::scope::Act) -> Result<ExitCode> {
     let config = load_config()?;
     let watched = || config.projects.keys();
     match args
@@ -44,23 +49,61 @@ pub fn work(args: &WorkArgs, scope: &Projects) -> Result<ExitCode> {
         WorkCommand::Offers(offers) => work_offers(&config, offers),
         WorkCommand::Dispatch(dispatch) => {
             let projects = scope.narrow(&dispatch.project, watched())?;
-            dispatch_work(&config, dispatch, &projects)
+            let gate = gate(
+                &config,
+                "work dispatch",
+                &projects,
+                dispatch.item.is_some(),
+                act,
+            );
+            dispatch_work(&config, dispatch, &projects, &gate)
         }
         WorkCommand::Ask(ask) => ask_work(&config, ask),
         WorkCommand::Sync(sync) => {
             let projects = scope.narrow(&sync.project, watched())?;
-            sync_work(&config, sync, &projects)
+            let gate = gate(&config, "work sync", &projects, false, act);
+            sync_work(&config, sync, &projects, &gate)
         }
         WorkCommand::Cancel(cancel) => cancel_work(&config, cancel),
         WorkCommand::Run(run) => {
             let projects = scope.narrow(&run.project, watched())?;
-            run_work(&config, run, &projects)
+            // `--item` narrows to one matter only where the verb honours it. The
+            // `--due` sweep ignores it and walks every project, so treating it as
+            // one matter there let a wide sweep run unheld and write the ledger.
+            // §FS-011-command-line.10
+            let one_matter = run.item.is_some() && !run.due;
+            let gate = gate(&config, "work run", &projects, one_matter, act);
+            run_work(&config, run, &projects, &gate)
         }
         WorkCommand::Workflows(workflows) => list_workflows(&config, workflows),
         WorkCommand::Lay(lay) => lay_workflow(&config, lay),
         WorkCommand::Forget(forget) => forget_work(&config, forget),
         WorkCommand::States(states) => work_states(&config, states),
     }
+}
+
+/// The gate for one of the three sweeps that write (§FS-011-command-line.10).
+///
+/// The width is the **resolved** project set: what `--project` and the
+/// selectors left, where an empty answer still means every watched project —
+/// which is why a bare sweep at a site watching four projects is a sweep over
+/// four. `one_matter` is `--item`, and it names a matter rather than a sweep,
+/// so it is one however wide the site is.
+fn gate(
+    config: &StatusConfig,
+    verb: &str,
+    projects: &[String],
+    one_matter: bool,
+    act: crate::scope::Act,
+) -> crate::scope::Gate {
+    if one_matter {
+        return crate::scope::Gate::acting();
+    }
+    let width = match projects.is_empty() {
+        true => config.projects.len(),
+        false => projects.len(),
+    };
+    act.over(verb, width)
 }
 
 /// `ephor work states` — the machine ephor's tickets actually run under
@@ -117,6 +160,22 @@ fn work_states(config: &StatusConfig, args: &crate::cli::WorkStatesArgs) -> Resu
     }
     print!("{states}");
     Ok(ExitCode::SUCCESS)
+}
+
+/// The gate's own facts, folded into a sweep's reading
+/// (§FS-011-command-line.10).
+///
+/// A gated report answers a program the way every other outcome does: the same
+/// document the dry run always printed, with the gate named in it. Absent
+/// where nothing was held, because a fact that is not there is absent rather
+/// than `false` (§REQ-002-parity.4) — a caller who never reached the gate
+/// reads exactly the reading they read before.
+fn gated(mut reading: serde_json::Value, gate: &crate::scope::Gate) -> serde_json::Value {
+    if let (Some(object), Some(says)) = (reading.as_object_mut(), gate.says()) {
+        object.insert("gated".to_string(), serde_json::json!(true));
+        object.insert("says".to_string(), serde_json::json!(says));
+    }
+    reading
 }
 
 /// One row with every absent fact left out rather than spelled `null`.
@@ -411,7 +470,13 @@ fn dispatch_work(
     config: &StatusConfig,
     args: &crate::cli::WorkDispatchArgs,
     projects: &[String],
+    gate: &crate::scope::Gate,
 ) -> Result<ExitCode> {
+    // A held sweep is this verb's own dry run and not a second rendering of
+    // it (§FS-011-command-line.10): a dry run already resolves everything and
+    // writes nothing (§FS-005-dispatch.26), which is exactly the report the
+    // gate owes the reader.
+    let dry_run = args.dry_run || gate.holds();
     let mut dispatcher = Dispatcher::load(config)?;
     let items = selected_items(config, projects)?;
     let items = order_by_ranking(&mut dispatcher, config, args, items);
@@ -492,6 +557,7 @@ fn dispatch_work(
                     item,
                     picked.as_ref(),
                     args,
+                    dry_run,
                     &style,
                     &mut laid,
                     &mut refused,
@@ -542,7 +608,7 @@ fn dispatch_work(
             }
             continue;
         }
-        match dispatcher.dispatch(item, &recipe, picked.as_ref(), args.dry_run) {
+        match dispatcher.dispatch(item, &recipe, picked.as_ref(), dry_run) {
             // A deterministic opening move that finished is not a ticket
             // (§FS-005-dispatch.12) — it is reported as what it was, and
             // nothing was handed over.
@@ -575,14 +641,14 @@ fn dispatch_work(
                     "item": item.id,
                     "title": item.title,
                     "recipe": recipe.id,
-                    "outcome": if args.dry_run { "would-open" } else { "opened" },
+                    "outcome": if dry_run { "would-open" } else { "opened" },
                     "ticket": ticket,
                     "says": outcome.describe(),
                 }));
                 if !args.json {
                     println!(
                         "{} {}\n  {}",
-                        if args.dry_run { "would open" } else { "opened" },
+                        if dry_run { "would open" } else { "opened" },
                         title(&item.title),
                         style.dim(&outcome.describe())
                     );
@@ -602,7 +668,7 @@ fn dispatch_work(
         }
     }
 
-    if !args.dry_run {
+    if !dry_run {
         dispatcher.save()?;
         // Work that needs nobody to start it gets its run in the same breath
         // as the ticket (§FS-005-dispatch.24). The sweep decides what that
@@ -628,15 +694,18 @@ fn dispatch_work(
     if args.json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "opened": opened,
-                "laid": laid,
-                "settled": settled,
-                "refused": refused,
-                "dry_run": args.dry_run,
-                "items": landed,
-                "notes": dispatcher.notes(),
-            }))
+            serde_json::to_string_pretty(&gated(
+                serde_json::json!({
+                    "opened": opened,
+                    "laid": laid,
+                    "settled": settled,
+                    "refused": refused,
+                    "dry_run": dry_run,
+                    "items": landed,
+                    "notes": dispatcher.notes(),
+                }),
+                gate
+            ))
             .unwrap_or_else(|_| "null".to_string())
         );
         if asked_for_one && opened == 0 && settled == 0 && laid == 0 {
@@ -646,7 +715,7 @@ fn dispatch_work(
     }
     println!(
         "\n{opened} ticket(s){}{}{}{}",
-        if args.dry_run {
+        if dry_run {
             " would be opened"
         } else {
             " opened"
@@ -654,7 +723,7 @@ fn dispatch_work(
         if laid > 0 {
             format!(
                 ", {laid} plan(s) {}",
-                match args.dry_run {
+                match dry_run {
                     true => "would be laid down",
                     false => "laid down",
                 }
@@ -673,6 +742,12 @@ fn dispatch_work(
             String::new()
         }
     );
+    // And why, where the width is the reason (§FS-011-command-line.10): the
+    // sentence names `--act`, so a reader who meant to hand the work over has
+    // the word that does it rather than only the news that nothing happened.
+    if let Some(says) = gate.says() {
+        println!("{says}");
+    }
     // Asking for exactly one item and being refused is a failure; a sweep that
     // steps over what it cannot reach is not. An item the deterministic move
     // finished is not a refusal — it is the work being over
@@ -698,6 +773,10 @@ fn lay_autorun(
     item: &Item,
     picked: Option<&crate::work::recipe::HandPin>,
     args: &crate::cli::WorkDispatchArgs,
+    // The sweep's own answer, gate included: the report a held sweep prints
+    // is a dry run, and a laying is written or not written with everything
+    // else it would have done (§FS-011-command-line.10).
+    dry_run: bool,
     style: &Style,
     laid: &mut usize,
     refused: &mut usize,
@@ -710,7 +789,7 @@ fn lay_autorun(
     else {
         return;
     };
-    match laying_for(dispatcher, item, &entry, picked, args.dry_run) {
+    match laying_for(dispatcher, item, &entry, picked, dry_run) {
         Ok(landing) => {
             *laid += 1;
             landed.push(serde_json::json!({
@@ -718,14 +797,14 @@ fn lay_autorun(
                 "title": item.title,
                 "entry": entry.id,
                 "workflow": landing.workflow,
-                "outcome": if args.dry_run { "would-lay" } else { "laid" },
+                "outcome": if dry_run { "would-lay" } else { "laid" },
                 "plan": landing.plan,
                 "says": landing.says,
             }));
             if !args.json {
                 println!(
                     "{} {}\n  {}",
-                    if args.dry_run { "would lay" } else { "laid" },
+                    if dry_run { "would lay" } else { "laid" },
                     title(&item.title),
                     style.dim(&landing.says)
                 );
@@ -1284,7 +1363,11 @@ fn sync_work(
     config: &StatusConfig,
     args: &crate::cli::WorkSyncArgs,
     projects: &[String],
+    gate: &crate::scope::Gate,
 ) -> Result<ExitCode> {
+    // The same reuse dispatch makes: a held sweep is this verb's own dry run
+    // (§FS-011-command-line.10).
+    let dry_run = args.dry_run || gate.holds();
     let mut dispatcher = Dispatcher::load(config)?;
     let items = selected_items(config, projects)?;
     let mut reopened = 0usize;
@@ -1293,7 +1376,7 @@ fn sync_work(
         if !dispatcher.ledger.entries.contains_key(&item.id) {
             continue;
         }
-        match dispatcher.sync(item, args.dry_run) {
+        match dispatcher.sync(item, dry_run) {
             Ok(Outcome::Current) => {}
             // Reported, not counted: nothing was written, and the reader still
             // wants to know their work is about something that is over.
@@ -1321,17 +1404,13 @@ fn sync_work(
                 landed.push(serde_json::json!({
                     "item": item.id,
                     "title": item.title,
-                    "outcome": if args.dry_run { "would-reopen" } else { "reopened" },
+                    "outcome": if dry_run { "would-reopen" } else { "reopened" },
                     "says": outcome.describe(),
                 }));
                 if !args.json {
                     println!(
                         "{} {}\n  {}",
-                        if args.dry_run {
-                            "would reopen"
-                        } else {
-                            "reopened"
-                        },
+                        if dry_run { "would reopen" } else { "reopened" },
                         title(&item.title),
                         Style::detect().dim(&outcome.describe())
                     );
@@ -1340,7 +1419,7 @@ fn sync_work(
             Err(err) => eprintln!("note: {}: {err}", item.id),
         }
     }
-    if !args.dry_run {
+    if !dry_run {
         dispatcher.save()?;
         // The same continuation dispatch makes: work reopened because its
         // item moved is work again, and where it needs nobody to start it,
@@ -1350,24 +1429,30 @@ fn sync_work(
     if args.json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "reopened": reopened,
-                "dry_run": args.dry_run,
-                "items": landed,
-                "notes": dispatcher.notes(),
-            }))
+            serde_json::to_string_pretty(&gated(
+                serde_json::json!({
+                    "reopened": reopened,
+                    "dry_run": dry_run,
+                    "items": landed,
+                    "notes": dispatcher.notes(),
+                }),
+                gate
+            ))
             .unwrap_or_else(|_| "null".to_string())
         );
         return Ok(ExitCode::SUCCESS);
     }
     println!(
         "\n{reopened} ticket(s) {}",
-        if args.dry_run {
+        if dry_run {
             "would be reopened"
         } else {
             "reopened"
         }
     );
+    if let Some(says) = gate.says() {
+        println!("{says}");
+    }
     // The continuation above read the ceilings, so it can have something to
     // say about them (§FS-005-dispatch.24).
     for note in dispatcher.notes() {
@@ -1383,13 +1468,19 @@ fn run_work(
     config: &StatusConfig,
     args: &crate::cli::WorkRunArgs,
     projects: &[String],
+    gate: &crate::scope::Gate,
 ) -> Result<ExitCode> {
     let mut dispatcher = Dispatcher::load(config)?;
     // The runtime is a rung like every other capacity ephor leans on, and the
     // refusal is the table's sentence rather than this command's own
-    // (§AR-005-capabilities.2).
-    if let Some(refusal) = runtime::refusal(&config.work) {
-        return Err(EphorError::Command(refusal));
+    // (§AR-005-capabilities.2). A held run starts nothing, so it does not lean
+    // on that rung and must not refuse for it: reporting what would run is
+    // exactly what you ask for on a machine where the runtime is absent
+    // (§FS-011-command-line.10).
+    if !gate.holds() {
+        if let Some(refusal) = runtime::refusal(&config.work) {
+            return Err(EphorError::Command(refusal));
+        }
     }
     let entries: Vec<Entry> = dispatcher
         .ledger
@@ -1422,6 +1513,12 @@ fn run_work(
     // this command, the timer, and a dispatch that just wrote a ticket cannot
     // drift into three ways of doing one thing (§AR-009-surfaces.1).
     if args.due {
+        // This verb had no dry run to reuse, so the gate's report is built
+        // here: the roots the sweep says are due, and the tickets that made
+        // each one due (§FS-011-command-line.10).
+        if gate.holds() {
+            return would_sweep(&mut dispatcher, args, projects, gate);
+        }
         return swept(config, &mut dispatcher, args, projects);
     }
     let mut roots: Vec<Group> = Vec::new();
@@ -1455,6 +1552,56 @@ fn run_work(
             false => println!("note: {}", Style::detect().dim(note)),
         }
     }
+    // The other half of the same report, for the roots a plain `work run`
+    // would take: said before the runtime is asked for anything, so a held
+    // sweep starts nothing at all (§FS-011-command-line.10).
+    if gate.holds() {
+        let would: Vec<serde_json::Value> = roots
+            .iter()
+            .map(|(root, checkout, hand, plans)| {
+                let mut row = serde_json::json!({
+                    "root": root,
+                    "checkout": checkout,
+                    "plans": plans,
+                    "outcome": "would-run",
+                });
+                if let (Some(row), Some(hand)) = (row.as_object_mut(), hand.as_ref()) {
+                    row.insert("hand".to_string(), serde_json::json!(hand.describe()));
+                }
+                row
+            })
+            .collect();
+        if args.json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&gated(
+                    serde_json::json!({ "runs": would, "failed": 0 }),
+                    gate
+                ))
+                .unwrap_or_else(|_| "null".to_string())
+            );
+            return Ok(ExitCode::SUCCESS);
+        }
+        for (root, _, hand, plans) in &roots {
+            println!(
+                "would run {} {} ({} plan(s){})",
+                runtime::label(&config.work),
+                root.display(),
+                plans.len(),
+                match hand {
+                    Some(hand) => format!(", {}", hand.describe()),
+                    None => String::new(),
+                }
+            );
+            println!("  {}", Style::detect().dim(&plans.join(", ")));
+        }
+        println!("\n{} root(s) would be run", roots.len());
+        if let Some(says) = gate.says() {
+            println!("{says}");
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
+
     if roots.is_empty() {
         if args.json {
             println!("{}", serde_json::json!({ "runs": [], "failed": 0 }));
@@ -1737,6 +1884,67 @@ fn swept(
         println!("note: {}", style.dim(note));
     }
     exit_code(failed)
+}
+
+/// `ephor work run --due` above one project, which reports rather than starts
+/// (§FS-011-command-line.10).
+///
+/// The roots come from the sweep's own reading, so what this says would be
+/// started is what `--act` would start. Nothing is locked and nothing is
+/// written: the sweep's record of failed starts is the act's, and a report
+/// that wrote one would be a dry run that was not dry.
+fn would_sweep(
+    dispatcher: &mut Dispatcher,
+    args: &crate::cli::WorkRunArgs,
+    projects: &[String],
+    gate: &crate::scope::Gate,
+) -> Result<ExitCode> {
+    let style = Style::detect();
+    let due = dispatcher.due_now(Utc::now(), projects);
+    if args.json {
+        let rows: Vec<serde_json::Value> = due
+            .iter()
+            .map(|root| {
+                stated(serde_json::json!({
+                    "root": root.root,
+                    "project": root.project,
+                    "item": root.item,
+                    "tickets": root.tickets,
+                    "outcome": "would-run",
+                }))
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&gated(
+                serde_json::json!({
+                    "runs": rows,
+                    "failed": 0,
+                    "notes": dispatcher.notes(),
+                }),
+                gate
+            ))
+            .unwrap_or_else(|_| "null".to_string())
+        );
+        return Ok(ExitCode::SUCCESS);
+    }
+    if due.is_empty() {
+        println!("Nothing is due: no work root is waiting for a run.");
+    } else {
+        for root in &due {
+            println!("would run {}", root.root.display());
+            // What made the root due, the same reason the act prints
+            // (§FS-005-dispatch.24).
+            println!("  {}", style.dim(&root.tickets.join(", ")));
+        }
+    }
+    if let Some(says) = gate.says() {
+        println!("{says}");
+    }
+    for note in dispatcher.notes() {
+        println!("note: {}", style.dim(note));
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 /// A sweep is a success unless a launch actually failed: a root passed over
