@@ -247,6 +247,9 @@ about the *path*: the dossier and a recipe's brief are prose, and carry an
 empty organization the way they carry any other field a matter has not got
 ([§2](#2-the-ticket-carries-what-ephor-knows-not-a-link-to-it)).
 
+**Which scope a plan belongs in is a different question from which tier may
+answer it**, and [§FS-014-work-root-scopes](FS-014-work-root-scopes.md#fs-014-work-root-scopes-a-plan-lives-in-the-smallest-scope-that-can-see-everything-it-touches) is the rule for it.
+
 ## 7. Handing over work is the reader's move, and stays inside the machine
 
 Dispatch writes files and nothing else. It opens no pull request, posts no
