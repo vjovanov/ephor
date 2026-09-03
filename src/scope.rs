@@ -19,6 +19,13 @@
 //! refuses the rest by name. The match in [`honoured`] is total on purpose —
 //! a variant added without a line here does not compile, so the fault this
 //! module exists to end cannot come back by omission.
+//!
+//! [`sweeps`] is the second axis, and the one §FS-011-command-line.10 turns
+//! on: which projects a verb reads says nothing about what it then writes in
+//! them. A read at any width is free; a verb that changes a work root in every
+//! project the scope reaches is a different kind of act above one checkout, so
+//! [`Act`] holds it to the gate — report by default, act under `--act`. Total
+//! for the same reason [`honoured`] is.
 
 use std::collections::BTreeSet;
 
@@ -166,6 +173,198 @@ fn work_honoured(args: &WorkArgs) -> (String, Honours) {
         Some(WorkCommand::Lay(_)) => said("work lay", Honours::Nothing),
         Some(WorkCommand::Forget(_)) => said("work forget", Honours::Nothing),
         Some(WorkCommand::States(_)) => said("work states", Honours::Nothing),
+    }
+}
+
+/// What a verb writes *across* the scope it resolved (§FS-011-command-line.10).
+///
+/// The other axis to [`Honours`]: that one says which projects a verb reads,
+/// this one says whether it changes a work root in every one of them. Total on
+/// [`Command`] for the same reason, and written out rather than defaulted — a
+/// new mutating verb that shipped without a line here would be the one thing
+/// this rule exists to make impossible.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sweeps {
+    /// Nothing the width changes: the verb reads, or it writes about the one
+    /// checkout, matter or record it was named, or it writes ephor's own
+    /// memory — a read mark, a ledger row — which is the same act at every
+    /// width. `--act` would mean nothing here, so it is refused by name.
+    Nothing,
+    /// A work root in every project the scope reaches, held to the gate:
+    /// above one project it reports what it would do and writes only under
+    /// `--act`.
+    Gated,
+    /// The same sweep, and deliberately *not* held to the gate — the whole
+    /// content of this variant is that the exemption is written down.
+    /// `update` and `ensure-agents` rewrite files in every managed workspace
+    /// their scope reaches, and the issue that built the gate did not name
+    /// them; classifying them with the read verbs would have hidden that
+    /// behind a word that was not true. Joining the gate is one word on this
+    /// line (§FS-011-command-line.10).
+    Ungated,
+}
+
+/// What each verb writes across its scope (§FS-011-command-line.10).
+///
+/// Beside [`honoured`] rather than folded into it: the two questions have
+/// different answers for the same verb — `work list` and `work dispatch` read
+/// the same projects and only one of them writes in them — and a reader
+/// checking one rule should not have to read the other's arms to find it.
+pub fn sweeps(command: &Command) -> Sweeps {
+    match command {
+        // The managed-workspace sweeps. `validate` only reads the paths it
+        // walks; the other two rewrite a file in every workspace, and are the
+        // deferral this rule records rather than hides.
+        Command::Validate(_) => Sweeps::Nothing,
+        // One ad hoc workspace, named on the command line and in no registry:
+        // there is no set of projects here to be above (§FS-011-command-line.9).
+        Command::EnsureAgents(args) if args.project_type.is_some() => Sweeps::Nothing,
+        Command::EnsureAgents(_) => Sweeps::Ungated,
+        Command::Update(_) => Sweeps::Ungated,
+        Command::Work(args) => work_sweeps(args),
+        // Everything else. The readings write nothing at all; `rebase`,
+        // `checkout`, `restart`, `react`, `reply` and `tick` change the one
+        // thing they were given, which is the same act however wide the site
+        // is; `mark-read` and the screen write ephor's own memory of what has
+        // been seen, not a project's work root.
+        Command::List(_)
+        | Command::Check(_)
+        | Command::Schema(_)
+        | Command::Status(_)
+        | Command::Feed(_)
+        | Command::Refresh(_)
+        | Command::MarkRead(_)
+        | Command::Failures(_)
+        | Command::Restart(_)
+        | Command::Rebase(_)
+        | Command::Checkout(_)
+        | Command::Job(_)
+        | Command::Actions(_)
+        | Command::Branches(_)
+        | Command::Operations(_)
+        | Command::Thread(_)
+        | Command::React(_)
+        | Command::Tick(_)
+        | Command::Reply(_)
+        | Command::Capabilities(_)
+        | Command::Doctor(_)
+        | Command::Tui => Sweeps::Nothing,
+    }
+}
+
+/// The same question one level down: three of `ephor work`'s eleven verbs
+/// write a work root in every project they reach (§FS-011-command-line.10).
+fn work_sweeps(args: &WorkArgs) -> Sweeps {
+    match args.command.as_ref() {
+        Some(WorkCommand::Dispatch(_)) | Some(WorkCommand::Sync(_)) | Some(WorkCommand::Run(_)) => {
+            Sweeps::Gated
+        }
+        // `work list` reads; the rest are about one matter, which the width
+        // of the site does not widen — `lay`, `ask`, `cancel` and `forget`
+        // included, since each names the matter it is about.
+        None
+        | Some(WorkCommand::List(_))
+        | Some(WorkCommand::Offers(_))
+        | Some(WorkCommand::Ask(_))
+        | Some(WorkCommand::Cancel(_))
+        | Some(WorkCommand::Workflows(_))
+        | Some(WorkCommand::Lay(_))
+        | Some(WorkCommand::Forget(_))
+        | Some(WorkCommand::States(_)) => Sweeps::Nothing,
+    }
+}
+
+/// The word that says act at a scope wider than one project
+/// (§FS-011-command-line.10).
+///
+/// Read off the command line beside [`Scope`] and held to the verb the same
+/// way: a flag accepted where it can change nothing is the fault
+/// §FS-011-command-line.9 exists to end, arriving one rule later.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Act {
+    asked: bool,
+}
+
+impl Act {
+    pub fn of(cli: &Cli) -> Act {
+        Act { asked: cli.act }
+    }
+
+    /// The flag as if it had been given, for the callers that are not a
+    /// command line — the interface dispatches one matter at a time and is
+    /// never above the gate, and a test that is about something else should
+    /// not have to say so.
+    pub fn asked() -> Act {
+        Act { asked: true }
+    }
+
+    /// Hold a verb to the flag: `--act` is taken exactly where the gate can
+    /// fire, and refused by name everywhere else (§FS-011-command-line.10).
+    pub fn held_to(&self, verb: &str, sweeps: Sweeps) -> Result<()> {
+        if !self.asked || sweeps == Sweeps::Gated {
+            return Ok(());
+        }
+        let mut says = format!("{verb} does not take --act.");
+        match sweeps {
+            Sweeps::Nothing => says.push_str(&format!(
+                " --act lets a sweep act at a scope wider than one project, and {verb} \
+                 sweeps no set of projects: it is the same act however many the site has."
+            )),
+            // Said plainly rather than as an apology: the reader is owed the
+            // fact that this verb acts at every width, which is what makes
+            // the flag meaningless on it rather than merely unimplemented.
+            Sweeps::Ungated => says.push_str(&format!(
+                " --act lets a sweep act at a scope wider than one project, and {verb} is \
+                 not held to that gate: it acts at every width, as it always has."
+            )),
+            Sweeps::Gated => unreachable!("returned above"),
+        }
+        says.push_str(" `work dispatch`, `work sync` and `work run` take it.");
+        // Exits 2 like a refused selector: both halves of the scope rule are
+        // one configuration refusal for the caller (§FS-011-command-line.9).
+        Err(registry_error(says))
+    }
+
+    /// The gate for a run of `verb` that resolved to `projects` projects.
+    pub fn over(&self, verb: &str, projects: usize) -> Gate {
+        if self.asked || projects <= 1 {
+            return Gate::acting();
+        }
+        Gate {
+            held: Some(format!(
+                "Nothing was written: {verb} reaches {projects} projects, and above one \
+                 it reports what it would do. Pass --act to do it."
+            )),
+        }
+    }
+}
+
+/// Whether this run acts, or reports what it would do
+/// (§FS-011-command-line.10).
+///
+/// A sentence rather than a flag, because the report is only half the rule:
+/// the other half is that the reader is told the word that acts, which is why
+/// nothing here can be held without something to say.
+#[derive(Clone, Debug, Default)]
+pub struct Gate {
+    held: Option<String>,
+}
+
+impl Gate {
+    /// Nothing wide enough to hold: what this command line did before the
+    /// rule, byte for byte.
+    pub fn acting() -> Gate {
+        Gate { held: None }
+    }
+
+    /// Whether this run must report rather than write.
+    pub fn holds(&self) -> bool {
+        self.held.is_some()
+    }
+
+    /// What a held run says it did instead, naming the flag that does it.
+    pub fn says(&self) -> Option<&str> {
+        self.held.as_deref()
     }
 }
 
@@ -683,6 +882,118 @@ mod tests {
             classified(&["work", "offers", "--item", "x"]),
             ("work offers".into(), Honours::Nothing)
         );
+    }
+
+    /// §FS-011-command-line.10: every verb says what it writes across its
+    /// scope, and the three that sweep a work root are the ones the gate can
+    /// fire on. `update` and `ensure-agents` are the written-down deferral —
+    /// classified as the sweeps they are and left outside the gate, so
+    /// joining it later is one word rather than a rediscovery.
+    #[test]
+    fn every_verb_says_what_it_sweeps() {
+        let swept = |args: &[&str]| sweeps(&cli(args).command);
+        for gated in [
+            vec!["work", "dispatch"],
+            vec!["work", "sync"],
+            vec!["work", "run"],
+        ] {
+            assert_eq!(swept(&gated), Sweeps::Gated, "{gated:?}");
+        }
+        assert_eq!(swept(&["update"]), Sweeps::Ungated);
+        assert_eq!(swept(&["ensure-agents"]), Sweeps::Ungated);
+        // Two verbs under one name answer for themselves here too: one ad hoc
+        // workspace is no set of projects to be above.
+        assert_eq!(
+            swept(&["ensure-agents", "--type", "monorepo"]),
+            Sweeps::Nothing
+        );
+        for reading in [
+            vec!["status"],
+            vec!["feed"],
+            vec!["refresh"],
+            vec!["list"],
+            vec!["validate"],
+            vec!["rebase"],
+            vec!["checkout"],
+            vec!["mark-read"],
+            vec!["tui"],
+            vec!["work"],
+            vec!["work", "forget", "--done"],
+            vec!["work", "lay", "--item", "x", "entry"],
+        ] {
+            assert_eq!(swept(&reading), Sweeps::Nothing, "{reading:?}");
+        }
+    }
+
+    /// §FS-011-command-line.10: `--act` is taken where the gate can fire and
+    /// refused by name everywhere else — including the two sweeps left
+    /// outside the gate, whose refusal says *that* rather than denying they
+    /// sweep. It exits 2, like a refused selector at the other end of the
+    /// same rule.
+    #[test]
+    fn act_is_refused_where_the_gate_cannot_fire() {
+        let act = Act::asked();
+        assert!(act.held_to("work dispatch", Sweeps::Gated).is_ok());
+        assert!(act.held_to("work sync", Sweeps::Gated).is_ok());
+
+        let err = act.held_to("rebase", Sweeps::Nothing).unwrap_err();
+        assert!(
+            matches!(err, crate::error::EphorError::Registry(_)),
+            "a refused --act must exit 2: {err:?}"
+        );
+        let refused = err.to_string();
+        assert!(refused.contains("rebase does not take --act"), "{refused}");
+        assert!(refused.contains("sweeps no set of projects"), "{refused}");
+
+        let deferred = act
+            .held_to("update", Sweeps::Ungated)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            deferred.contains("update does not take --act"),
+            "{deferred}"
+        );
+        assert!(
+            deferred.contains("it acts at every width, as it always has"),
+            "{deferred}"
+        );
+        assert!(
+            !deferred.contains("sweeps no set of projects"),
+            "the deferral must not deny that it sweeps: {deferred}"
+        );
+
+        // Nothing said, nothing to hold: every verb is free of the flag it
+        // was not given.
+        let silent = Act::default();
+        for sweeps in [Sweeps::Nothing, Sweeps::Gated, Sweeps::Ungated] {
+            assert!(silent.held_to("rebase", sweeps).is_ok());
+        }
+    }
+
+    /// §FS-011-command-line.10: the gate counts the resolved project set. One
+    /// project is what this command line always did; more than one reports,
+    /// and says the word that acts.
+    #[test]
+    fn the_gate_counts_the_resolved_projects() {
+        let silent = Act::default();
+        assert!(!silent.over("work dispatch", 1).holds());
+        // A site watching nothing is not a sweep either.
+        assert!(!silent.over("work dispatch", 0).holds());
+
+        let held = silent.over("work dispatch", 4);
+        assert!(held.holds());
+        let says = held
+            .says()
+            .expect("a held gate always has something to say");
+        assert!(says.contains("work dispatch reaches 4 projects"), "{says}");
+        assert!(
+            says.contains("--act"),
+            "a gated report must name the flag that acts: {says}"
+        );
+
+        // And with the word said, today's behaviour at any width.
+        assert!(!Act::asked().over("work dispatch", 4).holds());
+        assert!(Gate::acting().says().is_none());
     }
 
     /// Each verb's `--all` is that verb's own, and says what that verb means
