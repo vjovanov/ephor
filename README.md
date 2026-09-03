@@ -384,7 +384,7 @@ ephor work dispatch [--project P] [--recipe R] [--item ID] [--kind pr]
 ephor work ask --item ID "…"                # a ticket in your own words
 ephor work sync [--dry-run]                 # reopen work whose item has moved
 ephor work cancel --item ID TICKET… [--why "…"]   # take a ticket back; the plan keeps it
-ephor work run [--project P] [--item ID] [-- --parallel 2]   # rhei run, per work root
+ephor work run [--project P] [--item ID] [-- --parallel 2]   # rhei run, one per checkout
 ephor work forget [--item ID | --done | --missing]
 ephor work states                           # the state machine the tickets run under
 ```

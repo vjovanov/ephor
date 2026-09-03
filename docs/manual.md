@@ -2333,7 +2333,7 @@ ephor work dispatch [--project P] [--item ID] [--recipe R] [--kind K]
 ephor work ask --item ID [WORDS…] [--state S] [--dry-run]
 ephor work sync [--project P] [--dry-run]
 ephor work cancel --item ID TICKET… [--why WORDS] [--dry-run]
-ephor work run [--project P] [--item ID] [--due [--max-concurrent N]] [--watch] [-- RHEI_ARGS…]
+ephor work run [--project P] [--item ID] [--due [--max-concurrent N]] [--watch] [--force] [-- RHEI_ARGS…]
 ephor work workflows [--project P] [WORKFLOW] [--json]
 ephor work lay ENTRY --item ID [--values FILE]… [--set INPUT=VALUE]… [--hand H] [--dry-run]
 ephor work forget [--item ID | --done | --missing]
@@ -2366,7 +2366,12 @@ ephor work states
   It **starts the run detached** and prints the id it was given
   ([§FS-005-dispatch.20](functional-spec/FS-005-dispatch.md#20-a-run-of-the-runtime-starts-beneath-the-screen-and-is-watched-by-attaching));
   `--watch` keeps your terminal and watches the run here, which is also what a
-  runner with no detached shape does unasked, saying so.
+  runner with no detached shape does unasked, saying so. A plan whose checkout
+  a live run already holds — its own root's run, or one in a second work root
+  over the same tree — is **refused by name**: `a run is live in this
+  checkout: <id>`, and nothing is started. `--force` starts it anyway, and
+  lifts that refusal and nothing else
+  ([§FS-005-dispatch.24](functional-spec/FS-005-dispatch.md#24-work-nobody-has-to-start-starts-itself)).
   `--due` is the other question entirely: not "run this item's work" but
   "start whatever should be running and is not"
   ([§FS-005-dispatch.24](functional-spec/FS-005-dispatch.md#24-work-nobody-has-to-start-starts-itself)).
@@ -2376,9 +2381,13 @@ ephor work states
   ticket from a recipe that said `"autorun": true` — or a plan a workflow
   entry that said it laid down, whose tasks are read where the runtime wrote
   them and judged by the machine beside them — or by the root's, where they
-  keep none (§8.15.1). A root a run already holds
-  gets nothing, so the sweep is safe to run as often as you like and starts one
-  run however many times you invoke it. A root whose start failed rests before
+  keep none (§8.15.1). A root whose **checkout** a live run already holds gets
+  nothing — its own root's run, or one in another work root over the same
+  working tree, because two runs in one tree are two agents editing the same
+  files — so the sweep is safe to run as often as you like and starts one run
+  however many times you invoke it. Inside one sweep the same holds: a tree a
+  launch has just taken is passed over for the rest of it, naming the run that
+  took it. A root whose start failed rests before
   it is tried again, longer each consecutive time, so a runner that refuses
   cannot become a spawn loop. Where the runner has no detached shape the sweep
   starts nothing and says so: a run nobody asked for must not take a terminal.

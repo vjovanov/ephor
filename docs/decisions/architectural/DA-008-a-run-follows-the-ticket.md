@@ -14,7 +14,8 @@ second and names what the first would have cost.
 
 Autorun is a **sweep**: `work run --due` asks which roots hold a ticket that
 is open, unclaimed, not gating, and from a recipe that asked to run itself,
-and where no run is live on that root it starts the detached run
+and where no run is live in the checkout that root's work runs in it starts
+the detached run
 [§FS-005-dispatch.20](../../functional-spec/FS-005-dispatch.md#20-a-run-of-the-runtime-starts-beneath-the-screen-and-is-watched-by-attaching) already describes. Nothing about the run changes — the
 same launcher, the same identity beside the same lock, the same attach and
 the same stop in the runner's own words. The only new thing is who says go.
@@ -22,7 +23,7 @@ the same stop in the runner's own words. The only new thing is who says go.
 The sweep is **idempotent by construction and stateless about its own past**.
 It re-reads the world every time ([§FS-005-dispatch.15](../../functional-spec/FS-005-dispatch.md#15-every-operation-is-visible-in-one-place)), and the live-run
 check is the runtime's own lock, so running it twice in a second starts one
-run, and running it on a root that is already busy starts none. That is what
+run, and running it on a root whose working tree is already busy starts none. That is what
 lets every trigger be the same call: the dispatch that just wrote an
 autorun ticket, the timer, and a reader typing it all invoke one verb, and
 none of them has to know what the others did.
