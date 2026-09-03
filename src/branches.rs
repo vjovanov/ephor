@@ -483,6 +483,20 @@ pub fn why_the_workspace_is_refused(
         return None;
     }
     let root = lexical(&crate::paths::resolve_path(&rendered));
+    // A work root that holds the whole workspace area refuses every branch, so
+    // the branch is not what is wrong: naming it would send the reader off to
+    // rename a branch when what has to move is the project's `work.root`. Said
+    // before either collision below, which are about one name landing on the
+    // work root rather than about none being able to miss it.
+    if base.starts_with(&root) {
+        return Some(format!(
+            "{}'s work root {} covers the whole area it puts its branch workspaces in, so \
+             every branch renders inside the work root and none can miss it — it is the \
+             work root that has to move, not '{branch}'.",
+            placement.project,
+            root.display()
+        ));
+    }
     if target == root {
         return Some(format!(
             "'{branch}' is {}'s work root, not a branch: {} is where its work goes, and a \
@@ -1674,6 +1688,25 @@ mod tests {
         let why = why_the_workspace_is_refused(&placement, "panta/sub", "{root}/panta")
             .expect("a branch inside the work root is refused");
         assert!(why.contains("work root"), "{why}");
+    }
+
+    /// A work root that swallows the whole workspace area refuses every branch
+    /// there is, so the refusal is about the project's configuration and says
+    /// so: a message naming the branch would send the reader off to rename one
+    /// when what has to move is `work.root` (§FS-004-quick-actions.7.3).
+    #[test]
+    fn a_work_root_holding_the_whole_workspace_area_blames_itself_and_not_the_branch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let placement = poly_repo(tmp.path());
+        let why = why_the_workspace_is_refused(&placement, "brand-new", "{root}")
+            .expect("a work root holding the workspace area refuses the branch");
+        assert!(why.contains("work root"), "{why}");
+        assert!(why.contains("has to move"), "{why}");
+        // The same answer for any name, which is what makes it the
+        // configuration's and not the branch's.
+        let other = why_the_workspace_is_refused(&placement, "feature", "{root}")
+            .expect("every branch is refused, not one");
+        assert!(other.contains("work root"), "{other}");
     }
 
     /// A work-root template naming a field only a matter can fill describes no
