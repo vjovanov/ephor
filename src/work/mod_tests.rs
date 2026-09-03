@@ -792,6 +792,34 @@ fn due_root(root: &Path, tickets: &str) -> runtime::watch::RootPlans {
     }
 }
 
+/// Take and hold a work root's runtime lock, the way a live run holds it.
+/// The handle is the run: dropping it lets the tree go.
+fn hold(root: &Path) -> fs::File {
+    fs::create_dir_all(root.join(".rhei")).unwrap();
+    fs::write(root.join(".rhei/run.lock"), "").unwrap();
+    let holder = fs::File::open(root.join(".rhei/run.lock")).unwrap();
+    holder.lock().unwrap();
+    holder
+}
+
+/// Wait until a released lock has actually come free. Closing the holder is
+/// not always the instant the kernel releases it — the release rides on the
+/// last reference to the open file going away, which can be deferred by a
+/// millisecond under load — so this waits for the world to agree rather than
+/// assuming it already does. Everything ephor does here reads the lock as it
+/// is at the moment it asks (§FS-005-dispatch.15), which is what these cases
+/// are about.
+fn freed(config: &WorkConfig, root: &Path) {
+    let since = std::time::Instant::now();
+    while runtime::watch::live(config, root) {
+        assert!(
+            since.elapsed() < std::time::Duration::from_secs(5),
+            "the run let go and the lock never came free"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
+
 fn ticket_at(id: &str, state: &str) -> String {
     format!("### Task {id}: do it\n**State:** {state}\n\nwork\n\n")
 }
@@ -1527,10 +1555,7 @@ fn a_root_a_run_already_holds_is_left_alone() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("panta");
     let group = due_root(&root, &ticket_at("fix-gate-1", "collect"));
-    fs::create_dir_all(root.join(".rhei")).unwrap();
-    fs::write(root.join(".rhei/run.lock"), "").unwrap();
-    let holder = fs::File::open(root.join(".rhei/run.lock")).unwrap();
-    holder.lock().unwrap();
+    let holder = hold(&root);
 
     assert!(
         due_among(
@@ -1544,22 +1569,9 @@ fn a_root_a_run_already_holds_is_left_alone() {
         .is_empty(),
         "a second run there would only wait for the first"
     );
-    // And once that run lets go, the root is due again. Closing the
-    // holder is not always the instant the kernel releases the lock —
-    // the release rides on the last reference to the open file going
-    // away, which can be deferred by a millisecond under load — so this
-    // waits for the world to agree rather than assuming it already does.
-    // Everything ephor does here reads the lock as it is at the moment it
-    // asks (§FS-005-dispatch.15), which is exactly what is being checked.
+    // And once that run lets go, the root is due again.
     drop(holder);
-    let freed = std::time::Instant::now();
-    while runtime::watch::live(&work_config(), &root) {
-        assert!(
-            freed.elapsed() < std::time::Duration::from_secs(5),
-            "the run let go and the lock never came free"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(1));
-    }
+    freed(&work_config(), &root);
     assert_eq!(
         due_among(
             &work_config(),
@@ -1571,6 +1583,87 @@ fn a_root_a_run_already_holds_is_left_alone() {
         )
         .len(),
         1
+    );
+}
+
+/// The invariant is one live run per *checkout*, not per root: a second
+/// work root over a tree a run already holds would put a second agent in
+/// the same files, so it is left alone too (§FS-005-dispatch.24).
+#[test]
+fn a_root_over_a_checkout_another_roots_run_holds_is_left_alone() {
+    let tmp = tempfile::tempdir().unwrap();
+    // Two work roots, one working tree: `panta` and `panta2` both sit in
+    // the checkout the runtime would be run from.
+    let held = tmp.path().join("panta");
+    let beside = tmp.path().join("panta2");
+    let live = due_root(&held, &ticket_at("fix-gate-1", "collect"));
+    let candidate = due_root(&beside, &ticket_at("fix-gate-1", "collect"));
+    let holder = hold(&held);
+
+    // The run holds `panta`; the due ticket is in `panta2`. Nothing in the
+    // live root is due, which is why the guard cannot be a question asked
+    // of the candidates alone.
+    assert!(
+        due_among(
+            &work_config(),
+            &[live.clone(), candidate.clone()],
+            &asking(&["fix-gate"]),
+            &laying(&[]),
+            &empty_ledger(),
+            Utc::now(),
+        )
+        .is_empty(),
+        "a second run in that tree is a second agent editing the same files"
+    );
+
+    // And once the tree is free, the root beside it is due as it always was.
+    drop(holder);
+    freed(&work_config(), &held);
+    assert_eq!(
+        due_among(
+            &work_config(),
+            &[live, candidate],
+            &asking(&["fix-gate"]),
+            &laying(&[]),
+            &empty_ledger(),
+            Utc::now(),
+        )
+        .len(),
+        2
+    );
+}
+
+/// The trees are compared as the file system resolves them: a root reaching
+/// the busy checkout through a symbolic link is the same working tree, and
+/// a guard that compared spellings would let it through
+/// (§FS-005-dispatch.24).
+#[test]
+#[cfg(unix)]
+fn a_second_spelling_of_the_busy_checkout_does_not_defeat_the_guard() {
+    let tmp = tempfile::tempdir().unwrap();
+    let tree = tmp.path().join("tree");
+    let held = tree.join("panta");
+    let live = due_root(&held, &ticket_at("fix-gate-1", "collect"));
+    // The same directory under a second name, as a workspace template that
+    // symlinks back to the checkout renders it.
+    let alias = tmp.path().join("alias");
+    std::os::unix::fs::symlink(&tree, &alias).unwrap();
+    let candidate = due_root(&alias.join("panta2"), &ticket_at("fix-gate-1", "collect"));
+    let _holder = hold(&held);
+
+    assert!(
+        due_among(
+            &work_config(),
+            &[live, candidate],
+            &asking(&["fix-gate"]),
+            &laying(&[]),
+            &empty_ledger(),
+            Utc::now(),
+        )
+        .is_empty(),
+        "{} and {} are one working tree",
+        tree.display(),
+        alias.display()
     );
 }
 
