@@ -27,10 +27,11 @@ the way it does, and every `§ID` here points into it.
 6. [The inbox](#6-the-inbox)
 7. [Actions](#7-actions)
 8. [Work](#8-work)
-9. [Automation](#9-automation)
-10. [Extending ephor](#10-extending-ephor)
-11. [Reference](#11-reference)
-12. [Troubleshooting](#12-troubleshooting)
+9. [Burn — what this machine is spending](#9-burn--what-this-machine-is-spending)
+10. [Automation](#10-automation)
+11. [Extending ephor](#11-extending-ephor)
+12. [Reference](#12-reference)
+13. [Troubleshooting](#13-troubleshooting)
 
 ---
 
@@ -108,12 +109,15 @@ Everything, in one directory:
   feed/<project>.json     one cache per project: items, per-provider status
   seen.json               unread tracking: item id → when you last read it
   work.json               the work ledger (§8)
+  burn/<date>.json        five-minute token buckets, thirty days of them (§9)
+  burn/cursors.json       how far each transcript has been read (§9.3)
 ```
 
 Deleting any of it is safe. The feed comes back on the next `ephor refresh`;
 `seen.json` coming back empty means everything reads as unread once;
 `work.json` coming back empty forgets which plans belong to which item, and
-the plans themselves stay where they are.
+the plans themselves stay where they are; `burn/` coming back empty costs one
+full scan of the transcripts it is built from.
 
 ---
 
@@ -554,7 +558,7 @@ ephor check --list-features --json   # what a CI matrix fans out over
 
 `ephor check` takes a checkout and nothing else — no registry, no site
 configuration, no credentials — which is what lets the shipped CI step stand on
-it ([§9.3](#93-ci-steps-ephor-ships)). Which verbs run and in what order is
+it ([§10.3](#103-ci-steps-ephor-ships)). Which verbs run and in what order is
 policy above the interface: with none named it runs the aggregate where the
 project declares one, and whatever else it declares where it does not, because
 the aggregate is defined as everything the project considers a check and
@@ -799,7 +803,7 @@ A provider block always has `provider`; the rest is its own.
 | `github-notifications` | `GET /notifications` — everything GitHub says is directed at you (§5.2) | GitHub's reason is a mention, a review request, an assignment, a broken gate, or an advisory |
 | `github-threads` | GraphQL unresolved review threads | the last comment is not yours |
 | `custom-status` | any shell command in the workspace | the JSON says so |
-| `<anything else>` | an external forge executable (§10.1) | ephor's policy, over what it answered |
+| `<anything else>` | an external forge executable (§11.1) | ephor's policy, over what it answered |
 | `slack`, `discord`, `email` | stubs; activate by adding secrets | mentions and DMs (planned) |
 
 Two more sources need no provider block at all: a **task store** in the
@@ -1070,7 +1074,7 @@ re-requested review reads `review-requested` however you voted before. Where
 your forge reports no verdict of yours — or where you have not reviewed — the
 colon carries the reason the row is yours instead: `mentioned`, `assigned`,
 `in-thread`. A verdict of your own is a capability an implementation declares
-([§10.1](#101-a-forge-out-of-process)); `github-prs` reads it, and a forge that
+([§11.1](#111-a-forge-out-of-process)); `github-prs` reads it, and a forge that
 does not report one simply never shows it.
 
 ### 6.3 Keys
@@ -1094,6 +1098,7 @@ does not report one simply never shows it.
 | `a` | mark everything visible done |
 | `u` | unread-only ↔ everything |
 | `;` | the operations board (§8.13) — from any screen |
+| `$` | the burn page (§9) — from any screen |
 | `[` `]` | previous / next project (Detail) |
 | `Esc` `h` | back |
 | `r` | refresh underneath the screen — the projects it was opened over, and in Detail only that project |
@@ -1211,7 +1216,7 @@ GitHub's own *rerun failed jobs*, so *restart what failed* really is per-job —
 and a check that is not a workflow run, an external status somebody else's
 system wrote, is named rather than silently skipped. On a project whose forge
 is reached through an extension, the same two entries run `ephor restart`
-([§11.1](#111-every-command)) and the forge answers what it actually asked for.
+([§12.1](#121-every-command)) and the forge answers what it actually asked for.
 
 Read the row before you press it. Where a forge starts its gate as a whole
 rather than job by job, *restart what failed* is the failing gate **and
@@ -2564,7 +2569,7 @@ file is moved aside so the same words cannot go out twice.
 `p` appears only where the channel **said** it can carry a reply
 ([§FS-007-matters.4](functional-spec/FS-007-matters.md#4-a-channel-says-what-it-can-do)) — a
 forge declares the `replies` capability and puts a `reply` descriptor on the
-threads that take one ([§10.1](#101-a-forge-out-of-process)). Where it does
+threads that take one ([§11.1](#111-a-forge-out-of-process)). Where it does
 not, the card is still there and names the file: the proposal is what you copy,
 which is the offer narrowing rather than the feature failing.
 
@@ -3186,9 +3191,206 @@ is placed exactly as before.
 
 ---
 
-## 9. Automation
+## 9. Burn — what this machine is spending
 
-### 9.1 Timers
+Everything ephor watches costs tokens. The agent command-line tools already
+write down every one of them, and the runtime already meters its own runs, so
+the fact is on disk in two places — and until now it was reachable from
+neither ([§FS-013-burn](functional-spec/FS-013-burn.md#fs-013-burn-what-this-machine-spends-on-agents-is-a-reading-like-any-other)).
+
+`$` from anywhere in the interface opens the burn page; `Esc` (or `$` again)
+returns exactly where you were, the same way the operations board does
+([§8.13](#813-the-operations-board)). `ephor burn` is the same reading on the
+command line.
+
+```
+ ephor — burn
+  burn   window 1h  ·  by project  ·  machine lens
+    now  41.0k/min    ▂▃▂▅▇▆▅▃▂▁▂▃▅▆▇█▆▅   5-min spans over the window
+      claude-opus-5          ephor              38.0k/min   live
+      gpt-5.6-luna           tool-reports        3.1k/min   live · sub-agent
+
+  project                              in       out   cache-r   cache-w  cost
+    ephor                           412.0k     88.0k     31.2M      1.1M  $4.12
+    grund                           102.0k     31.0k      8.4M    306.0k  unpriced
+    other                            44.0k      9.0k      2.1M    102.0k  unpriced
+  total                             558.0k    128.0k     41.7M      1.5M  $4.12
+
+    what this machine burned, from the agent tools' own logs — B for what the runtime metered
+```
+
+### 9.1 Two lenses, and they are never added together
+
+The two records answer two different questions and overlap in a way nothing
+can subtract exactly, so ephor keeps them apart and says which one you are
+looking at ([§FS-013-burn.1](functional-spec/FS-013-burn.md#1-two-lenses-and-they-are-never-added-together)).
+
+**The machine lens** is what this machine burned, read from the agent tools'
+own transcripts. It is the ground truth for a total: it covers your own
+interactive sessions and runs the runtime started alike, because the runtime
+shells out to the same tools. It answers `--by project`, `--by model` and
+`--by session`.
+
+**The work lens** is what a piece of work cost, read from the runtime's own
+accounting records under each work root. Those records name the plan, the
+ticket and the state that spent them, and a matter is reached through ephor's
+own ledger — a plan was dispatched *for* a matter, so a matter's burn is the
+burn of the plans dispatched for it ([§8.10](#810-the-ledger)). It answers
+`--by plan` and `--by matter`.
+
+A run measured by both appears in both. **Nothing sums them**, and no total
+mixes them: a surface that added them would double-count every run the runtime
+started, and you could not see that happening from the number. Asking for a
+grouping is what selects the lens; the page says which one is answering, on
+the page.
+
+**The work lens says what it did not measure.** The runtime records an
+invocation whether or not the tool it ran reported any usage, and some do not
+— today a `claude-code` invocation records nothing, so the work lens is
+codex-and-`pi`-only until [vjovanov/rhei#121](https://github.com/vjovanov/rhei/issues/121)
+lands. Rather than showing a plan costing a third of what it cost, the reading
+carries how many invocations recorded no usage and which agents did report, in
+prose and in `--json` ([§FS-013-burn.2](functional-spec/FS-013-burn.md#2-the-work-lens-says-what-it-did-not-measure)).
+
+### 9.2 What is counted
+
+Four counters per record — input, output, cache-read and cache-write — kept
+apart all the way to the screen, because a cache read and an input token are
+priced an order of magnitude apart and one "tokens" number would hide which of
+them moved ([§FS-013-burn.3](functional-spec/FS-013-burn.md#3-what-is-counted-and-the-two-ways-of-counting-it-wrong)).
+
+Sub-agent transcripts are real spend and are counted, tagged so they can be
+told from the session that spawned them — the live strip marks them
+`· sub-agent`. A session that changes model mid-way has each part of its spend
+attributed to the model in force at the time, never to one model for the whole
+session. Provider stays beside model everywhere: not every model a tool runs
+is served by the vendor whose tool it is, so traffic routed elsewhere is not
+filed under the vendor's name.
+
+**Every record finds a project, or lands in `other`.** Each record carries the
+directory the agent ran in, and that directory is matched against the registry
+— each project's root and each branch workspace its `branch_root_template`
+names, longest match first, so a branch checkout inside a project root is
+attributed to the project ([§3.1](#31-fields-that-matter-most)). A directory
+under no registered root is not dropped and is not guessed at: it lands in a
+project called `other`. Burn ephor cannot attribute is still burn, and a total
+that quietly excluded it would be wrong in the one direction you could not
+detect ([§FS-013-burn.4](functional-spec/FS-013-burn.md#4-every-record-finds-a-project-or-lands-in-other)).
+
+### 9.3 The store
+
+Reading the transcripts is a scan of everything this machine has ever run, so
+it happens once and then only over what was appended
+([§FS-013-burn.5](functional-spec/FS-013-burn.md#5-buckets-not-transcripts)).
+
+**Cursors.** One per transcript file, recording the byte offset already read
+and the size the file had then. A file whose size and modification time are
+unchanged is not opened at all; one that has grown is read from its cursor;
+one that has *shrunk* is read from the start, because it is not the file the
+cursor was about.
+
+**Buckets.** What a scan reads is aggregated into five-minute buckets and
+written one file per day, holding counters and the keys they are counted under
+— never transcript text. Every window is then a sum over buckets, so changing
+the window re-reads nothing. Day files older than thirty days are deleted on
+the next scan, so the store bounds itself without your running anything.
+
+Both live under `~/.local/state/ephor/burn/`, beside the feed cache
+([§1.3](#13-what-ephor-writes)). Deleting the directory costs nothing but the
+next scan, which rebuilds it from the transcripts.
+
+**Neither surface scans a transcript while drawing.** The page refreshes the
+store from the same tick that watches the work artifacts, and the command
+refreshes inline only when the store is more than thirty seconds stale. Both
+are local file reads, so this is not a fetch: `refresh` remains the only verb
+that asks the world ([§4.1](#41-commands)). `R` on the page, and `--rescan` on
+the command, read again without waiting for the store to go stale.
+
+### 9.4 Windows, groupings, and the current rate
+
+Four windows — `1h`, `6h`, `24h`, `7d` — and five groupings: `project`,
+`model`, `session`, `plan`, `matter`
+([§FS-013-burn.6](functional-spec/FS-013-burn.md#6-windows-groupings-and-the-current-rate)).
+
+**The current rate** is what the five-minute span in progress and the one
+before it hold, over the time those cover. The span before it is in because
+the one in progress may have started a second ago, and a rate that read nearly
+zero on every five-minute boundary would be a number nobody could use.
+
+Beside it are the sessions still going: those that spent anything in the last
+few spans, with what each has spent per minute over them. A session counts as
+going on what it spent, never on the rounded rate — one that spent a little
+over fifteen minutes rounds to nothing a minute and is very much still going.
+
+### 9.5 Dollars are opportunistic, and `unpriced` is never `$0.00`
+
+Tokens are the reading. A cost is shown only where the log carried one
+already; ephor computes no prices and ships no price book, so today dollars
+come from Claude sessions that record their own cost and from nowhere else.
+
+**Unknown and zero are different facts and stay different**, on the screen and
+in `--json` ([§FS-013-burn.7](functional-spec/FS-013-burn.md#7-dollars-are-opportunistic-and-unpriced-is-never-000)). A group nothing priced prints
+`unpriced`, never `$0.00`. In the machine form that is `cost_usd: null` with
+`priced: false`, against `cost_usd: 0` with `priced: true` for a priced
+nothing. A reader who sees a zero concludes something was free, and being
+wrong about that is the whole reason the distinction is written down.
+
+### 9.6 Keys
+
+| Key | Does |
+|---|---|
+| `$` | open the page from any screen; again to close |
+| `w` | cycle the window — `1h` → `6h` → `24h` → `7d` |
+| `B` | cycle the grouping — project → model → session → plan → matter |
+| `R` | read the transcripts again, without waiting for the store to go stale |
+| `j` `k`, arrows | scroll |
+| `g` | top |
+| `f` `b`, PageDown/PageUp | page |
+| `Esc` `h` `q` | back to where you were |
+
+`B` and not `b`, because `b` is a page up on every screen that scrolls and a
+key cannot mean two things on one page.
+
+### 9.7 The command
+
+```bash
+ephor burn                                   # the last hour, by project
+ephor burn --window 24h --by model           # a day, per model
+ephor burn --window 7d --by matter --json    # a week of work, per matter
+ephor burn --rescan                          # read the transcripts first
+```
+
+`--window` and `--by` are the page's two keys spelled as arguments, which is
+the whole of the difference between the two surfaces
+([§12.4](#124-the-machine-form)). `--json` prints the published `burn` shape:
+`window`, `by`, `lens`, `from`/`to`, `totals`, `groups`, and a `now` carrying
+the rate, the live sessions and the window's five-minute spans.
+
+Burn reads every project the site is configured with in order to say which one
+a session was working in, so `--org`, `--tag` and `--workspace` narrow nothing
+here and are refused by name like every other verb that cannot honour them
+([§4.3](#43-exit-codes)).
+
+### 9.8 What this version leaves out
+
+Written down rather than left as an absence
+([§FS-013-burn.9](functional-spec/FS-013-burn.md#9-what-this-version-leaves-out)):
+
+- **A price book.** Prices are site data and would belong beside the registry,
+  not in the binary. Until there is one, everything the logs do not price is
+  `unpriced`.
+- **Per-invocation live detail.** The runtime emits a usage event per
+  invocation into the stream ephor already tails; the live strip reads file
+  times instead, which is enough to say what is going and costs no new
+  coupling.
+- **Drilling into a row.** A row groups; opening one to see what it groups is
+  a second reading, and both surfaces would owe it.
+
+---
+
+## 10. Automation
+
+### 10.1 Timers
 
 ```bash
 mkdir -p ~/.config/systemd/user
@@ -3203,7 +3405,7 @@ systemctl --user enable --now ephor-work-sync.timer
 reopens everything whose item has moved, half-hourly — it writes tickets and
 runs nothing, because spawning agents stays something you ask for.
 
-### 9.2 A shell prompt
+### 10.2 A shell prompt
 
 ```bash
 ephor status --check          # exit 4 when something needs a response
@@ -3213,7 +3415,7 @@ ephor status widget --cached  # one project, no fetching
 Use `--cached` in anything that runs often: without it, `status` refetches
 whatever is older than the TTL and blocks until every provider answers.
 
-### 9.3 CI steps ephor ships
+### 10.3 CI steps ephor ships
 
 Three steps ship, and they version with ephor
 ([§FS-009-shipped-actions](functional-spec/FS-009-shipped-actions.md#fs-009-shipped-actions-what-ephor-ships-for-ci-runs-from-the-repository-alone)):
@@ -3281,9 +3483,9 @@ that declares nothing is told so — with both ways to declare something named
 
 ---
 
-## 10. Extending ephor
+## 11. Extending ephor
 
-### 10.1 A forge, out of process
+### 11.1 A forge, out of process
 
 Any `provider` name that is not built in names a **forge extension**: an
 executable `ephor-forge-<name>` on `PATH` (or an explicit `"command"`), which
@@ -3339,21 +3541,21 @@ Policy is never an extension's business: what counts as answered, what needs a
 response, how threads and gates roll up, how items match branches, what is
 unread — all of that is ephor's, applied identically over every implementation.
 
-### 10.2 A provider, in process
+### 11.2 A provider, in process
 
 One module in `src/feed/providers/` implementing `Provider`, plus a match arm
 in `providers::build_provider`. A provider may also offer **quick actions** on
 items it produced, and answer `failures` and `restart` for a gate. Implementing the
 `Forge` trait instead gets the whole item-building policy for free.
 
-### 10.3 A state machine of your own
+### 11.3 A state machine of your own
 
 `ephor work states > my-states.yaml`, edit, and either drop it in a work root
 as `states.yaml` or point `work.states` at it. Recipes then name its states in
 their `state` field; one naming a state the machine does not declare is refused
 by name rather than written.
 
-### 10.4 An agent of your own
+### 11.4 An agent of your own
 
 Which agent and model each state runs on is the machine's business, not
 ephor's: a state names one with `target: "<agent>[<mode>]:<provider>:<model>"`.
@@ -3375,9 +3577,9 @@ stalled on *"required outputs are missing"* no matter how well it reasons.
 
 ---
 
-## 11. Reference
+## 12. Reference
 
-### 11.1 Every command
+### 12.1 Every command
 
 ```
 ephor list | validate | ensure-agents | update            # the registry
@@ -3390,13 +3592,14 @@ ephor thread <id> | react | tick | reply                  # a conversation
 ephor work list | offers | dispatch | ask | sync | cancel | lay | run | forget
 ephor work workflows | states                             # what the runtime carries
 ephor operations [attach <run>]                           # the board — alias: ops
+ephor burn [--window 1h|6h|24h|7d] [--by project|model|session|plan|matter]
 ephor job list | log <id>                                 # what runs beneath the screen
 ephor tui                                                 # alias: inbox
 ```
 
 Every one of these takes `--json` and prints the same answer as JSON
 ([§REQ-002-parity](requirements/REQ-002-parity.md#req-002-parity-every-ability-is-reachable-without-the-screen-and-every-answer-has-a-machine-form),
-[§11.4](#114-the-machine-form)). The two exceptions are the two that are not
+[§12.4](#124-the-machine-form)). The two exceptions are the two that are not
 readings: `schema` prints a published JSON document already, and `tui` is the
 interface itself.
 
@@ -3414,9 +3617,9 @@ all.
 
 A checkout is enough for those three, which is why CI can run them
 ([§FS-006-project-interface.11](functional-spec/FS-006-project-interface.md#11-the-interface-is-versioned),
-[§9.3](#93-ci-steps-ephor-ships)).
+[§10.3](#103-ci-steps-ephor-ships)).
 
-### 11.2 Environment
+### 12.2 Environment
 
 | Variable | Effect |
 |---|---|
@@ -3428,7 +3631,7 @@ A checkout is enough for those three, which is why CI can run them
 | `NO_COLOR` | plain output |
 | `PAGER`, `EDITOR` | used by quick actions, `e` on the work screen, and reading a job's log |
 
-### 11.3 Files
+### 12.3 Files
 
 | Path | What |
 |---|---|
@@ -3438,12 +3641,15 @@ A checkout is enough for those three, which is why CI can run them
 | `~/.local/state/ephor/seen.json` | unread tracking |
 | `~/.local/state/ephor/work.json` | the work ledger |
 | `~/.local/state/ephor/jobs/<id>/` | one job: `job.json`, `log` (none for a windowed job), `lock`, `outcome.json` (§8.14) |
+| `~/.local/state/ephor/burn/<date>.json` | five-minute token buckets, thirty days kept (§9.3) |
+| `~/.local/state/ephor/burn/cursors.json` | how far each transcript has been read (§9.3) |
+| `~/.claude/projects/**/*.jsonl`, `~/.codex/sessions/**/*.jsonl` | read, never written: what the burn page is built from (§9) |
 | `~/config/secrets/ephor/*.json` | provider secrets |
 | `<forest root>/ephor.json` | the project's own manifest, if it wrote one (§4.2.1) |
 | `<checkout>/panta/` | work roots: plans, state machine, runtime artifacts |
 | `<work root>/runtime/ephor/<plan>.reply.md` | a drafted answer, until you post it (§8.12) |
 
-### 11.4 The machine form
+### 12.4 The machine form
 
 Nothing lives behind the screen alone. Every ability the inbox offers is also
 a command, and every command that prints a reading takes `--json`
@@ -3468,6 +3674,9 @@ usable by the runtime it hands work to.
 | `c` — the gate spelled out | `ephor failures --item ID` |
 | `;` — the operations board | `ephor operations` |
 | `a` on the board — watch a live run | `ephor operations attach <run>` |
+| `$` — what this machine is spending | `ephor burn` |
+| `w` / `B` on the burn page — window, grouping | `ephor burn --window 6h` / `--by model` |
+| `R` on the burn page — read the transcripts again | `ephor burn --rescan` |
 | `L` — what a job wrote | `ephor job log <id>` (`--follow` keeps up; with `--json` it waits and then answers) |
 | `m` / `d` / space — mark read | `ephor mark-read --id ID` |
 | `u` — only what is unread | `ephor feed --unread` |
@@ -3512,7 +3721,7 @@ configuration is read, rather than quietly standing beside the row it shadows.
 
 ---
 
-## 12. Troubleshooting
+## 13. Troubleshooting
 
 **A section is empty and I do not believe it.** Check the header and stderr:
 a failed provider is always named, its last-good items are marked `(stale)`,
