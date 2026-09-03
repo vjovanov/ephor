@@ -183,8 +183,8 @@ rule is written down now, and the mechanism under most of it has shipped
 ([`## Unreleased`](changelog.md#unreleased)). What is missing is any
 construction that holds a reader to it:
 [§FS-014-work-root-scopes.7](functional-spec/FS-014-work-root-scopes.md#7-what-is-not-yet-held)
-names three parts of the rule that are stated there and that this program does
-not yet enforce, and this entry is where they are tracked.
+names three parts of the rule that are this program's to enforce and are not
+yet enforced, and this entry is where they are tracked.
 
 Roughly half of what it tracks is not in this repository at all. That half is
 listed anyway, because an entry that hides its other half reads as stalled when

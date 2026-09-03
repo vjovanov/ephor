@@ -128,15 +128,15 @@ name.
   sit beside an organization root without being one. Folding the two together
   would put intake and work under one machine that suits neither.
 - **No tree is kept alive in order to keep a record.** The answer to [§5](#5-nothing-durable-lives-in-a-checkout-work-root) is
-  folding up before the tree is reclaimed, never declining to reclaim it. A
-  project root full of checkouts nobody is working in, held open for their
-  logs, is the cost this rule was supposed to remove.
+  folding up before the tree is reclaimed, never declining to reclaim it.
+  Checkouts nobody is working in, held open for their logs, are the cost this
+  rule was supposed to remove.
 
 ## 7. What is not yet held
 
-Three parts of the rule above are stated here as the rule and are not yet
-enforced by this program. Saying so costs a paragraph; a reader discovering it
-from behaviour costs more.
+Three parts of the rule above are this program's to enforce and are not yet
+enforced. Saying so costs a paragraph; a reader discovering it from behaviour
+costs more.
 
 - **Placement is chosen per project, not per entry.** One project's dispatches
   are placed by one answer, so a project cannot send fixes to minted checkouts
