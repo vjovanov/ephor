@@ -146,6 +146,9 @@ started in another terminal is reachable by its id alone.
 `ephor work run` starts the runtime detached and prints the run's id
 ([§FS-005-dispatch.20](FS-005-dispatch.md#20-a-run-of-the-runtime-starts-beneath-the-screen-and-is-watched-by-attaching)); `--watch` keeps the terminal and watches the run as
 before, which is also what a runner that cannot detach does unasked, saying so.
+It refuses a plan whose checkout a live run already holds, naming that run, and
+`--force` starts it anyway
+([§FS-005-dispatch.24](FS-005-dispatch.md#24-work-nobody-has-to-start-starts-itself)).
 
 
 ## 9. A scope selector is honoured or refused
