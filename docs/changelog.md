@@ -44,7 +44,7 @@ ships, the previous "latest" section moves verbatim to
   this checkout: <id>`; `--force` lifts it for a run asked for by name and
   does nothing with `--due`. Queueing is untouched — laying or dispatching a
   ticket into a busy checkout's plan still succeeds, which is what makes
-  handing work down to a tree somebody is in safe. (PR #N)
+  handing work down to a tree somebody is in safe. (PR #62)
 
 - **File-size limits have one authority.** The duplicated numeric limits table
   is removed from [§FS-012-file-size](functional-spec/FS-012-file-size.md#fs-012-file-size-every-file-is-measured-against-a-budget-set-by-how-it-is-read), so
