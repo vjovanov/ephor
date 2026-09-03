@@ -49,7 +49,7 @@ ships, the previous "latest" section moves verbatim to
   refusal says rather than denying. **Callers who swept more than one project
   bare now get a report instead of an act** — `systemd/ephor-work-sync.service`
   passes `--act` on `work sync` and `work run --due` for exactly that reason.
-  (PR #N)
+  (PR #61)
 
 - **File-size limits have one authority.** The duplicated numeric limits table
   is removed from [§FS-012-file-size](functional-spec/FS-012-file-size.md#fs-012-file-size-every-file-is-measured-against-a-budget-set-by-how-it-is-read), so
