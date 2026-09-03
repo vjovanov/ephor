@@ -21,6 +21,11 @@ use crate::burn::render;
 
 use super::{Action, Screen, BURN_TICK};
 
+/// How many live sessions the strip shows before it says how many more there
+/// are. The reading itself is never cut — this is the page's own choice about
+/// what fits above the table the strip introduces.
+const STRIP: usize = 6;
+
 pub(crate) struct BurnScreen {
     reading: views::Burn,
     /// What the next reading asks for. Held here rather than read back off
@@ -128,7 +133,7 @@ impl BurnScreen {
             Span::styled(render::spark(&spans), Style::default().fg(Color::Cyan)),
             Span::styled("   5-min spans over the window".to_string(), dim),
         ]));
-        for row in &reading.now.live {
+        for row in reading.now.live.iter().take(STRIP) {
             lines.push(Line::from(vec![
                 Span::styled(
                     format!("      {:<22} {:<16}", row.model, row.project),
@@ -143,6 +148,16 @@ impl BurnScreen {
                     dim,
                 ),
             ]));
+        }
+        // The strip is the busiest sessions, not all of them, and it says so
+        // rather than trailing off. A machine running two dozen agents at once
+        // would otherwise push the table it introduces off the screen — which
+        // the machine form never does, because it carries every row.
+        if let Some(rest) = reading.now.live.len().checked_sub(STRIP).filter(|n| *n > 0) {
+            lines.push(Line::from(Span::styled(
+                format!("      and {rest} more going — `ephor burn --json` has every one"),
+                dim,
+            )));
         }
 
         lines.push(Line::from(""));
