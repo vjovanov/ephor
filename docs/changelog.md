@@ -45,7 +45,11 @@ ships, the previous "latest" section moves verbatim to
   exiting 2, with the refusal on standard output as an outcome under `--json`.
   This is a behaviour change for a caller who was passing values ephor ignored,
   and the point of it: an unfilled `{meta.branch}` in a program state now stops
-  the run instead of running a different one. Absent, and empty once trimmed,
+  the run instead of running a different one. It reaches one value ephor was
+  honouring rather than ignoring: `--from` (`FROM`) is documented as a branch
+  and is now held to being one, so `HEAD` or a revision expression such as
+  `HEAD~1` is refused instead of being passed to git, which had been resolving
+  `origin/HEAD` for it. Absent, and empty once trimmed,
   are still nothing given and still fall through, which is what a state machine
   handing a program `BRANCH: "{meta.branch}"` about a branchless matter depends
   on. `ephor checkout` also settles the branch name before the first directory
