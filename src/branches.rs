@@ -426,6 +426,33 @@ fn why_git_refuses(branch: &str) -> Option<String> {
     None
 }
 
+/// Why the workspace this branch renders to is not a place to make one, as a
+/// clause a refusal can carry — None where it is (§FS-004-quick-actions.7.3).
+///
+/// The two questions the checkout has to settle before it makes anything: does
+/// the rendered path stay in the area this project's own template puts branch
+/// workspaces in, and does it land on the project's work root or inside it.
+/// `work_root` is that project's resolved work-root template
+/// ([`crate::work::root_template`]), rendered here against the candidate
+/// workspace rather than read from disk, because neither directory exists yet.
+///
+/// Standing apart from [`expand_workspace`] and [`Placement::workspace_for`] on
+/// purpose: those two answer *where an already known branch's workspace is* for
+/// every surface that asks, and are called with a sentinel that is deliberately
+/// not a branch name, so a refusal inside them would silently stop branch
+/// discovery finding workspaces on disk.
+pub fn why_the_workspace_is_refused(
+    placement: &Placement,
+    branch: &str,
+    work_root: &str,
+) -> Option<String> {
+    // The contract without its answers: `specify` fixes the question this asks
+    // and the unit tests below say what each answer has to be; the body is the
+    // implementation's to write (§FS-004-quick-actions.7.3).
+    let _ = (placement, branch, work_root);
+    None
+}
+
 /// Where an entry's work resolves, with no refusal to answer for: the matter's
 /// own checkout where the forge or the registry gave it a branch, the workspace
 /// a `branch` template names where it did not, and the matter's own again where
@@ -1531,5 +1558,74 @@ mod tests {
         item.kind = ItemKind::Issue;
         item.raw = json!({ "repo": "widget", "number": "95" });
         item
+    }
+
+    /// The shipped work root is a directory *inside* each branch workspace, so
+    /// it can never be one: a project on the default configuration keeps
+    /// `ephor checkout --branch panta` (§FS-004-quick-actions.7.3).
+    #[test]
+    fn the_shipped_work_root_under_each_workspace_never_collides() {
+        let tmp = tempfile::tempdir().unwrap();
+        let placement = poly_repo(tmp.path());
+        assert_eq!(
+            why_the_workspace_is_refused(&placement, "panta", "{workspace}/panta"),
+            None
+        );
+        assert_eq!(
+            why_the_workspace_is_refused(&placement, "feature", "{workspace}/panta"),
+            None
+        );
+    }
+
+    /// A work root written beside the branch workspaces rather than inside each
+    /// of them is a directory a branch name can land on, and the branch named
+    /// for it is refused rather than checked out on top of the work root
+    /// (§FS-004-quick-actions.7.3).
+    #[test]
+    fn a_work_root_beside_the_workspaces_refuses_the_branch_named_for_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let placement = poly_repo(tmp.path());
+        let why = why_the_workspace_is_refused(&placement, "panta", "{root}/panta")
+            .expect("a branch named for the work root is refused");
+        assert!(why.contains("panta"), "{why}");
+        assert!(why.contains("work root"), "{why}");
+    }
+
+    /// Landing *inside* the work root is the same collision: `panta/sub`
+    /// renders under it, and a workspace there would hold the plans of every
+    /// branch (§FS-004-quick-actions.7.3).
+    #[test]
+    fn a_branch_under_the_work_root_is_refused_too() {
+        let tmp = tempfile::tempdir().unwrap();
+        let placement = poly_repo(tmp.path());
+        let why = why_the_workspace_is_refused(&placement, "panta/sub", "{root}/panta")
+            .expect("a branch inside the work root is refused");
+        assert!(why.contains("work root"), "{why}");
+    }
+
+    /// A work-root template naming a field only a matter can fill describes no
+    /// fixed place, so there is nothing for a branch to collide with and it is
+    /// passed over rather than guessed at (§FS-004-quick-actions.7.3).
+    #[test]
+    fn a_work_root_only_a_matter_can_render_is_passed_over() {
+        let tmp = tempfile::tempdir().unwrap();
+        let placement = poly_repo(tmp.path());
+        assert_eq!(
+            why_the_workspace_is_refused(&placement, "panta", "{root}/{ticket}/panta"),
+            None
+        );
+    }
+
+    /// A name that climbs out of the area the template puts workspaces in is
+    /// refused before anything is made — the directories on the way to it are
+    /// what git's own refusal would have left behind
+    /// (§FS-004-quick-actions.7.3).
+    #[test]
+    fn a_branch_that_climbs_out_of_the_workspace_area_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let placement = poly_repo(tmp.path());
+        let why = why_the_workspace_is_refused(&placement, "../escaped", "{workspace}/panta")
+            .expect("a name that leaves the workspace area is refused");
+        assert!(why.contains("escaped"), "{why}");
     }
 }

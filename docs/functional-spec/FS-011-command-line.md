@@ -221,3 +221,29 @@ need none in order to refuse. Both halves of the rule exit **2**, the code this
 command line gives a configuration refusal: a refused selector and a selection
 that came out empty are one rule answering, and a caller learns "the scope was
 refused" from one comparison rather than two.
+
+The selectors are the first case of this rule rather than the whole of it.
+Every value a command takes arrives in one of two spellings — the flag a reader
+types, and the name a program state sets in the environment for that flag,
+which are one input said two ways because the key and the command line are one
+operation ([§FS-005-dispatch.12](FS-005-dispatch.md#12-work-an-algorithm-can-finish-does-not-start-with-a-model))
+— and every one of them is **honoured, or refused naming the input it came in
+on**. None of them is quietly dropped into the path the command would have
+taken without it. A caller who passed `--branch` and is told that nothing said
+which branch to check out has been given an answer about a command they did not
+run, and the two are indistinguishable from the output, which is the failure
+this rule opens with.
+
+What counts as *given* is the distinction the rule turns on, and it is not
+"valid". An argument that was not passed, and an environment variable unset or
+empty once trimmed, are **nothing given**: the command falls through to
+whatever it does without one, and that is not a refusal — a state machine
+handing a program `BRANCH: "{meta.branch}"` about a matter that has no branch
+depends on it. A value that *is* there and is not one the command can act on is
+refused, naming the flag or the variable and quoting what it held: an unfilled
+placeholder arriving as itself, a branch name git will not take, a name whose
+workspace would land outside the project's own workspace area or on its work
+root ([§FS-004-quick-actions.7.3](FS-004-quick-actions.md#73-where-the-workspace-goes-is-decided-before-anything-is-made)).
+Refusing exits **2** and prints as every other refusal does, which is what lets
+a caller tell "you gave me something I cannot use" from "you gave me nothing"
+by the exit code alone.

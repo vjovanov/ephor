@@ -215,3 +215,42 @@ fn a_directory_that_is_not_a_checkout_is_refused_by_name() {
         .failure()
         .stderr(predicates::str::contains("No git repository"));
 }
+
+/// An unresolved `{workspace}` in the environment a program state set used to
+/// be filtered away, and a rebase that was told exactly which checkout to
+/// replay silently replayed the directory it happened to be started in. A
+/// value that is there is refused naming the variable it came in on, and exits
+/// 2 (§FS-011-command-line.9).
+#[test]
+fn an_unresolved_checkout_is_refused_rather_than_read_as_the_current_directory() {
+    let tmp = tempdir();
+    let elsewhere = tmp.path().join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+
+    ephor_cmd()
+        .current_dir(&elsewhere)
+        .args(["rebase", "--onto", "master"])
+        .env("CHECKOUT", "{workspace}")
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains("CHECKOUT"))
+        .stderr(predicates::str::contains("{workspace}"));
+}
+
+/// The compatibility half: an environment variable empty once trimmed is
+/// nothing given, so the rebase still falls through to the directory it was
+/// started in (§FS-011-command-line.9).
+#[test]
+fn an_empty_checkout_still_means_the_current_directory() {
+    let tmp = tempdir();
+    let checkout = workspace(tmp.path());
+    advance_master(tmp.path(), "theirs.txt", "theirs\n");
+
+    ephor_cmd()
+        .current_dir(&checkout)
+        .args(["rebase", "--onto", "master"])
+        .env("CHECKOUT", "  ")
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Replayed onto `origin/master`"));
+}

@@ -266,6 +266,50 @@ things, and there is nothing to choose among here: a workspace that is not
 there has exactly one thing that can be done about it, and the row already
 says so.
 
+### 7.3 Where the workspace goes is decided before anything is made
+
+A branch name reaches the checkout from wherever it came — a key on a row, a
+flag a reader typed, the environment a program state set, a `branch` template a
+dispatch rendered — and the project's own template turns it into a directory.
+That directory is the first thing the operation makes. So every question about
+whether it is the right directory is answered **before the making starts**,
+rather than discovered inside it.
+
+The order is the rule and not an implementation detail. Git refuses a name it
+will not take, but its refusal arrives from within the making: by the time a
+working tree is added, the directories leading down to it are on disk, and a
+name that reached above the project has already left them there. A refusal that
+has to be cleaned up after is not the same answer as one that happened instead.
+This is already said of the `branch` template a dispatch renders
+([§FS-005-dispatch.25](FS-005-dispatch.md#25-work-about-a-matter-with-no-branch-can-mint-the-branch-it-needs)),
+and the checkout is one operation for every caller
+([§7](#7-a-workspace-that-is-not-there-is-offered-the-checkout)), so it holds
+wherever the name came from — the reader's flag included.
+
+Three questions, all answerable from the name and the project's own
+configuration, none of them asking the disk:
+
+- **It is a name git will take**, by the rules `git check-ref-format --branch`
+  applies — asked here rather than left to the working tree that would be
+  added under it.
+- **The rendered path stays where this project puts its branch workspaces.**
+  The template says where those are: the fixed part of it, above wherever the
+  branch name lands. A rendered path that resolves outside that area is not a
+  workspace of this project, whatever else it is. Resolved lexically, since the
+  directory does not exist yet and there is nothing to canonicalize.
+- **It is not the project's work root, and not inside it.** Where work goes is
+  a template of its own ([§FS-006-project-interface.7](FS-006-project-interface.md#7-the-projects-own-tasks-are-read-where-they-live)),
+  and one that puts the work root beside the branch workspaces rather than
+  inside each of them leaves a branch name that lands on it. A workspace made
+  there would be a checkout and a work root in one directory, each holding the
+  other's files. A template naming a field only a matter can fill describes no
+  fixed place and is passed over rather than guessed at, the same way the
+  board's walk passes it over
+  ([§FS-005-dispatch.15.1](FS-005-dispatch.md#151-the-board-keeps-itself-current)).
+
+A name that fails one of them is refused, saying which value and which rule,
+and nothing is made.
+
 ## 8. A branch that trails its own published copy is offered the rebase onto it
 
 Main moving under a branch is one thing that happens to it. The branch moving

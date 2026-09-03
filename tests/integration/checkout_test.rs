@@ -8,6 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use predicates::prelude::*;
 use serde_json::json;
 
 use common::*;
@@ -560,4 +561,159 @@ fn a_project_with_no_checkout_yet_is_refused_by_name() {
         .assert()
         .failure()
         .stderr(predicates::str::contains("no checkout on disk"));
+}
+
+/// Put this project's work root somewhere other than the shipped
+/// `{workspace}/panta` — the configuration that makes a branch name able to
+/// land on it (§FS-004-quick-actions.7.3).
+fn work_root(tmp: &Path, template: &str) {
+    let path = tmp.join("status.json");
+    let mut config: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    config["work"]["root"] = json!(template);
+    fs::write(&path, serde_json::to_string_pretty(&config).unwrap()).unwrap();
+}
+
+/// A project whose work root is written beside its branch checkouts rather
+/// than inside each of them has a directory a branch name can land on. The
+/// checkout refuses the name in the ticket's own words and makes nothing —
+/// asserted on the filesystem, because git's refusal would have arrived after
+/// the directories were there (§FS-004-quick-actions.7.3).
+#[test]
+fn a_branch_named_for_the_work_root_is_refused_and_nothing_is_made() {
+    let tmp = tempdir();
+    let root = fixture(tmp.path());
+    work_root(tmp.path(), "{root}/panta");
+    let _ce = repo(tmp.path(), "ce");
+    let _ee = repo(tmp.path(), "ee");
+
+    ephor(tmp.path())
+        .args(["checkout", "--project", "demo", "--branch", "panta"])
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains("work root"))
+        .stderr(predicates::str::contains("panta"));
+
+    assert!(
+        !root.join("panta").exists(),
+        "the work root was checked out over"
+    );
+}
+
+/// A name whose rendered path climbs out of the area the project puts its
+/// branch workspaces in is refused before anything is made. The reproduction
+/// this pins is the directory that was left two levels above the project root
+/// while git was still being asked (§FS-004-quick-actions.7.3).
+#[test]
+fn a_branch_that_climbs_out_of_the_project_is_refused_and_leaves_nothing() {
+    let tmp = tempdir();
+    let _root = fixture(tmp.path());
+    let _ce = repo(tmp.path(), "ce");
+    let _ee = repo(tmp.path(), "ee");
+
+    ephor(tmp.path())
+        .args(["checkout", "--project", "demo", "--branch", "../escaped"])
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains("../escaped"));
+
+    assert!(
+        !tmp.path().join("escaped").exists(),
+        "a directory was made outside the project root"
+    );
+}
+
+/// The ticket's first fault: a `--branch` that will not do became `None` and
+/// the reader was told they had passed no branch at all. A value that is there
+/// is refused naming the flag it came in on, and exits 2 — the code a value
+/// ephor will not act on takes (§FS-011-command-line.9). Under `--json` the
+/// refusal is on standard output as an outcome, like every other
+/// (§FS-011-command-line.7).
+#[test]
+fn an_unresolved_branch_is_refused_by_name_rather_than_read_as_none() {
+    let tmp = tempdir();
+    let _root = fixture(tmp.path());
+    let _ce = repo(tmp.path(), "ce");
+    let _ee = repo(tmp.path(), "ee");
+
+    ephor(tmp.path())
+        .args(["checkout", "--project", "demo", "--branch", "{branch}"])
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains("--branch"))
+        .stderr(predicates::str::contains("{branch}"))
+        .stderr(predicates::str::contains("Nothing says which branch").not());
+
+    let refused = ephor(tmp.path())
+        .args([
+            "checkout",
+            "--project",
+            "demo",
+            "--branch",
+            "{branch}",
+            "--json",
+        ])
+        .assert()
+        .code(2)
+        .get_output()
+        .stdout
+        .clone();
+    let outcome: serde_json::Value = serde_json::from_slice(&refused).unwrap();
+    assert_eq!(outcome["ok"], json!(false));
+    assert!(
+        outcome["says"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("--branch"),
+        "{outcome}"
+    );
+
+    // The same value a program state sets, refused by the name it set it under.
+    ephor(tmp.path())
+        .arg("checkout")
+        .env("PROJECT", "demo")
+        .env("BRANCH", "{meta.branch}")
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains("BRANCH"));
+}
+
+/// The compatibility half, and the regression the collision guard could
+/// cause: on the shipped `{workspace}/panta` the work root is inside each
+/// workspace, so `panta` is an ordinary branch name and a project on the
+/// default configuration keeps its checkout (§FS-004-quick-actions.7.3).
+#[test]
+fn the_shipped_work_root_leaves_a_branch_called_panta_alone() {
+    let tmp = tempdir();
+    let root = fixture(tmp.path());
+    let _ce = repo(tmp.path(), "ce");
+    let _ee = repo(tmp.path(), "ee");
+
+    ephor(tmp.path())
+        .args(["checkout", "--project", "demo", "--branch", "panta"])
+        .assert()
+        .success();
+
+    assert!(root.join("panta/ce/.git").exists());
+    assert!(root.join("panta/panta/states.yaml").is_file());
+}
+
+/// The other compatibility half: absent, and empty once trimmed, still mean
+/// *nothing was given* and still fall through (§FS-011-command-line.9). A
+/// state machine handing a program `BRANCH: "{meta.branch}"` about a matter
+/// with no branch is the caller that depends on it.
+#[test]
+fn an_empty_value_is_still_nothing_given() {
+    let tmp = tempdir();
+    let _root = fixture(tmp.path());
+    let _ce = repo(tmp.path(), "ce");
+    let _ee = repo(tmp.path(), "ee");
+
+    ephor(tmp.path())
+        .arg("checkout")
+        .env("PROJECT", "demo")
+        .env("BRANCH", "   ")
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("Nothing says which branch"));
 }
