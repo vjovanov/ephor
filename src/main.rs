@@ -151,6 +151,12 @@ fn run(cli: Cli) -> Result<ExitCode> {
     let scope = scope::Scope::of(&cli);
     let (verb, honours) = scope::honoured(&cli.command);
     scope.held_to(&verb, honours)?;
+    // The second axis, held the same way and in the same place: which
+    // projects a verb reads says nothing about what it writes in them, and
+    // `--act` is taken only where the gate above one project can fire
+    // (§FS-011-command-line.10).
+    let act = scope::Act::of(&cli);
+    act.held_to(&verb, scope::sweeps(&cli.command))?;
     // Resolved only where a verb reads a set of projects: resolving asks the
     // registry, and the verbs that refuse have nothing to ask it about.
     let projects = match honours {
@@ -167,7 +173,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Command::Restart(args) => return feed::commands::restart(args),
         Command::Rebase(args) => return rebase::rebase(args),
         Command::Checkout(args) => return checkout::checkout(args),
-        Command::Work(args) => return work::commands::work(args, &projects),
+        Command::Work(args) => return work::commands::work(args, &projects, act),
         // The abilities the screen used to hold alone (§FS-011-command-line).
         // Each opens the same session a key would have (§AR-009-surfaces.2).
         Command::Actions(args) => return ephor::commands::actions(args),
