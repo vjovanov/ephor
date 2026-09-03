@@ -137,10 +137,7 @@ pub fn group(buckets: &[Bucket], by: By) -> Vec<Group> {
     for bucket in buckets {
         let named = match by {
             By::Model => (bucket.key.model.clone(), Some(bucket.key.provider.clone())),
-            By::Session => (
-                bucket.key.session.clone(),
-                Some(bucket.key.project.clone()),
-            ),
+            By::Session => (bucket.key.session.clone(), Some(bucket.key.project.clone())),
             // Every other grouping falls back to the project, which is what a
             // machine-lens bucket can always answer.
             _ => (bucket.key.project.clone(), None),
@@ -357,7 +354,9 @@ mod tests {
     /// Empty spans stay in the row: a gap is a fact about the window.
     #[test]
     fn the_spans_of_a_window_keep_their_gaps() {
-        let now = "2026-09-03T10:12:00Z".parse::<DateTime<Utc>>().expect("now");
+        let now = "2026-09-03T10:12:00Z"
+            .parse::<DateTime<Utc>>()
+            .expect("now");
         let drawn = bars(&window(), now - Duration::minutes(20), now);
         assert_eq!(drawn.len(), 5);
         assert_eq!(drawn[0].tokens, 0);
@@ -369,8 +368,14 @@ mod tests {
     /// off the live strip rather than being reported as still going.
     #[test]
     fn the_rate_and_the_strip_are_about_now() {
-        let now = "2026-09-03T10:07:00Z".parse::<DateTime<Utc>>().expect("now");
-        assert_eq!(rate(&window(), now), 21, "150 tokens over the seven minutes since 10:00");
+        let now = "2026-09-03T10:07:00Z"
+            .parse::<DateTime<Utc>>()
+            .expect("now");
+        assert_eq!(
+            rate(&window(), now),
+            21,
+            "150 tokens over the seven minutes since 10:00"
+        );
         let going = live(&window(), now);
         assert_eq!(going.len(), 3, "{going:?}");
 

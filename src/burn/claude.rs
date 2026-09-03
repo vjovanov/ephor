@@ -83,7 +83,7 @@ fn subagent(file: &Path, carry: &Carry) -> bool {
 }
 
 /// One paid call: the outer counters, and nothing from `iterations`.
-fn call(record: &Value, carry: &Carry, subagent: bool) -> Option<Sample> {
+fn call(record: &Value, carry: &mut Carry, subagent: bool) -> Option<Sample> {
     let message = record.get("message")?;
     let usage = message.get("usage")?;
     let tokens = Tokens {
@@ -96,12 +96,15 @@ fn call(record: &Value, carry: &Carry, subagent: bool) -> Option<Sample> {
         return None;
     }
     let at = when(record.get("timestamp").and_then(Value::as_str))?;
+    let model = string(message, "model").unwrap_or_else(|| "unknown".to_string());
+    // What the rollup below joins its dollars back to (§FS-013-burn.3).
+    carry.models.insert(model.clone());
     Some(Sample {
         at,
         cwd: carry.cwd.clone(),
         source: SOURCE,
         provider: PROVIDER.to_string(),
-        model: string(message, "model").unwrap_or_else(|| "unknown".to_string()),
+        model,
         session: carry.session.clone().unwrap_or_default(),
         subagent,
         tokens,
@@ -142,7 +145,7 @@ fn priced(record: &Value, carry: &mut Carry, subagent: bool) -> Vec<Sample> {
             cwd: carry.cwd.clone(),
             source: SOURCE,
             provider: PROVIDER.to_string(),
-            model: model.clone(),
+            model: joined(model, carry),
             session: carry.session.clone().unwrap_or_default(),
             subagent,
             tokens: Tokens::default(),
@@ -150,6 +153,25 @@ fn priced(record: &Value, carry: &mut Carry, subagent: bool) -> Vec<Sample> {
         });
     }
     found
+}
+
+/// The model a rollup's dollars belong on (§FS-013-burn.3).
+///
+/// The two halves of this log spell one model two ways: a call names the
+/// alias (`claude-opus-5`) and the rollup names the billing variant
+/// (`claude-opus-5[1m]`). Left alone that is two rows for one model, one
+/// holding every token and no price and the other a price and no tokens —
+/// and a reader cannot add them back up, because they look like two models.
+///
+/// So a variant whose alias this session actually called is filed under that
+/// alias. A model the rollup names and the calls never did — the tool's own
+/// background work is billed but never appears as a call — keeps the only
+/// spelling anything knows it by, and is a row of its own on purpose.
+fn joined(model: &str, carry: &Carry) -> String {
+    match model.split_once('[') {
+        Some((alias, _)) if carry.models.contains(alias) => alias.to_string(),
+        _ => model.to_string(),
+    }
 }
 
 fn counter(usage: &Value, field: &str) -> u64 {
@@ -188,7 +210,10 @@ mod tests {
         let mut carry = Carry::default();
         let found = read(Path::new("/x/s1.jsonl"), DOUBLE, &mut carry);
         assert_eq!(found.len(), 1);
-        assert_eq!(found[0].tokens.output, 1000, "the breakdown was counted too");
+        assert_eq!(
+            found[0].tokens.output, 1000,
+            "the breakdown was counted too"
+        );
         assert_eq!(found[0].tokens.total(), 1002);
         assert_eq!(found[0].model, "claude-opus-5");
         assert_eq!(found[0].cwd.as_deref(), Some("/w/app"));
@@ -254,6 +279,44 @@ mod tests {
             .find(|sample| sample.cost_usd.is_some())
             .expect("a priced sample");
         assert_eq!(priced.at.to_rfc3339(), "2026-09-03T10:01:00+00:00");
+    }
+
+    /// The two halves of this log spell one model two ways, and a reading
+    /// that kept them apart would show every token under a row with no price
+    /// and every dollar under a row with no tokens (§FS-013-burn.3).
+    ///
+    /// This is the shape the real transcripts have: calls name
+    /// `claude-opus-5`, the rollup names `claude-opus-5[1m]`, and it also
+    /// bills a model no call ever named.
+    #[test]
+    fn a_rollups_dollars_land_on_the_model_the_calls_named() {
+        let text = r#"
+{"type":"assistant","cwd":"/w/app","sessionId":"s1","timestamp":"2026-09-03T10:01:00Z","message":{"model":"claude-opus-5","usage":{"output_tokens":5}}}
+{"type":"cost-state","sessionId":"s1","modelUsage":{"claude-opus-5[1m]":{"costUSD":4.0},"claude-haiku-4-5-20251001":{"costUSD":0.5}}}
+"#;
+        let mut carry = Carry::default();
+        let found = read(Path::new("/x/s1.jsonl"), text, &mut carry);
+
+        let priced: Vec<(&str, f64)> = found
+            .iter()
+            .filter_map(|sample| Some((sample.model.as_str(), sample.cost_usd?)))
+            .collect();
+        // The variant is filed under the alias its own session called, so the
+        // tokens and the dollars are one row.
+        assert!(
+            priced.contains(&("claude-opus-5", 4.0)),
+            "the variant did not join the alias: {priced:?}"
+        );
+        assert!(
+            !priced.iter().any(|(model, _)| model.contains('[')),
+            "a billing variant reached a bucket key: {priced:?}"
+        );
+        // And a model only the rollup knows about keeps its own spelling
+        // rather than being folded into whichever alias looks nearest.
+        assert!(
+            priced.contains(&("claude-haiku-4-5-20251001", 0.5)),
+            "a model no call named lost its row: {priced:?}"
+        );
     }
 
     /// A carry is what makes the scan incremental: the second half of a file

@@ -11,7 +11,7 @@
 //! records it already consumed is carried here beside the offset
 //! (§FS-013-burn.5).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
@@ -46,6 +46,11 @@ pub struct Carry {
     /// dollars up per session (§FS-013-burn.7).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub costs: BTreeMap<String, f64>,
+    /// Every model this session's own calls named. What a dollar rollup
+    /// keyed by a longer spelling of one of them is joined back to
+    /// (§FS-013-burn.3).
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub models: BTreeSet<String>,
     /// The newest timestamp seen in the file, RFC 3339. A record that carries
     /// no time of its own is attributed to this one — it was written after
     /// everything before it.

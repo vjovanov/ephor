@@ -87,7 +87,11 @@ pub fn under(root: &Path) -> Vec<Invocation> {
         .filter_map(|text| serde_json::from_str::<Value>(&text).ok())
         .filter_map(|record| invocation(root, &record))
         .collect();
-    found.sort_by(|left, right| left.at.cmp(&right.at).then_with(|| left.task.cmp(&right.task)));
+    found.sort_by(|left, right| {
+        left.at
+            .cmp(&right.at)
+            .then_with(|| left.task.cmp(&right.task))
+    });
     found
 }
 

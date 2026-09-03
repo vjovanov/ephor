@@ -181,12 +181,7 @@ pub fn stale(dir: &Path) -> bool {
 /// The day a bucket file is named for — the store's own naming, exposed so a
 /// test can put a file where a reading will find it.
 pub fn day_of(at: DateTime<Utc>) -> String {
-    format!(
-        "{:04}-{:02}-{:02}",
-        at.year(),
-        at.month(),
-        at.day()
-    )
+    format!("{:04}-{:02}-{:02}", at.year(), at.month(), at.day())
 }
 
 #[cfg(test)]
@@ -227,7 +222,9 @@ mod tests {
             ],
         )
         .expect("it writes again");
-        let now = "2026-09-03T10:10:00Z".parse::<DateTime<Utc>>().expect("now");
+        let now = "2026-09-03T10:10:00Z"
+            .parse::<DateTime<Utc>>()
+            .expect("now");
         let found = since(&dir, now - Duration::hours(1), now);
         assert_eq!(found.len(), 2);
         assert_eq!(found[0].tokens.output, 15, "the two scans did not add");
