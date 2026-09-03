@@ -2221,6 +2221,17 @@ rather than handing the terminal to a command that cannot start. Everything
 else on the screen is unchanged: the ticket is written, read, reopened and
 edited whether or not anything can run it.
 
+The key is a place a run starts, so the one-live-run-per-checkout guard holds
+here as it does on the command line
+([§FS-005-dispatch.24](functional-spec/FS-005-dispatch.md#24-work-nobody-has-to-start-starts-itself)):
+pressed on a matter whose working tree a live run already holds — its own
+root's run, or one in another work root over the same tree — it starts
+nothing and says `a run is live in this checkout: <id>`. The key is still
+taught, because the tree is busy for now rather than for good. There is no
+`--force` on the screen: starting a second run in a busy tree is
+`ephor work run --item <id> --force` from a shell, where the flag says you
+mean it.
+
 It is the same run `ephor work run` starts, over this one plan: the hand is
 resolved before the terminal is ceded and rides the run as the runtime's own
 agent flags where it names an agent and no model ([§8.4](#84-where-work-goes-and-what-runs-it)).
@@ -2369,8 +2380,12 @@ ephor work states
   runner with no detached shape does unasked, saying so. A plan whose checkout
   a live run already holds — its own root's run, or one in a second work root
   over the same tree — is **refused by name**: `a run is live in this
-  checkout: <id>`, and nothing is started. `--force` starts it anyway, and
-  lifts that refusal and nothing else
+  checkout: <id>`, and nothing is started. A run this very invocation started
+  counts as holding it: one command over two work roots in one tree starts
+  one of them and refuses the rest, naming the run it just made. `--force`
+  starts it anyway, and lifts that refusal and nothing else; it is about the
+  run you asked for by name, so it does nothing at all with `--due`, which
+  sweeps for what should be running rather than starting a run you named
   ([§FS-005-dispatch.24](functional-spec/FS-005-dispatch.md#24-work-nobody-has-to-start-starts-itself)).
   `--due` is the other question entirely: not "run this item's work" but
   "start whatever should be running and is not"
@@ -2385,7 +2400,11 @@ ephor work states
   nothing — its own root's run, or one in another work root over the same
   working tree, because two runs in one tree are two agents editing the same
   files — so the sweep is safe to run as often as you like and starts one run
-  however many times you invoke it. Inside one sweep the same holds: a tree a
+  however many times you invoke it. Where the run holding the tree is
+  *another root's*, the root is printed as `passed-over` with that run named,
+  rather than dropped in silence: an empty sweep reads as a quiet machine. A
+  root whose own run is live says nothing, because that is the ordinary case
+  for as long as the work takes. Inside one sweep the same holds: a tree a
   launch has just taken is passed over for the rest of it, naming the run that
   took it. A root whose start failed rests before
   it is tried again, longer each consecutive time, so a runner that refuses
