@@ -2221,16 +2221,10 @@ rather than handing the terminal to a command that cannot start. Everything
 else on the screen is unchanged: the ticket is written, read, reopened and
 edited whether or not anything can run it.
 
-The key is a place a run starts, so the one-live-run-per-checkout guard holds
-here as it does on the command line
-([§FS-005-dispatch.24](functional-spec/FS-005-dispatch.md#24-work-nobody-has-to-start-starts-itself)):
-pressed on a matter whose working tree a live run already holds — its own
-root's run, or one in another work root over the same tree — it starts
-nothing and says `a run is live in this checkout: <id>`. The key is still
-taught, because the tree is busy for now rather than for good. There is no
-`--force` on the screen: starting a second run in a busy tree is
-`ephor work run --item <id> --force` from a shell, where the flag says you
-mean it.
+The key is a place a run starts, so it is guarded as the command line is: on a
+matter whose working tree a live run holds it starts nothing and says `a run is
+live in this checkout: <id>`. It is still taught, and the way past a busy tree
+is `ephor work run --item <id> --force` from a shell.
 
 It is the same run `ephor work run` starts, over this one plan: the hand is
 resolved before the terminal is ceded and rides the run as the runtime's own
@@ -2378,15 +2372,9 @@ ephor work states
   ([§FS-005-dispatch.20](functional-spec/FS-005-dispatch.md#20-a-run-of-the-runtime-starts-beneath-the-screen-and-is-watched-by-attaching));
   `--watch` keeps your terminal and watches the run here, which is also what a
   runner with no detached shape does unasked, saying so. A plan whose checkout
-  a live run already holds — its own root's run, or one in a second work root
-  over the same tree — is **refused by name**: `a run is live in this
-  checkout: <id>`, and nothing is started. A run this very invocation started
-  counts as holding it: one command over two work roots in one tree starts
-  one of them and refuses the rest, naming the run it just made. `--force`
-  starts it anyway, and lifts that refusal and nothing else; it is about the
-  run you asked for by name, so it does nothing at all with `--due`, which
-  sweeps for what should be running rather than starting a run you named
-  ([§FS-005-dispatch.24](functional-spec/FS-005-dispatch.md#24-work-nobody-has-to-start-starts-itself)).
+  a live run holds — its own root's, another root's over the same tree, or one
+  this invocation just started — is **refused by name**: `a run is live in this
+  checkout: <id>`. `--force` lifts that refusal alone, and nothing with `--due`.
   `--due` is the other question entirely: not "run this item's work" but
   "start whatever should be running and is not"
   ([§FS-005-dispatch.24](functional-spec/FS-005-dispatch.md#24-work-nobody-has-to-start-starts-itself)).
@@ -2396,17 +2384,11 @@ ephor work states
   ticket from a recipe that said `"autorun": true` — or a plan a workflow
   entry that said it laid down, whose tasks are read where the runtime wrote
   them and judged by the machine beside them — or by the root's, where they
-  keep none (§8.15.1). A root whose **checkout** a live run already holds gets
-  nothing — its own root's run, or one in another work root over the same
-  working tree, because two runs in one tree are two agents editing the same
-  files — so the sweep is safe to run as often as you like and starts one run
-  however many times you invoke it. Where the run holding the tree is
-  *another root's*, the root is printed as `passed-over` with that run named,
-  rather than dropped in silence: an empty sweep reads as a quiet machine. A
-  root whose own run is live says nothing, because that is the ordinary case
-  for as long as the work takes. Inside one sweep the same holds: a tree a
-  launch has just taken is passed over for the rest of it, naming the run that
-  took it. A root whose start failed rests before
+  keep none (§8.15.1). A root whose **checkout** a live run holds gets nothing
+  — its own root's run, or another root's over the same tree, including one
+  taken earlier in the same sweep — so the sweep is safe to run as often as you
+  like and starts one run however many times you invoke it. A root whose start
+  failed rests before
   it is tried again, longer each consecutive time, so a runner that refuses
   cannot become a spawn loop. Where the runner has no detached shape the sweep
   starts nothing and says so: a run nobody asked for must not take a terminal.
@@ -2440,9 +2422,10 @@ ephor work states
   slot only while their runtime lock remains held, so a refused or immediately
   completed start leaves room for the next root. Candidates follow
   `work.ranking`, with every unranked root retaining the previous deterministic
-  order. An eligible root omitted only because a ceiling is full is printed as
-  `passed-over` with the reason naming the key it hit (also under `--json`) and
-  does not increase `failed`. The reading says how many roots are live and how
+  order. An eligible root omitted only because a ceiling is full, or because a
+  live run in another work root holds its checkout, is printed as `passed-over`
+  with the reason naming the key or that run (also under `--json`) and does not
+  increase `failed`. The reading says how many roots are live and how
   many of those are parked, in prose and under `--json`, so a full ceiling never
   hides that a person is holding one of the slots. Ceilings gate starts, not
   runs already under way: several parked roots resuming at once can carry
