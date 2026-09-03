@@ -101,13 +101,106 @@ fn a_sweep_starts_nothing_in_a_checkout_a_run_already_holds() {
         ephor::api::schema::holds("work-run", &reading).is_empty(),
         "the sweep must hold to the published work-run shape: {reading}"
     );
-    assert_eq!(
-        reading["runs"].as_array().unwrap().len(),
-        0,
-        "the second root over the busy tree is not due: {reading}"
+    assert!(
+        output.status.success(),
+        "passing a root over is not a failure: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(starts(&log), 0, "no run may be started in a busy checkout");
+    // Nothing started, and the sweep says which run has the tree rather than
+    // reading as a quiet machine. One row: the root holding the run itself is
+    // said nothing about, because it has its run.
+    let runs = reading["runs"].as_array().unwrap();
+    assert_eq!(
+        runs.len(),
+        1,
+        "one root is passed over, one is running: {reading}"
+    );
+    assert_eq!(runs[0]["outcome"], "passed-over", "{reading}");
+    assert!(
+        runs[0]["root"].as_str().unwrap().ends_with("demo/panta2"),
+        "the root held back is the one beside the live run: {reading}"
+    );
+    assert!(
+        runs[0]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("a run is live in this checkout"),
+        "the reason is the tree, not a ceiling: {reading}"
+    );
     drop(holder);
+}
+
+/// §FS-005-dispatch.24: one invocation, two work roots over one tree, nothing
+/// live to begin with — the run this very command starts holds the tree for
+/// the rest of it, so the second group is refused by the id of the first's
+/// run rather than started beside it.
+#[test]
+fn one_command_starts_one_run_in_one_checkout() {
+    let tmp = tempdir();
+    let log = tmp.path().join("runner.log");
+    dispatched_but_unstarted(tmp.path(), &log);
+    second_root_in_the_same_checkout(tmp.path(), "github-prs:acme/widget#second");
+    holding_runner(tmp.path(), &log);
+
+    let output = ephor(tmp.path())
+        .args(["work", "run", "--json"])
+        .output()
+        .unwrap();
+    let reading: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        ephor::api::schema::holds("work-run", &reading).is_empty(),
+        "a refusal must hold to the published work-run shape: {reading}"
+    );
+    assert!(
+        !output.status.success(),
+        "the reader asked for two runs and got one: {reading}"
+    );
+    assert_eq!(reading["refused"], 1, "{reading}");
+    assert_eq!(reading["failed"], 0, "{reading}");
+    let runs = reading["runs"].as_array().unwrap();
+    let outcomes: Vec<&str> = runs
+        .iter()
+        .filter_map(|run| run["outcome"].as_str())
+        .collect();
+    assert_eq!(outcomes, vec!["started", "refused"], "{reading}");
+    assert_eq!(
+        runs[1]["says"], "a run is live in this checkout: live-run",
+        "the refusal names the run this command just started: {reading}"
+    );
+    assert_eq!(starts(&log), 1, "one working tree takes one run");
+}
+
+/// §FS-005-dispatch.24: `--force` lifts that refusal too — the reader who
+/// says they know what the other run is doing means the run made a second ago
+/// as much as one that was already there.
+#[test]
+fn force_starts_both_groups_in_one_checkout() {
+    let tmp = tempdir();
+    let log = tmp.path().join("runner.log");
+    dispatched_but_unstarted(tmp.path(), &log);
+    second_root_in_the_same_checkout(tmp.path(), "github-prs:acme/widget#second");
+    holding_runner(tmp.path(), &log);
+
+    let output = ephor(tmp.path())
+        .args(["work", "run", "--force", "--json"])
+        .output()
+        .unwrap();
+    let reading: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        output.status.success(),
+        "--force starts them anyway: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(reading["refused"], 0, "{reading}");
+    let outcomes: Vec<&str> = reading["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|run| run["outcome"].as_str())
+        .collect();
+    assert_eq!(outcomes, vec!["started", "started"], "{reading}");
+    assert_eq!(starts(&log), 2, "both roots were launched");
 }
 
 /// §FS-005-dispatch.24: two roots over one tree, both due, in one sweep. The

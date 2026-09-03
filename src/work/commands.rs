@@ -1480,6 +1480,13 @@ fn run_work(
     // (§FS-005-dispatch.15).
     let snapshot = dispatcher.work_roots();
     let busy = crate::work::live_checkouts(&config.work, &snapshot, &dispatcher.ledger);
+    // And which trees this command's own launches have taken, checkout to the
+    // root the run was started from. The reading above is older than every
+    // launch below, so two groups over one working tree are both in it;
+    // without this the second would start into the tree the first is already
+    // editing (§FS-005-dispatch.24) — the same book the sweep keeps for the
+    // same reason, so the two paths cannot come apart (§AR-009-surfaces.1).
+    let mut taken: BTreeMap<std::path::PathBuf, std::path::PathBuf> = BTreeMap::new();
     // A run starts beneath the screen unless the reader asked to watch it
     // (§FS-005-dispatch.20) — and unless the binding has no detached shape, in
     // which case it runs attached as it always did and this says so rather
@@ -1525,7 +1532,13 @@ fn run_work(
         // lifted by `--force` for the reader who knows what that run is doing
         // (§FS-005-dispatch.24).
         if let Some(held_by) = (!args.force)
-            .then(|| crate::work::holding(&busy, checkout))
+            .then(|| {
+                // The run that was already there, or the one this command
+                // just made: a tree is as busy from a run one second old as
+                // from one that was there all along.
+                crate::work::holding(&busy, checkout)
+                    .or_else(|| crate::work::holding(&taken, checkout))
+            })
             .flatten()
         {
             let says = crate::work::live_in_this_checkout(&config.work, held_by);
@@ -1578,6 +1591,14 @@ fn run_work(
                     };
                     if !args.json {
                         println!("{says}");
+                    }
+                    // A run that is still holding the tree takes it for the
+                    // rest of this command. One that named itself nothing
+                    // takes it too — the row is live from the lock alone, and
+                    // the refusal falls back to naming the root
+                    // (§FS-005-dispatch.24). One already over holds nothing.
+                    if !started.finished && runtime::watch::live(&config.work, root) {
+                        crate::work::take_checkout(&mut taken, checkout, root);
                     }
                     runs.push(landed(outcome, Some(says), started.id.as_deref()));
                 }
