@@ -183,6 +183,17 @@ selector is therefore resolved against the registry and then intersected with
 what the site watches, and the intersection is applied where each verb picks
 its projects rather than in a helper beside them.
 
+`refresh` also takes direct project names, either as repeatable `--project
+PROJECT` selectors or as the compatible positional `[PROJECTS]...` form. The
+two spellings form one direct-project set: mixed input is their union, no name
+from either spelling is dropped, and a project repeated within or across the
+spellings is refreshed once. The direct set is then held to `--workspace`,
+`--tag` and `--org` like every other project restriction: those selectors
+intersect it, and a directly named project outside their scope is refused by
+name rather than silently removed. A direct name that has no watched project
+is likewise refused explicitly; it never falls back to refreshing every
+watched project.
+
 What a selector narrows is which projects a verb **reads**, not everything the
 run does behind them. The sources that ask about no project in particular are
 fetched once for the whole site and placed by ephor's own engine rather than by

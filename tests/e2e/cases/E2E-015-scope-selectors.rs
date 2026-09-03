@@ -21,6 +21,9 @@ use support::*;
 /// The second project, in the other organization, watched beside the first.
 const OTHER: &str = "far";
 
+/// A registered project this site does not watch.
+const UNWATCHED: &str = "idle";
+
 /// A world watching two organizations, each with one project reporting one
 /// status item that names itself.
 fn two_organizations() -> World {
@@ -32,7 +35,11 @@ fn two_organizations() -> World {
     std::fs::create_dir_all(&far).expect("the other forest");
     std::fs::write(far.join("status.txt"), "far is well\n").expect("its status");
 
+    let idle = world.path().join(UNWATCHED);
+    std::fs::create_dir_all(&idle).expect("the unwatched forest");
+
     let mut registry = world.registry_doc();
+    registry["projects"][0]["tags"] = json!(["foundation"]);
     registry["organizations"]
         .as_array_mut()
         .expect("organizations")
@@ -41,15 +48,28 @@ fn two_organizations() -> World {
     row["id"] = json!(OTHER);
     row["display_name"] = json!("Far");
     row["organization"] = json!("elsewhere");
+    row["tags"] = json!(["elsewhere"]);
     row["root"] = json!(far.to_string_lossy());
+    registry["projects"]
+        .as_array_mut()
+        .expect("projects")
+        .push(row);
+    let mut row = registry["projects"][0].clone();
+    row["id"] = json!(UNWATCHED);
+    row["display_name"] = json!("Idle");
+    row["root"] = json!(idle.to_string_lossy());
     registry["projects"]
         .as_array_mut()
         .expect("projects")
         .push(row);
     write_json(&world.registry_path(), &registry);
 
-    let watching =
-        json!({ "providers": [{ "provider": "custom-status", "command": "cat status.txt" }] });
+    let watching = json!({
+        "providers": [{
+            "provider": "custom-status",
+            "command": "printf '%s\\n' \"$EPHOR_PROJECT\" >> ../refreshes.txt; cat status.txt"
+        }]
+    });
     world.configure(json!({
         "work": {
             "recipes": [{
@@ -63,6 +83,106 @@ fn two_organizations() -> World {
     }));
     world.ephor().args(["refresh"]).assert().success();
     world
+}
+
+/// Run a refresh from the public command line and return the projects whose
+/// provider actually ran. The shared log makes duplicate work observable.
+fn refreshed_projects(world: &World, args: &[&str]) -> Vec<String> {
+    std::fs::write(world.path().join("refreshes.txt"), "").expect("clear the refresh log");
+    world
+        .ephor()
+        .arg("refresh")
+        .args(args)
+        .arg("--quiet")
+        .assert()
+        .success();
+    let mut refreshed: Vec<String> = world
+        .read("refreshes.txt")
+        .lines()
+        .map(str::to_string)
+        .collect();
+    refreshed.sort();
+    refreshed
+}
+
+/// `refresh` takes the repeatable spelling its sibling sweeps take, keeps the
+/// positional spelling, and treats both as one direct-project set under the
+/// global selectors (§FS-011-command-line.9). The provider log proves which
+/// projects were really refreshed and proves a repeated name did not run
+/// twice.
+#[test]
+fn refresh_accepts_named_and_positional_projects_as_one_scoped_set() {
+    let world = two_organizations();
+    let both = vec![PROJECT.to_string(), OTHER.to_string()];
+
+    assert_eq!(
+        refreshed_projects(&world, &["--project", PROJECT, "--project", OTHER]),
+        both,
+        "repeated named selectors did not refresh their projects exactly once"
+    );
+    world
+        .ephor()
+        .args(["refresh", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--project <PROJECT>"));
+    assert_eq!(
+        refreshed_projects(&world, &[PROJECT, OTHER]),
+        both,
+        "the compatible positional spelling changed"
+    );
+    assert_eq!(
+        refreshed_projects(&world, &[PROJECT, "--project", OTHER, "--project", PROJECT]),
+        both,
+        "mixed spellings were not unioned and de-duplicated"
+    );
+
+    for (selector, value) in [
+        ("--workspace", PROJECT),
+        ("--tag", "foundation"),
+        ("--org", "foundation"),
+    ] {
+        std::fs::write(world.path().join("refreshes.txt"), "").expect("clear the refresh log");
+        world
+            .ephor()
+            .args([
+                "refresh",
+                "--project",
+                PROJECT,
+                "--project",
+                OTHER,
+                selector,
+                value,
+                "--quiet",
+            ])
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains(format!(
+                "Project '{OTHER}' is outside {selector} {value}"
+            )));
+        assert_eq!(
+            world.read("refreshes.txt"),
+            "",
+            "refresh started before refusing {selector}"
+        );
+    }
+
+    for project in ["missing", UNWATCHED] {
+        std::fs::write(world.path().join("refreshes.txt"), "").expect("clear the refresh log");
+        world
+            .ephor()
+            .args(["refresh", "--project", project, "--quiet"])
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains(format!(
+                "Project '{project}' has no feed configuration"
+            )));
+        assert_eq!(
+            world.read("refreshes.txt"),
+            "",
+            "refresh fell back after refusing {project}"
+        );
+    }
 }
 
 /// The ticket's first reproducer: the two organizations printed the same
