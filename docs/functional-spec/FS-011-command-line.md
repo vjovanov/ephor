@@ -246,8 +246,8 @@ workspace would land outside the project's own workspace area or on its work
 root ([§FS-004-quick-actions.7.3](FS-004-quick-actions.md#73-where-the-workspace-goes-is-decided-before-anything-is-made)).
 Refusing exits **2** and prints as every other refusal does, which is what lets
 a caller tell "you gave me something I cannot use" from "you gave me nothing"
-by the exit code alone. Every value is read where the command starts rather
-than where it is used, so a refusal happens **instead of** the work rather than
-after it: a report path nothing filled that is noticed only once the branch has
-been replayed has left the replay standing and taken the exit code the replay's
-own outcome needed.
+by the exit code alone. Every value is read before the command acts on anything
+a caller would have to undo, so a refusal happens **instead of** the work
+rather than after it: a report path nothing filled that is noticed only once
+the branch has been replayed has left the replay standing and taken the exit
+code the replay's own outcome needed.
