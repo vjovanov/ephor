@@ -607,7 +607,7 @@ fn dispatch_work(
         // Work that needs nobody to start it gets its run in the same breath
         // as the ticket (§FS-005-dispatch.24). The sweep decides what that
         // is, so this starts nothing where nothing asked for it and nothing
-        // on a root a run already holds.
+        // in a checkout a run already holds.
         started(&mut dispatcher, projects, args.json)?;
     }
     // What the reader should know about who got the work: a hand nobody could
