@@ -372,20 +372,20 @@ ephor doctor [--project P] [--skip-self|--self-only] [--json]
   because it did not read the feeds it would be forgetting.
 - **`failures`** prints what went wrong under one red gate; it is what the
   quick action on a red gate runs.
-- **`rebase`** replays a checkout onto its main branch — or, with
-  `--upstream`, onto the branch's own published copy — and is what the quick
-  actions on a branch that has fallen behind run
-  ([§8.11](#811-rebasing-a-branch-that-has-fallen-behind)). Its exit codes are
-  its own — `3` is a conflict, not a failure.
+- **`rebase`** replays a checkout onto its main branch — or, with `--upstream`,
+  onto the branch's own published copy — and is what the quick actions on a
+  branch that has fallen behind run ([§8.11](#811-rebasing-a-branch-that-has-fallen-behind)).
+  Its exit codes are its own — `3` is a conflict, not a failure.
 - **`checkout`** makes the branch workspace that is not there yet, one working
   tree per repository, and is what the quick action on a missing checkout runs
-  ([§7.1](#71-quick-actions)). It needs nothing but the registry: the project
-  says where the workspace goes, which repositories it holds, and what a new
-  branch grows from. A workspace that is *partly* there is completed rather
-  than reported as already there — this is the one command whose exit code
-  answers "is this workspace whole", which is why every other fold can name a
-  repository that is not on disk and carry on
-  ([§8.11](#811-rebasing-a-branch-that-has-fallen-behind)).
+  ([§7.1](#71-quick-actions)). It needs nothing but the registry, which says where
+  the workspace goes, which repositories it holds, and what a new branch grows
+  from. Where it goes is settled before anything is made — git takes the name, its
+  path stays in the area `branch_root_template` puts branch workspaces in, and it
+  is neither the work root nor inside it, or exit `2` with nothing on disk. A
+  workspace *partly* there is completed rather than reported as already there:
+  this command's exit code answers "is this workspace whole", which is why every
+  other fold can name a repository not on disk and carry on ([§8.11](#811-rebasing-a-branch-that-has-fallen-behind)).
 - **`capabilities`** prints the ladder of §7.5 for a project — held rungs, and
   missing ones with the reason a refused action would show ([§4.3.2](#432-what-a-project-can-do--capabilities)).
 - **`doctor`** asks whether any of this still works, and says so in its exit
@@ -675,7 +675,7 @@ ephor schema answer > answer.schema.json    # validate your verb's output offlin
 |---|---|
 | 0 | fine |
 | 1 | the command failed |
-| 2 | configuration or registry error |
+| 2 | configuration or registry error, or a value you gave that the command will not act on |
 | 3 | every provider failed — nothing could be fetched at all |
 | 4 | some providers were lost (`refresh`, `doctor`), or unread needs-response items exist (`status --check`) |
 
