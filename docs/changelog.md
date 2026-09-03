@@ -61,7 +61,7 @@ ships, the previous "latest" section moves verbatim to
   rather than inside each of them, put a working tree on top of the work root
   and exited zero. The shipped `{workspace}/panta` renders inside each workspace
   and cannot collide, so a project on the default configuration keeps `panta` as
-  an ordinary branch name. (PR #N)
+  an ordinary branch name. (PR #68)
 
 ### Changed
 
