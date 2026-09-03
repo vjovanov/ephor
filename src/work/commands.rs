@@ -1473,9 +1473,14 @@ fn run_work(
     let mut dispatcher = Dispatcher::load(config)?;
     // The runtime is a rung like every other capacity ephor leans on, and the
     // refusal is the table's sentence rather than this command's own
-    // (§AR-005-capabilities.2).
-    if let Some(refusal) = runtime::refusal(&config.work) {
-        return Err(EphorError::Command(refusal));
+    // (§AR-005-capabilities.2). A held run starts nothing, so it does not lean
+    // on that rung and must not refuse for it: reporting what would run is
+    // exactly what you ask for on a machine where the runtime is absent
+    // (§FS-011-command-line.10).
+    if !gate.holds() {
+        if let Some(refusal) = runtime::refusal(&config.work) {
+            return Err(EphorError::Command(refusal));
+        }
     }
     let entries: Vec<Entry> = dispatcher
         .ledger
