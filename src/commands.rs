@@ -11,7 +11,7 @@ use crate::api::read::Subject;
 use crate::api::{offers, views, Session};
 use crate::cli::{
     ActionsArgs, ActionsCommand, ActionsListArgs, ActionsOpenArgs, ActionsRunArgs, BranchesArgs,
-    OperationsArgs, ReactArgs, ReplyArgs, SubjectArgs, ThreadArgs, TickArgs,
+    BurnArgs, OperationsArgs, ReactArgs, ReplyArgs, SubjectArgs, ThreadArgs, TickArgs,
 };
 use crate::error::{registry_error, EphorError, Result};
 use crate::feed::config::load_config;
@@ -706,3 +706,85 @@ pub fn reply(args: &ReplyArgs) -> Result<ExitCode> {
 /// Kept beside the rest so a surface never reaches past the API for the one
 /// name a freehand entry answers to (§AR-009-surfaces.5).
 pub const FREEHAND: &str = offers::FREEHAND_ID;
+
+/// A name that fits its column. The reading is a table, and a key long enough
+/// to push the numbers out of line is a table nobody can read down.
+fn clipped(name: &str, width: usize) -> String {
+    match name.chars().count() > width {
+        true => format!("{}…", name.chars().take(width - 1).collect::<String>()),
+        false => name.to_string(),
+    }
+}
+
+/// `ephor burn` (§FS-013-burn.8): what this machine is spending on agents.
+///
+/// It refreshes the store before reading it, and only where the store has
+/// gone stale (§FS-013-burn.8). That is reading local files the agent tools
+/// were writing anyway, not a fetch — `refresh` is still the only verb that
+/// asks the world (§FS-001-forge-interface.7).
+pub fn burn(args: &BurnArgs) -> Result<ExitCode> {
+    let config = load_config()?;
+    let mut session = Session::open(&config)?;
+    session.burn_refresh(args.rescan);
+    let reading = session.burn(args.window, args.by);
+    if args.json {
+        emit(&reading);
+        return Ok(ExitCode::SUCCESS);
+    }
+    use crate::burn::render;
+    let spans: Vec<u64> = reading.now.spans.iter().map(|span| span.tokens).collect();
+    println!(
+        "Burn · {} · by {} · {} lens",
+        reading.window, reading.by, reading.lens
+    );
+    println!(
+        "now  {:<12}  {}",
+        render::rate(reading.now.rate),
+        render::spark(&spans)
+    );
+    for row in &reading.now.live {
+        println!(
+            "  {:<22} {:<14} {:>10}  live{}",
+            row.model,
+            row.project,
+            render::rate(row.rate),
+            if row.subagent { " · sub-agent" } else { "" }
+        );
+    }
+    println!();
+    println!(
+        "  {:<28} {:>9} {:>9} {:>9} {:>9}  {}",
+        reading.by, "in", "out", "cache-r", "cache-w", "cost"
+    );
+    for row in &reading.groups {
+        let named = match &row.detail {
+            Some(detail) => format!("{} ({detail})", row.key),
+            None => row.key.clone(),
+        };
+        println!(
+            "  {:<28} {:>9} {:>9} {:>9} {:>9}  {}",
+            clipped(&named, 28),
+            render::tokens(row.spend.input),
+            render::tokens(row.spend.output),
+            render::tokens(row.spend.cache_read),
+            render::tokens(row.spend.cache_write),
+            render::cost(row.spend.cost_usd),
+        );
+    }
+    println!(
+        "  {:<28} {:>9} {:>9} {:>9} {:>9}  {}",
+        "total",
+        render::tokens(reading.totals.input),
+        render::tokens(reading.totals.output),
+        render::tokens(reading.totals.cache_read),
+        render::tokens(reading.totals.cache_write),
+        render::cost(reading.totals.cost_usd),
+    );
+    // What the lens could not measure is part of the reading, never a low
+    // number left to be read as a fact (§FS-013-burn.2).
+    if let Some(says) = &reading.says {
+        println!();
+        println!("note: {says}");
+    }
+    Ok(ExitCode::SUCCESS)
+}

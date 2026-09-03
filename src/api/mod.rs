@@ -8,6 +8,7 @@
 //! which call; it never computes an answer of its own (§AR-001-layers.1).
 
 pub mod act;
+pub mod burn;
 pub mod conversation;
 pub mod offers;
 pub mod parity;

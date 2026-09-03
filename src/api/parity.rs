@@ -122,6 +122,34 @@ pub const ABILITIES: &[Ability] = &[
         keys: &["a"],
         command: "operations attach",
     },
+    // The Burn page and its two keys (§FS-013-burn.8). Each one shows a fact
+    // nothing else on either surface shows — a different window and a
+    // different grouping are different numbers — so each is an ability rather
+    // than a mode, and each is carried by an argument of the same command.
+    Ability {
+        what: "what this machine is spending on agents",
+        keys: &["$"],
+        command: "burn",
+    },
+    Ability {
+        what: "how far back the spending is counted",
+        keys: &["w"],
+        command: "burn --window",
+    },
+    // `B` and not `b`, which is a page up on every screen that scrolls. A key
+    // cannot be exempt and owed at once — that is the exemption swallowing a
+    // command that was owed — so the grouping takes the shifted key and says
+    // why here (§REQ-002-parity.1).
+    Ability {
+        what: "how the spending is grouped, and so which lens answers",
+        keys: &["B"],
+        command: "burn --by",
+    },
+    Ability {
+        what: "read the transcripts again rather than waiting for the store to go stale",
+        keys: &["R"],
+        command: "burn --rescan",
+    },
     Ability {
         what: "what a job wrote",
         keys: &["L"],
