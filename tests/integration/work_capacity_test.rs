@@ -15,33 +15,6 @@ use serde_json::{json, Value};
 
 use common::*;
 
-/// Copy the dispatched fixture's plan and ledger entry onto another checkout,
-/// producing another independently lockable due root without inventing a
-/// second dispatch implementation inside the test.
-fn duplicate_work_root(tmp: &Path, item: &str, checkout_name: &str) {
-    let ledger_path = tmp.join("state/ephor/work.json");
-    let mut ledger: Value =
-        serde_json::from_str(&fs::read_to_string(&ledger_path).unwrap()).unwrap();
-    let original = ledger["entries"]["github-prs:acme/widget#42"].clone();
-    let source_root = tmp.join("demo/panta");
-    let checkout = tmp.join(checkout_name);
-    let root = checkout.join("panta");
-    fs::create_dir_all(&root).unwrap();
-    fs::copy(source_root.join("states.yaml"), root.join("states.yaml")).unwrap();
-    let plan_id = format!("github-prs-acme-widget-{checkout_name}");
-    let plan = root.join(format!("{plan_id}.rhei.md"));
-    fs::copy(source_root.join("github-prs-acme-widget-42.rhei.md"), &plan).unwrap();
-
-    let mut copied = original;
-    copied["root"] = json!(root);
-    copied["checkout"] = json!(checkout);
-    copied["branch"] = Value::Null;
-    copied["plan_id"] = json!(plan_id);
-    copied["plan"] = json!(plan);
-    ledger["entries"][item] = copied;
-    fs::write(&ledger_path, serde_json::to_string_pretty(&ledger).unwrap()).unwrap();
-}
-
 /// A detached runner whose `second` root finishes inside the handshake and
 /// whose other roots hold their runtime lock long enough for the sweep to
 /// account for them. Its child redirects the inherited pipes so the launcher
@@ -662,16 +635,6 @@ fn assign_project(tmp: &Path, item: &str, project: &str) {
         serde_json::from_str(&fs::read_to_string(&ledger_path).unwrap()).unwrap();
     ledger["entries"][item]["project"] = json!(project);
     fs::write(&ledger_path, serde_json::to_string_pretty(&ledger).unwrap()).unwrap();
-}
-
-/// Take and hold a work root's runtime lock, so the sweep reads it as a root
-/// somebody else's run already has.
-fn hold(root: &Path) -> fs::File {
-    fs::create_dir_all(root.join(".rhei")).unwrap();
-    fs::write(root.join(".rhei/run.lock"), "").unwrap();
-    let holder = fs::File::open(root.join(".rhei/run.lock")).unwrap();
-    holder.lock().unwrap();
-    holder
 }
 
 /// A dispatched fixture with one autorun recipe, whose site ceiling of zero

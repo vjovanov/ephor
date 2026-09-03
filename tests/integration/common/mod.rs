@@ -346,3 +346,48 @@ pub fn starts(log: &Path) -> usize {
         .filter(|line| line.contains("--headless"))
         .count()
 }
+
+/// Copy the dispatched fixture's plan and ledger entry onto another checkout,
+/// producing another independently lockable due root without inventing a
+/// second dispatch implementation inside a test.
+pub fn duplicate_work_root(tmp: &Path, item: &str, checkout_name: &str) {
+    duplicate_root_at(tmp, item, &tmp.join(checkout_name), "panta", checkout_name);
+}
+
+/// The same, with the checkout and the work root's own name both given — so a
+/// second root can be put *inside a checkout that already has one*. Two work
+/// roots over one working tree is the shape one live run per checkout is about
+/// (§FS-005-dispatch.24), and it is not reachable through the checkout name
+/// alone.
+pub fn duplicate_root_at(tmp: &Path, item: &str, checkout: &Path, root_name: &str, label: &str) {
+    let ledger_path = tmp.join("state/ephor/work.json");
+    let mut ledger: Value =
+        serde_json::from_str(&fs::read_to_string(&ledger_path).unwrap()).unwrap();
+    let original = ledger["entries"]["github-prs:acme/widget#42"].clone();
+    let source_root = tmp.join("demo/panta");
+    let root = checkout.join(root_name);
+    fs::create_dir_all(&root).unwrap();
+    fs::copy(source_root.join("states.yaml"), root.join("states.yaml")).unwrap();
+    let plan_id = format!("github-prs-acme-widget-{label}");
+    let plan = root.join(format!("{plan_id}.rhei.md"));
+    fs::copy(source_root.join("github-prs-acme-widget-42.rhei.md"), &plan).unwrap();
+
+    let mut copied = original;
+    copied["root"] = json!(root);
+    copied["checkout"] = json!(checkout);
+    copied["branch"] = Value::Null;
+    copied["plan_id"] = json!(plan_id);
+    copied["plan"] = json!(plan);
+    ledger["entries"][item] = copied;
+    fs::write(&ledger_path, serde_json::to_string_pretty(&ledger).unwrap()).unwrap();
+}
+
+/// Take and hold a work root's runtime lock, so a sweep reads it as a root
+/// somebody else's run already has.
+pub fn hold(root: &Path) -> fs::File {
+    fs::create_dir_all(root.join(".rhei")).unwrap();
+    fs::write(root.join(".rhei/run.lock"), "").unwrap();
+    let holder = fs::File::open(root.join(".rhei/run.lock")).unwrap();
+    holder.lock().unwrap();
+    holder
+}
