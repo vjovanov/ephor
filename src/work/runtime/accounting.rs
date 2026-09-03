@@ -26,8 +26,9 @@ use serde_json::Value;
 
 use crate::burn::Tokens;
 
-/// Where the runtime keeps one record per invocation, relative to the work
-/// root. Read and never written here.
+/// Where the runtime keeps one record per invocation — relative to the *plan*
+/// it is running, which sits inside the work root rather than being it
+/// (§FS-013-burn.1). Read and never written here.
 const INVOCATIONS: &str = "runtime/accounting/invocations";
 
 /// One agent invocation the runtime paid for.
@@ -76,17 +77,24 @@ impl Invocation {
 /// one when it has metered something, and a root it has not run yet has
 /// nothing to say.
 pub fn under(root: &Path) -> Vec<Invocation> {
-    let Ok(entries) = fs::read_dir(root.join(INVOCATIONS)) else {
-        return Vec::new();
-    };
-    let mut found: Vec<Invocation> = entries
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
-        .filter_map(|path| fs::read_to_string(path).ok())
-        .filter_map(|text| serde_json::from_str::<Value>(&text).ok())
-        .filter_map(|record| invocation(root, &record))
-        .collect();
+    let mut found: Vec<Invocation> = Vec::new();
+    for dir in metered(root) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            continue;
+        };
+        found.extend(
+            entries
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+                .filter_map(|path| fs::read_to_string(path).ok())
+                .filter_map(|text| serde_json::from_str::<Value>(&text).ok())
+                // The work root, not the plan directory the record was found
+                // in: the ledger keys its dispatches by root and plan, and the
+                // plan is read off the task id (§FS-005-dispatch.4).
+                .filter_map(|record| invocation(root, &record)),
+        );
+    }
     found.sort_by(|left, right| {
         left.at
             .cmp(&right.at)
@@ -95,17 +103,44 @@ pub fn under(root: &Path) -> Vec<Invocation> {
     found
 }
 
+/// Every place under one work root the runtime may have metered into: each
+/// plan directory it holds, and the root itself.
+///
+/// A run meters into the plan it is running, so the records sit one directory
+/// down (§FS-013-burn.1). The root is looked at as well because nothing
+/// promises it will stay that way, and a directory that is not there costs a
+/// failed `read_dir` and no more.
+fn metered(root: &Path) -> Vec<PathBuf> {
+    let mut places = vec![root.join(INVOCATIONS)];
+    if let Ok(entries) = fs::read_dir(root) {
+        let mut plans: Vec<PathBuf> = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.is_dir())
+            .map(|path| path.join(INVOCATIONS))
+            .collect();
+        // `read_dir` answers in whatever order the filesystem holds; a
+        // reading is the same twice running.
+        plans.sort();
+        places.extend(plans);
+    }
+    places
+}
+
 fn invocation(root: &Path, record: &Value) -> Option<Invocation> {
     let task = string(record, "task_id")?;
     let plan = task
         .split_once('.')
         .map(|(plan, _)| plan.to_string())
         .unwrap_or_else(|| task.clone());
+    let reported = measure(record, &["tokens", "input", "total"]);
+    let cache_read = measure(record, &["tokens", "input", "cached_read"]);
+    let cache_write = measure(record, &["tokens", "input", "cache_write"]);
     let tokens = Tokens {
-        input: measure(record, &["tokens", "input", "total"]),
+        input: uncached(reported, cache_read, cache_write),
         output: measure(record, &["tokens", "output", "total"]),
-        cache_read: measure(record, &["tokens", "input", "cached_read"]),
-        cache_write: measure(record, &["tokens", "input", "cache_write"]),
+        cache_read,
+        cache_write,
     };
     Some(Invocation {
         root: root.to_path_buf(),
@@ -123,6 +158,28 @@ fn invocation(root: &Path, record: &Value) -> Option<Invocation> {
         tokens,
         cost_usd: priced(record),
     })
+}
+
+/// The part of a reported input total that was actually paid at the input
+/// rate (§FS-013-burn.3).
+///
+/// The two tools the runtime shells out to disagree about the cached
+/// counters: one reports them *inside* the input total it hands over, the
+/// other reports them *beside* it. The runtime passes on whichever it was
+/// given and no field says which, so the numbers themselves have to answer —
+/// and they can, because counters larger than the total they would be part of
+/// cannot be part of it. Inside, they come out, and the four counters then
+/// add back up to the record's own total; beside, the input stands as it is.
+///
+/// Read the wrong way round, a cache read is counted twice — 3.6x over this
+/// machine's records, which is the whole reason this is a function and not a
+/// subtraction written inline.
+fn uncached(reported: u64, cache_read: u64, cache_write: u64) -> u64 {
+    let cached = cache_read.saturating_add(cache_write);
+    match cached <= reported {
+        true => reported - cached,
+        false => reported,
+    }
 }
 
 /// A counter the runtime reports as `{ "value": n }` beside a source, or as a
@@ -238,18 +295,50 @@ mod tests {
       "pricing": { "status": "unpriced" }
     }"#;
 
+    /// The other shape a record comes in: this tool reports its cached
+    /// counters *beside* the input rather than inside it, so 216 is the whole
+    /// of what was paid at the input rate and the record's own total leaves
+    /// the cache out (§FS-013-burn.3).
+    const BESIDE: &str = r#"{
+      "task_id": "tickets.5", "state": "implement", "visit": 1,
+      "agent": "claude-code", "provider": "anthropic", "model": "claude-opus-5",
+      "started_at": "2026-09-02T22:24:26Z", "ended_at": "2026-09-02T22:46:32Z",
+      "extraction_status": "measured",
+      "tokens": {
+        "total": { "value": 106969 },
+        "input": { "total": { "value": 216 },
+                   "cached_read": { "value": 18590602 },
+                   "cache_write": { "value": 278786 } },
+        "output": { "total": { "value": 106753 } } },
+      "pricing": { "status": "unpriced" }
+    }"#;
+
+    /// A work root as the runtime leaves it: the records sit under the plan
+    /// that was run, not in the root itself (§FS-013-burn.1).
     fn root(records: &[&str]) -> tempfile::TempDir {
+        plans(&[("a-plan", records)])
+    }
+
+    /// A work root holding several plans, each with its own records.
+    fn plans(each: &[(&str, &[&str])]) -> tempfile::TempDir {
         let home = tempfile::tempdir().expect("a temporary world");
-        let dir = home.path().join(INVOCATIONS);
-        fs::create_dir_all(&dir).expect("the accounting directory");
-        for (index, record) in records.iter().enumerate() {
-            fs::write(dir.join(format!("{index}.json")), record).expect("a record");
+        for (plan, records) in each {
+            let dir = home.path().join(plan).join(INVOCATIONS);
+            fs::create_dir_all(&dir).expect("the accounting directory");
+            for (index, record) in records.iter().enumerate() {
+                fs::write(dir.join(format!("{index}.json")), record).expect("a record");
+            }
         }
         home
     }
 
     /// The counters are read apart, the plan comes off the qualified task id,
     /// and a status where a number was expected is not a zero.
+    ///
+    /// The cached part is taken out of the input, because this record reports
+    /// it inside — so the four counters add back up to the 78 625 the record
+    /// itself claims, which a naive reading would have made 141 089
+    /// (§FS-013-burn.3).
     #[test]
     fn a_record_is_read_into_the_four_counters() {
         let home = root(&[MEASURED]);
@@ -262,11 +351,16 @@ mod tests {
         assert_eq!(
             one.tokens,
             Tokens {
-                input: 77147,
+                input: 14683,
                 output: 1478,
                 cache_read: 62464,
                 cache_write: 0
             }
+        );
+        assert_eq!(
+            one.tokens.total(),
+            78625,
+            "the counters no longer add up to the record's own total"
         );
         assert!(one.measured);
         assert_eq!(one.cost_usd, None, "unpriced must not become a zero");
@@ -291,6 +385,47 @@ mod tests {
         assert!(says.contains("claude"), "{says}");
         // Everything measured: nothing to say, and the absence means that.
         assert_eq!(unmeasured(&found[..1]), None);
+    }
+
+    /// The other shape: cached counters reported beside the input rather than
+    /// inside it are already apart, so the input stands as it is and taking
+    /// them out again would throw away the only input the record has
+    /// (§FS-013-burn.3).
+    #[test]
+    fn a_record_reporting_its_cache_beside_the_input_keeps_the_input() {
+        let home = root(&[BESIDE]);
+        let found = under(home.path());
+        assert_eq!(found.len(), 1);
+        assert_eq!(
+            found[0].tokens,
+            Tokens {
+                input: 216,
+                output: 106753,
+                cache_read: 18590602,
+                cache_write: 278786
+            }
+        );
+        // Here the record's own total is the uncached part only, so the
+        // reading is larger than it on purpose: the cache was still spent.
+        assert_eq!(found[0].tokens.input + found[0].tokens.output, 106969);
+    }
+
+    /// Where the records actually are: the runtime meters into the plan it is
+    /// running, so they sit one directory below the work root — and a reader
+    /// that looked only at the root would report a busy week as an empty one
+    /// (§FS-013-burn.1).
+    #[test]
+    fn the_records_are_found_under_the_plan_the_runtime_ran() {
+        let home = plans(&[("first-plan", &[MEASURED]), ("second-plan", &[QUIET])]);
+        // Nothing at the root itself, which is exactly the shape on disk.
+        assert!(!home.path().join(INVOCATIONS).exists());
+        let found = under(home.path());
+        assert_eq!(found.len(), 2, "{found:?}");
+        // And the root each one carries is the work root, not the plan
+        // directory it was found in: that is what the ledger keys on.
+        assert!(found.iter().all(|one| one.root == home.path()));
+        assert_eq!(found[0].task, "tickets.3");
+        assert_eq!(found[1].task, "tickets.4");
     }
 
     /// A root the runtime has not metered is empty, not an error.

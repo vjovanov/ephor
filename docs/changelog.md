@@ -125,6 +125,14 @@ ships, the previous "latest" section moves verbatim to
   rather than summed, because it is cumulative; each delta attributed to the
   model in force at that event; and a dollar rollup filed under the model its
   own session called, so tokens and dollars are one row instead of two.
+  A response written as one record per content block is charged once, under
+  the request its records all name, so a reply that calls two tools is not
+  billed three times. The runtime's records are read where it writes them —
+  one directory per plan under each work root — and their cached counters are
+  taken out of the input where the tool that reported them put them inside it
+  and left alone where it put them beside it, since both shapes arrive and no
+  field says which. A matter's burn reaches the plans a workflow laid down
+  for it as well as the one its ledger entry wrote itself.
   Records are attributed to a project by matching the directory they ran in
   against the registry, longest match first, and anything under no registered
   root lands in `other` rather than being dropped. Scanning is incremental —
@@ -140,7 +148,7 @@ ships, the previous "latest" section moves verbatim to
   ships no price book — so **`unpriced` is never rendered as `$0.00`**, and
   `cost_usd: null` with `priced: false` stays distinct from a priced zero in
   the machine form. Deferred and written down rather than dropped: a site
-  price book, per-invocation live detail, and drilling into a row. (PR #N)
+  price book, per-invocation live detail, and drilling into a row. (PR #60)
 
 - **Autorun capacity has an organization tier between the site's and each
   project's**

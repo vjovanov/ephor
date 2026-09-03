@@ -25,11 +25,16 @@ the runtime shells out to the same tools. It groups by project, by model and
 by session.
 
 **The work lens** is what a piece of work cost. It is built from the
-runtime's own accounting records under each work root, which name the plan,
-the ticket and the state that spent them, and it reaches a matter through
-ephor's own ledger — a plan was dispatched *for* a matter, so a matter's burn
-is the burn of the plans dispatched for it ([§FS-005-dispatch.4](FS-005-dispatch.md#4-the-ledger-is-ephors-record-and-never-the-truth-about-the-work)). It groups
-by plan and by matter.
+runtime's own accounting records, which name the plan, the ticket and the
+state that spent them. The runtime meters into the plan it is running, so
+they sit one directory per plan under each work root rather than in the root
+itself — a reader that looked only at the root would find nothing, ever, and
+report it as a quiet week. It reaches a matter through ephor's own ledger —
+a plan was dispatched *for* a matter, so a matter's burn
+is the burn of the plans dispatched for it ([§FS-005-dispatch.4](FS-005-dispatch.md#4-the-ledger-is-ephors-record-and-never-the-truth-about-the-work)): the plan
+the entry wrote itself *and* every plan a workflow laid down beside it, since
+a supervised fix spends all of it under the second. It groups by plan and by
+matter.
 
 A run measured by both appears in both. **Neither reading ever contains the
 other's numbers, and no total sums them.** A surface that added them would
@@ -79,7 +84,12 @@ here rather than left to whoever writes the next reader:
 - **One log reports its cached counters inside the input total and the other
   reports them beside it.** Where they are inside, what is left after taking
   them out is the input; where they are beside, they are already apart. Read
-  the wrong way round, a cache read is counted twice.
+  the wrong way round, a cache read is counted twice. The runtime's own
+  records carry *both* shapes, because each one passes on whatever the tool it
+  ran reported, and no field says which. They are told apart by the only thing
+  that does say: cached counters larger than the input total cannot be part of
+  it, so they are beside it; cached counters that fit inside it are inside it,
+  and what is left after taking them out is the input.
 - **One log spells a model two ways**: its calls name the model, and its
   dollar rollup names the same model with its billing terms in brackets after
   it (`claude-opus-5` and `claude-opus-5[1m]`). Kept apart they are two rows

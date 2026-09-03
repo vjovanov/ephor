@@ -140,15 +140,7 @@ impl super::Session {
         }
         // A plan was dispatched *for* a matter, and the ledger is where that
         // is written down (§FS-005-dispatch.4). Nothing else joins the two.
-        let matters: BTreeMap<(PathBuf, String), (String, String)> = crate::work::ledger::load()
-            .map(|ledger| {
-                ledger
-                    .entries
-                    .into_iter()
-                    .map(|(id, entry)| ((entry.root, entry.plan_id), (id, entry.title)))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let matters = dispatched();
         let mut rows: BTreeMap<String, (Tokens, Option<f64>, Option<String>)> = BTreeMap::new();
         let mut skipped = 0usize;
         for one in &found {
@@ -195,6 +187,39 @@ impl super::Session {
         }
         (groups, spend(&tokens, cost), says(&found, skipped, by))
     }
+}
+
+/// Every plan the ledger says was dispatched for a matter, keyed the way an
+/// invocation is found — by the root it sits under and the plan that spent it
+/// (§FS-013-burn.1).
+///
+/// An entry names *two* kinds of plan: the one it wrote its own ticket into,
+/// and the one each workflow dispatch laid down beside it
+/// (§FS-005-dispatch.19). The second is where a supervised fix spends
+/// everything, and its accounting records are qualified by it — so a join on
+/// the entry's own plan alone reaches no matter at all for the very shape
+/// most work has. `enumerate_roots` already walks both.
+fn dispatched() -> BTreeMap<(PathBuf, String), (String, String)> {
+    crate::work::ledger::load()
+        .map(|ledger| matters_of(&ledger.entries))
+        .unwrap_or_default()
+}
+
+fn matters_of(
+    entries: &BTreeMap<String, crate::work::ledger::Entry>,
+) -> BTreeMap<(PathBuf, String), (String, String)> {
+    let mut found: BTreeMap<(PathBuf, String), (String, String)> = BTreeMap::new();
+    for (id, entry) in entries {
+        let plans = std::iter::once(entry.plan_id.clone())
+            .chain(entry.dispatches.iter().filter_map(|one| one.plan.clone()));
+        for plan in plans {
+            found.insert(
+                (entry.root.clone(), plan),
+                (id.clone(), entry.title.clone()),
+            );
+        }
+    }
+    found
 }
 
 /// What the work lens has to say about itself: what it could not measure
@@ -275,6 +300,44 @@ mod tests {
         // it is priced — which is the only honest answer either way round.
         assert_eq!(totals.cost_usd, Some(0.0));
         assert_eq!(totals.tokens, 15);
+    }
+
+    /// The plan a workflow laid down is the one the invocations name, and it
+    /// has to reach the matter it was laid down for — otherwise every
+    /// supervised fix, which is the shape most work has, is reported as
+    /// belonging to no matter at all (§FS-013-burn.1, §FS-005-dispatch.19).
+    #[test]
+    fn a_plan_a_workflow_laid_down_reaches_the_matter_it_was_for() {
+        let ledger = r#"{
+          "github-issues:vjovanov/ephor#39": {
+            "project": "ephor", "title": "Burn: a token-burn page in the TUI",
+            "root": "/w/ephor/panta",
+            "plan_id": "github-issues-vjovanov-ephor-39",
+            "plan": "/w/ephor/panta/github-issues-vjovanov-ephor-39.rhei.md",
+            "dispatches": [{
+              "ticket": "", "recipe": "supervised-ticket-fix",
+              "at": "2026-09-02T22:00:00Z",
+              "plan": "github-issues-vjovanov-ephor-39-fix-issue",
+              "snapshot": { "updated_at": "2026-09-02T22:00:00Z" }
+            }]
+          }
+        }"#;
+        let entries: BTreeMap<String, crate::work::ledger::Entry> =
+            serde_json::from_str(ledger).expect("a ledger");
+        let matters = matters_of(&entries);
+        let root = PathBuf::from("/w/ephor/panta");
+        // What the accounting records under that root are actually qualified
+        // by: the plan the workflow laid down, not the entry's own.
+        let laid = matters
+            .get(&(
+                root.clone(),
+                "github-issues-vjovanov-ephor-39-fix-issue".to_string(),
+            ))
+            .expect("the plan the workflow laid down reaches no matter");
+        assert_eq!(laid.0, "github-issues:vjovanov/ephor#39");
+        // And the entry's own plan still does, for work dispatched as a
+        // ticket rather than as a workflow.
+        assert!(matters.contains_key(&(root, "github-issues-vjovanov-ephor-39".to_string())));
     }
 
     /// An empty window says so rather than printing an empty table that reads
