@@ -183,8 +183,8 @@ rule is written down now, and the mechanism under most of it has shipped
 ([`## Unreleased`](changelog.md#unreleased)). What is missing is any
 construction that holds a reader to it:
 [§FS-014-work-root-scopes.7](functional-spec/FS-014-work-root-scopes.md#7-what-is-not-yet-held)
-names three parts of the rule that are stated there and enforced nowhere, and
-this entry is where they are tracked.
+names three parts of the rule that are stated there and that this program does
+not yet enforce, and this entry is where they are tracked.
 
 Roughly half of what it tracks is not in this repository at all. That half is
 listed anyway, because an entry that hides its other half reads as stalled when
@@ -221,8 +221,8 @@ itself:
   that.**
   [§FS-014-work-root-scopes.4](functional-spec/FS-014-work-root-scopes.md#4-a-handed-down-ticket-names-where-it-came-from-and-the-trail-runs-both-ways)
   is owed in both directions — neither the origin on the ticket nor the spawned
-  ids on the result is written by anything — and it is the one part of the rule
-  with no ticket behind it. Opening that issue is part of this entry, not a
+  ids on the result is written by anything — and it is the one of the three with
+  no ticket behind it. Opening that issue is part of this entry, not a
   precondition for it.
 - **`ephor checkout` accepts any branch name** (#46), `panta` included — which
   puts a working tree exactly on top of the work root whose plans that branch's
@@ -230,12 +230,12 @@ itself:
   the three, and it belongs here anyway: a placement rule whose checkout verb
   can land a tree on a work root is a rule the program itself can break.
 
-**Owed elsewhere.** The other half is the workspace a set of projects is checked
-out in, which is a repository of its own and not this one. Four things there
-are what make the three scopes real rather than describable: an organization
-root has to exist as an ordinary flat runtime project; the project-scope plans
-parked in checkouts have to move to the project roots they describe; those
-project roots have to be tracked by the workspace's own repository, since a root
+**Owed elsewhere.** The other half is the directory the projects are checked out
+under, which is a repository of its own and not this one. Four things there are
+what make the three scopes real rather than describable: an organization root
+has to exist as an ordinary flat runtime project; the project-scope plans parked
+in checkouts have to move to the project roots they describe; those project
+roots have to be tracked by that directory's own repository, since a root
 nothing tracks is a root that does not survive a clean; and the script that
 reclaims a finished worktree has to fold that run's plan and result up into a
 longer-lived scope before removing the tree, which is
@@ -261,11 +261,11 @@ declaration itself so that the gap travels with the rule.
 
 In this repository: #43, #44 and #46 close, and an issue exists for the origin
 trail and closes with it, so a handed-down ticket names the plan and ticket
-that laid it and the handing-down work's result names the ids it spawned. On
-the workspace side: an organization root exists and holds org-scope work, no
-project-scope plan is parked in a checkout, the project roots are tracked where
-they live, and a reclaimed worktree's record is found in a longer-lived scope
-after the tree is gone.
+that laid it and the handing-down work's result names the ids it spawned.
+Outside this repository: an organization root exists and holds org-scope work,
+no project-scope plan is parked in a checkout, the project roots are tracked
+where they live, and a reclaimed worktree's record is found in a longer-lived
+scope after the tree is gone.
 
 When only that second set is left, this entry closes here and says where the
 rest lives. Half of what it tracks is not this repository's to close, and an
