@@ -73,6 +73,14 @@ here rather than left to whoever writes the next reader:
   reports them beside it.** Where they are inside, what is left after taking
   them out is the input; where they are beside, they are already apart. Read
   the wrong way round, a cache read is counted twice.
+- **One log spells a model two ways**: its calls name the model, and its
+  dollar rollup names the billing variant of that model. Kept apart they are
+  two rows for one model — every token under one with no price, every dollar
+  under the other with no tokens — and nothing downstream can add them back
+  up, because they read as two models. So a variant is filed under the model
+  its own session called. A model the rollup names and the calls never did is
+  real spend the calls do not carry, and keeps the only spelling anything
+  knows it by rather than being folded into whichever name looks nearest.
 
 Provider stays beside model in every key: not every model a tool runs is
 priced or served by the vendor whose tool it is.

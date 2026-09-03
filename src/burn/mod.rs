@@ -17,6 +17,7 @@ pub mod claude;
 pub mod codex;
 pub mod cursors;
 pub mod query;
+pub mod render;
 pub mod store;
 
 use std::collections::BTreeMap;
