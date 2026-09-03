@@ -12,6 +12,15 @@
 //! plausible enough that nothing downstream would catch it — so this reader
 //! never looks inside `iterations`, and the test below is a record whose
 //! breakdown would double it.
+//!
+//! **And one call is written as several records.** A response carrying more
+//! than one content block is one `assistant` record per block, every one of
+//! them naming the same `requestId` and repeating that request's identical
+//! `usage`. Each reads as a perfectly ordinary call, so charging them all
+//! bills one response two or three times and nothing downstream can tell —
+//! on this machine's own transcripts that is most of a doubling. So the
+//! request last charged is remembered, in the carry, and the records
+//! repeating it are read for everything except their counters.
 
 use std::path::Path;
 
@@ -59,8 +68,19 @@ pub fn read(file: &Path, text: &str, carry: &mut Carry) -> Vec<Sample> {
         }
         match record.get("type").and_then(Value::as_str) {
             Some("assistant") => {
+                // One response, several records: a reply that says something
+                // and then calls two tools is written as one record per
+                // content block, all naming the same request and all
+                // restating that request's identical `usage`. The first is
+                // the call; the rest are the same call again, and charging
+                // them bills it two or three times (§FS-013-burn.3).
+                let response = response(&record);
+                if response.is_some() && response == carry.charged {
+                    continue;
+                }
                 if let Some(sample) = call(&record, carry, subagent(file, carry)) {
                     found.push(sample);
+                    carry.charged = response;
                 }
             }
             // The tool's own dollar rollup, which is the only place dollars
@@ -80,6 +100,13 @@ fn subagent(file: &Path, carry: &Carry) -> bool {
         || file
             .components()
             .any(|part| part.as_os_str() == "subagents" || part.as_os_str() == "sidechains")
+}
+
+/// Which response a record is part of: the request the tool made, or — where
+/// a record names no request — the message that request answered with. Two
+/// records naming the same one are one call written twice (§FS-013-burn.3).
+fn response(record: &Value) -> Option<String> {
+    string(record, "requestId").or_else(|| string(record.get("message")?, "id"))
 }
 
 /// One paid call: the outer counters, and nothing from `iterations`.
@@ -219,6 +246,65 @@ mod tests {
         assert_eq!(found[0].cwd.as_deref(), Some("/w/app"));
         assert_eq!(found[0].session, "s1");
         assert!(!found[0].subagent);
+    }
+
+    /// One response, three records: text and then two tool calls, all under
+    /// one `requestId` and all restating the one `usage` that request was
+    /// billed at. This is the shape most of the machine's transcripts have,
+    /// and a reader that charged every record would report 95 502 tokens
+    /// where 31 834 were spent (§FS-013-burn.3).
+    const BLOCKS: &str = r#"
+{"type":"assistant","requestId":"req_1","cwd":"/w/app","sessionId":"s1","timestamp":"2026-09-03T10:01:00Z","message":{"id":"msg_1","model":"claude-opus-5","content":[{"type":"text"}],"usage":{"input_tokens":2,"output_tokens":338,"cache_read_input_tokens":10005,"cache_creation_input_tokens":21489}}}
+{"type":"assistant","requestId":"req_1","cwd":"/w/app","sessionId":"s1","timestamp":"2026-09-03T10:01:01Z","message":{"id":"msg_1","model":"claude-opus-5","content":[{"type":"tool_use"}],"usage":{"input_tokens":2,"output_tokens":338,"cache_read_input_tokens":10005,"cache_creation_input_tokens":21489}}}
+{"type":"assistant","requestId":"req_1","cwd":"/w/app","sessionId":"s1","timestamp":"2026-09-03T10:01:02Z","message":{"id":"msg_1","model":"claude-opus-5","content":[{"type":"tool_use"}],"usage":{"input_tokens":2,"output_tokens":338,"cache_read_input_tokens":10005,"cache_creation_input_tokens":21489}}}
+{"type":"assistant","requestId":"req_2","cwd":"/w/app","sessionId":"s1","timestamp":"2026-09-03T10:02:00Z","message":{"id":"msg_2","model":"claude-opus-5","content":[{"type":"text"}],"usage":{"input_tokens":1,"output_tokens":9,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}
+"#;
+
+    #[test]
+    fn a_response_is_charged_once_however_many_records_it_was_written_as() {
+        let mut carry = Carry::default();
+        let found = read(Path::new("/x/s1.jsonl"), BLOCKS, &mut carry);
+        assert_eq!(found.len(), 2, "one response was charged more than once");
+        assert_eq!(found[0].tokens.total(), 31834);
+        assert_eq!(found[1].tokens.total(), 10);
+        // The record charged is the first of the response, not the last, so
+        // the call lands at the time it was made.
+        assert_eq!(found[0].at.to_rfc3339(), "2026-09-03T10:01:00+00:00");
+    }
+
+    /// The trap the carry closes: a scan that stops between two records of
+    /// one response must not charge the rest of it on the next pass
+    /// (§FS-013-burn.5).
+    #[test]
+    fn a_scan_resuming_mid_response_does_not_charge_it_again() {
+        let mut lines = BLOCKS.trim().lines();
+        let first = lines.next().expect("the first block");
+        let rest: String = lines.collect::<Vec<_>>().join("\n");
+        let mut carry = Carry::default();
+        let head = read(Path::new("/x/s1.jsonl"), first, &mut carry);
+        assert_eq!(head.len(), 1);
+        assert_eq!(carry.charged.as_deref(), Some("req_1"));
+        let tail = read(Path::new("/x/s1.jsonl"), &rest, &mut carry);
+        assert_eq!(tail.len(), 1, "the response was charged twice: {tail:?}");
+        assert_eq!(tail[0].tokens.total(), 10);
+    }
+
+    /// A record naming no request falls back to the message it answered
+    /// with, and one naming neither is charged rather than dropped: an
+    /// unidentifiable call is still spend.
+    #[test]
+    fn a_response_with_no_request_id_is_still_told_apart() {
+        let text = r#"
+{"type":"assistant","cwd":"/w/app","sessionId":"s1","timestamp":"2026-09-03T10:01:00Z","message":{"id":"msg_1","model":"m","usage":{"output_tokens":5}}}
+{"type":"assistant","cwd":"/w/app","sessionId":"s1","timestamp":"2026-09-03T10:01:01Z","message":{"id":"msg_1","model":"m","usage":{"output_tokens":5}}}
+{"type":"assistant","cwd":"/w/app","sessionId":"s1","timestamp":"2026-09-03T10:02:00Z","message":{"model":"m","usage":{"output_tokens":7}}}
+{"type":"assistant","cwd":"/w/app","sessionId":"s1","timestamp":"2026-09-03T10:03:00Z","message":{"model":"m","usage":{"output_tokens":7}}}
+"#;
+        let mut carry = Carry::default();
+        let found = read(Path::new("/x/s1.jsonl"), text, &mut carry);
+        let spent: u64 = found.iter().map(|sample| sample.tokens.total()).sum();
+        assert_eq!(found.len(), 3, "{found:?}");
+        assert_eq!(spent, 19, "an unidentifiable call was dropped");
     }
 
     /// The four counters are read apart, and a user record spends nothing.

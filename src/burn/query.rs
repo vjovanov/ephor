@@ -248,10 +248,18 @@ const LIVE_SPANS: i64 = 3;
 /// The sessions written to in the last few spans, busiest first.
 pub fn live(buckets: &[Bucket], now: DateTime<Utc>) -> Vec<Live> {
     let from = super::store::floor(now) - Duration::seconds(super::store::SPAN * (LIVE_SPANS - 1));
-    let mut rows: BTreeMap<(String, String), (Live, u64)> = BTreeMap::new();
+    // A sub-agent's transcript carries the session id of the agent that
+    // spawned it, so the flag is part of what tells two rows apart: without
+    // it a session and its sub-agents merge into one row wearing whichever
+    // flag arrived first (§FS-013-burn.3).
+    let mut rows: BTreeMap<(String, String, bool), (Live, u64)> = BTreeMap::new();
     for bucket in buckets.iter().filter(|bucket| bucket.at >= from) {
         let entry = rows
-            .entry((bucket.key.session.clone(), bucket.key.model.clone()))
+            .entry((
+                bucket.key.session.clone(),
+                bucket.key.model.clone(),
+                bucket.key.subagent,
+            ))
             .or_insert_with(|| {
                 (
                     Live {
@@ -286,6 +294,8 @@ pub fn live(buckets: &[Bucket], now: DateTime<Utc>) -> Vec<Live> {
             .tokens
             .cmp(&left.tokens)
             .then_with(|| left.session.cmp(&right.session))
+            .then_with(|| left.subagent.cmp(&right.subagent))
+            .then_with(|| left.model.cmp(&right.model))
     });
     found
 }
@@ -384,6 +394,32 @@ mod tests {
             .expect("later");
         assert_eq!(rate(&window(), later), 0);
         assert!(live(&window(), later).is_empty());
+    }
+
+    /// A sub-agent's transcript carries the session id of whatever spawned
+    /// it, so a strip keyed on the session alone shows one row holding both
+    /// and tagged for whichever arrived first (§FS-013-burn.3).
+    #[test]
+    fn a_session_and_its_sub_agents_are_two_rows() {
+        let now = "2026-09-03T10:07:00Z"
+            .parse::<DateTime<Utc>>()
+            .expect("now");
+        let mut own = bucket("2026-09-03T10:05:00Z", "app", "opus", "s1", 100);
+        let mut theirs = bucket("2026-09-03T10:05:00Z", "app", "opus", "s1", 30);
+        theirs.key.subagent = true;
+        own.key.subagent = false;
+        let going = live(&[own, theirs], now);
+        assert_eq!(going.len(), 2, "they were added together: {going:?}");
+        let session = going
+            .iter()
+            .find(|row| !row.subagent)
+            .expect("the session's own row");
+        let sub = going
+            .iter()
+            .find(|row| row.subagent)
+            .expect("the sub-agents' row");
+        assert_eq!(session.tokens, 100);
+        assert_eq!(sub.tokens, 30);
     }
 
     /// Both cycles come back round, so a key held down never wedges

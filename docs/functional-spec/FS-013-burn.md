@@ -61,6 +61,13 @@ here rather than left to whoever writes the next reader:
 - **The assistant record's own `usage` is the whole of it.** A record also
   carries a per-iteration breakdown of the same call. Summing the outer
   counters *and* the breakdown counts every token twice.
+- **One response is written as one record per content block.** A reply that
+  says something and then calls two tools is three consecutive records, each
+  naming the same request and each restating that request's identical `usage`.
+  Charging every record charges one call two or three times; the excess is
+  invisible downstream, because every record is a well-formed call. So a
+  response is charged once — under the request it names — and the records
+  repeating it are read for everything except their counters.
 - **The session's token counter is cumulative, not per event.** Each event
   restates the session's running total, so the tokens an event spent are its
   total minus the previous event's. Summing the events themselves inflates a
@@ -74,13 +81,15 @@ here rather than left to whoever writes the next reader:
   them out is the input; where they are beside, they are already apart. Read
   the wrong way round, a cache read is counted twice.
 - **One log spells a model two ways**: its calls name the model, and its
-  dollar rollup names the billing variant of that model. Kept apart they are
-  two rows for one model — every token under one with no price, every dollar
-  under the other with no tokens — and nothing downstream can add them back
-  up, because they read as two models. So a variant is filed under the model
-  its own session called. A model the rollup names and the calls never did is
-  real spend the calls do not carry, and keeps the only spelling anything
-  knows it by rather than being folded into whichever name looks nearest.
+  dollar rollup names the same model with its billing terms in brackets after
+  it (`claude-opus-5` and `claude-opus-5[1m]`). Kept apart they are two rows
+  for one model — every token under one with no price, every dollar under the
+  other with no tokens — and nothing downstream can add them back up, because
+  they read as two models. So a key with a bracketed suffix is filed under the
+  model before the bracket, where this session's own calls named that model. A
+  model the rollup names and the calls never did is real spend the calls do
+  not carry, and keeps the only spelling anything knows it by rather than
+  being folded into whichever name looks nearest.
 
 Provider stays beside model in every key: not every model a tool runs is
 priced or served by the vendor whose tool it is.
@@ -106,10 +115,11 @@ it is done once and then only over what was appended.
 **Cursors.** One cursor per transcript file, keyed by path, recording the
 byte offset already read, the size the file had then, and whatever the reader
 must carry across a scan — the session's last cumulative counter, the model
-in force, the last cost total seen. A file whose size and modification time
-are unchanged is not opened at all; one that has grown is read from its
-cursor to its last complete line; one that has *shrunk* is read from the
-start, because it is not the file the cursor was about.
+in force, the last cost total seen, the last response already charged. A file
+whose size and modification time are unchanged is not opened at all; one
+that has grown is read from its cursor to its last complete line; one that
+has *shrunk* is read from the start, because it is not the file the cursor
+was about.
 
 **Buckets.** What a scan reads is aggregated into five-minute buckets keyed by
 `(project, source, provider, model, session, sub-agent)` and written to one
