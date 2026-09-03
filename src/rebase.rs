@@ -117,11 +117,10 @@ pub fn rebase(args: &RebaseArgs) -> Result<ExitCode> {
         )
     };
 
-    // Read where the command starts rather than where it is written: a value
-    // this command will not act on is refused instead of the branch being
-    // replayed and the refusal arriving afterwards, which left the replay
-    // standing and took the exit code the conflict needs
-    // (§FS-011-command-line.9).
+    // Read above everything that acts: a value this command will not act on is
+    // refused instead of the branch being replayed, rather than the refusal
+    // arriving afterwards and leaving the replay standing with the exit code
+    // the conflict needs (§FS-011-command-line.9).
     let report = given::value(&args.report, "REPORT")?;
 
     let outcome = git::rebase(&forest, &onto);
