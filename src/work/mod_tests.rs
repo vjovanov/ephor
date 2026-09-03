@@ -863,6 +863,7 @@ fn candidate(id: &str, project: &str) -> Due {
         tickets: vec![format!("{id}.fix-1")],
         item: Some(id.to_string()),
         items: vec![id.to_string()],
+        held_by: None,
     }
 }
 
@@ -1588,7 +1589,8 @@ fn a_root_a_run_already_holds_is_left_alone() {
 
 /// The invariant is one live run per *checkout*, not per root: a second
 /// work root over a tree a run already holds would put a second agent in
-/// the same files, so it is left alone too (§FS-005-dispatch.24).
+/// the same files, so nothing is started there either — and the row says
+/// which run has the tree, rather than vanishing (§FS-005-dispatch.24).
 #[test]
 fn a_root_over_a_checkout_another_roots_run_holds_is_left_alone() {
     let tmp = tempfile::tempdir().unwrap();
@@ -1603,33 +1605,43 @@ fn a_root_over_a_checkout_another_roots_run_holds_is_left_alone() {
     // The run holds `panta`; the due ticket is in `panta2`. Nothing in the
     // live root is due, which is why the guard cannot be a question asked
     // of the candidates alone.
-    assert!(
-        due_among(
-            &work_config(),
-            &[live.clone(), candidate.clone()],
-            &asking(&["fix-gate"]),
-            &laying(&[]),
-            &empty_ledger(),
-            Utc::now(),
-        )
-        .is_empty(),
-        "a second run in that tree is a second agent editing the same files"
+    let due = due_among(
+        &work_config(),
+        &[live.clone(), candidate.clone()],
+        &asking(&["fix-gate"]),
+        &laying(&[]),
+        &empty_ledger(),
+        Utc::now(),
+    );
+    // The root holding the run says nothing: it has one, and repeating that
+    // every sweep would report the ordinary case for as long as it runs.
+    assert_eq!(
+        due.len(),
+        1,
+        "only the root beside it is left to answer for"
+    );
+    assert_eq!(due[0].root, beside);
+    assert_eq!(
+        due[0].held_by.as_ref(),
+        Some(&held),
+        "a second run in that tree is a second agent editing the same files,          and the row names the run in the way"
     );
 
     // And once the tree is free, the root beside it is due as it always was.
     drop(holder);
     freed(&work_config(), &held);
-    assert_eq!(
-        due_among(
-            &work_config(),
-            &[live, candidate],
-            &asking(&["fix-gate"]),
-            &laying(&[]),
-            &empty_ledger(),
-            Utc::now(),
-        )
-        .len(),
-        2
+    let due = due_among(
+        &work_config(),
+        &[live, candidate],
+        &asking(&["fix-gate"]),
+        &laying(&[]),
+        &empty_ledger(),
+        Utc::now(),
+    );
+    assert_eq!(due.len(), 2);
+    assert!(
+        due.iter().all(|root| root.held_by.is_none()),
+        "nothing holds the tree now"
     );
 }
 
@@ -1651,16 +1663,18 @@ fn a_second_spelling_of_the_busy_checkout_does_not_defeat_the_guard() {
     let candidate = due_root(&alias.join("panta2"), &ticket_at("fix-gate-1", "collect"));
     let _holder = hold(&held);
 
-    assert!(
-        due_among(
-            &work_config(),
-            &[live, candidate],
-            &asking(&["fix-gate"]),
-            &laying(&[]),
-            &empty_ledger(),
-            Utc::now(),
-        )
-        .is_empty(),
+    let due = due_among(
+        &work_config(),
+        &[live, candidate],
+        &asking(&["fix-gate"]),
+        &laying(&[]),
+        &empty_ledger(),
+        Utc::now(),
+    );
+    assert_eq!(due.len(), 1, "the live root has its run and says nothing");
+    assert_eq!(
+        due[0].held_by.as_ref(),
+        Some(&held),
         "{} and {} are one working tree",
         tree.display(),
         alias.display()

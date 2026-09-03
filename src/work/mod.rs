@@ -2500,11 +2500,15 @@ pub fn due_among(
     let nothing: BTreeSet<String> = BTreeSet::new();
     let mut due = Vec::new();
     for group in roots {
-        // A tree a run already holds is left alone, whichever root that run
-        // was started from: the live run reaches a ticket written beneath it,
-        // and a second run in the same working tree is a second agent editing
-        // the same files (§FS-005-dispatch.24).
-        if holding(&busy, &checkout_of(ledger, &group.root)).is_some() {
+        // A root whose own run is live is left alone here and said nothing
+        // about: the runtime schedules one run per root, that run reaches
+        // every ticket written beneath it, and a sweep reporting on it would
+        // repeat the ordinary case for as long as the work takes
+        // (§FS-005-dispatch.24). A tree *another* root's run holds is a
+        // different matter and is answered below, where the root has been
+        // judged due and there is something to pass over.
+        let held_by = holding(&busy, &checkout_of(ledger, &group.root));
+        if held_by.is_some_and(|held_by| held_by == &group.root) {
             continue;
         }
         // A root that could not be started is passed over for a while,
@@ -2657,6 +2661,12 @@ pub fn due_among(
                 })
             }),
             items,
+            // Due, and held back by a run in another root over this same
+            // working tree: the row is kept so the sweep can pass it over
+            // with the run in the way, rather than dropping it where a reader
+            // would see an empty sweep and go looking for a full ceiling
+            // (§FS-005-dispatch.24). Nothing is started on it.
+            held_by: held_by.cloned(),
         });
     }
     due
@@ -2798,8 +2808,8 @@ impl Dispatcher {
         // the run was started from. The due list was read from a snapshot
         // older than every launch below, so two due roots over one working
         // tree are both in it; without this they would both start
-        // (§FS-005-dispatch.24). Roots a run held *before* the sweep are
-        // already gone from the list — [`due_among`] took them out.
+        // (§FS-005-dispatch.24). A tree a run held *before* the sweep is not
+        // in here — [`due_among`] wrote that on the root itself.
         let mut taken: BTreeMap<PathBuf, PathBuf> = BTreeMap::new();
         let runs = self
             .due_in(&roots, now)
@@ -2812,12 +2822,18 @@ impl Dispatcher {
                         .any(|project| projects.contains(project))
             })
             .map(|root| {
-                // A tree a launch in this same sweep has just taken is taken
-                // for the rest of it. Passed over with the run that has it,
-                // never raced: this is a successful non-launch outcome, and a
-                // reader told only that nothing started would go looking for a
-                // ceiling that is not full (§FS-005-dispatch.24).
-                if let Some(held_by) = holding(&taken, &root.checkout) {
+                // A tree another root's run held before this sweep began, and
+                // a tree a launch in this same sweep has just taken: one
+                // condition, one sentence, one kind of row. Passed over with
+                // the run that has it, never raced — a successful non-launch
+                // outcome, and a reader told only that nothing started would
+                // go looking for a ceiling that is not full
+                // (§FS-005-dispatch.24).
+                if let Some(held_by) = root
+                    .held_by
+                    .as_ref()
+                    .or_else(|| holding(&taken, &root.checkout))
+                {
                     let why = live_in_this_checkout(&self.global, held_by);
                     return Launched::passed_over(&root, why);
                 }
@@ -2861,7 +2877,7 @@ impl Dispatcher {
                         let remains_live =
                             !started.finished && runtime::watch::live(&self.global, &root.root);
                         if remains_live {
-                            taken.insert(canonical(&root.checkout), root.root.clone());
+                            take_checkout(&mut taken, &root.checkout, &root.root);
                         }
                         capacity.started(&root.projects, remains_live);
                         Launched {
@@ -2920,7 +2936,9 @@ impl Dispatcher {
     }
 }
 
-/// One work root a sweep should start a run on (§FS-005-dispatch.24).
+/// One work root a sweep should start a run on — or, where `held_by` says a
+/// run in another root holds its working tree, would start one on but for
+/// that run (§FS-005-dispatch.24).
 #[derive(Debug, Clone)]
 pub struct Due {
     pub project: String,
@@ -2944,6 +2962,10 @@ pub struct Due {
     /// The matter this root's work is about, where the ledger knows one —
     /// where a failure's news lands (§FS-005-dispatch.24).
     pub item: Option<String>,
+    /// The other root whose live run holds this root's working tree, where
+    /// one does (§FS-005-dispatch.24). Nothing may be started here while it
+    /// is set: the row exists so the sweep can say so by name.
+    pub held_by: Option<PathBuf>,
 }
 
 /// What starting one due root came to (§FS-005-dispatch.24).
@@ -3435,6 +3457,18 @@ pub fn holding<'a>(
     checkout: &std::path::Path,
 ) -> Option<&'a PathBuf> {
     busy.get(&canonical(checkout))
+}
+
+/// Note that a launch has taken this working tree, so the rest of the same
+/// command sees it as busy (§FS-005-dispatch.24). Keyed exactly as [`holding`]
+/// will look for it, beside it for the same reason the lookup is: a writer
+/// that resolved the tree its own way would fill a map the reader misses.
+pub fn take_checkout(
+    taken: &mut BTreeMap<PathBuf, PathBuf>,
+    checkout: &std::path::Path,
+    root: &std::path::Path,
+) {
+    taken.insert(canonical(checkout), root.to_path_buf());
 }
 
 /// The one sentence said wherever a start is held back because a live run
