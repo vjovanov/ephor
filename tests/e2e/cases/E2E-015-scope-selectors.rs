@@ -171,7 +171,14 @@ fn refresh_accepts_named_and_positional_projects_as_one_scoped_set() {
         std::fs::write(world.path().join("refreshes.txt"), "").expect("clear the refresh log");
         world
             .ephor()
-            .args(["refresh", "--project", project, "--quiet"])
+            .args([
+                "refresh",
+                "--project",
+                PROJECT,
+                "--project",
+                project,
+                "--quiet",
+            ])
             .assert()
             .code(2)
             .stderr(predicate::str::contains(format!(
@@ -180,7 +187,7 @@ fn refresh_accepts_named_and_positional_projects_as_one_scoped_set() {
         assert_eq!(
             world.read("refreshes.txt"),
             "",
-            "refresh fell back after refusing {project}"
+            "refresh started before refusing {project}"
         );
     }
 }
