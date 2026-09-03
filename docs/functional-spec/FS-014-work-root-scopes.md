@@ -20,8 +20,8 @@ plan sits is the same fact as what the work it holds is allowed to reach
 
 A work root exists at each of the three scopes ephor already addresses:
 
-- an **organization** root, which lives as long as the workspace does, and holds
-  work belonging to no single repository — a release that moves several
+- an **organization** root, which lives as long as the organization does, and
+  holds work belonging to no single repository — a release that moves several
   projects' gates, a sweep across all of them;
 - a **project** root, which lives as long as the project, and holds work about
   one repository that is not about one of its branches;
@@ -56,7 +56,7 @@ project-scope work ends up parked in one checkout and org-scope work ends up
 with nowhere to be written down at all.
 
 **Smallest, not merely sufficient.** An organization root can see every tree
-beneath it, so every plan in the workspace would be *legal* there. What the
+beneath it, so every plan those trees hold would be *legal* there. What the
 smallest scope buys is that the placement is itself a claim a reader can check:
 a plan in a checkout root says this work is confined to this tree, and a root
 that held everything would say nothing. The rule is only worth having in its
@@ -129,14 +129,14 @@ name.
   would put intake and work under one machine that suits neither.
 - **No tree is kept alive in order to keep a record.** The answer to [§5](#5-nothing-durable-lives-in-a-checkout-work-root) is
   folding up before the tree is reclaimed, never declining to reclaim it. A
-  workspace full of checkouts nobody is working in, held open for their logs, is
-  the cost this rule was supposed to remove.
+  project root full of checkouts nobody is working in, held open for their
+  logs, is the cost this rule was supposed to remove.
 
 ## 7. What is not yet held
 
 Three parts of the rule above are stated here as the rule and are not yet
-enforced anywhere. Saying so costs a paragraph; a reader discovering it from
-behaviour costs more.
+enforced by this program. Saying so costs a paragraph; a reader discovering it
+from behaviour costs more.
 
 - **Placement is chosen per project, not per entry.** One project's dispatches
   are placed by one answer, so a project cannot send fixes to minted checkouts
@@ -152,6 +152,9 @@ behaviour costs more.
   both directions: neither the origin on the ticket nor the spawned ids on the
   result is written by anything.
 
-The roadmap carries what each of these is waiting on. What this declaration
-carries is the rule they are measured against, so that work naming this doctrine
-has something in the tree to name.
+A fourth is owed, and not from here: the fold-up [§5](#5-nothing-durable-lives-in-a-checkout-work-root) asks for is the
+archiver's, so what is missing for it is outside this program rather than in it.
+
+The roadmap carries what each of these is waiting on, here and elsewhere. What
+this declaration carries is the rule they are measured against, so that work
+naming this doctrine has something in the tree to name.
