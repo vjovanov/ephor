@@ -17,27 +17,21 @@ use crate::feed::cache;
 use crate::feed::config::load_config;
 use crate::feed::model::Item;
 use crate::git;
+use crate::given;
 use crate::work::Dispatcher;
 
 /// A conflict is not a failure: it is where the work starts.
 const CONFLICT: u8 = 3;
 
-/// An argument, or what a program state put in the environment for it. A
-/// state machine hands its program everything through `env:` (the manual's
-/// §8.5), so the flags a reader types and the names a state sets are the same
-/// inputs spelled two ways.
-fn or_env(flag: &Option<String>, name: &str) -> Option<String> {
-    flag.clone()
-        .or_else(|| std::env::var(name).ok())
-        .map(|value| value.trim().to_string())
-        // A `{meta.branch}` the runtime could not fill arrives as itself; an
-        // unresolved placeholder is not a value, and the same guard settles
-        // what a project type declares (§AR-004-forest.2).
-        .filter(|value| crate::forest::is_branch_name(value))
-}
-
 pub fn rebase(args: &RebaseArgs) -> Result<ExitCode> {
-    let checkout = match or_env(&args.checkout, "CHECKOUT") {
+    // A state machine hands its program everything through `env:` (the manual's
+    // §8.5), so the flags a reader types and the names a state sets are the
+    // same inputs spelled two ways, and each is honoured or refused naming the
+    // spelling it arrived in (§FS-011-command-line.9). A `{meta.branch}` the
+    // runtime could not fill arrives as itself: an unresolved placeholder is
+    // not a value, and turning one into "rebase the working directory" ran a
+    // different rebase than the state asked for.
+    let checkout = match given::value(&args.checkout, "CHECKOUT")? {
         Some(path) => crate::paths::resolve_path(&path),
         None => std::env::current_dir().map_err(|err| {
             EphorError::Command(format!("Cannot read the working directory: {err}"))
@@ -50,7 +44,7 @@ pub fn rebase(args: &RebaseArgs) -> Result<ExitCode> {
         )));
     }
 
-    let item = match or_env(&args.item, "ITEM") {
+    let item = match given::value(&args.item, "ITEM")? {
         Some(id) => Some(find_item(&id)?),
         None => None,
     };
@@ -59,15 +53,15 @@ pub fn rebase(args: &RebaseArgs) -> Result<ExitCode> {
     // key and the command line are one operation (§FS-005-dispatch.12). Parsed
     // before the replay runs: the refusal of a pick that is not one is
     // computed here, not discovered on the conflicted run (§AR-002-summons.4).
-    let picked = or_env(&args.hand, "HAND")
+    let picked = given::value(&args.hand, "HAND")?
         .map(|text| crate::work::recipe::HandPin::parse(&text))
         .transpose()
         .map_err(EphorError::Command)?;
     if picked.is_some() && !args.dispatch {
         eprintln!("note: --hand rides --dispatch — without it, nothing is handed over.");
     }
-    let project =
-        or_env(&args.project, "PROJECT").or_else(|| item.as_ref().map(|item| item.project.clone()));
+    let project = given::value(&args.project, "PROJECT")?
+        .or_else(|| item.as_ref().map(|item| item.project.clone()));
     let placement = project.as_deref().and_then(|project| {
         Placement::load(&crate::feed::commands::load_registry_doc().ok()?, project)
     });
@@ -86,8 +80,8 @@ pub fn rebase(args: &RebaseArgs) -> Result<ExitCode> {
     // clap's `conflicts_with` sees only the flags, the refusal of the two
     // together is repeated here across both spellings: silently preferring
     // one would run a different rebase than the state asked for.
-    let upstream = args.upstream || or_env(&None, "UPSTREAM").is_some();
-    let onto_named = or_env(&args.onto, "ONTO");
+    let upstream = args.upstream || given::value(&None, "UPSTREAM")?.is_some();
+    let onto_named = given::value(&args.onto, "ONTO")?;
     if upstream && onto_named.is_some() {
         return Err(EphorError::Command(
             "--upstream (UPSTREAM) and --onto (ONTO) name two different things to replay \
@@ -205,7 +199,7 @@ pub fn rebase(args: &RebaseArgs) -> Result<ExitCode> {
     // (§FS-005-dispatch.12). Writing it only on the happy path made the
     // conflict report disappear on ordinary conditions — an unwritable ledger,
     // an unconfigured recipe — which is the absence §REQ-001-boundary.1 forbids.
-    if let Some(path) = or_env(&args.report, "REPORT") {
+    if let Some(path) = given::value(&args.report, "REPORT")? {
         write_report(&path, &outcome.report())?;
     }
     if let Some(err) = refused {

@@ -24,6 +24,7 @@ pub mod feed;
 pub mod forest;
 pub mod forge;
 pub mod git;
+pub mod given;
 pub mod hooks;
 pub mod manifest;
 pub mod matter;

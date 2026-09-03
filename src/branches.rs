@@ -385,7 +385,7 @@ fn nameable(values: &std::collections::BTreeMap<&'static str, String>) -> Vec<St
 /// checkout: git's own answer comes from inside the making, by which time the
 /// directories leading to the workspace are already there, so an author's bad
 /// template would be reported and still leave part of a tree behind.
-fn why_git_refuses(branch: &str) -> Option<String> {
+pub(crate) fn why_git_refuses(branch: &str) -> Option<String> {
     /// What git refuses anywhere in a ref, beyond the control characters.
     const FORBIDDEN: [char; 9] = [' ', '~', '^', ':', '?', '*', '[', '\\', '\u{7f}'];
     if branch.is_empty() {
@@ -446,11 +446,84 @@ pub fn why_the_workspace_is_refused(
     branch: &str,
     work_root: &str,
 ) -> Option<String> {
-    // The contract without its answers: `specify` fixes the question this asks
-    // and the unit tests below say what each answer has to be; the body is the
-    // implementation's to write (§FS-004-quick-actions.7.3).
-    let _ = (placement, branch, work_root);
+    // A project whose checkout is its root has no workspace to place and no
+    // area to leave; where the branch belongs is the caller's own refusal.
+    let target = lexical(&placement.workspace_for(branch)?);
+    let base = lexical(&placement.workspace_base()?);
+    if !target.starts_with(&base) {
+        return Some(format!(
+            "'{branch}' renders to {}, which is not inside {} — the area {} puts its branch \
+             workspaces in.",
+            target.display(),
+            base.display(),
+            placement.project
+        ));
+    }
+
+    // Where this project's work goes, rendered against the workspace this
+    // branch would be: the same values the store is made with, so the two
+    // cannot disagree about the directory (§FS-006-project-interface.7).
+    let mut values = std::collections::BTreeMap::from([
+        ("workspace", target.to_string_lossy().into_owned()),
+        ("root", placement.root.to_string_lossy().into_owned()),
+        ("project", placement.project.clone()),
+    ]);
+    if let Some(organization) = &placement.organization {
+        values.insert("org", organization.id.clone());
+        if let Some(root) = &organization.root {
+            values.insert("org_root", root.to_string_lossy().into_owned());
+        }
+    }
+    let rendered = crate::work::dossier::render(work_root, &values);
+    // A template naming a field only a matter can fill describes no fixed
+    // place, so there is nothing here for a branch to land on. Passed over
+    // rather than guessed at, exactly as the board's walk passes it over
+    // (§FS-005-dispatch.15.1).
+    if rendered.contains('{') {
+        return None;
+    }
+    let root = lexical(&crate::paths::resolve_path(&rendered));
+    if target == root {
+        return Some(format!(
+            "'{branch}' is {}'s work root, not a branch: {} is where its work goes, and a \
+             workspace made there would be a checkout and a work root in one directory.",
+            placement.project,
+            root.display()
+        ));
+    }
+    if target.starts_with(&root) {
+        return Some(format!(
+            "'{branch}' renders inside {}'s work root {}, where a workspace would sit among \
+             the plans of every branch rather than beside them.",
+            placement.project,
+            root.display()
+        ));
+    }
     None
+}
+
+/// A path with its `.` and `..` folded out, without asking the disk: the
+/// workspace this is about does not exist yet, so there is nothing to
+/// canonicalize and the question is what the name *says*
+/// (§FS-004-quick-actions.7.3).
+///
+/// A `..` with nothing left to climb is kept rather than dropped, so a name
+/// that reaches above whatever it is compared against stays outside it.
+fn lexical(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut folded = PathBuf::new();
+    for part in path.components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !folded.pop() {
+                    folded.push("..");
+                }
+            }
+            other => folded.push(other.as_os_str()),
+        }
+    }
+    folded
 }
 
 /// Where an entry's work resolves, with no refusal to answer for: the matter's

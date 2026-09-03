@@ -17,15 +17,7 @@ use crate::feed::cache;
 use crate::feed::config::load_config;
 use crate::feed::model::Item;
 use crate::git;
-
-/// An argument, or what a program state put in the environment for it — the
-/// same two spellings `ephor rebase` takes.
-fn or_env(flag: &Option<String>, name: &str) -> Option<String> {
-    flag.clone()
-        .or_else(|| std::env::var(name).ok())
-        .map(|value| value.trim().to_string())
-        .filter(|value| crate::forest::is_branch_name(value))
-}
+use crate::given;
 
 /// What making one branch workspace came to (§FS-004-quick-actions.7), in the
 /// shape every caller of [`make`] needs: what was already there, what git did
@@ -88,12 +80,36 @@ pub fn make(
     branch: &str,
     from: Option<&str>,
 ) -> Result<(Made, PathBuf)> {
+    // Where the workspace goes is settled before the first directory can be
+    // created (§FS-004-quick-actions.7.3), and here rather than at the command
+    // line alone: this is the implementation every caller shares
+    // (§FS-005-dispatch.12), so the name a reader typed, the one a state
+    // machine set and the one a `branch` template minted are all held to it.
+    if !crate::forest::is_branch_name(branch) {
+        return Err(EphorError::Registry(format!(
+            "'{branch}' is a placeholder nothing filled, not a branch to check out."
+        )));
+    }
+    if let Some(why) = crate::branches::why_git_refuses(branch) {
+        return Err(EphorError::Registry(format!(
+            "git will not take '{branch}' as a branch name: {why}."
+        )));
+    }
     let target = placement.workspace_for(branch).ok_or_else(|| {
         EphorError::Command(format!(
             "{project} does not use a checkout per branch (no branch_root_template), so \
              there is no workspace to make for {branch} — its root is the checkout."
         ))
     })?;
+    // Read once and answered twice: the work root says whether this name lands
+    // on the place plans go, and the same reading puts the store there once the
+    // tree is whole (§FS-006-project-interface.7).
+    let work = Work::read(placement, project);
+    if let Some(why) =
+        crate::branches::why_the_workspace_is_refused(placement, branch, &work.root())
+    {
+        return Err(EphorError::Registry(why));
+    }
     // A directory is not a workspace: the declared repositories are what make
     // it one. This is the operation whose answer says whether the workspace is
     // whole (§AR-004-forest.1), so a directory that is there is asked which of
@@ -109,7 +125,7 @@ pub fn make(
             // all, or made by the project's own checkout command, holds every
             // repository it should and has nowhere for a plan to land
             // (§FS-004-quick-actions.7.1). Asking again is what repairs it.
-            let store = init_store(placement, project, &target);
+            let store = init_store(&work, placement, project, &target);
             return Ok((
                 Made {
                     target: target.clone(),
@@ -164,7 +180,7 @@ pub fn make(
     // workspace is refused by the caller, and a work root inside one would be a
     // place for plans that cannot be worked (§FS-006-project-interface.7).
     let store = (outcome.refused().is_empty() && !outcome.repos.is_empty())
-        .then(|| init_store(placement, project, &target));
+        .then(|| init_store(&work, placement, project, &target));
     Ok((
         Made {
             target,
@@ -178,11 +194,15 @@ pub fn make(
 }
 
 pub fn checkout(args: &CheckoutArgs) -> Result<ExitCode> {
-    let item = match or_env(&args.item, "ITEM") {
+    // Every value this command takes is honoured or refused naming the input it
+    // came in on, before the first of them is acted on
+    // (§FS-011-command-line.9). What the reader passed decides the answer, so
+    // one they passed and ephor cannot use may not become one they did not.
+    let item = match given::value(&args.item, "ITEM")? {
         Some(id) => Some(find_item(&id)?),
         None => None,
     };
-    let project = or_env(&args.project, "PROJECT")
+    let project = given::value(&args.project, "PROJECT")?
         .or_else(|| item.as_ref().map(|item| item.project.clone()))
         .ok_or_else(|| {
             EphorError::Command(
@@ -198,7 +218,7 @@ pub fn checkout(args: &CheckoutArgs) -> Result<ExitCode> {
         ))
     })?;
 
-    let branch = or_env(&args.branch, "BRANCH")
+    let branch = given::branch(&args.branch, "BRANCH")?
         .or_else(|| item.as_ref().and_then(|item| placement.branch_name(item)))
         .ok_or_else(|| {
             EphorError::Command(
@@ -208,15 +228,16 @@ pub fn checkout(args: &CheckoutArgs) -> Result<ExitCode> {
             )
         })?;
 
+    // Read before the making rather than where each is used: a value this
+    // command will not act on is refused instead of the workspace being made
+    // and the refusal arriving afterwards (§FS-004-quick-actions.7.3).
+    let from = given::branch(&args.from, "FROM")?;
+    let report = given::value(&args.report, "REPORT")?;
+
     // Everything below is reporting: what the workspace came to is the one
     // operation's answer, and this command is the reading of it
     // (§AR-009-surfaces.1).
-    let (made, source) = make(
-        &placement,
-        &project,
-        &branch,
-        or_env(&args.from, "FROM").as_deref(),
-    )?;
+    let (made, source) = make(&placement, &project, &branch, from.as_deref())?;
     if made.already {
         let summary = format!("{} is already checked out", made.target.display());
         if args.json {
@@ -271,7 +292,7 @@ pub fn checkout(args: &CheckoutArgs) -> Result<ExitCode> {
     } else {
         print!("{}", outcome.report());
     }
-    if let Some(path) = or_env(&args.report, "REPORT") {
+    if let Some(path) = report {
         write_report(&path, &outcome.report())?;
     }
 
@@ -294,6 +315,66 @@ pub fn checkout(args: &CheckoutArgs) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// This project's work configuration, read once at the three tiers a work root
+/// resolves through — the site's, its organization's, and its own
+/// (§FS-005-dispatch.6.1).
+///
+/// The checkout asks for it twice and must get one answer both times: before
+/// anything is made, to know whether the branch name lands on the work root
+/// (§FS-004-quick-actions.7.3), and after, to put the store there
+/// (§FS-006-project-interface.7). Two readings of one configuration would
+/// eventually name two directories, and the second of them would be where the
+/// plans went.
+struct Work<'a> {
+    /// None where no site configuration can be read: the shipped default
+    /// answers then, which is `ephor checkout` working on a machine that has a
+    /// registry and nothing else.
+    config: Option<crate::feed::config::StatusConfig>,
+    placement: &'a Placement,
+    project: &'a str,
+}
+
+impl<'a> Work<'a> {
+    fn read(placement: &'a Placement, project: &'a str) -> Work<'a> {
+        Work {
+            config: load_config().ok(),
+            placement,
+            project,
+        }
+    }
+
+    fn global(&self) -> crate::work::recipe::WorkConfig {
+        self.config
+            .as_ref()
+            .map(|config| config.work.clone())
+            .unwrap_or_default()
+    }
+
+    fn per_project(&self) -> Option<&crate::work::recipe::ProjectWorkConfig> {
+        self.config
+            .as_ref()
+            .and_then(|config| config.projects.get(self.project))
+            .map(|project| &project.work)
+    }
+
+    /// The organization tier, read through the membership the registry declares
+    /// (§FS-005-dispatch.6.1) — the same resolution dispatch makes, because the
+    /// work root is one answer for both.
+    fn per_organization(&self) -> Option<&crate::work::recipe::OrganizationWorkConfig> {
+        let placed_in = self.placement.organization.as_ref()?;
+        self.config
+            .as_ref()?
+            .organizations
+            .get(&placed_in.id)
+            .map(|organization| &organization.work)
+    }
+
+    /// Where this project's work goes, as the template says it.
+    fn root(&self) -> String {
+        crate::work::root_template(&self.global(), self.per_organization(), self.per_project())
+    }
+}
+
 /// A workspace ephor makes gets a task store, so the first dispatch into
 /// this branch has somewhere to land and what is under way is visible from
 /// the moment the tree exists (§FS-006-project-interface.7). A workspace that
@@ -306,31 +387,18 @@ pub fn checkout(args: &CheckoutArgs) -> Result<ExitCode> {
 /// fail. Where no site configuration can be read, the shipped default answers
 /// — this is `ephor checkout` working on a machine that has a registry and
 /// nothing else.
-fn init_store(placement: &Placement, project: &str, workspace: &std::path::Path) -> Store {
-    let config = load_config().ok();
-    let global = config
-        .as_ref()
-        .map(|config| config.work.clone())
-        .unwrap_or_default();
-    let per_project = config
-        .as_ref()
-        .and_then(|config| config.projects.get(project))
-        .map(|project| &project.work);
-    // The organization tier of the work root, read through the membership the
-    // registry declares (§FS-005-dispatch.6.1) — the same resolution dispatch
-    // makes, because the work root is one answer for both.
-    let placed_in = placement.organization.as_ref();
-    let per_organization = config
-        .as_ref()
-        .zip(placed_in)
-        .and_then(|(config, org)| config.organizations.get(&org.id))
-        .map(|organization| &organization.work);
+fn init_store(
+    work: &Work,
+    placement: &Placement,
+    project: &str,
+    workspace: &std::path::Path,
+) -> Store {
     match crate::work::ensure_store(
-        &global,
-        per_organization,
-        per_project,
+        &work.global(),
+        work.per_organization(),
+        work.per_project(),
         project,
-        placed_in,
+        placement.organization.as_ref(),
         workspace,
         &placement.root,
     ) {
