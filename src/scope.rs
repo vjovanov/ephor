@@ -252,6 +252,10 @@ pub fn sweeps(command: &Command) -> Sweeps {
         | Command::Reply(_)
         | Command::Capabilities(_)
         | Command::Doctor(_)
+        // `burn` reads the agents' transcripts and the runtime's records and
+        // folds them into ephor's own store; like `mark-read` it writes ephor's
+        // memory, never a project's work root.
+        | Command::Burn(_)
         | Command::Tui => Sweeps::Nothing,
     }
 }
