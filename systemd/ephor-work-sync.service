@@ -15,6 +15,13 @@ Type=oneshot
 # ticket a hand appended, another ephor, a root whose run died. The sweep reads
 # the world and starts nothing on a root that already has a run, so running it
 # here and there both costs one lock probe per root.
+#
+# `--act` on both sweeps: a mutating verb whose resolved scope names more than
+# one project reports what it would do and writes nothing unless it is told to
+# act (§FS-011-command-line.10). This unit is exactly the case the flag is for
+# — a sweep with nobody watching, over every project the site watches — so it
+# says so once here rather than being silently exempt. `refresh` reads and
+# needs no such word.
 ExecStart=%h/.cargo/bin/ephor refresh --quiet
-ExecStart=%h/.cargo/bin/ephor work sync
-ExecStart=%h/.cargo/bin/ephor work run --due
+ExecStart=%h/.cargo/bin/ephor work sync --act
+ExecStart=%h/.cargo/bin/ephor work run --due --act
