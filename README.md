@@ -109,7 +109,7 @@ branches, ticket inference, branch workspaces, and hook sets. The embedded
 
 ```bash
 ephor tui                                   # interactive inbox (alias: ephor inbox)
-ephor refresh [PROJECT ...] [--quiet]       # fetch providers into the cache
+ephor refresh [PROJECT ...] [--project P]... [--quiet] # fetch providers into the cache
 ephor status                                # summary table per project
 ephor status widget [--refresh|--cached] [--max-age SECS] [--json] [--check]
 ephor feed [--project P] [--unread] [--kind pr|ci|message|status] [--json]

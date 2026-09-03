@@ -687,8 +687,14 @@ pub struct SchemaArgs {
 
 #[derive(Args, Debug)]
 pub struct RefreshArgs {
-    /// Projects to refresh (omit for all configured projects).
+    /// Projects to refresh; combines with --project (omit both for all
+    /// configured projects).
     pub projects: Vec<String>,
+
+    /// Restrict to one project. May be passed multiple times and combines
+    /// with positional projects.
+    #[arg(long, value_name = "PROJECT")]
+    pub project: Vec<String>,
 
     /// Print nothing on success.
     #[arg(long)]
