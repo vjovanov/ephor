@@ -1708,6 +1708,12 @@ the gate-fixer to start itself says nothing about the rest of the menu, and
 every refusal dispatch makes still applies, including refusing to run in a
 working tree standing on another branch.
 
+Arguments after `--` on `ephor work dispatch` are passed unchanged and in
+order to every autorun that invocation starts. They belong only to that
+dispatch: ephor does not interpret or remember them, and later due sweeps,
+syncs, and runs started from the interface receive none of them. A dry run
+still starts no runtime.
+
 **The selector.** Every field that is set must hold; an empty one asks nothing.
 Finished work never matches.
 
@@ -2334,7 +2340,7 @@ ephor work                                  # = work list
 ephor work list [--project P] [--open] [--json]
 ephor work dispatch [--project P] [--item ID] [--recipe R] [--kind K]
                     [--again] [--hand H] [--updated-within DAYS]
-                    [--ranking PATH] [--limit N] [--dry-run]
+                    [--ranking PATH] [--limit N] [--dry-run] [-- RUNNER_ARGS…]
 ephor work ask --item ID [WORDS…] [--state S] [--dry-run]
 ephor work sync [--project P] [--dry-run]
 ephor work cancel --item ID TICKET… [--why WORDS] [--dry-run]
@@ -2364,6 +2370,10 @@ ephor work states
   failing, and the sweep says which of the three happened, along with any id
   the file named that matched nothing
   ([§FS-005-dispatch.26](functional-spec/FS-005-dispatch.md#26-an-ordering-already-made-can-be-read-and-a-limit-bounds-what-runs)).
+  Pass runtime arguments after `--`; dispatch gives the vector unchanged and
+  in order to every autorun this invocation starts and does not remember it
+  for later sweeps. With no trailing vector, autoruns receive no additional
+  runtime arguments, as before.
 - **`run`** groups by work root and names the plans ephor opened, so a runtime
   project you keep in the same checkout for your own work is not swept in. One
   root at a time: tickets in one root are about one checkout, and two agents in
