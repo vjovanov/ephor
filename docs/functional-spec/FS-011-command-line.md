@@ -150,6 +150,14 @@ It refuses a plan whose checkout a live run already holds, naming that run, and
 `--force` starts it anyway
 ([§FS-005-dispatch.24](FS-005-dispatch.md#24-work-nobody-has-to-start-starts-itself)).
 
+`ephor work dispatch -- <RUNNER_ARGS>...` accepts the same trailing command
+line shape and passes that vector, in order and without interpretation, to
+every autorun its dispatch starts. The command's help advertises the trailing
+arguments. Their lifetime is this dispatch invocation only: they are not
+stored for `work sync`, interface actions, or later sweeps, and omitting them
+keeps the existing dispatch behaviour
+([§FS-005-dispatch.24](FS-005-dispatch.md#24-work-nobody-has-to-start-starts-itself)).
+
 
 ## 9. A scope selector is honoured or refused
 

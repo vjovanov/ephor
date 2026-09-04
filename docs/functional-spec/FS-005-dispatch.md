@@ -1501,6 +1501,17 @@ the checkout that root's work would run in. A ticket a hand wrote into such a
 plan is due exactly as a dispatched one is; the recipe is a fact about the
 ticket, not about who appended it.
 
+**A dispatch may give its autoruns arguments, for that invocation alone.**
+`ephor work dispatch -- <RUNNER_ARGS>...` supplies the trailing vector to
+every runtime run started by that dispatch's own sweep, unchanged and in the
+order it was given. Ephor neither interprets the arguments nor stores them in
+the plan, ledger, or configuration: a later due sweep does not inherit them.
+Omitting the vector is the empty vector and preserves the behaviour dispatch
+had before this form existed. The passthrough already accepted by `work run`
+is unchanged, and `work sync` and interface actions still supply no runner
+arguments. A dry run still starts no runtime, whether or not a trailing vector
+was supplied.
+
 **One live run per checkout, because a run is an agent editing a working
 tree.** A root a run already holds is left alone: the runtime schedules one
 run per root, the live run reaches a ticket written beneath it, and a second
