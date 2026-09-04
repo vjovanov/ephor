@@ -36,7 +36,7 @@ ships, the previous "latest" section moves verbatim to
   the compatible positional project list instead of being rejected by the
   argument parser with an escaping tip. Mixed named and positional inputs form
   one de-duplicated set, still constrained by `--workspace`, `--tag` and
-  `--org`, with unknown, unwatched and out-of-scope projects refused. (PR #N)
+  `--org`, with unknown, unwatched and out-of-scope projects refused. (PR #69)
 
 - **A value the command line was given is used or refused, never quietly
   dropped, and the checkout settles where the workspace goes before it makes
