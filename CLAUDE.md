@@ -1,5 +1,5 @@
 <!-- BEGIN GRUND MANAGED BLOCK -->
-## Grounding with grund (v8)
+## Grounding with grund (v7)
 
 This project uses [`grund`](https://github.com/vjovanov/grund): every spec, goal, decision, and end-to-end test has a stable ID `<KIND>-<NNN>-<slug>[.<section>]` (`KIND ∈ {GRUND, GOAL, FS, REQ, AR, DF, DA, RM}`), cited with the marker `§` — e.g. `<§>FS-042-user-login.3.1` (the `FS-042-user-login` here is a shape illustration, not a real ID in this repo, hence the `<§>` escape). Type `$$` in a grund-aware editor and it becomes `§`. Bare ID-shaped tokens are ignored — `[reference] strict = true` is set in `grund.toml`, so only `§`-prefixed citations are checked.
 
@@ -49,18 +49,16 @@ Declarations are heading lines `# FS-042-user-login: …` in markdown. In a code
 
 ### Citation directions
 
-`must`/`never` are `grund check` errors; `should`/`avoid` are suggestions (`grund check --suggestions`).
-
-- Each **GOAL** declaration should cite GRUND or GOAL.
-- Each **FS** declaration should cite (GOAL or FS) and REQ; never cite AR.
-- Each **REQ** declaration should cite GOAL or GRUND.
-- Each **AR** declaration should cite (FS or GOAL) and REQ.
-- Each **DF** declaration should cite (FS or GOAL) and REQ.
-- Each **DA** declaration should cite (AR or FS) and REQ.
-- Each file in **tests/e2e/** must cite FS; avoid citing AR.
-- Each file in **tests/integration/** should cite AR.
-- Each source file outside the Project map (**code**) that cites anything should cite FS, AR, or REQ.
-Anything not listed above is allowed.
+- **GOAL** should cite GRUND or GOAL.
+- **FS** should cite GOAL or FS and REQ; never cite AR.
+- **REQ** should cite GOAL or GRUND.
+- **AR** should cite FS or GOAL and REQ.
+- **DF** should cite FS or GOAL and REQ.
+- **DA** should cite AR or FS and REQ.
+- **tests/e2e/** must cite FS; avoid citing AR.
+- **tests/integration/** should cite AR.
+- **code** (any file outside a kind home) should cite FS or AR or REQ.
+Unlisted kinds and pairs are fine.
 
 ### Clickable citations
 
