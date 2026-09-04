@@ -608,7 +608,7 @@ fn dispatch_work(
         // as the ticket (§FS-005-dispatch.24). The sweep decides what that
         // is, so this starts nothing where nothing asked for it and nothing
         // in a checkout a run already holds.
-        started(&mut dispatcher, projects, args.json)?;
+        started(&mut dispatcher, projects, &args.runner_args, args.json)?;
     }
     // What the reader should know about who got the work: a hand nobody could
     // be named to, a pair ephor cannot check, an agent with no model of its
@@ -1345,7 +1345,7 @@ fn sync_work(
         // The same continuation dispatch makes: work reopened because its
         // item moved is work again, and where it needs nobody to start it,
         // nobody has to (§FS-005-dispatch.24, §FS-005-dispatch.5).
-        started(&mut dispatcher, projects, args.json)?;
+        started(&mut dispatcher, projects, &[], args.json)?;
     }
     if args.json {
         println!(
@@ -1679,8 +1679,13 @@ fn run_work(
 /// sweep, idempotent, safe on a root that already has a run. Said in one line
 /// per run so the reader who asked for a ticket learns that it also began —
 /// and, where it could not begin, why.
-fn started(dispatcher: &mut Dispatcher, projects: &[String], json: bool) -> Result<()> {
-    let launched = dispatcher.start_due(Utc::now(), projects, &[], None)?;
+fn started(
+    dispatcher: &mut Dispatcher,
+    projects: &[String],
+    runner_args: &[String],
+    json: bool,
+) -> Result<()> {
+    let launched = dispatcher.start_due(Utc::now(), projects, runner_args, None)?;
     if launched.runs.is_empty() {
         return Ok(());
     }

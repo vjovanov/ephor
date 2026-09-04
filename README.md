@@ -381,6 +381,7 @@ ephor work                                  # what has been dispatched, and what
 ephor work dispatch --dry-run               # what would be opened, and where
 ephor work dispatch [--project P] [--recipe R] [--item ID] [--kind pr]
                     [--updated-within DAYS] [--again] [--ranking PATH] [--limit N]
+                    [-- RUNNER_ARGS…]
 ephor work ask --item ID "…"                # a ticket in your own words
 ephor work sync [--dry-run]                 # reopen work whose item has moved
 ephor work cancel --item ID TICKET… [--why "…"]   # take a ticket back; the plan keeps it
@@ -409,8 +410,10 @@ ticket gets its run in the same breath it is written, and a timer running
 reads the world rather than a memory — a root is due when it holds an open,
 unclaimed, unparked ticket from such a recipe and no run is live on it — so it
 is safe to invoke as often as anything cares to, and starts nothing on a root
-that already has a run. Everything that says nothing about this is still
-nobody's to start but yours.
+that already has a run. Arguments after `--` on `work dispatch` pass unchanged
+and in order to every autorun that invocation starts; they are not remembered
+for later sweeps, and a dry run still starts nothing. Everything that says
+nothing about this is still nobody's to start but yours.
 
 In the TUI, `w` on any item opens its **work screen**: the tickets already
 opened and what they reached, whether the item has moved under them, and the

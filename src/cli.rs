@@ -328,6 +328,11 @@ pub struct WorkDispatchArgs {
     #[arg(long)]
     pub dry_run: bool,
 
+    /// Arguments passed through to the runtime for autoruns started by this
+    /// dispatch, after `--`.
+    #[arg(last = true)]
+    pub runner_args: Vec<String>,
+
     /// Emit the outcome as JSON.
     #[arg(long)]
     pub json: bool,
