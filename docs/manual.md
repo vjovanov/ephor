@@ -1706,13 +1706,7 @@ yours to start. It is said on the thing that hands work over and nowhere else
 — a recipe, or an entry that lays a workflow down (§8.15.1) — because trusting
 the gate-fixer to start itself says nothing about the rest of the menu, and
 every refusal dispatch makes still applies, including refusing to run in a
-working tree standing on another branch.
-
-Arguments after `--` on `ephor work dispatch` are passed unchanged and in
-order to every autorun that invocation starts. They belong only to that
-dispatch: ephor does not interpret or remember them, and later due sweeps,
-syncs, and runs started from the interface receive none of them. A dry run
-still starts no runtime.
+working tree standing on another branch. Arguments after `--` on `ephor work dispatch` are passed unchanged and in order to every autorun that invocation starts; ephor neither interprets nor remembers them, later due sweeps, syncs, and interface runs receive none, and dry runs still start no runtime.
 
 **The selector.** Every field that is set must hold; an empty one asks nothing.
 Finished work never matches.
@@ -2369,11 +2363,7 @@ ephor work states
   that is absent, empty, or unreadable falls back to today's order rather than
   failing, and the sweep says which of the three happened, along with any id
   the file named that matched nothing
-  ([§FS-005-dispatch.26](functional-spec/FS-005-dispatch.md#26-an-ordering-already-made-can-be-read-and-a-limit-bounds-what-runs)).
-  Pass runtime arguments after `--`; dispatch gives the vector unchanged and
-  in order to every autorun this invocation starts and does not remember it
-  for later sweeps. With no trailing vector, autoruns receive no additional
-  runtime arguments, as before.
+  ([§FS-005-dispatch.26](functional-spec/FS-005-dispatch.md#26-an-ordering-already-made-can-be-read-and-a-limit-bounds-what-runs)). Pass runtime arguments after `--`; dispatch gives the vector unchanged and in order to every autorun this invocation starts, does not remember it for later sweeps, and supplies none when omitted, as before.
 - **`run`** groups by work root and names the plans ephor opened, so a runtime
   project you keep in the same checkout for your own work is not swept in. One
   root at a time: tickets in one root are about one checkout, and two agents in
