@@ -36,7 +36,7 @@ ships, the previous "latest" section moves verbatim to
   Arguments after `--` on `ephor work dispatch` now reach every autorun that
   dispatch starts, unchanged and in order. Ephor neither interprets nor stores
   them, so dispatches without arguments and later sweeps keep their previous
-  behavior. (PR #N)
+  behavior. (PR #70)
 
 ### Fixed
 
