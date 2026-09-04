@@ -124,6 +124,30 @@ awk '{ if ($0 ~ /^\*\*State:\*\*/) print "**State:** done"; else print }' "$file
 mv "$file.tmp" "$file"
 "#;
 
+/// A detachable runtime that records only the arguments following ephor's
+/// own run arguments. Its finished descriptor keeps the scenario about the
+/// dispatch-to-runtime boundary rather than about work the stand-in might do.
+const ARGUMENT_RUNTIME: &str = r#"#!/usr/bin/env bash
+set -euo pipefail
+verb="$1"; shift
+if [ "$verb" = run ] && [ "${1:-}" = --help ]; then
+  printf '%s\n' '      --headless  Detach the run'
+  exit 0
+fi
+while [ "${1:-}" = --headless ] || [ "${1:-}" = --json ]; do
+  shift
+done
+root="$1"; shift
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --rhei|--agent|--agent-mode) shift 2 ;;
+    *) break ;;
+  esac
+done
+printf '%s\n' "$@" > "$HOME/dispatch-runner-args"
+printf '%s\n' '{"id":"dispatch-arguments","status":"finished"}'
+"#;
+
 /// A world watching the forge, with the runtime bound to a name that is not on
 /// PATH yet — which is every machine before the runtime is installed.
 fn watching() -> World {
@@ -146,6 +170,67 @@ fn watching() -> World {
 
 fn plan_path(world: &World) -> std::path::PathBuf {
     world.forest().join("panta").join(format!("{PLAN}.rhei.md"))
+}
+
+/// The arguments after dispatch's `--` belong to each runtime it starts, not
+/// to ephor: option-looking values and ordinary values arrive unchanged and
+/// in their original order (§FS-005-dispatch.24).
+#[test]
+fn dispatch_autoruns_receive_runner_arguments_unchanged_and_in_order() {
+    let world = watching();
+    world.stub("argument-runtime", ARGUMENT_RUNTIME);
+    world.configure(json!({
+        "projects": { PROJECT: { "providers": [
+            { "provider": "acmeforge", "user": "you", "repos": ["app"] }
+        ] } },
+        "work": {
+            "runner": "argument-runtime",
+            "recipes": [{
+                "id": "fix-gate",
+                "icon": "🛠",
+                "description": "fix the red gate",
+                "state": "fix",
+                "needs_checkout": true,
+                "autorun": true,
+                "when": { "kinds": ["pr"], "roles": ["author"], "gate": "failing" },
+                "brief": "Fix the gate on {title}."
+            }]
+        }
+    }));
+    let price_book = world.file("config/price book.json", "{}\n");
+    let price_book = price_book.to_str().expect("the fixture path is UTF-8");
+
+    world
+        .ephor()
+        .args([
+            "work",
+            "dispatch",
+            "--item",
+            "acmeforge:app/101",
+            "--recipe",
+            "fix-gate",
+            "--",
+            "--prices",
+            price_book,
+            "--effort",
+            "high",
+            "--trace-runtime",
+        ])
+        .assert()
+        .success();
+
+    let received = std::fs::read_to_string(world.path().join("dispatch-runner-args"))
+        .expect("the autorun recorded its runner arguments");
+    assert_eq!(
+        received.lines().collect::<Vec<_>>(),
+        vec![
+            "--prices",
+            price_book,
+            "--effort",
+            "high",
+            "--trace-runtime"
+        ]
+    );
 }
 
 /// Autorun is safe to leave enabled because a zero ceiling writes the work
