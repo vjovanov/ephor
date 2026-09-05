@@ -522,4 +522,69 @@ mod compat_tests {
         assert_eq!(entry.plan_id, "github-prs-acme-widget-42");
         assert_eq!(entry.project, "widget");
     }
+
+    /// A ledger written before the pool seam existed — no `pools` map, no
+    /// entry `pool` field — still reads: the entry and its start come back
+    /// exactly as written, and `pools` is added beside them as empty rather
+    /// than refusing the file (§FS-005-dispatch.29,
+    /// §FS-006-project-interface.11).
+    #[test]
+    fn a_ledger_from_before_pools_reads_with_its_entry_and_start_unchanged_and_pools_added() {
+        let older = serde_json::json!({
+            "entries": {
+                "github-prs:acme/widget#42": {
+                    "project": "widget",
+                    "title": "Retry window",
+                    "root": "/w/panta",
+                    "checkout": "/w",
+                    "plan_id": "github-prs-acme-widget-42",
+                    "plan": "/w/panta/github-prs-acme-widget-42.rhei.md",
+                    "dispatches": []
+                }
+            },
+            "starts": {
+                "/w": {
+                    "at": "2026-09-01T00:00:00Z",
+                    "failures": 2,
+                    "says": "rate limit reached"
+                }
+            }
+        });
+        let before = older.clone();
+        let ledger: Ledger = serde_json::from_value(older).expect("an old ledger still reads");
+
+        let entry = &ledger.entries["github-prs:acme/widget#42"];
+        assert_eq!(entry.project, "widget");
+        assert_eq!(entry.plan_id, "github-prs-acme-widget-42");
+        assert_eq!(entry.pool, None);
+
+        let start = &ledger.starts["/w"];
+        assert_eq!(start.failures, 2);
+        assert_eq!(start.says, "rate limit reached");
+
+        assert!(ledger.pools.is_empty());
+
+        // The parts that existed before are untouched by reading them into a
+        // struct that now knows about pools: serializing back reproduces the
+        // same document, with no `pools` key added since there is nothing to
+        // report (`skip_serializing_if`).
+        let after = serde_json::to_value(&ledger).expect("it serializes back");
+        assert_eq!(after["entries"], before["entries"]);
+        assert_eq!(after["starts"], before["starts"]);
+        assert!(after.get("pools").is_none());
+    }
+
+    /// A malformed ledger degrades to a `Result::Err` rather than a panic —
+    /// which is what lets a caller (`probe_headroom` in
+    /// `src/feed/commands.rs`) turn it into a warning on stderr and carry on
+    /// with the refresh instead of failing it (§FS-005-dispatch.29).
+    #[test]
+    fn a_malformed_ledger_is_an_error_not_a_panic() {
+        let malformed = serde_json::json!({
+            // `entries` is a map keyed by item id; a bare string here cannot
+            // deserialize as one.
+            "entries": "not a map",
+        });
+        assert!(serde_json::from_value::<Ledger>(malformed).is_err());
+    }
 }
