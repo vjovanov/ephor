@@ -358,20 +358,29 @@ pub fn status(args: &StatusArgs, scope: &Projects) -> Result<ExitCode> {
             println!("{project:<30}  {items:>6}  {unread:>6}  {needs:>7}  {failing:>7}");
         }
         // What the providers behind the roster have left, beneath the summary
-        // that says what there is to hand to them (§FS-005-dispatch.29). Only
-        // where something has actually been reported: a machine with no
-        // headroom bound and no refusal recorded has nothing to say here, and
-        // a block of *unknown* under every reading would be noise.
+        // that says what there is to hand to them (§FS-005-dispatch.29).
+        //
+        // Shown whole or not at all. A site that binds a headroom verb, or one
+        // whose own spawn has been refused, is a site with something to report
+        // about its pools, and every one of them is then listed — including the
+        // unknown ones, with the reason, which is what the degrade rule is for
+        // (§REQ-001-boundary.1). A site with neither has had nothing reported
+        // about any pool, and this reading is the same reading it always was:
+        // the interface grows by addition, and a block of *unknown* under every
+        // `status` would be growth nobody asked for
+        // (§FS-006-project-interface.11).
         let pools: Vec<crate::work::headroom::Standing> =
             match crate::work::Dispatcher::load(&config) {
-                Ok(mut dispatcher) => dispatcher
-                    .pools(None)
-                    .into_iter()
-                    .filter(|pool| pool.remaining.is_some() || pool.refused_until.is_some())
-                    .collect(),
+                Ok(mut dispatcher) => dispatcher.pools(None),
                 Err(_) => Vec::new(),
             };
-        crate::doctor::render_pools(&pools, &style);
+        let reported = !config.work.headroom.is_empty()
+            || pools
+                .iter()
+                .any(|pool| pool.remaining.is_some() || pool.refused_until.is_some());
+        if reported {
+            crate::doctor::render_pools(&pools, &style);
+        }
     }
     Ok(check_exit(&feeds, &seen, args.check, recent_days))
 }
