@@ -85,6 +85,12 @@ struct Diagnosis {
     /// task store is probed and a shared source is site-level, and both are
     /// sources of this project's matters.
     configured: usize,
+    /// Where this checkout still keeps a piece of tool configuration under the
+    /// deprecated `.agents/` name, one sentence per file, in the probe's own
+    /// words (§FS-006-project-interface.12). Composed here and judged nowhere
+    /// (§FS-010-doctor.1): it is news rather than a fault, so it moves neither
+    /// the health below nor the exit code.
+    deprecated: Vec<String>,
 }
 
 impl Diagnosis {
@@ -142,6 +148,10 @@ impl Diagnosis {
                     json!({ "source": name, "why": why, "unreachable": unreachable })
                 })
                 .collect::<Vec<_>>(),
+            // The same sentence a person reads, because a fact only a person
+            // at a terminal can see is a fact nothing can act on
+            // (§REQ-002-parity.3).
+            "deprecated": self.deprecated,
         })
     }
 }
@@ -203,7 +213,26 @@ fn diagnose(
         answering,
         asked,
         configured,
+        deprecated: placement
+            .as_ref()
+            .map(|placement| deprecated_layout(&placement.root))
+            .unwrap_or_default(),
     }
+}
+
+/// What the probe has to say about where this checkout keeps the toolchain's
+/// own files (§FS-006-project-interface.12): one sentence per file still under
+/// the deprecated name, in the probe's words and not in `doctor`'s.
+///
+/// This is the same composition [`render_roster`] makes of the runtime
+/// module's judgement — the question has an owner, and every surface with
+/// something to say about the layout says that owner's sentence
+/// (§FS-010-doctor.1).
+fn deprecated_layout(root: &std::path::Path) -> Vec<String> {
+    crate::grounds::in_a_checkout()
+        .iter()
+        .filter_map(|kept| kept.find(root)?.note)
+        .collect()
 }
 
 /// The projects to look at: the one named, or everything configured.
@@ -401,6 +430,17 @@ fn render_ladder(row: &Diagnosis, style: &Style) {
     }
     for (rung, why) in &row.missing {
         println!("  ✗ {:<18} {}", rung.name(), style.dim(why));
+    }
+    render_deprecated(row, "  ", style);
+}
+
+/// Where the checkout still keeps tool configuration under the deprecated
+/// name, printed exactly as the probe wrote it (§FS-006-project-interface.12).
+/// Both readings print it, because one fact should not read two ways depending
+/// on which command printed it.
+fn render_deprecated(row: &Diagnosis, indent: &str, style: &Style) {
+    for note in &row.deprecated {
+        println!("{indent}{} {}", style.dim("·"), style.dim(note));
     }
 }
 
@@ -685,6 +725,10 @@ fn render_project(row: &Diagnosis, style: &Style) {
             );
         }
     }
+    // A deprecated layout is shown however the project reads: it is not a
+    // fault, so it is not context for one, and a well project is exactly the
+    // one whose reader would otherwise never hear it.
+    render_deprecated(row, "      ", style);
 }
 
 fn summary(health: Health, style: &Style) -> String {
@@ -716,6 +760,7 @@ mod tests {
             answering,
             asked,
             configured,
+            deprecated: Vec::new(),
         }
     }
 

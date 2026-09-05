@@ -84,6 +84,13 @@ pub struct Roster {
     /// that does not parse empties it too, with the file named — or None
     /// where the runtime is there and the hands speak for themselves.
     pub refusal: Option<String>,
+    /// What reading this roster had to say that takes nothing away: today,
+    /// that the work root's overlay answered under the deprecated `.agents/`
+    /// name, or was passed over there for its home
+    /// (§FS-006-project-interface.12). It is news and not a fault, so it is
+    /// carried here rather than in `refusal`, which empties the roster
+    /// (§FS-005-dispatch.14).
+    pub notes: Vec<String>,
 }
 
 impl Roster {
@@ -123,6 +130,7 @@ pub fn roster(config: &crate::work::recipe::WorkConfig, root: Option<&Path>) -> 
         return Roster {
             hands: Vec::new(),
             refusal: Some(reason),
+            notes: Vec::new(),
         };
     }
     let global = match read_settings(&global_settings_path()) {
@@ -131,16 +139,28 @@ pub fn roster(config: &crate::work::recipe::WorkConfig, root: Option<&Path>) -> 
             return Roster {
                 hands: Vec::new(),
                 refusal: Some(reason),
+                notes: Vec::new(),
             }
         }
     };
-    let project = match root {
-        Some(root) => match read_settings(&root.join(project_settings_path())) {
+    // Where the overlay was found is said whichever way the file then reads:
+    // a file that does not parse still empties the roster, and the reader is
+    // still told which of the two names it was read under
+    // (§FS-006-project-interface.12).
+    let overlay = root.and_then(project_settings);
+    let notes = overlay
+        .as_ref()
+        .and_then(|found| found.note.clone())
+        .into_iter()
+        .collect::<Vec<_>>();
+    let project = match &overlay {
+        Some(found) => match read_settings(&found.path) {
             Ok(settings) => settings,
             Err(reason) => {
                 return Roster {
                     hands: Vec::new(),
                     refusal: Some(reason),
+                    notes,
                 }
             }
         },
@@ -149,6 +169,7 @@ pub fn roster(config: &crate::work::recipe::WorkConfig, root: Option<&Path>) -> 
     Roster {
         hands: enumerate(&merge(built_in_agents(), global.typed, project)),
         refusal: None,
+        notes,
     }
 }
 
@@ -620,13 +641,14 @@ fn global_settings_path() -> PathBuf {
         .join("settings.json")
 }
 
-/// The overlay a work root may carry, relative to the execution root —
-/// composed from the same word as the global path, for the same reason
-/// (§AR-007-runtime.2).
-fn project_settings_path() -> PathBuf {
-    Path::new(".agents")
-        .join(super::RUNNER)
-        .join("settings.json")
+/// The overlay a work root may carry, found where the toolchain keeps its own
+/// files: under the home first, then the deprecated `.agents/` name
+/// (§FS-006-project-interface.12). Composed from the same word as the global
+/// path, so rebinding `work.runner` swaps the word that executes and never
+/// where the settings are read from (§AR-007-runtime.2). None where the root
+/// carries no overlay under either name.
+fn project_settings(root: &Path) -> Option<crate::grounds::Found> {
+    crate::grounds::under_the_home(Path::new(super::RUNNER).join("settings.json")).find(root)
 }
 
 /// The names of a profile's named flag sets, in declaration order — the
@@ -1351,6 +1373,7 @@ mod tests {
         Roster {
             hands: enumerate(&registry(SETTINGS, "{}")),
             refusal: None,
+            notes: Vec::new(),
         }
     }
 
@@ -1689,6 +1712,7 @@ mod tests {
                 available: None,
             }],
             refusal: None,
+            notes: Vec::new(),
         };
         let why = match resolve_(
             &plain,
@@ -1764,6 +1788,7 @@ mod tests {
                 available: None,
             }],
             refusal: None,
+            notes: Vec::new(),
         };
         let choice = resolve_(
             &plain,
@@ -1810,6 +1835,7 @@ mod tests {
                 },
             ],
             refusal: None,
+            notes: Vec::new(),
         };
         let choice = resolve_(
             &roster,
@@ -1916,6 +1942,7 @@ mod tests {
         let empty = Roster {
             hands: Vec::new(),
             refusal: Some("nobody".to_string()),
+            notes: Vec::new(),
         };
         assert!(pickable(&empty, None).is_empty());
     }
