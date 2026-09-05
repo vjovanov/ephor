@@ -1720,7 +1720,11 @@ unlimited and `0` admits no new autorun starts, exactly as the ceilings above
 read. What a ceiling is compared against is the reading `ephor burn` publishes
 for the same window and project (§9): ephor prices nothing and keeps no
 accounting of its own, and the sweep refreshes that store itself rather than
-waiting for somebody to open a reading.
+waiting for somebody to open a reading. The site ceiling is compared against
+everything that reading covers, including the spend it could attribute to no
+watched project — an agent you ran by hand somewhere else counts against it,
+because it is a ceiling on what this machine spends and a day spent by hand is
+spent. An organization's and a project's count only their own.
 
 Two denominations, because they fail differently. A dollar figure is only ever
 the one a log carried already, so a price book with no entry for a model

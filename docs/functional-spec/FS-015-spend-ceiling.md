@@ -63,6 +63,18 @@ the sweep reach the network. Ephor keeps no second accounting of its own: the
 number the ceiling is compared against is the number `burn` would print for
 the same window and project.
 
+**So the site scope counts the whole reading, and the inner scopes count only
+their own.** Every record `burn` could attribute to no watched project lands in
+`other` ([§FS-013-burn.4](FS-013-burn.md#4-every-record-finds-a-project-or-lands-in-other)), and the site total is the total `burn` prints, `other`
+included. That is deliberate rather than incidental: a site budget is a ceiling
+on what this machine spends, and a session somebody ran by hand in an unwatched
+directory spent that money exactly as a dispatched run would. Excluding it
+would make the site ceiling mean *only what ephor started* — the caveat that
+reading `burn` rather than ephor's own ledger exists to avoid. An
+organization's and a project's ceilings count only the projects the registry
+places in them, so a scope narrower than the site is never moved by spend
+outside it.
+
 ## 2. A dollar can be wrong in a way a token cannot
 
 Both denominations ship, and the reason is not symmetry. Tokens are the
@@ -105,8 +117,10 @@ numbers. Anything else is refused, and the refusal names what is accepted.
 **`per` accepts exactly the windows the store can answer** — `1h`, `6h`,
 `24h`, `7d` — with `day` and `week` accepted as spellings of the last two
 ([§FS-013-burn.6](FS-013-burn.md#6-windows-groupings-and-the-current-rate)). A window the store cannot answer is a budget that cannot
-bind, so it is refused rather than approximated, and the refusal names the
-four. The window is the trailing one the reading uses, not a calendar period:
+bind, so it is refused rather than approximated, and the refusal names every
+spelling it accepts — the two alternative spellings beside the four windows,
+because a reader who wrote one of those two is owed the same list as anybody
+else. The window is the trailing one the reading uses, not a calendar period:
 `24h` is the last twenty-four hours, not since midnight.
 
 **`amount` is a number and is not negative.** All three keys are required on

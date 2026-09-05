@@ -1076,6 +1076,16 @@ fn lay_workflow(config: &StatusConfig, args: &crate::cli::WorkLayArgs) -> Result
     let laid = dispatcher.lay(&item, &laying, args.dry_run)?;
     if !args.dry_run {
         dispatcher.save()?;
+        // A person typed this, so a full budget is said and the plan is laid
+        // anyway: the cap is the human's leash on the machine, not on the
+        // human (§FS-015-spend-ceiling.6). On the error stream, where a
+        // warning belongs and where it leaves `--json` stdout a reading
+        // (§REQ-002-parity.3). Said where a plan is actually written, so a
+        // ceiling is never announced over a dry run that laid nothing —
+        // the same place `dispatch` says it.
+        if let Some(full) = dispatcher.budgets(Utc::now()).over(&[item.project.clone()]) {
+            eprintln!("note: {}", full.says);
+        }
     }
     if args.json {
         println!(
