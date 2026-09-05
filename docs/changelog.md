@@ -70,7 +70,7 @@ ships, the previous "latest" section moves verbatim to
   plan language. `ephor status` and `ephor capabilities` grow a line per pool
   and `ephor caps --json` a `pools` array, both by addition;
   `config/headroom.example.sh` and `config/headroom-metered.example.sh` are the
-  worked examples the seam ships beside ephor. (PR #N)
+  worked examples the seam ships beside ephor. (PR #73)
 
 - **Dispatch autoruns accept per-invocation runtime arguments**
   ([§FS-005-dispatch.24](functional-spec/FS-005-dispatch.md#24-work-nobody-has-to-start-starts-itself),
@@ -91,7 +91,7 @@ ships, the previous "latest" section moves verbatim to
   **accepted**, silently, as agent `a` carrying model `b`, and
   `["a", "b", "c"]` as that pair at effort `c`. A hand is now read by a
   visitor that takes a string and a map and refuses a sequence by name, saying
-  where a list belongs. (PR #N)
+  where a list belongs. (PR #73)
 
 - **`refresh` accepts the project selector used by sibling sweeps**
   ([§FS-011-command-line.9](functional-spec/FS-011-command-line.md#9-a-scope-selector-is-honoured-or-refused)).
