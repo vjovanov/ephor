@@ -21,6 +21,7 @@
 #[path = "../support.rs"]
 mod support;
 
+use chrono::{Duration, SecondsFormat, Utc};
 use predicates::prelude::*;
 use serde_json::{json, Value};
 
@@ -415,14 +416,29 @@ fn a_refusal_ephor_recorded_passes_that_pool_over_until_it_lifts() {
             "brief": "Fix the gate on {title}."
         }],
     }));
-    // A runtime that refuses in its provider's words, naming when the window
-    // lifts. Nothing here is a vendor ephor knows: it is a failed start whose
-    // message happens to carry an instant.
+    // The window lifts six hours from now rather than at an hour written down
+    // here: a refusal is evidence only while the instant it names is still
+    // ahead (§FS-005-dispatch.29), so a literal would quietly stop being a
+    // refusal the moment the clock passed it.
+    let lifts = (Utc::now() + Duration::hours(6)).to_rfc3339_opts(SecondsFormat::Secs, true);
+    // A runtime that answers the detach probe every start makes, and then
+    // refuses in its provider's words, naming when the window lifts. Nothing
+    // here is a vendor ephor knows: it is a failed start whose message happens
+    // to carry an instant.
     world.stub(
         "acme-runtime",
-        "#!/usr/bin/env bash\n\
-         printf 'rate limit reached for this account; resets at 2026-09-05T18:30:00Z\\n' >&2\n\
-         exit 1\n",
+        &format!(
+            r#"#!/usr/bin/env bash
+case "$*" in
+  *--help*)
+    printf 'Options:\n      --headless  Detach the run into its own session\n'
+    exit 0
+    ;;
+esac
+printf 'rate limit reached for this account; resets at {lifts}\n' >&2
+exit 1
+"#
+        ),
     );
 
     world.ephor().args(["work", "dispatch"]).assert().success();
@@ -447,5 +463,5 @@ fn a_refusal_ephor_recorded_passes_that_pool_over_until_it_lifts() {
         plan.contains("**Target:** acme-agent:south:m-south"),
         "{plan}"
     );
-    assert!(plan.contains("2026-09-05T18:30:00Z"), "{plan}");
+    assert!(plan.contains(&lifts), "{plan}");
 }
