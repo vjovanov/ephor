@@ -1010,9 +1010,21 @@ impl Placement {
     /// a project with nothing placed has no checkout to read, which `doctor`
     /// already reports as the missing *placed* rung rather than as a sentence
     /// about the layout.
+    ///
+    /// The one place the two ladders part: a project the registry gives a
+    /// `branch_root_template` does not fall back to its root, even where a
+    /// repository of its own happens to sit there. The registry has said its
+    /// checkouts live one level down, so what is at the container is not a
+    /// checkout this project keeps, and reporting the container's files as the
+    /// project's layout names a path no checkout maintains. `None` is the
+    /// honest answer, and `doctor` already reports the branch workspaces as
+    /// missing. [`Placement::source_checkout`] keeps the root candidate: a
+    /// working tree may be added from any repository, wherever it stands
+    /// (§FS-004-quick-actions.7).
     pub fn project_checkout(&self) -> Option<PathBuf> {
         self.checkout_candidates()
             .into_iter()
+            .filter(|path| self.template.is_none() || path != &self.root)
             .find(|path| path.is_dir())
     }
 

@@ -900,3 +900,34 @@ fn doctor_reads_the_layout_where_the_checkout_is_rather_than_the_root_above_it()
     );
     assert_eq!(rows["projects"][0]["health"], "well");
 }
+
+/// And where no checkout is on disk at all, the container answers for nothing
+/// (§FS-006-project-interface.12, §FS-010-doctor.1).
+///
+/// A branch-addressable project's root is the container by the registry's own
+/// word, so a file left there is not a layout any checkout keeps. Reporting it
+/// would name a path nobody maintains and send a reader to fix it where it
+/// cannot be fixed; the missing workspace is what `doctor` has to say instead.
+#[test]
+fn doctor_does_not_read_the_container_as_a_checkout_when_no_workspace_is_on_disk() {
+    let tmp = tempdir();
+    fixture(tmp.path(), json!([{ "provider": "demo" }]));
+    let checkout = branch_addressable(tmp.path());
+    // The container is on disk, but nothing is checked out under it.
+    fs::remove_dir(&checkout).unwrap();
+    let stray = tmp.path().join("project/.agents");
+    fs::create_dir_all(&stray).unwrap();
+    fs::write(stray.join("grund.toml"), "project_name = \"stray\"\n").unwrap();
+
+    let out = ephor(tmp.path())
+        .args(["doctor", "--skip-self", "--project", "widget", "--json"])
+        .output()
+        .unwrap();
+    let rows: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        rows["projects"][0]["deprecated"],
+        json!([]),
+        "the container's own file was read as the project's layout: {}",
+        rows["projects"][0]
+    );
+}
