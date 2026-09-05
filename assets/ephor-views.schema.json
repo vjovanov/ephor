@@ -339,6 +339,11 @@
               "unreachable": { "type": "boolean" }
             }
           }
+        },
+        "deprecated": {
+          "type": "array",
+          "description": "Where this checkout still keeps a piece of tool configuration under the deprecated `.agents/` name, one sentence per file, naming the file and where it belongs now (FS-006-project-interface.12). The same sentence the report prints. News rather than a fault: it moves neither `health` nor the exit code.",
+          "items": { "type": "string" }
         }
       }
     },

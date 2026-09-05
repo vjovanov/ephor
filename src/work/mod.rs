@@ -943,6 +943,13 @@ impl Dispatcher {
     fn ensure_roster(&mut self, root: &std::path::Path) {
         if !self.rosters.contains_key(root) {
             let roster = runtime::roster::roster(&self.global, Some(root));
+            // Where this root's overlay was found travels as a note beside the
+            // work, never as a refusal: the deprecated name produces exactly
+            // the roster its home produces, so nothing a reader had is taken
+            // away (§FS-006-project-interface.12, §FS-005-dispatch.14).
+            for note in roster.notes.clone() {
+                self.note_once(&note);
+            }
             self.rosters.insert(root.to_path_buf(), roster);
         }
     }
