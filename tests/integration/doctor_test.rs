@@ -751,3 +751,82 @@ fn a_site_with_no_runtime_still_resolves_every_other_rung() {
         .unwrap()
         .contains(&json!("placed")));
 }
+
+/// A project still keeping tool configuration under the deprecated `.agents/`
+/// name is named where a person looks (§FS-010-doctor.1,
+/// §FS-006-project-interface.12).
+///
+/// `doctor` judges none of it: where a checkout keeps these files is the
+/// probe's question and the probe's sentence, and `doctor` composes it beside
+/// the ladder and the sources the way it composes everything else. So it is
+/// news rather than a fault — the project is well, the exit code does not move,
+/// and nothing about the old name stops the project doing anything
+/// (§FS-006-project-interface.10). The report is in the machine form too,
+/// because a fact only a person at a terminal can see is a fact nothing can act
+/// on (§REQ-002-parity.3).
+#[test]
+fn doctor_names_a_project_still_keeping_its_tool_configuration_under_the_old_name() {
+    let tmp = tempdir();
+    fixture(tmp.path(), json!([{ "provider": "demo" }]));
+    // A checkout on the layout every one of these files has moved off.
+    let old = tmp.path().join("project/.agents");
+    fs::create_dir_all(&old).unwrap();
+    fs::write(old.join("grund.toml"), "project_name = \"widget\"\n").unwrap();
+    fs::write(old.join("fissile.toml"), "fissile_config_version = 1\n").unwrap();
+
+    let out = ephor(tmp.path())
+        .args(["doctor", "--skip-self", "--project", "widget"])
+        .output()
+        .unwrap();
+    let report = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        report.contains(".agents/grund.toml") && report.contains(".agents/fissile.toml"),
+        "doctor said nothing about a checkout still on the deprecated name:\n{report}"
+    );
+    // And where they belong now, so the line is actionable without a second
+    // lookup.
+    assert!(
+        report.contains(".agent-grounds/fissile.toml"),
+        "the report names the old path without naming the new one:\n{report}"
+    );
+    // News, not a fault: the project is well and the exit code is what it was.
+    assert!(
+        out.status.success(),
+        "a deprecated path moved the exit code: {:?}",
+        out.status.code()
+    );
+
+    // The same reading answers a program, per project.
+    let out = ephor(tmp.path())
+        .args(["doctor", "--skip-self", "--project", "widget", "--json"])
+        .output()
+        .unwrap();
+    let rows: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let widget = rows["projects"][0].to_string();
+    assert!(
+        widget.contains(".agents/grund.toml") && widget.contains(".agents/fissile.toml"),
+        "the machine form left the layout out: {widget}"
+    );
+    assert_eq!(rows["projects"][0]["health"], "well");
+
+    // A checkout already on the new layout is not named at all: the report is
+    // about the deprecated name and nothing else.
+    fs::remove_dir_all(&old).unwrap();
+    fs::write(
+        tmp.path().join("project/grund.toml"),
+        "project_name = \"widget\"\n",
+    )
+    .unwrap();
+    let new = tmp.path().join("project/.agent-grounds");
+    fs::create_dir_all(&new).unwrap();
+    fs::write(new.join("fissile.toml"), "fissile_config_version = 1\n").unwrap();
+    let out = ephor(tmp.path())
+        .args(["doctor", "--skip-self", "--project", "widget"])
+        .output()
+        .unwrap();
+    let report = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !report.contains(".agents/"),
+        "a checkout on the new layout was reported anyway:\n{report}"
+    );
+}

@@ -328,4 +328,46 @@ change bumps the schema version with a changelog entry per
 [§FS-002-release.1](FS-002-release.md#1-changelog). The schemas are the interface's stability surface — what
 a release may change is answerable by diffing them.
 
+## 12. What the toolchain keeps in a checkout has a home, and a deprecated one
 
+`.agents/` is, by convention, where an agent's *instructions* live, and agent
+runtimes treat it that way — one of them mounts it read-only inside a checkout,
+so a tool asked to maintain a file there cannot write it and is not always told
+why. Tool configuration is not instructions and does not belong beside them.
+Each such file therefore has a **home of its own**: the runtime settings overlay
+a work root may carry and the file-size budget live under `.agent-grounds/`,
+and the grounding configuration lives at the repository root, where it says at a
+glance that the repository is a grund tree. `.agents/` is the **deprecated
+former name** for all of them. These are conventions probed in the checkout
+(§1) — well-known names a project carries for its own sake — never artifacts
+ephor requires of it ([§REQ-001-boundary.3](../requirements/REQ-001-boundary.md#3-requirements-on-a-project-are-capabilities-never-artifacts)).
+
+**One probe, one fixed order, and both names go on working.** Looking for one
+of these files under a root is its home first and the deprecated `.agents/`
+name second; the first that exists is the one read, and a root carrying neither
+carries the file nowhere. Nothing is withdrawn: a root that has only the old
+name goes on producing exactly what it produced before, because it is the same
+file and only where it was found has changed. A root carrying **both** is
+answered by the home and the deprecated one is ignored rather than merged — two
+homes for one file is a tie, and reading both would make the answer depend on an
+order nobody wrote down.
+
+**Reading the deprecated name is said, and says nothing else.** It produces one
+sentence, naming the file that was read and where it belongs now, and that
+sentence is the whole of the consequence. It is news and not a fault: nothing is
+refused, nothing a reader already had is taken away, and no exit code moves. A
+deprecation that emptied a list or failed a command would punish a person for a
+path that still works — and that it still works is the only reason to have kept
+it.
+
+**The judgement is made once, and reported wherever it matters.** The probe owns
+where a root keeps these files and is the only thing that answers it; every
+surface with something to say about the layout says the probe's own sentence
+rather than forming a second opinion of its own. That is what lets `doctor`
+report a project still on the deprecated name while judging nothing itself
+([§FS-010-doctor.1](FS-010-doctor.md#1-it-reports-what-is-already-judged-and-judges-nothing-itself)).
+
+**ephor reads both names and writes neither.** It creates no tool configuration
+in a checkout, moves none, and rewrites none: watching a project costs the
+project nothing ([§GOAL-005-costless](../goals.md#goal-005-costless-watching-costs-the-watched-nothing)), and where a file of the project's own
+lives is the project's to change.

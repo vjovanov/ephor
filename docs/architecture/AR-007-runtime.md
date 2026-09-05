@@ -111,6 +111,15 @@ binding for this module's verbs — plan writing in its language, its runner
 command, its read-back — selected by configuration, with no change above
 the module.
 
+The **homes of the settings** stay outside a binding too, and there are two of
+them. The person's file is read from their own configuration directory; the
+overlay a work root may carry is read from where the toolchain keeps its own
+files — the home first, the deprecated `.agents/` name second, and reading the
+second one said rather than refused ([§FS-006-project-interface.12](../functional-spec/FS-006-project-interface.md#12-what-the-toolchain-keeps-in-a-checkout-has-a-home-and-a-deprecated-one)). So
+rebinding `work.runner` swaps the word that executes and never where the
+settings are read from, and a second binding inherits both homes, in that
+order, unchanged.
+
 ## 3. Degrade
 
 With no runner bound or installed, writing and reading work unchanged —

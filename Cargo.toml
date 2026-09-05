@@ -98,6 +98,10 @@ name = "e2e_018_a_ceiling_on_what_is_spent"
 path = "tests/e2e/cases/E2E-018-a-ceiling-on-what-is-spent.rs"
 
 [[test]]
+name = "e2e_019_where_the_toolchain_keeps_its_own"
+path = "tests/e2e/cases/E2E-019-where-the-toolchain-keeps-its-own.rs"
+
+[[test]]
 name = "agents_test"
 path = "tests/integration/agents_test.rs"
 
