@@ -146,11 +146,13 @@ jobs:
 
   # Every file in this tree is measured against a budget set by how it is read
   # (§FS-012-file-size.2): the rules and the derivation for each limit are in
-  # `.agents/fissile.toml`. The pre-commit hook measures the files a commit
-  # touches; this measures the whole tree, so a file that grew past its budget
-  # on a branch nobody committed through the hook is still caught. One platform,
-  # for the same reason the grund job gives — it measures the repository's
-  # files, not behaviour.
+  # `.agent-grounds/fissile.toml`, which fissile discovers on its own from
+  # 0.8.3 forward — hence the pin below, and hence no `--config` flag anywhere
+  # (§FS-006-project-interface.12). The pre-commit hook measures the files a
+  # commit touches; this measures the whole tree, so a file that grew past its
+  # budget on a branch nobody committed through the hook is still caught. One
+  # platform, for the same reason the grund job gives — it measures the
+  # repository's files, not behaviour.
   fissile:
     name: fissile check
     runs-on: ubuntu-latest
@@ -167,13 +169,16 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: ${{ runner.os }}-cargo-fissile-0.8.1
+          key: ${{ runner.os }}-cargo-fissile-0.8.3
 
       # Pinned for the reason grund is pinned: a budget only means something
       # against a fixed measurement, so a version that counted lines differently
-      # would move every limit in the tree with no commit saying it had.
+      # would move every limit in the tree with no commit saying it had. 0.8.3
+      # is the floor as well as the pin: anything older looks for the config
+      # under `.agents/` alone, does not find it, and measures this tree against
+      # built-in defaults whose source rule is harder than its own.
       - name: Install fissile
-        run: cargo install fissile --version 0.8.1 --locked
+        run: cargo install fissile --version 0.8.3 --locked
 
       - name: fissile check
         run: fissile check

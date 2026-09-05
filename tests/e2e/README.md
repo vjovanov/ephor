@@ -7,7 +7,7 @@ and thrown away afterwards.
 
 This is the home of the non-citable `e2e` kind: a case is exercised by being
 run, not navigated to, so no file here carries an ID. `[citations.e2e]` in
-`.agents/grund.toml` says the home must cite `FS` and should not cite `AR` —
+`grund.toml` says the home must cite `FS` and should not cite `AR` —
 every case still opens with the module doc-comment naming the scenario and the
 `§FS` point it holds ephor to, the way `E2E-001-forge-extension.rs` names
 `ephor`'s one provider interface ([§FS-001-forge-interface.2](../../docs/functional-spec/FS-001-forge-interface.md#2-two-transports-one-interface)). A case that cites
