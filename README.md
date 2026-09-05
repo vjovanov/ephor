@@ -404,6 +404,20 @@ and then, whenever the world moves — a new comment, a gate that turned red —
 `ephor refresh && ephor work sync` writes the next round of tickets and
 `ephor work run` works them.
 
+**Who does it, and what to do when they cannot.** `work.hands` names the hand
+per action id, and every place it writes one takes an ordered list of them
+instead — a JSON array in the tables, commas on `--hand` — with one name being
+that list with a single member, so nothing already written changes meaning.
+Which member gets the ticket is decided from evidence ephor is *given*: a
+refusal its own spawn was handed, or an optional `work.headroom` command per
+provider pool reporting what is left. The rule is a **veto and never a
+reordering** — a member is passed over only when its pool is *known spent*, the
+survivors keep the order you wrote, and a number nobody reported is unknown
+rather than zero, so silence demotes nothing
+([§FS-005-dispatch.29](requirements.md#29-headroom-is-reported-to-ephor-and-vetoes-a-member-it-never-reorders)).
+`docs/manual.md` §8.19 has the payload, the floor and the two worked example
+scripts.
+
 A recipe that says `"autorun": true` does not wait for that last command: the
 ticket gets its run in the same breath it is written, and a timer running
 `ephor work run --due` starts anything born elsewhere. The sweep behind it

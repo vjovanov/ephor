@@ -36,6 +36,14 @@
   "work": {
     "root": "{workspace}/panta",
     "max_concurrent": 4,
+    "hands": {
+      "default": ["north-fast", "south-fast"]
+    },
+    "headroom": {
+      "north": "~/.config/ephor/headroom-north.sh",
+      "south": "~/.config/ephor/headroom-south.sh"
+    },
+    "headroom_floor": 0,
     "recipes": [
       {
         "id": "fix-gate",

@@ -1631,6 +1631,10 @@ Add your own, or replace a shipped one by reusing its id:
     "ranking": "~/my/ranking.txt",     // item ids, one per line, most important first (§8.9)
     "max_concurrent": 4,                // aggregate ceiling on roots in flight; omitted is unlimited
     "max_active": 2,                    // aggregate ceiling on the ones an agent is working
+    "headroom": {                      // what reports each pool's window (§8.19)
+      "north": "~/.config/ephor/headroom-north.sh"
+    },
+    "headroom_floor": 0,               // spent at or below this fraction; 0 unless you say
     "recipes": [
       {
         "id": "fix-gate",
@@ -1845,6 +1849,33 @@ operation: `t` on a menu entry that hands work over (§7.6), and `--hand
 remembered by nothing — the next dispatch of the same action resolves from
 the tables again. A pick outside the project's `permitted_hands` is refused
 like any other named choice.
+
+**A pin may name alternates.** Every place above that writes one hand takes an
+ordered list of them instead, best first — a JSON array in the tables, commas
+on `--hand` — and one name *is* that list with a single member, so nothing you
+have written already means anything different:
+
+```jsonc
+"hands": { "default": ["north-fast", "south-fast"], "rebase": "luna:high" }
+```
+
+```console
+$ ephor work dispatch --hand north-fast,south-fast
+```
+
+An array is a list of hands and never a pair spelled out positionally; the long
+form is the object `{ "agent", "model" }` and nothing else. The seven steps are
+untouched by this: they still answer exactly once, and what the answering step
+hands on is the list it carried rather than a name. The order is yours and it
+ranks by *fitness* — the first name is the right hand for this work, and each
+name after it is what to do when the one before it cannot be had. Which of them
+finally gets the ticket is decided from evidence, in §8.29 below, and that stage
+may pass a member over but never reorders the survivors.
+
+`permitted_hands` is checked against **every** member, and one unpermitted name
+refuses the whole list with that name in the message — never filtered down to
+the members that are permitted. A policy that quietly used your second choice is
+indistinguishable from one that was never asked.
 
 The long form `{ "agent", "model", "effort" }` is for a pair the runtime's
 registry never listed — a proxy serving a model it does not know about. It is
@@ -3199,6 +3230,117 @@ be written at the project root; it now refuses on the command line, naming
 `branch` as the way out, which is what the menu has always done. Everything
 with a branch of its own, and every project keeping one checkout at its root,
 is placed exactly as before.
+
+### 8.19 What a provider has left, and which alternate gets the ticket
+
+A list of alternates (§8.4) is only worth writing if something can say the first
+of them cannot be had right now. That something is a quota, and a quota is the
+provider's fact rather than ephor's: ephor consumes a **report** about capacity
+and never derives one
+([§FS-005-dispatch.29](functional-spec/FS-005-dispatch.md#29-headroom-is-reported-to-ephor-and-vetoes-a-member-it-never-reorders)).
+
+**The unit is a pool, and a pool is who serves the model** — a hand's provider
+where the roster gives it one, and its agent id where it does not. Two hands
+served by one provider spend one allowance whichever of them is asked, so
+evidence about either is evidence about both. `ephor caps` prints the pools
+under the roster, and `ephor caps --json` carries them as `pools`.
+
+**Two channels report, and one costs nothing.**
+
+The **ledger** needs no configuration. The one authoritative thing a provider
+says about its own window is a refusal, and a refusal names the instant it
+lifts; it arrives as a start that failed, which ephor already records in the
+runner's own words. Where those words carry an instant ephor can read, that
+start becomes a refusal on the hand's pool, held until the instant and cleared
+by any observed success on the pool. Where they do not, **nothing about a pool
+is claimed** and the failure stays what it was — that root's own doubling
+back-off (§8.4). A failure ephor cannot date is not a window it may guess at.
+
+The **bound verb** is richer and optional. `work.headroom` names one command
+per pool:
+
+```jsonc
+{
+  "work": {
+    "headroom": {
+      "north": "~/.config/ephor/headroom-north.sh",
+      "south": "~/.config/ephor/headroom-south.sh"
+    },
+    "headroom_floor": 0
+  }
+}
+```
+
+It is summoned like every other command this interface names (§4.4): the
+`EPHOR_*` environment in, the exit code and the file `$EPHOR_ANSWER` names out.
+Its payload rides `data`, and never standard output:
+
+```json
+{ "v": 1,
+  "data": { "windows": [
+    { "name": "session", "remaining": 0.12, "resets_at": "2026-09-05T18:30:00Z" },
+    { "name": "weekly",  "remaining": null, "resets_at": "2026-09-08T00:00:00Z" } ] } }
+```
+
+Probing is fetching, so it runs under `ephor refresh` on the same freshness
+discipline as every other source, and never in front of a dispatch. Two worked
+examples ship beside ephor rather than inside it, because how a vendor is asked
+is volatile and ephor's release cycle is the wrong place for it to go stale:
+`config/headroom.example.sh` for a subscription credential that publishes no
+number, and `config/headroom-metered.example.sh` for one with a quota endpoint.
+
+**A number nobody reported is unknown, and unknown is never zero.** A window
+with no `remaining` is unknown; a pool with no readable window is unknown. This
+is the load-bearing rule, because absent is the *ordinary* case: a credential
+signed in through a vendor's own sign-in shows its usage to a person and
+publishes no number a program may ask for, so a rule that read silence as
+exhaustion would veto every pool on the machine and stop the loop it exists to
+keep moving. Say `null` when you do not know.
+
+**A pool's effective remaining is the least of its known windows.** An unknown
+window is simply not among them, so one unreadable window never lowers a pool
+another window reported healthy.
+
+**The rule: known spent is passed over, and everything else keeps its place.** A
+member is passed over exactly when its pool is known spent — an unexpired
+refusal, or an effective remaining at or under `work.headroom_floor`, which is
+`0` unless you name another. Survivors keep the order you wrote. Nothing is
+sorted and no two members' numbers are ever compared: headroom **vetoes, and it
+never reorders**
+([§DA-009-headroom-vetoes](decisions/architectural/DA-009-headroom-vetoes.md#da-009-headroom-vetoes-headroom-is-a-report-ephor-is-given-and-it-vetoes-a-member-rather-than-ranking-the-list)),
+because your order is a judgment about which hand is right for the work and a
+rule that re-ranked it would be overruling the only judgment in it. Where
+*every* member is vetoed the first still gets the ticket, carrying a note that
+names the earliest instant any of their pools resets: a ticket that waits is
+work you can see and start by hand, and work that silently never dispatched is
+neither. The fallback lives inside the list — no later step of the seven is
+consulted because a member turned out to be unreachable.
+
+**Absence degrades to unknown, out loud.** A pool with no verb bound, a verb
+that exits non-zero, output that will not parse, and an answer holding no
+readable window are all unknown, with the reason shown beside the pool. None of
+them is an error that stops a dispatch, and none is silent.
+
+**The choice is recorded where the work is.** Selection runs at every write
+ephor makes — a dispatch, a laying, a restart — and the member it chose, with
+whatever the choosing had to say, is written onto the ticket in ephor's own
+words beside the dossier, rather than as a field of the runtime's plan language:
+
+```markdown
+**Who this went to.** south-fast takes this because 'north-fast' was passed
+over: north reports 0 of its window left, which lifts at 2026-09-05T18:30:00Z.
+```
+
+Mid-plan exhaustion needs nobody steering: the spawn fails carrying the instant,
+the sweep that reads the failure writes the ledger, and a restart is another
+write, which re-answers the pin of every step that has not run.
+
+**What is reported grows by addition.** `ephor status` and `ephor capabilities`
+gain a line per pool, and `ephor caps --json` gains the matching `pools` array.
+Nothing already printed changes. The spawn count beside a pool is shown and is
+never read into the rule: counting one's own spawns is deriving a quota under
+another name, and it is wrong the first moment anything else spends from the
+same credential.
 
 ---
 
