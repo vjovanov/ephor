@@ -94,6 +94,10 @@ name = "e2e_017_provider_headroom"
 path = "tests/e2e/cases/E2E-017-provider-headroom.rs"
 
 [[test]]
+name = "e2e_018_a_ceiling_on_what_is_spent"
+path = "tests/e2e/cases/E2E-018-a-ceiling-on-what-is-spent.rs"
+
+[[test]]
 name = "agents_test"
 path = "tests/integration/agents_test.rs"
 

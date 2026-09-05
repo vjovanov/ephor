@@ -1695,6 +1695,10 @@ everywhere, so a configuration naming only `max_concurrent` is bounded exactly
 as it was, in behaviour and in wording, and `--max-concurrent N` replaces the
 site's roots-in-flight ceiling alone.
 
+**And none of these is money.** What unattended work may *spend* is a ceiling
+of its own, written at these same three scopes and evaluated in this same
+order ([§FS-015-spend-ceiling](FS-015-spend-ceiling.md#fs-015-spend-ceiling-what-unattended-work-may-spend-is-the-persons-number-and-the-sweep-stops-at-it)).
+
 **A live root is parked when what it waits for is a person.** Every live root
 counts toward the flight ceilings — it exists, and that is what those numbers
 count — and toward `max_active` too *unless* nothing in it is being worked and
