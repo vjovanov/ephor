@@ -64,6 +64,7 @@ fn the_roots_are_the_configured_places_and_the_ledger_keeps_its_matter() {
 
     let mut ledger = Ledger {
         version: 1,
+        pools: Default::default(),
         entries: BTreeMap::new(),
         starts: BTreeMap::new(),
     };
@@ -71,6 +72,7 @@ fn the_roots_are_the_configured_places_and_the_ledger_keeps_its_matter() {
         "forge:widget/7".to_string(),
         Entry {
             project: "widget".to_string(),
+            pool: None,
             title: "Widen the retry window".to_string(),
             url: None,
             root: workspace.join("panta"),
@@ -196,6 +198,7 @@ fn root_with_plan(tmp: &Path) -> (WorkConfig, PathBuf, PathBuf) {
 fn entry_for(root: &Path, plan_path: &Path) -> Entry {
     Entry {
         project: "demo".to_string(),
+        pool: None,
         title: "demo".to_string(),
         url: None,
         root: root.to_path_buf(),
@@ -466,6 +469,7 @@ fn a_shared_root_is_listed_once_and_an_item_template_is_skipped() {
     );
     let ledger = Ledger {
         version: 1,
+        pools: Default::default(),
         entries: BTreeMap::new(),
         starts: BTreeMap::new(),
     };
@@ -516,6 +520,7 @@ fn an_aliased_workspace_is_one_root_not_two() {
 
     let ledger = Ledger {
         version: 1,
+        pools: Default::default(),
         entries: BTreeMap::new(),
         starts: BTreeMap::new(),
     };
@@ -601,6 +606,7 @@ fn a_plan_under_an_organization_root_is_enumerated_and_one_with_no_answer_is_ski
     );
     let ledger = Ledger {
         version: 1,
+        pools: Default::default(),
         entries: BTreeMap::new(),
         starts: BTreeMap::new(),
     };
@@ -848,6 +854,7 @@ fn work_config() -> WorkConfig {
 fn empty_ledger() -> Ledger {
     Ledger {
         version: 1,
+        pools: Default::default(),
         entries: BTreeMap::new(),
         starts: BTreeMap::new(),
     }
@@ -1797,6 +1804,7 @@ fn a_checkout_standing_on_another_branch_is_not_run_in() {
         "forge:widget/42".to_string(),
         Entry {
             project: "widget".to_string(),
+            pool: None,
             title: "t".to_string(),
             url: None,
             root: root.clone(),
@@ -1846,6 +1854,7 @@ fn a_branch_nobody_recorded_refuses_nothing() {
         "forge:widget/42".to_string(),
         Entry {
             project: "widget".to_string(),
+            pool: None,
             title: "t".to_string(),
             url: None,
             root: root.clone(),
@@ -1884,6 +1893,7 @@ fn the_ledgers_recipe_answers_for_a_ticket_ephor_dispatched() {
         "forge:widget/42".to_string(),
         Entry {
             project: "widget".to_string(),
+            pool: None,
             title: "t".to_string(),
             url: None,
             root: root.clone(),
@@ -1962,6 +1972,7 @@ fn laid_ledger(root: &Path, entry: &str) -> Ledger {
         "forge:widget/42".to_string(),
         Entry {
             project: "widget".to_string(),
+            pool: None,
             title: "t".to_string(),
             url: None,
             root: root.to_path_buf(),

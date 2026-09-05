@@ -202,7 +202,7 @@ struct AgentAsk {
     #[serde(default)]
     state: Option<String>,
     #[serde(default)]
-    hand: Option<crate::work::recipe::HandPin>,
+    hand: Option<crate::work::recipe::HandList>,
     /// This work needs nobody to start it (§FS-005-dispatch.24). An entry
     /// that asks for work is a recipe under another name, so it says this
     /// the way a recipe does.
@@ -661,10 +661,12 @@ mod tests {
         assert_eq!(recipe.when.kinds, ["pr"]);
         assert_eq!(
             recipe.hand,
-            Some(crate::work::recipe::HandPin::Named {
-                id: "luna".to_string(),
-                effort: Some("high".to_string()),
-            })
+            Some(crate::work::recipe::HandList::one(
+                crate::work::recipe::HandPin::Named {
+                    id: "luna".to_string(),
+                    effort: Some("high".to_string()),
+                }
+            ))
         );
         // Unwritten, the ticket starts where the recipes do.
         let plain: ActionConfig = serde_json::from_value(serde_json::json!({

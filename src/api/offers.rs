@@ -23,7 +23,7 @@ use crate::capabilities::CapabilitySet;
 use crate::feed::config::{ActionConfig, CheckoutConfig, Minted};
 use crate::feed::model::Item;
 use crate::forest::{Forest, Trail, Upstream};
-use crate::work::recipe::{Facts, HandPin};
+use crate::work::recipe::{Facts, HandList};
 
 /// Actions applicable to one item: global first, then the project's own,
 /// selected by the shared language (§FS-006-project-interface.9).
@@ -504,7 +504,7 @@ pub struct MenuEntry {
     /// used (§FS-005-dispatch.14). It rides the one outcome that carries it
     /// to the dispatch and dies there: nothing records it, and the next
     /// dispatch resolves from the second step down.
-    pub picked: Option<HandPin>,
+    pub picked: Option<HandList>,
     pub gate: Gate,
     /// What is already going about this entry's subject, where anything is
     /// (§FS-005-dispatch.21). Filled in by the session that assembles the

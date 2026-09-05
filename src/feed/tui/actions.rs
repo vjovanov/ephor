@@ -26,7 +26,7 @@ use crate::api::offers;
 pub(crate) use crate::api::offers::{Gate, MenuEntry, Subject};
 use crate::capabilities::CapabilitySet;
 use crate::feed::config::{ActionConfig, CheckoutConfig};
-use crate::work::recipe::HandPin;
+use crate::work::recipe::{HandList, HandPin};
 use crate::work::runtime::roster::Hand;
 
 use super::{highlight_style, BranchInfo, WorkspaceState};
@@ -393,7 +393,10 @@ impl ActionMenu {
                     self.confirming = None;
                     return MenuOutcome::Open(entry);
                 }
-                entry.picked = Some(pin);
+                // The picker names one hand and no alternates: it is a
+                // keystroke on one row, and a list is something a person
+                // writes down (§FS-005-dispatch.14).
+                entry.picked = Some(HandList::one(pin));
                 // Opening the picker and choosing in it is already the
                 // deliberate second step a `confirm` entry asks for.
                 self.confirming = None;
@@ -1501,10 +1504,10 @@ mod tests {
                 assert!(entry.action.agent.is_some());
                 assert_eq!(
                     entry.picked,
-                    Some(HandPin::Named {
+                    Some(HandList::one(HandPin::Named {
                         id: "luna".to_string(),
                         effort: Some("high".to_string()),
-                    })
+                    }))
                 );
             }
             _ => panic!("expected the entry to run with the pick"),
@@ -1518,10 +1521,10 @@ mod tests {
         match menu.handle_key(KeyCode::Enter) {
             MenuOutcome::Run(entry) => assert_eq!(
                 entry.picked,
-                Some(HandPin::Named {
+                Some(HandList::one(HandPin::Named {
                     id: "luna".to_string(),
                     effort: Some("yolo".to_string()),
-                })
+                }))
             ),
             _ => panic!("expected the picked effort to ride"),
         }
@@ -1535,10 +1538,10 @@ mod tests {
         match menu.handle_key(KeyCode::Enter) {
             MenuOutcome::Run(entry) => assert_eq!(
                 entry.picked,
-                Some(HandPin::Named {
+                Some(HandList::one(HandPin::Named {
                     id: "pi-alone".to_string(),
                     effort: None,
-                })
+                }))
             ),
             _ => panic!("expected the plain ask"),
         }

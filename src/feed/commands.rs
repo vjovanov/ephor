@@ -156,6 +156,16 @@ fn refresh_projects(
         }
     }
 
+    // Probing is fetching, so it happens here, beneath the reading and on the
+    // same discipline as every other source (§FS-005-dispatch.29) — never in
+    // front of a dispatch, which would put a network call between a reader and
+    // a ticket. It asks about the site rather than about a project, so it is
+    // asked once for the whole sweep and it cannot fail the refresh: an
+    // unbound pool, a verb that exits non-zero, and output that will not parse
+    // are all *unknown* with the reason kept beside the pool
+    // (§REQ-001-boundary.1).
+    probe_headroom(config, None);
+
     // After the projects, not before: a per-project refresh writes its whole
     // feed, so a shared source's slot has to be folded in once the file it
     // lands in has been rewritten (§AR-008-pipeline.1).
@@ -200,6 +210,31 @@ fn refresh_projects(
     })
 }
 
+/// Ask every bound pool what it has left, and keep what it said beside ephor's
+/// other state (§FS-005-dispatch.29).
+///
+/// Nothing here may stop a refresh. A ledger that cannot be read or written is
+/// a warning on the error stream and no more: headroom is evidence over a
+/// choice somebody else already made, and a machine that refused to fetch a
+/// feed because it could not ask about a quota would have the priority exactly
+/// backwards.
+fn probe_headroom(config: &StatusConfig, fresh_within: Option<chrono::TimeDelta>) {
+    if config.work.headroom.is_empty() {
+        return;
+    }
+    let mut ledger = match crate::work::ledger::load() {
+        Ok(ledger) => ledger,
+        Err(err) => {
+            eprintln!("warning: {}: {err}", crate::work::headroom::VERB);
+            return;
+        }
+    };
+    crate::work::headroom::probe(&config.work, &mut ledger, Utc::now(), fresh_within);
+    if let Err(err) = crate::work::ledger::store(&ledger) {
+        eprintln!("warning: {}: {err}", crate::work::headroom::VERB);
+    }
+}
+
 /// How a whole refresh went, across every selected project.
 struct RefreshTally {
     refreshed: usize,
@@ -238,6 +273,11 @@ fn ensure_fresh(config: &StatusConfig, project: &str, args: &StatusArgs) -> Resu
     for failure in &outcome.failures {
         eprintln!("error: {project}: {}", failure.describe());
     }
+    // A reading that refetched because its cache had aged asks the pools on
+    // the same terms — the ones that have aged, and no others
+    // (§FS-005-dispatch.29). Site-wide rather than per project, which is why
+    // the second project of a sweep finds them all still fresh.
+    probe_headroom(config, chrono::TimeDelta::try_seconds(ttl as i64));
     cache::load_feed(project)?
         .ok_or_else(|| EphorError::Command(format!("Refresh produced no cache for '{project}'.")))
 }
@@ -317,6 +357,21 @@ pub fn status(args: &StatusArgs, scope: &Projects) -> Result<ExitCode> {
                 .count();
             println!("{project:<30}  {items:>6}  {unread:>6}  {needs:>7}  {failing:>7}");
         }
+        // What the providers behind the roster have left, beneath the summary
+        // that says what there is to hand to them (§FS-005-dispatch.29). Only
+        // where something has actually been reported: a machine with no
+        // headroom bound and no refusal recorded has nothing to say here, and
+        // a block of *unknown* under every reading would be noise.
+        let pools: Vec<crate::work::headroom::Standing> =
+            match crate::work::Dispatcher::load(&config) {
+                Ok(mut dispatcher) => dispatcher
+                    .pools(None)
+                    .into_iter()
+                    .filter(|pool| pool.remaining.is_some() || pool.refused_until.is_some())
+                    .collect(),
+                Err(_) => Vec::new(),
+            };
+        crate::doctor::render_pools(&pools, &style);
     }
     Ok(check_exit(&feeds, &seen, args.check, recent_days))
 }

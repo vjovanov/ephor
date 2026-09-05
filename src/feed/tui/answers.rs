@@ -30,7 +30,7 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragra
 
 use crate::feed::config::ActionConfig;
 use crate::feed::model::Item;
-use crate::work::recipe::HandPin;
+use crate::work::recipe::HandList;
 use crate::work::runtime::roster::Hand;
 use crate::work::runtime::workflow::Kind;
 use crate::work::workflow::From;
@@ -154,7 +154,7 @@ struct Typing {
 pub(crate) struct AnswerScreen {
     pub item: Box<Item>,
     pub entry: Box<ActionConfig>,
-    pub picked: Option<HandPin>,
+    pub picked: Option<HandList>,
     /// What the reader has answered here, by input name — the first of the
     /// five steps, and what travels as the `--set` pairs of the same call a
     /// command makes (§REQ-002-parity.2).
@@ -186,7 +186,7 @@ impl AnswerScreen {
     pub fn over(
         item: Item,
         entry: ActionConfig,
-        picked: Option<HandPin>,
+        picked: Option<HandList>,
         laying: &Laying,
         roster: Vec<Hand>,
     ) -> Self {

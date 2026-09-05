@@ -48,9 +48,23 @@ pub struct WorkConfig {
     /// Who does which action, by the action's own id, with [`DEFAULT_HAND`]
     /// answering for every id the table does not name
     /// (§FS-006-project-interface.9). The site's answer, which a project's
-    /// table displaces.
+    /// table displaces. An entry is one hand or an ordered list of them.
     #[serde(default)]
-    pub hands: BTreeMap<String, HandPin>,
+    pub hands: BTreeMap<String, HandList>,
+    /// What reports each pool's headroom: a pool id, and the command that says
+    /// what that provider has left (§FS-005-dispatch.29). Unbound by default —
+    /// a pool nothing here names is *unknown*, which demotes nobody, and the
+    /// ledger's own record of a refusal keeps working with this table empty.
+    /// How any one vendor is asked stays outside ephor: what ships beside it is
+    /// a worked example per vendor (§REQ-001-boundary.5).
+    #[serde(default)]
+    pub headroom: BTreeMap<String, String>,
+    /// The fraction of a window at or below which a pool counts as spent
+    /// (§FS-005-dispatch.29). `0` unless the site names another, which is what
+    /// makes the rule a veto over what a provider actually refused rather than
+    /// a preference about what is comfortable.
+    #[serde(default)]
+    pub headroom_floor: Option<f64>,
     /// A file naming which items `ephor work dispatch` opens first: one item
     /// id per line, most important first. `--ranking <path>` displaces it for
     /// one run (§FS-005-dispatch.26).
@@ -78,6 +92,8 @@ impl Default for WorkConfig {
             runner: None,
             recipes: Vec::new(),
             hands: BTreeMap::new(),
+            headroom: BTreeMap::new(),
+            headroom_floor: None,
             ranking: None,
             max_concurrent: None,
             max_active: None,
@@ -101,8 +117,9 @@ pub struct ProjectWorkConfig {
     pub recipes: Vec<Recipe>,
     /// Who does which action on this project — read before the site's table,
     /// this action's id before [`DEFAULT_HAND`] (§FS-006-project-interface.9).
+    /// An entry is one hand or an ordered list of them.
     #[serde(default)]
-    pub hands: BTreeMap<String, HandPin>,
+    pub hands: BTreeMap<String, HandList>,
     /// The hands that may be used on this project at all. Empty asks nothing;
     /// a non-empty list refuses everything outside it with that reason,
     /// wherever it was named (§FS-006-project-interface.9) — which is what a
@@ -219,42 +236,83 @@ impl HandPin {
     }
 }
 
+/// The long form, as a map spells it: both halves of a pair the registry never
+/// enumerated. Read from a map and from nothing else — see [`PinVisitor`].
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Long {
+    #[serde(default)]
+    agent: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    effort: Option<String>,
+}
+
+impl Long {
+    fn into_pin<E: serde::de::Error>(self) -> std::result::Result<HandPin, E> {
+        match (self.agent, self.model) {
+            (Some(agent), Some(model)) => Ok(HandPin::Spelled {
+                agent,
+                model,
+                effort: self.effort,
+            }),
+            // Half a pair is a hand the roster names on its own, and naming it
+            // by id is what lets ephor check it.
+            _ => Err(serde::de::Error::custom(
+                "a hand spelled out in full names both 'agent' and 'model'; \
+                 to name one of them alone, use the roster's id for it",
+            )),
+        }
+    }
+}
+
+/// One pin, read from a string or from a map and refused from a sequence.
+///
+/// The refusal is the point, and it is written by hand rather than derived: an
+/// untagged enum over `String | Long` accepts a *sequence* too, because serde
+/// will fill a struct's fields positionally from one — so `["a", "b"]` was read
+/// as agent `a` carrying model `b`, silently, which is exactly the shape a list
+/// of two alternates arrives in (§FS-006-project-interface.9). A visitor with
+/// no `visit_seq` of its own would refuse it with serde's own wording; this one
+/// says where the list belongs instead.
+struct PinVisitor;
+
+impl<'de> serde::de::Visitor<'de> for PinVisitor {
+    type Value = HandPin;
+
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("a hand named '<hand>[:<effort>]', or spelled out as { \"agent\", \"model\" }")
+    }
+
+    fn visit_str<E: serde::de::Error>(self, text: &str) -> std::result::Result<HandPin, E> {
+        HandPin::parse(text).map_err(serde::de::Error::custom)
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(
+        self,
+        map: A,
+    ) -> std::result::Result<HandPin, A::Error> {
+        Long::deserialize(serde::de::value::MapAccessDeserializer::new(map))?.into_pin()
+    }
+
+    fn visit_seq<A: serde::de::SeqAccess<'de>>(
+        self,
+        _: A,
+    ) -> std::result::Result<HandPin, A::Error> {
+        Err(serde::de::Error::custom(
+            "an array here is an ordered list of hands, and this place takes one hand — \
+             a hand spelled out in full is the object { \"agent\": …, \"model\": … }, \
+             never a pair written positionally",
+        ))
+    }
+}
+
 impl<'de> Deserialize<'de> for HandPin {
     fn deserialize<D: serde::Deserializer<'de>>(
         deserializer: D,
     ) -> std::result::Result<HandPin, D::Error> {
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Long {
-            #[serde(default)]
-            agent: Option<String>,
-            #[serde(default)]
-            model: Option<String>,
-            #[serde(default)]
-            effort: Option<String>,
-        }
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum Raw {
-            Short(String),
-            Long(Long),
-        }
-        match Raw::deserialize(deserializer)? {
-            Raw::Short(text) => HandPin::parse(&text).map_err(serde::de::Error::custom),
-            Raw::Long(long) => match (long.agent, long.model) {
-                (Some(agent), Some(model)) => Ok(HandPin::Spelled {
-                    agent,
-                    model,
-                    effort: long.effort,
-                }),
-                // Half a pair is a hand the roster names on its own, and
-                // naming it by id is what lets ephor check it.
-                _ => Err(serde::de::Error::custom(
-                    "a hand spelled out in full names both 'agent' and 'model'; \
-                     to name one of them alone, use the roster's id for it",
-                )),
-            },
-        }
+        deserializer.deserialize_any(PinVisitor)
     }
 }
 
@@ -282,6 +340,139 @@ impl Serialize for HandPin {
                 }
                 map.end()
             }
+        }
+    }
+}
+
+/// What a pin names: an ordered list of hands, best first
+/// (§FS-005-dispatch.14). One name *is* this list with a single member, so
+/// nothing written before alternates existed means anything different, and the
+/// seven steps still answer exactly once — with the list the answering step
+/// carried rather than with a name.
+///
+/// The order is the author's and it ranks by fitness rather than by equality:
+/// the first name is the right hand for this work and each name after it is
+/// what to do when the one before it cannot be had. Which of them finally gets
+/// the work is decided from evidence, later and elsewhere
+/// (§FS-005-dispatch.29) — nothing here reorders anything.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HandList(Vec<HandPin>);
+
+impl HandList {
+    /// The list one pin makes.
+    pub fn one(pin: HandPin) -> HandList {
+        HandList(vec![pin])
+    }
+
+    pub fn members(&self) -> &[HandPin] {
+        &self.0
+    }
+
+    /// The first member — the hand the author would have written alone.
+    pub fn first(&self) -> &HandPin {
+        &self.0[0]
+    }
+
+    /// Whether anything was actually chosen among: a list of one is the bare
+    /// name it was written as, and the choosing has nothing to say about it.
+    pub fn is_alternates(&self) -> bool {
+        self.0.len() > 1
+    }
+
+    /// How a message names this list back to the person who wrote it.
+    pub fn describe(&self) -> String {
+        self.0
+            .iter()
+            .map(HandPin::describe)
+            .collect::<Vec<_>>()
+            .join(", then ")
+    }
+
+    /// The command line's spelling: the names separated by commas
+    /// (§FS-006-project-interface.9). Commas rather than a flag given twice,
+    /// because a repeated flag would make the order depend on how the shell
+    /// was typed — and an empty member is refused with what was written, since
+    /// a trailing comma is a typo far more often than it is a name.
+    ///
+    /// Public because a hand is typed at a command line exactly as it is
+    /// written in configuration, and one grammar cannot be read two ways.
+    pub fn parse(text: &str) -> std::result::Result<HandList, String> {
+        let empty = || {
+            format!(
+                "'{text}' names an empty hand between its commas — a list of hands is \
+                 '<hand>[:<effort>]' separated by commas, best first"
+            )
+        };
+        if text.trim().is_empty() {
+            return Err(empty());
+        }
+        let mut members = Vec::new();
+        for member in text.split(',') {
+            if member.trim().is_empty() {
+                return Err(empty());
+            }
+            members.push(HandPin::parse(member)?);
+        }
+        Ok(HandList(members))
+    }
+}
+
+impl<'de> Deserialize<'de> for HandList {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<HandList, D::Error> {
+        struct ListVisitor;
+        impl<'de> serde::de::Visitor<'de> for ListVisitor {
+            type Value = HandList;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("one hand, or an ordered list of them")
+            }
+
+            fn visit_str<E: serde::de::Error>(
+                self,
+                text: &str,
+            ) -> std::result::Result<HandList, E> {
+                PinVisitor.visit_str(text).map(HandList::one)
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                map: A,
+            ) -> std::result::Result<HandList, A::Error> {
+                PinVisitor.visit_map(map).map(HandList::one)
+            }
+
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> std::result::Result<HandList, A::Error> {
+                let mut members = Vec::new();
+                while let Some(pin) = seq.next_element::<HandPin>()? {
+                    members.push(pin);
+                }
+                if members.is_empty() {
+                    return Err(serde::de::Error::custom(
+                        "an empty list names nobody — write the hand, or leave the entry out",
+                    ));
+                }
+                Ok(HandList(members))
+            }
+        }
+        deserializer.deserialize_any(ListVisitor)
+    }
+}
+
+impl Serialize for HandList {
+    /// A list of one serializes as the bare name it was written as, so nothing
+    /// already on disk changes shape when it is read back and rewritten.
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        match self.0.as_slice() {
+            [only] => only.serialize(serializer),
+            several => serializer.collect_seq(several),
         }
     }
 }
@@ -337,9 +528,10 @@ pub struct Recipe {
     pub opens_with: Option<String>,
     /// Whose work this is, when it is not whoever the tables would default to
     /// — the second of the seven steps, and the portable spelling: a hand id
-    /// the roster knows, checked against it (§FS-006-project-interface.9).
+    /// the roster knows, checked against it (§FS-006-project-interface.9). One
+    /// name, or an ordered list of them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub hand: Option<HandPin>,
+    pub hand: Option<HandList>,
     /// Pin the runtime's execution identity for this ticket. The runtime's own
     /// words rather than a hand, so nothing checks it — it pins this recipe
     /// the same way `hand` does, and a project's tables do not displace it. A
@@ -1234,26 +1426,26 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(
-            work.hands["default"],
-            HandPin::Named {
+            work.hands["default"].members(),
+            [HandPin::Named {
                 id: "sonnet".to_string(),
                 effort: None
-            }
+            }]
         );
         assert_eq!(
-            work.hands["rebase"],
-            HandPin::Named {
+            work.hands["rebase"].members(),
+            [HandPin::Named {
                 id: "luna".to_string(),
                 effort: Some("high".to_string())
-            }
+            }]
         );
         assert_eq!(
-            work.hands["fix-gate"],
-            HandPin::Spelled {
+            work.hands["fix-gate"].members(),
+            [HandPin::Spelled {
                 agent: "claude-code".to_string(),
                 model: "our-proxy-model".to_string(),
                 effort: Some("high".to_string())
-            }
+            }]
         );
         assert_eq!(work.permitted_hands, ["sonnet", "luna"]);
         assert_eq!(work.hands["rebase"].describe(), "'luna' at effort 'high'");
@@ -1266,7 +1458,7 @@ mod tests {
         .unwrap();
         assert_eq!(site.hands.len(), 1);
         assert_eq!(
-            site.recipes[0].hand.as_ref().unwrap().effort(),
+            site.recipes[0].hand.as_ref().unwrap().first().effort(),
             Some("high")
         );
         // And it survives the round trip a recipe makes through JSON.

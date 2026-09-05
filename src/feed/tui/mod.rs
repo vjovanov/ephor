@@ -1200,7 +1200,7 @@ impl App {
         item: &Item,
         entry: &ActionConfig,
         typed: std::collections::BTreeMap<String, String>,
-        picked: Option<crate::work::recipe::HandPin>,
+        picked: Option<crate::work::recipe::HandList>,
     ) -> Result<()> {
         let Some(dispatcher) = &mut self.ctx.dispatcher else {
             self.message = "Work needs the registry, which could not be read".to_string();

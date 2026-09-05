@@ -395,6 +395,19 @@
         "tokens": { "type": "integer" }
       }
     },
+    "pool": {
+      "type": "object",
+      "description": "What one provider pool has left, as ephor was told (FS-005-dispatch.29). A pool is who serves the model: the hand's provider where the roster gives it one, its agent id where it does not. `remaining` null is unknown and never zero — a pool nobody reported on demotes nothing, and `why` says why there is no number.",
+      "required": ["pool", "remaining"],
+      "properties": {
+        "pool": { "type": "string" },
+        "remaining": { "type": ["number", "null"], "description": "The least of the known windows, as a fraction. Null is unknown." },
+        "why": { "type": "string", "description": "Why the number is unknown, or what was refused." },
+        "refused_until": { "type": "string", "description": "When an unexpired refusal ephor recorded lifts." },
+        "resets_at": { "type": "string", "description": "The earliest instant anything known about this pool resets." },
+        "spawns": { "type": "integer", "description": "How many runs ephor started on this pool. Shown only, never read into the selection rule." }
+      }
+    },
     "roster": {
       "type": "object",
       "description": "Who the runtime can be asked for (FS-005-dispatch.14). An unavailable hand stays on the list with its reason rather than being hidden (DA-004-roster-is-asked-not-configured).",
@@ -776,7 +789,12 @@
           "type": "array",
           "items": { "$ref": "#/$defs/diagnosis" }
         },
-        "roster": { "$ref": "#/$defs/roster" }
+        "roster": { "$ref": "#/$defs/roster" },
+        "pools": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/pool" },
+          "description": "Every pool the roster reaches, and every pool `work.headroom` binds a command for (FS-005-dispatch.29). An addition, so nothing already printed here changes (FS-006-project-interface.11)."
+        }
       }
     },
     "doctor": {

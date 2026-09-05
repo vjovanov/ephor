@@ -37,6 +37,67 @@ pub struct Ledger {
     /// unchanged (§FS-006-project-interface.11).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub starts: BTreeMap<String, Start>,
+    /// What is known about each provider pool, keyed by the pool
+    /// (§FS-005-dispatch.29). The same kind of thing `starts` is — ephor's
+    /// record of what it was told and of its own act, never work state
+    /// (§FS-005-dispatch.4) — and site data, kept where ephor's other state is
+    /// and never written into a project (§REQ-001-boundary.4). An addition, so
+    /// a ledger written before this field existed reads unchanged
+    /// (§FS-006-project-interface.11).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub pools: BTreeMap<String, PoolRecord>,
+}
+
+/// What one pool has said about itself, from either channel
+/// (§FS-005-dispatch.29).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PoolRecord {
+    /// The instant an unexpired refusal lifts, read out of the refusal's own
+    /// words. Absent where nothing was refused, or where the words carried no
+    /// instant ephor could read — in which case nothing about the pool is
+    /// claimed at all.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refused_until: Option<DateTime<Utc>>,
+    /// What was refused, in the runner's or the launcher's own words — the
+    /// same words `starts` keeps, so a reader is told why in the sentence the
+    /// provider used rather than in one ephor invented.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub says: Option<String>,
+    /// When the bound verb last answered about this pool.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reported_at: Option<DateTime<Utc>>,
+    /// The windows it reported. Empty is unknown, and `unreadable` says why.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub windows: Vec<Window>,
+    /// Why the last probe told ephor nothing — unbound, non-zero, or
+    /// unparseable, each of which degrades to unknown out loud
+    /// (§REQ-001-boundary.1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unreadable: Option<String>,
+    /// How many runs ephor started on this pool. Display only, and never read
+    /// into the selection rule (§FS-005-dispatch.29).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub spawns: u64,
+}
+
+fn is_zero(count: &u64) -> bool {
+    *count == 0
+}
+
+/// One window of a pool's allowance, exactly as the payload spells it
+/// (§FS-005-dispatch.29). `remaining` absent or null is **unknown**, which is
+/// the load-bearing distinction of the whole seam: absent is the ordinary case,
+/// so a rule that read silence as exhaustion would veto every pool on the
+/// machine and stop the loop it exists to keep moving.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Window {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// How much of the window is left, as a fraction. None is unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remaining: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resets_at: Option<DateTime<Utc>>,
 }
 
 fn version() -> u32 {
@@ -75,6 +136,14 @@ pub struct Entry {
     pub plan_id: String,
     pub plan: PathBuf,
     pub dispatches: Vec<Dispatch>,
+    /// The pool the hand chosen for the last dispatch onto this item buys its
+    /// work against (§FS-005-dispatch.29), so that a start which fails on this
+    /// item's root can be recorded against the pool that refused it rather
+    /// than against the root alone. Absent where nobody was chosen, and on
+    /// entries written before this was recorded — a fact nobody recorded
+    /// claims nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pool: Option<String>,
 }
 
 /// How long a root waits after one failed start, and how long it may ever
@@ -303,6 +372,7 @@ pub fn load() -> Result<Ledger> {
             version: version(),
             entries: BTreeMap::new(),
             starts: BTreeMap::new(),
+            pools: BTreeMap::new(),
         });
     }
     let text = fs::read_to_string(&path)
