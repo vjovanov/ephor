@@ -3322,18 +3322,22 @@ readable window are all unknown, with the reason shown beside the pool. None of
 them is an error that stops a dispatch, and none is silent.
 
 **The choice is recorded where the work is.** Selection runs at every write
-ephor makes — a dispatch, a laying, a restart — and the member it chose, with
-whatever the choosing had to say, is written onto the ticket in ephor's own
-words beside the dossier, rather than as a field of the runtime's plan language:
+ephor makes — a dispatch and a laying — and the member it chose, with whatever
+the choosing had to say, is written onto the ticket in ephor's own words beside
+the dossier, rather than as a field of the runtime's plan language:
 
 ```markdown
-**Who this went to.** south-fast takes this because 'north-fast' was passed
-over: north reports 0 of its window left, which lifts at 2026-09-05T18:30:00Z.
+**Who this went to.** 'south-fast' takes this, and it is not the first hand
+named here. 'north-fast' was passed over: north reports 0 of its window left,
+which lifts at 2026-09-05T18:30:00Z.
 ```
 
 Mid-plan exhaustion needs nobody steering: the spawn fails carrying the instant,
-the sweep that reads the failure writes the ledger, and a restart is another
-write, which re-answers the pin of every step that has not run.
+the sweep that reads the failure writes the ledger, and the next write ephor
+makes reads it and answers afresh. What is already pinned on a step is never
+silently replayed onto it — a hand changing under you while you are still
+reading the plan would be worse than a hand that waited — so where ephor answers
+a pin again, you see it as a plan edit.
 
 **What is reported grows by addition.** `ephor status` and `ephor capabilities`
 gain a line per pool, and `ephor caps --json` gains the matching `pools` array.

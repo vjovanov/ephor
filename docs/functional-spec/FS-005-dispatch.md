@@ -2224,10 +2224,10 @@ an optional verb mandatory; one whose absence said nothing would leave a
 reader looking at a choice they cannot explain.
 
 **The choice is recorded where the work is.** Selection runs at every write
-ephor makes — a dispatch, a laying, a restart — and the member it chose, with
-whatever the choosing had to say, is written onto the ticket in ephor's own
-words, beside the dossier it already writes there (§2) rather than as a field
-in the runtime's plan language, which is the runtime's ([§REQ-001-boundary.1](../requirements/REQ-001-boundary.md#1-the-anatomy)).
+ephor makes — a dispatch and a laying — and the member it chose, with whatever
+the choosing had to say, is written onto the ticket in ephor's own words,
+beside the dossier it already writes there (§2) rather than as a field in the
+runtime's plan language, which is the runtime's ([§REQ-001-boundary.1](../requirements/REQ-001-boundary.md#1-the-anatomy)).
 So the plan itself says who and why, and a reader who was not there can read
 both. Mid-plan exhaustion needs nobody steering: the spawn fails carrying the
 instant, the sync that reads the failure writes the ledger, and the next write
