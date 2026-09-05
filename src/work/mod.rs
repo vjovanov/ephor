@@ -3026,7 +3026,7 @@ impl Dispatcher {
                 says: says.to_string(),
             },
         );
-        self.pool_refused(root, says);
+        self.pool_refused(root, says, now);
     }
 
     /// A failed start, read as what a provider said about its own window — but
@@ -3039,8 +3039,12 @@ impl Dispatcher {
     /// failure stays exactly what the line above made it — this root's own
     /// doubling back-off (§FS-005-dispatch.24) — because a failure ephor
     /// cannot date is not a window it may guess at.
-    fn pool_refused(&mut self, root: &std::path::Path, says: &str) {
-        let Some(until) = headroom::instant_in(says) else {
+    ///
+    /// `now` is what tells a reset instant apart from a log line: the words are
+    /// the run's whole merged output, and only an instant still ahead of now is
+    /// a window that can lift.
+    fn pool_refused(&mut self, root: &std::path::Path, says: &str, now: DateTime<Utc>) {
+        let Some(until) = headroom::instant_in(says, now) else {
             return;
         };
         let Some(pool) = self.pool_of_root(root) else {
