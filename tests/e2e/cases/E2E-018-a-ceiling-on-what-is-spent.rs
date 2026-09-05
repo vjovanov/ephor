@@ -266,6 +266,44 @@ fn a_dollar_ceiling_the_site_wrote_passes_the_sweep_over_and_says_when_it_lifts(
     );
 }
 
+/// The sweep a timer runs is bound wherever it runs, and `ephor work sync`
+/// ends in the same one `--due` is. The unit ephor ships runs the two in that
+/// order every half hour, so a budget that bound only `--due` would let the
+/// sync start the night's work unbound and leave the bound sweep finding those
+/// roots already held (§FS-015-spend-ceiling.6).
+#[test]
+fn the_sweep_at_the_end_of_a_sync_is_bound_exactly_as_the_due_sweep_is() {
+    let world = watching(json!({
+        "max_spend": { "amount": 50, "currency": "USD", "per": "24h" }
+    }));
+    let at = span_start(Utc::now() - Duration::hours(2));
+    spent(&world, "priced-work", at, 1_000_000, Some(52.40));
+    ticketed(&world);
+
+    // Nobody typed this one either: it is the trigger the timer runs, and it
+    // is refused in the same words `--due` is refused in.
+    let synced = world
+        .ephor()
+        .args(["work", "sync"])
+        .output()
+        .expect("the sync runs");
+    assert!(synced.status.success(), "{synced:?}");
+    let said = String::from_utf8_lossy(&synced.stdout).to_string();
+    assert!(
+        said.contains("passed over"),
+        "the sweep a sync ends in started nothing: {said}"
+    );
+    assert!(
+        said.contains("global work.max_spend 50 USD per 24h is full"),
+        "and it gives the reason a bound sweep gives: {said}"
+    );
+
+    // And the root it did not start is still due, which is what tells a root
+    // passed over from one a sweep quietly took.
+    let swept = sweep(&world);
+    assert_eq!(swept["runs"][0]["outcome"], "passed-over", "{swept}");
+}
+
 /// A ceiling with room admits the start, and a site that never wrote one is
 /// the site it always was: omission is unlimited, and nothing configured
 /// today changes meaning (§FS-015-spend-ceiling.4).

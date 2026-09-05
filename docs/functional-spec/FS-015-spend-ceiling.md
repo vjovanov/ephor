@@ -160,12 +160,24 @@ sweep would be a warning about correct configuration.
 unchanged: *these limits apply only to this sweep: a run a reader explicitly
 starts keeps being the reader's move.*
 
-**The budget binds `ephor work run --due`,** which is the sweep that runs with
-nobody present and the one a timer invokes. Nothing else is refused for
-budget. `ephor work dispatch`, `ephor work sync`, `ephor work lay`, a
+**The budget binds every sweep that starts work with nobody present.** That is
+`ephor work run --due`, and it is also the same sweep as it runs at the end of
+`ephor work sync` — both of which a timer invokes, and neither of which anybody
+typed. The unit ephor ships runs the two in that order every half hour and its
+own comment names the first as the trigger and the second as the backstop, so a
+budget that bound only `--due` would let `work sync` start the night's work
+unbound and leave `--due` finding those roots already held. It would bind
+almost nothing. `max_concurrent` and `max_active` already bind both sweeps, and
+[§5](#5-every-ceiling-is-evaluated-and-the-outermost-full-one-is-the-reason)
+says the four ceilings are asked of the same start.
+
+Nothing else is refused for budget. `ephor work dispatch`, `ephor work lay`, a
 `work run` on a named plan or item, and the key in the interface all **warn
 and proceed**: the warning names the ceiling that would have refused, on the
 error stream where a warning belongs ([§REQ-002-parity.3](../requirements/REQ-002-parity.md#3-every-reading-answers-a-program)), and the run starts.
+`work dispatch` ends in the same sweep `work sync` does and is still not bound
+by it, because the difference is not what the sweep does but who asked: a
+person is at the terminal for one and nobody is for the other.
 
 The cap is the human's leash on the machine, not on the human. A person who
 types the command is present, is deciding, and can see the warning; refusing
