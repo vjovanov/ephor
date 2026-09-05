@@ -2230,15 +2230,17 @@ words, beside the dossier it already writes there (§2) rather than as a field
 in the runtime's plan language, which is the runtime's ([§REQ-001-boundary.1](../requirements/REQ-001-boundary.md#1-the-anatomy)).
 So the plan itself says who and why, and a reader who was not there can read
 both. Mid-plan exhaustion needs nobody steering: the spawn fails carrying the
-instant, the sync that reads the failure writes the ledger, and a restart is
-another write, which re-answers the pin of every step that has not run. That
-re-answering is a **recorded plan edit** and never a silent replay of the
-written line — a hand changing under a reader who is still reading the plan is
-the one thing worse than a hand that waited.
+instant, the sync that reads the failure writes the ledger, and the next write
+ephor makes reads it and answers afresh. A pin already on a step is **never
+silently replayed** onto it — a hand changing under a reader who is still
+reading the plan is the one thing worse than a hand that waited — so where a
+pin is answered again it is a **recorded plan edit** a reader can see.
 
 **What is reported grows by addition.** `status` and `capabilities` gain a
 line per pool — the pool, its effective remaining or *unknown* with the reason
-it is unknown, and any unexpired refusal with the instant it lifts — and the
-JSON forms gain the matching fields ([§FS-011-command-line.7](FS-011-command-line.md#7---json-is-the-same-answer-not-a-second-one)). Nothing already
-printed changes, which is what the interface's own versioning asks of any
-growth ([§FS-006-project-interface.11](FS-006-project-interface.md#11-the-interface-is-versioned)).
+it is unknown, and any unexpired refusal with the instant it lifts — and
+`capabilities --json` gains the matching fields. That is the JSON form that
+grows: `status --json` prints the matters a source reported, somebody else's
+document rather than ephor's, with nowhere site-wide a pool belongs
+([§FS-011-command-line.7](FS-011-command-line.md#7---json-is-the-same-answer-not-a-second-one)). Nothing already printed changes, which is what the
+interface's own versioning asks of any growth ([§FS-006-project-interface.11](FS-006-project-interface.md#11-the-interface-is-versioned)).
