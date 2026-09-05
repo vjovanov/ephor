@@ -213,7 +213,10 @@ fn standing(pool: &str, record: &PoolRecord, now: DateTime<Utc>) -> Standing {
         .iter()
         .filter_map(|window| window.resets_at)
         .collect();
-    resets.extend(record.refused_until);
+    // The *filtered* refusal: one that has lifted stops naming its instant on
+    // every surface at once, so the JSON reading of a pool stays the same
+    // answer as the text one rather than a second (§FS-011-command-line.7).
+    resets.extend(refused_until);
     // The reason, and only the reason: the instants are fields of their own, so
     // a surface writes "unknown until <instant> — <reason>" once instead of
     // every reason carrying a date inside its words.
