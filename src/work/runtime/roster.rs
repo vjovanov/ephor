@@ -377,10 +377,15 @@ pub fn resolve(
     // reorder, so what comes back is an index into the order as written.
     let (index, mut said) = headroom::choose(&members, evidence);
     let member = &members[index];
+    // A pin naming one hand and meeting no evidence has nothing to record: it
+    // answered exactly as a bare name always did, and the ticket's own
+    // execution line already says who. A pin naming alternates always has
+    // something, because which of them it went to is the thing a reader who
+    // was not there cannot work out from the line alone.
     if said.is_none() && pin.is_alternates() {
         said = Some(format!(
-            "'{}' takes this: it is the first of the hands named here, and nothing says \
-             its pool cannot be had",
+            "'{}' takes this — the first hand named here, and nothing says its pool \
+             cannot be had right now",
             member.hand.id
         ));
     }

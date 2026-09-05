@@ -275,10 +275,9 @@ pub fn choose(members: &[Member], evidence: &Evidence) -> (usize, Option<String>
         let Some(spent) = evidence.spent(&member.pool) else {
             let said = (!passed.is_empty()).then(|| {
                 format!(
-                    "{} takes this because {} — {} is what its pool has to say",
+                    "'{}' takes this, and it is not the first hand named here. {}",
                     member.hand.id,
-                    passed.join(", and because "),
-                    member.pool,
+                    passed.join(". ")
                 )
             });
             return (index, said);
@@ -298,10 +297,10 @@ pub fn choose(members: &[Member], evidence: &Evidence) -> (usize, Option<String>
     // earliest instant any of their pools resets.
     let said = members.first().map(|first| {
         format!(
-            "every hand this names is spent, so '{}' — the first — takes the ticket and it \
-             waits: {}. The earliest of their windows lifts at {}",
+            "every hand named here is spent, so '{}' — the first — takes the ticket and it \
+             waits. {}. The earliest of their windows lifts at {}",
             first.hand.id,
-            passed.join("; "),
+            passed.join(". "),
             match resets.iter().min() {
                 Some(earliest) => instant(earliest),
                 None => "an instant none of them named".to_string(),
