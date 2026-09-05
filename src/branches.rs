@@ -963,12 +963,18 @@ fn collect_stores(dir: &Path, depth: usize, found: &mut Vec<PathBuf>) {
 }
 
 impl Placement {
-    /// An existing checkout to make a new workspace from
-    /// (§FS-004-quick-actions.7). A working tree is added *from* a repository,
-    /// so there has to be one already on disk: the main branch's workspace by
-    /// preference — it is the one a new branch is grown from — then any other
-    /// branch's, then the root for a project that keeps its repositories there.
-    pub fn source_checkout(&self) -> Option<PathBuf> {
+    /// Where this project's checkouts would be, in the order one of them
+    /// stands for the project: the main branch's workspace first — it is the
+    /// one a question about the project rather than about a change is about,
+    /// and the one a new branch is grown from — then every other branch's,
+    /// then the root, which is the checkout itself for a project the registry
+    /// gives no `branch_root_template`.
+    ///
+    /// A project may have several checkouts, and this is the single ladder
+    /// that decides which one answers for it. Whether a candidate counts as
+    /// being there is left to the caller: what has to be true of the directory
+    /// depends on what is wanted from it.
+    fn checkout_candidates(&self) -> Vec<PathBuf> {
         let mut candidates = Vec::new();
         if let Some(main) = self.main_branch.as_deref() {
             candidates.extend(self.workspace_for(main));
@@ -978,8 +984,36 @@ impl Placement {
         }
         candidates.push(self.root.clone());
         candidates
+    }
+
+    /// An existing checkout to make a new workspace from
+    /// (§FS-004-quick-actions.7). A working tree is added *from* a repository,
+    /// so the first candidate holding one is the answer — a directory with no
+    /// repository under it is nothing to grow a working tree from.
+    pub fn source_checkout(&self) -> Option<PathBuf> {
+        self.checkout_candidates()
             .into_iter()
             .find(|path| !self.forest(path).is_empty())
+    }
+
+    /// The checkout that answers for this project when its own files are the
+    /// question — where it keeps the toolchain's configuration
+    /// (§FS-006-project-interface.12). The first candidate on disk, so a
+    /// branch-addressable project answers with the main branch's workspace and
+    /// never with the registry root above it: that root is the *container* the
+    /// workspaces sit in, and the files are one level down in each of them.
+    ///
+    /// The same ladder as [`Placement::source_checkout`] behind a weaker
+    /// filter, deliberately rather than by oversight: reading a file asks only
+    /// that the directory be there, while adding a working tree asks for a
+    /// repository to add it from. `None` where no candidate is on disk at all —
+    /// a project with nothing placed has no checkout to read, which `doctor`
+    /// already reports as the missing *placed* rung rather than as a sentence
+    /// about the layout.
+    pub fn project_checkout(&self) -> Option<PathBuf> {
+        self.checkout_candidates()
+            .into_iter()
+            .find(|path| path.is_dir())
     }
 
     pub fn matched(&self, item: &Item) -> Option<&BranchInfo> {
