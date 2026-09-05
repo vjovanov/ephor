@@ -966,8 +966,18 @@ impl Session {
                                     std::slice::from_ref(&project),
                                     &[],
                                     None,
+                                    // A person pressed a key, so a full budget
+                                    // is said and the run starts
+                                    // (§FS-015-spend-ceiling.6). There is no
+                                    // error stream behind a screen, so it is
+                                    // said where everything else about this
+                                    // entry is said.
+                                    crate::work::spend::Budget::Warns,
                                 ) {
                                     Ok(swept) => {
+                                        for full in swept.warned {
+                                            says = format!("{says} · {full}");
+                                        }
                                         for run in swept.runs {
                                             says = format!("{says} · {}", run.says());
                                         }

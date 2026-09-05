@@ -1698,6 +1698,55 @@ organization '<id>' (no registry row places a project in it).`, in the words
 an unknown project id gets, and the sweep carries a `note:` of its own.
 Nothing is refused for it — the key simply is not the one biting.
 
+**And none of those is money.** Beside them, `max_spend` and `max_tokens` bound
+what unattended work may *spend* in a trailing window, at the same three scopes
+and in site configuration only — the amount you will spend is not a fact about
+a repository
+([§FS-015-spend-ceiling](functional-spec/FS-015-spend-ceiling.md#fs-015-spend-ceiling-what-unattended-work-may-spend-is-the-persons-number-and-the-sweep-stops-at-it)).
+
+```jsonc
+{
+  "work": {
+    "max_spend":  { "amount": 50, "currency": "USD", "per": "24h" },
+    "max_tokens": { "amount": 200000000, "per": "24h" }
+  }
+}
+```
+
+`currency` accepts `USD`, and `per` accepts `1h`, `6h`, `24h` and `7d` with
+`day` and `week` as spellings of the last two; anything else is refused when
+the configuration loads, naming what is accepted. Omitting a budget is
+unlimited and `0` admits no new autorun starts, exactly as the ceilings above
+read. What a ceiling is compared against is the reading `ephor burn` publishes
+for the same window and project (§9): ephor prices nothing and keeps no
+accounting of its own, and the sweep refreshes that store itself rather than
+waiting for somebody to open a reading.
+
+Two denominations, because they fail differently. A dollar figure is only ever
+the one a log carried already, so a price book with no entry for a model
+reports real spend as nothing and a dollar ceiling under-counts; tokens are
+always measured, which is what `max_tokens` is for. A window in which *nothing*
+was priced binds nothing under `max_spend` — a cap that stopped over an
+accounting hole would fail over an extractor outage rather than over money —
+and the tokens no price covered are shown beside the dollar total rather than
+summed into it. Write both if you want both guarantees; the first to be full is
+what refuses. A project budget above its organization's is not noted the way an
+inverted `max_concurrent` pair is: an organization's total already contains its
+projects', so the outer number simply stops the project first.
+
+Only a sweep nobody asked for is bound — `ephor work run --due`, and the sweep
+at the end of `ephor work sync`, which are the two the work-sync timer runs.
+`ephor work dispatch`, `ephor work lay`, a `work run` on a named plan or item,
+and the key in the interface warn on the error stream and start the run anyway:
+the cap is your leash on the machine, not on you. A root the sweep passed over
+for budget names the key, the ceiling, what was measured, the tokens nothing
+priced, and the instant the trailing window lets work start again. And while a
+ceiling is binding, `ephor status` carries one line of its own —
+`Autorun paused: global work.max_spend, resumes 2026-09-06T10:05:00Z` — with
+every project that scope holds carrying an `autorun_paused` object under
+`--json`, so a paused loop and an idle loop do not look identical. The totals
+and the coverage stay in `ephor burn`, which is the spend reading.
+
 **`autorun`** is the one field that changes *when* work happens rather than
 what it says. With it, a ticket written from this recipe gets its run without
 anyone pressing anything: dispatch starts it in the same breath, and
@@ -2460,7 +2509,10 @@ ephor work states
   many of those are parked, in prose and under `--json`, so a full ceiling never
   hides that a person is holding one of the slots. Ceilings gate starts, not
   runs already under way: several parked roots resuming at once can carry
-  working roots above `max_active` until one finishes.
+  working roots above `max_active` until one finishes. Beside all four,
+  `max_spend` and `max_tokens` bound what this sweep and the one at the end of
+  `work sync` may *spend* in a trailing window, at the same three scopes and
+  asked after the two above them (§8.3).
 - **`workflows`** and **`lay`** are the runtime's own workflows, offered as
   actions (§8.15). `lay` writes a plan of its own beside the matter's and runs
   nothing; `--dry-run` shows what would answer every input first. Where the

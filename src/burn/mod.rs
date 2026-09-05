@@ -214,6 +214,21 @@ pub fn refresh(dir: &Path, sources: &Sources, roots: &attribution::Roots) -> Res
     Ok(scan)
 }
 
+/// Read the transcripts where the store has gone stale, and leave it current
+/// (§FS-013-burn.8).
+///
+/// This is local file reading, not a fetch: `refresh` remains the only verb
+/// that asks the world (§FS-001-forge-interface.7). Which is what lets a sweep
+/// running from a timer take the reading itself rather than depending on
+/// somebody having opened one first (§FS-015-spend-ceiling.1).
+pub fn refreshed(roots: &attribution::Roots, force: bool) -> Option<Scan> {
+    let dir = store::dir();
+    if !force && !store::stale(&dir) {
+        return None;
+    }
+    refresh(&dir, &Sources::of_home(), roots).ok()
+}
+
 /// Which tool wrote a transcript. Kept as an enum rather than a string so
 /// that adding a third log is a match arm the compiler asks for.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

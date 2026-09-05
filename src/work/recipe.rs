@@ -82,6 +82,17 @@ pub struct WorkConfig {
     /// exactly as it was.
     #[serde(default)]
     pub max_active: Option<usize>,
+    /// The most money autorun may spend across the site in a trailing window,
+    /// measured against the reading `burn` publishes
+    /// (§FS-015-spend-ceiling.1). Read exactly as the two ceilings above are:
+    /// omitted is unlimited, `0` admits no new autorun starts.
+    #[serde(default)]
+    pub max_spend: Option<crate::work::spend::SpendBudget>,
+    /// The same ceiling on tokens, which are always measured where a dollar
+    /// figure is only ever the one a log carried (§FS-015-spend-ceiling.2). A
+    /// site may write both, and the first of them to be full is what refuses.
+    #[serde(default)]
+    pub max_tokens: Option<crate::work::spend::TokenBudget>,
 }
 
 impl Default for WorkConfig {
@@ -97,6 +108,8 @@ impl Default for WorkConfig {
             ranking: None,
             max_concurrent: None,
             max_active: None,
+            max_spend: None,
+            max_tokens: None,
         }
     }
 }
@@ -137,6 +150,16 @@ pub struct ProjectWorkConfig {
     /// (§FS-005-dispatch.24).
     #[serde(default)]
     pub max_active: Option<usize>,
+    /// This project's spend ceiling, inside its organization's and inside the
+    /// site's (§FS-015-spend-ceiling.1). An organization's measured total
+    /// already contains this project's, so a number above the one outside it
+    /// is a project the outer ceiling stops first rather than a contradiction
+    /// (§FS-015-spend-ceiling.5).
+    #[serde(default)]
+    pub max_spend: Option<crate::work::spend::SpendBudget>,
+    /// The same, on tokens (§FS-015-spend-ceiling.2).
+    #[serde(default)]
+    pub max_tokens: Option<crate::work::spend::TokenBudget>,
 }
 
 /// Work for every project of one organization: the ceiling they share, inside
@@ -161,6 +184,15 @@ pub struct OrganizationWorkConfig {
     /// single repository. Omitted leaves the site's answer in force.
     #[serde(default)]
     pub root: Option<String>,
+    /// The most money autorun may spend across this organization's projects,
+    /// inside the site's ceiling and outside each project's own
+    /// (§FS-015-spend-ceiling.1). Which projects those are is the registry's
+    /// `organization` field and nothing here.
+    #[serde(default)]
+    pub max_spend: Option<crate::work::spend::SpendBudget>,
+    /// The same, on tokens (§FS-015-spend-ceiling.2).
+    #[serde(default)]
+    pub max_tokens: Option<crate::work::spend::TokenBudget>,
 }
 
 /// The key a hands table answers every unnamed action with
@@ -1408,6 +1440,39 @@ mod tests {
         assert_eq!(WorkConfig::default().max_active, None);
         assert_eq!(ProjectWorkConfig::default().max_active, None);
         assert!(serde_json::from_value::<ProjectWorkConfig>(json!({ "max_activ": 1 })).is_err());
+    }
+
+    /// The spend ceilings are two more keys on the same three blocks, read the
+    /// same way: omitted is unlimited, and a site that names none is bounded
+    /// exactly as it was (§FS-015-spend-ceiling.1, §FS-015-spend-ceiling.4).
+    #[test]
+    fn spend_ceilings_parse_at_all_three_scopes() {
+        let site: WorkConfig = serde_json::from_value(json!({
+            "max_spend": { "amount": 50, "currency": "USD", "per": "24h" },
+            "max_tokens": { "amount": 200000000, "per": "24h" }
+        }))
+        .unwrap();
+        let organization: OrganizationWorkConfig = serde_json::from_value(json!({
+            "max_spend": { "amount": 20, "currency": "USD", "per": "7d" }
+        }))
+        .unwrap();
+        let project: ProjectWorkConfig = serde_json::from_value(json!({
+            "max_tokens": { "amount": 0, "per": "1h" }
+        }))
+        .unwrap();
+        assert_eq!(site.max_spend.map(|budget| budget.amount), Some(50.0));
+        assert_eq!(site.max_tokens.map(|budget| budget.amount), Some(200000000));
+        assert_eq!(
+            organization.max_spend.map(|budget| budget.per),
+            Some(crate::work::spend::Per::Week)
+        );
+        assert_eq!(project.max_tokens.map(|budget| budget.amount), Some(0));
+        assert_eq!(project.max_spend, None);
+        assert_eq!(WorkConfig::default().max_spend, None);
+        assert_eq!(WorkConfig::default().max_tokens, None);
+        assert_eq!(OrganizationWorkConfig::default().max_tokens, None);
+        assert_eq!(ProjectWorkConfig::default().max_spend, None);
+        assert!(serde_json::from_value::<WorkConfig>(json!({ "max_spent": 1 })).is_err());
     }
 
     /// The table a project writes to say who does what

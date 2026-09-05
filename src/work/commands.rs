@@ -608,7 +608,16 @@ fn dispatch_work(
         // as the ticket (§FS-005-dispatch.24). The sweep decides what that
         // is, so this starts nothing where nothing asked for it and nothing
         // in a checkout a run already holds.
-        started(&mut dispatcher, projects, &args.runner_args, args.json)?;
+        // A person typed this, so a full budget is said and the run starts:
+        // the cap is the human's leash on the machine, not on the human
+        // (§FS-015-spend-ceiling.6).
+        started(
+            &mut dispatcher,
+            projects,
+            &args.runner_args,
+            args.json,
+            crate::work::spend::Budget::Warns,
+        )?;
     }
     // What the reader should know about who got the work: a hand nobody could
     // be named to, a pair ephor cannot check, an agent with no model of its
@@ -1345,7 +1354,17 @@ fn sync_work(
         // The same continuation dispatch makes: work reopened because its
         // item moved is work again, and where it needs nobody to start it,
         // nobody has to (§FS-005-dispatch.24, §FS-005-dispatch.5).
-        started(&mut dispatcher, projects, &[], args.json)?;
+        // Nobody typed this one: `work sync` is what a timer runs before
+        // `work run --due`, and a budget that bound only the second would let
+        // the first start the night's work unbound
+        // (§FS-015-spend-ceiling.6).
+        started(
+            &mut dispatcher,
+            projects,
+            &[],
+            args.json,
+            crate::work::spend::Budget::Binds,
+        )?;
     }
     if args.json {
         println!(
@@ -1465,6 +1484,20 @@ fn run_work(
         }
         println!("Nothing to run: no dispatched ticket is still open.");
         return Ok(ExitCode::SUCCESS);
+    }
+    // A run a reader explicitly starts keeps being the reader's move, so a
+    // budget that is full is said here and refuses nothing: the person is
+    // present, is deciding, and can see the warning
+    // (§FS-015-spend-ceiling.6). Said where a run is actually about to
+    // start, so a ceiling is never announced over a command that would have
+    // run nothing anyway.
+    let over: Vec<String> = entries
+        .iter()
+        .filter(|entry| roots.iter().any(|(root, ..)| &entry.root == root))
+        .map(|entry| entry.project.clone())
+        .collect();
+    if let Some(full) = dispatcher.budgets(Utc::now()).over(&over) {
+        eprintln!("note: {}", full.says);
     }
 
     let mut failed = 0usize;
@@ -1684,8 +1717,16 @@ fn started(
     projects: &[String],
     runner_args: &[String],
     json: bool,
+    budget: crate::work::spend::Budget,
 ) -> Result<()> {
-    let launched = dispatcher.start_due(Utc::now(), projects, runner_args, None)?;
+    let launched = dispatcher.start_due(Utc::now(), projects, runner_args, None, budget)?;
+    // A budget that is full where a person asked for the sweep is said and
+    // stops nothing, on the error stream where a warning belongs — before the
+    // runs, because a sweep that started nothing is still a sweep whose
+    // ceiling the reader wants to know about (§FS-015-spend-ceiling.6).
+    for full in &launched.warned {
+        eprintln!("note: {full}");
+    }
     if launched.runs.is_empty() {
         return Ok(());
     }
@@ -1716,8 +1757,13 @@ fn swept(
     projects: &[String],
 ) -> Result<ExitCode> {
     let style = Style::detect();
-    let swept =
-        dispatcher.start_due(Utc::now(), projects, &args.runner_args, args.max_concurrent)?;
+    let swept = dispatcher.start_due(
+        Utc::now(),
+        projects,
+        &args.runner_args,
+        args.max_concurrent,
+        crate::work::spend::Budget::Binds,
+    )?;
     let launched = &swept.runs;
     let failed = launched.iter().filter(|run| run.failed.is_some()).count();
     // What the ceilings are holding, split into work being done and work

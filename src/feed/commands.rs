@@ -334,8 +334,28 @@ pub fn status(args: &StatusArgs, scope: &Projects) -> Result<ExitCode> {
     };
 
     let recent_days = config.defaults.recent_days;
+    // A ceiling that is currently binding is said on the habitual command,
+    // because otherwise a paused loop and an idle loop look identical
+    // (§FS-015-spend-ceiling.10). Nothing at all when nothing binds, so the
+    // answer's presence is the signal — and `--cached` does not suppress it:
+    // reading the store is a local file read rather than a fetch.
+    let projects: Vec<String> = feeds.iter().map(|feed| feed.project.clone()).collect();
+    let paused = crate::work::spend::paused(&config, &projects);
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&feeds).unwrap());
+        let mut reading = serde_json::to_value(&feeds).unwrap_or(Value::Null);
+        for row in reading.as_array_mut().into_iter().flatten() {
+            let Some(pause) = row
+                .get("project")
+                .and_then(Value::as_str)
+                .and_then(|project| paused.get(project))
+            else {
+                continue;
+            };
+            if let (Some(row), Ok(pause)) = (row.as_object_mut(), serde_json::to_value(pause)) {
+                row.insert("autorun_paused".to_string(), pause);
+            }
+        }
+        println!("{}", serde_json::to_string_pretty(&reading).unwrap());
         return Ok(check_exit(&feeds, &seen, args.check, recent_days));
     }
 
@@ -381,6 +401,11 @@ pub fn status(args: &StatusArgs, scope: &Projects) -> Result<ExitCode> {
         if reported {
             crate::doctor::render_pools(&pools, &style);
         }
+    }
+    // The pause itself, and nothing beside it: the totals and the coverage
+    // stay in `burn`, which is the spend reading (§FS-015-spend-ceiling.10).
+    for line in crate::work::spend::lines(&paused) {
+        println!("{line}");
     }
     Ok(check_exit(&feeds, &seen, args.check, recent_days))
 }
