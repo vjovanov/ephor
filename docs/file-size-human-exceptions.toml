@@ -58,3 +58,23 @@ until = "the hand-over family moves into impl App blocks in the sibling modules 
 reason = """
 The per-screen state and rendering have already left: actions.rs, answers.rs, burn.rs, gate.rs, navigator.rs, operations.rs, prompt.rs, thread.rs and work.rs are all siblings. Two of the moves this entry was written for have since happened: the inline tests are now src/feed/tui/mod_tests.rs, and burn.rs carries its own impl App block for what its keys do — the boundary this reason names, taken for the newest screen first because it was the one being written. What is left in impl App is two families sharing &mut self. The event loop and key dispatch — event_loop, apply, submit, tick, draw — genuinely belong together and must not be broken apart. Refresh and lifecycle — load, reload_feeds, reload_work, start_refresh, collect_refresh, absorb, pulse_jobs, reload_operations — are a second. Beside them are about two dozen methods from open_work through read_log that carry out what a work or action key does, and those do not belong here: their screens already have modules, and only their behaviour is still here because those modules were written as renderers. Missing boundary: in Rust an inherent impl is a crate-wide thing rather than a module-wide one, so work.rs, actions.rs and answers.rs can each carry their own impl App block exactly as burn.rs now does, with no visibility change at all.
 """
+[[exceptions]]
+path = "docs/functional-spec/FS-005-dispatch.md"
+match = "exact"
+rules = ["specs"]
+kind = "deferred"
+max_accepted = { value = 2100, unit = "lines" }
+until = "a section of FS-005-dispatch that carries a behaviour of its own is given a declared ID and moved to its own document"
+reason = """
+The split that made this file put every FS declaration in a document of its own, and dispatch is the declaration that was half the monolith: 29 sections, several of which carry whole behaviours — the roster and the seven-step hand resolution, the autorun sweep, workflows, and now provider headroom. Missing boundary: dispatch is still one declaration over many behaviours, and fissile's own message for this rule names the move — give a section that carries its own behaviour a declared ID and move it to its own file. It is not taken here because that move is a rename. §FS-005-dispatch.14 and §FS-005-dispatch.29 are cited from code, from tests, from docs/manual.md and from docs/changelog.md, and re-pointing every one of them is a change that has to be reviewed as itself rather than as a rider on the commit that first pushed the file over. The ceiling is the 100-line step above today's measurement rather than the measurement, for the reason this file's header already gives.
+"""
+[[exceptions]]
+path = "docs/manual.md"
+match = "exact"
+rules = ["manual"]
+kind = "deferred"
+max_accepted = { value = 3400, unit = "lines" }
+until = "chapter 8 becomes a document of its own, linked from the Contents"
+reason = """
+main brought this file to exactly its 3200-line ceiling, so any change that adds manual prose trips this rule; this one adds the chapter documenting the provider-headroom seam. Missing boundary: the manual has outgrown one document, and fissile's own message for this rule both names the destination and has already measured it — `## 8. Work` is 1251 non-blank lines, 45% of the manual on its own, and it is the reason this rule exists. The manual is deliberately one document, because scripts/manual-page.py renders it as a single standalone page, so the move is not a cut at a heading but giving that chapter a document and a link from the Contents. It is not taken here for the same reason README.md's entry above gives: cutting the largest chapter out of the manual inside a feature commit puts an editorial judgment where a feature is being reviewed, and the two should be reviewable apart.
+"""
