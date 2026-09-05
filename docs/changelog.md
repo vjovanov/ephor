@@ -159,6 +159,12 @@ ships, the previous "latest" section moves verbatim to
 
 ### Changed
 
+- **CI's grund pin moves 0.12.3 → 0.13.0, and the entrypoints are re-rendered
+  by that version.** `CLAUDE.md` and `.claude/CLAUDE.md` carry the v8 init
+  block in place of v7. Under 0.13.0, `grund fmt --check` also caught a stray
+  bare `§FS-013-burn.8` citation that 0.12.3 let through uncaught; it now reads
+  as a Markdown link like its neighbors. (PR #76)
+
 - **Tool configuration has a home, and `.agents/` is its deprecated one**
   ([§FS-006-project-interface.12](functional-spec/FS-006-project-interface.md#12-what-the-toolchain-keeps-in-a-checkout-has-a-home-and-a-deprecated-one),
   [§FS-005-dispatch.14](functional-spec/FS-005-dispatch.md#14-who-does-the-work-is-chosen-and-defaulted-per-project),

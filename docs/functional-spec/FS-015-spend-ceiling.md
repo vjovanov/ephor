@@ -57,7 +57,7 @@ concurrency ceilings read it ([§FS-005-dispatch.24](FS-005-dispatch.md#24-work-
 itself.** A sweep runs from a timer with nobody present, so it cannot depend
 on somebody having opened a reading first: it refreshes the store inline when
 that store is stale, exactly as the reading's own command does
-(§FS-013-burn.8). That is a local file read of logs the agent tools were
+([§FS-013-burn.8](FS-013-burn.md#8-the-page-and-its-command)). That is a local file read of logs the agent tools were
 writing anyway and is not the fetch `refresh` owns — a budget must never make
 the sweep reach the network. Ephor keeps no second accounting of its own: the
 number the ceiling is compared against is the number `burn` would print for
