@@ -238,6 +238,32 @@ hand for everything — is either the deep hand on every trivial replay or the
 cheap one on the conflict that actually needed judgment, and that choice is
 being made today anyway, silently, by whatever the runtime would pick.
 
+**An entry may name an ordered list instead of one hand.** Every place this
+table writes a hand — an action's id, `default`, the pin a recipe carries, and
+`--hand` on the command line, which writes the same grammar the tables do —
+takes either one name or an ordered list of them, and one name is the list
+with a single member ([§FS-005-dispatch.14](FS-005-dispatch.md#14-who-does-the-work-is-chosen-and-defaulted-per-project)). In configuration a list is a JSON
+array of the same names the scalar form takes, which is the only thing an
+array of hands can mean here: the long form below is an *object* naming its
+halves, so reading `["a", "b"]` as a pair spelled out positionally would let a
+list of two alternates arrive as one hand nobody wrote, and it would do it
+silently. On the command line a list is the names separated by commas, because
+a flag that can be given twice would make the order depend on how the shell
+was typed; an empty member is refused with what was written, since a trailing
+comma is a typo far more often than it is a name.
+
+**Permission is checked against every member, and a list is refused whole.**
+Where a project narrows the roster, one unpermitted name in a list refuses the
+whole list, that name is in the refusal, and no member of it is used — never
+filtered down to the members that are permitted. It is the same argument this
+section already makes about a narrowing that fails quietly, and it holds
+harder here: a list is where a name can be dropped without the person noticing
+they wrote it, and a policy that quietly used the second choice is
+indistinguishable from a policy that was never asked. Which member finally
+does the work is decided after this, from evidence rather than from policy,
+and it may pass a permitted member over but may never reach past the list for
+one that was refused ([§FS-005-dispatch.29](FS-005-dispatch.md#29-headroom-is-reported-to-ephor-and-vetoes-a-member-it-never-reorders)).
+
 A hand is named `<hand-id>[:<effort>]`, both the roster's own words
 ([§FS-005-dispatch.14](FS-005-dispatch.md#14-who-does-the-work-is-chosen-and-defaulted-per-project)). The long form `{ "agent", "model", "effort" }` stays
 legal for a pair the runtime's registry never enumerated — a proxy serving a
@@ -301,4 +327,5 @@ field costs nothing, unknown fields are ignored, and any incompatible
 change bumps the schema version with a changelog entry per
 [§FS-002-release.1](FS-002-release.md#1-changelog). The schemas are the interface's stability surface — what
 a release may change is answerable by diffing them.
+
 

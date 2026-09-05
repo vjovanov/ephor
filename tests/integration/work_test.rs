@@ -1731,3 +1731,121 @@ exit 1
     let swept: Value = serde_json::from_slice(&again.stdout).unwrap();
     assert_eq!(swept["laid"], 0, "{swept}");
 }
+
+/// The runtime registry these alternates tests resolve against: one agent
+/// declaring one mode, and two model profiles on it served by one provider.
+/// Returns the `HOME` a run has to be given so the roster reads this file
+/// rather than the machine's own.
+fn roster_of_two(tmp: &Path) -> std::path::PathBuf {
+    let home = tmp.join("home");
+    let settings = home.join(".config/rhei/settings.json");
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    fs::write(
+        &settings,
+        r#"{
+            "agents": { "our-agent": { "command": ["sh"], "modes": { "high": [] } } },
+            "models": {
+                "impl-fast": { "provider": "acme", "model": "m-fast", "default_agent": "our-agent" },
+                "sonnet": { "provider": "acme", "model": "m-slow", "default_agent": "our-agent" }
+            }
+        }"#,
+    )
+    .unwrap();
+    fs::create_dir_all(tmp.join("fakebin")).unwrap();
+    make_executable(&tmp.join("fakebin/runner-of-ours"), "#!/bin/sh\nexit 0\n");
+    home
+}
+
+/// A table entry may name an ordered list of hands, and an array is that list
+/// (§FS-006-project-interface.9, §FS-005-dispatch.14). The names in it are the
+/// same names the scalar form takes, so `["impl-fast", "sonnet"]` is two hands
+/// to choose between and never one hand spelled out positionally — the long
+/// form is an object, and reading a sequence as one would let a list of
+/// alternates arrive as a pair nobody wrote, silently. Nothing vetoes anything
+/// here, so the first member is the one that gets the ticket.
+#[test]
+fn an_array_under_an_action_is_a_list_of_hands_not_a_pair_spelled_out() {
+    let tmp = tempdir();
+    fixture(tmp.path(), json!({ "runner": "runner-of-ours" }));
+    project_hands(
+        tmp.path(),
+        json!({ "fix-gate": ["impl-fast", "sonnet"] }),
+        &[],
+    );
+    let home = roster_of_two(tmp.path());
+    let run = |args: &[&str]| {
+        let mut command = ephor(tmp.path());
+        command.env("HOME", &home).args(args);
+        command
+    };
+
+    run(&["refresh", "demo"]).assert().success();
+    run(&["work", "dispatch"]).assert().success();
+    let plan_path = tmp
+        .path()
+        .join("demo/panta/github-prs-acme-widget-42.rhei.md");
+    let plan = fs::read_to_string(&plan_path).unwrap();
+    // The first member, resolved against the roster like any other name.
+    assert!(
+        plan.contains("**Target:** our-agent[high]:acme:m-fast"),
+        "{plan}"
+    );
+    // And never the positional reading, which would take the second member
+    // for the model the first one carries.
+    assert!(!plan.contains("impl-fast:sonnet"), "{plan}");
+    // The second member is an alternate, not a model: nothing of it reaches
+    // the ticket while the first member is the one chosen.
+    assert!(!plan.contains("m-slow"), "{plan}");
+}
+
+/// `--hand` writes the same grammar the tables do
+/// (§FS-006-project-interface.9), so it takes a list too — comma-separated,
+/// because a flag given twice would make the order depend on how the shell
+/// was typed. An empty member is refused with what was written: a trailing
+/// comma is a typo far more often than it is a name.
+#[test]
+fn the_hand_flag_takes_a_comma_separated_list_and_refuses_an_empty_member() {
+    let tmp = tempdir();
+    fixture(tmp.path(), json!({ "runner": "runner-of-ours" }));
+    let home = roster_of_two(tmp.path());
+    let run = |args: &[&str]| {
+        let mut command = ephor(tmp.path());
+        command.env("HOME", &home).args(args);
+        command
+    };
+
+    run(&["refresh", "demo"]).assert().success();
+    run(&[
+        "work",
+        "dispatch",
+        "--item",
+        "github-prs:acme/widget#42",
+        "--hand",
+        "sonnet,impl-fast",
+    ])
+    .assert()
+    .success();
+    let plan = fs::read_to_string(
+        tmp.path()
+            .join("demo/panta/github-prs-acme-widget-42.rhei.md"),
+    )
+    .unwrap();
+    assert!(
+        plan.contains("**Target:** our-agent[high]:acme:m-slow"),
+        "{plan}"
+    );
+
+    run(&[
+        "work",
+        "dispatch",
+        "--item",
+        "github-prs:acme/widget#42",
+        "--again",
+        "--hand",
+        "sonnet,",
+    ])
+    .assert()
+    .code(1)
+    .stderr(predicate::str::contains("sonnet,"))
+    .stderr(predicate::str::contains("empty"));
+}

@@ -90,6 +90,10 @@ name = "e2e_016_before_anything_is_made"
 path = "tests/e2e/cases/E2E-016-before-anything-is-made.rs"
 
 [[test]]
+name = "e2e_017_provider_headroom"
+path = "tests/e2e/cases/E2E-017-provider-headroom.rs"
+
+[[test]]
 name = "agents_test"
 path = "tests/integration/agents_test.rs"
 

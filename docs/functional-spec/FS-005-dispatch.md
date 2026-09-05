@@ -502,6 +502,31 @@ what a repository under a policy about which models may see its code needs —
 and a hand outside the narrowing is refused with that reason, never silently
 dropped.
 
+**A pin may name an ordered list of hands, and the steps still answer with
+one.** Everywhere a hand is named — a table's entry, the pin an action or a
+recipe carries, what the reader picked — the value may be an ordered list of
+names instead of a single one, and a single name *is* that list with one
+member in it. Nothing written before this means anything different, because a
+list of one resolves and dispatches exactly as the bare name did. The seven
+steps themselves are untouched: they displace one another in the same order
+and still answer exactly once, and what the answering step hands on is the
+list it carried rather than a name. Choosing among that list is a later stage
+with a different question in front of it (§29), and the two are kept apart on
+purpose — a step answers *whose work this is*, which is the author's judgment
+about the matter, and the stage below answers *which of them can be reached
+right now*, which is a fact about the world and no judgment at all. So a step
+that answered has answered: no later step is consulted because a member of its
+list turned out to be unreachable, and the fallback lives inside the list the
+author wrote rather than across the precedence order, where it would silently
+promote a table nobody meant to reach.
+
+The order inside a list is the author's, and it ranks by **fitness rather than
+by equality**: the first name is first because it is the right hand for this
+work, and each name after it is what to do when the one before it cannot be
+had. That is the whole reason the stage below may veto a member and may never
+reorder the survivors (§29) — a rule that sorted this list by anything else
+would be overruling the only judgment in it.
+
 The first step is **made at the moment of dispatch and spent by it**. In the
 interface it is a picker over the menu's entry: the roster's hands in one
 column and, beside a hand that declares efforts, those efforts in a second —
@@ -2103,3 +2128,117 @@ standing on another branch all apply to a root a workflow laid exactly as
 they apply to one a recipe wrote: it is the same root, reached the same way.
 An entry that says nothing about this is a menu entry and only a menu entry,
 laid by the reader and started by the reader, as it was.
+
+## 29. Headroom is reported to ephor, and vetoes a member it never reorders
+
+A list of alternates is only worth writing if something can say that the first
+of them cannot be had. That something is a **quota**, and a quota is the
+provider's fact rather than ephor's: ephor observes and summons, and it never
+governs ([§REQ-001-boundary](../requirements/REQ-001-boundary.md#req-001-boundary-every-capacity-ephor-lacks-crosses-a-seam-and-the-seam-has-one-anatomy)). So it consumes a *report* about capacity and
+never derives one, and the report is evidence over a list somebody else
+ordered — never an ordering of its own ([§DA-009-headroom-vetoes](../decisions/architectural/DA-009-headroom-vetoes.md#da-009-headroom-vetoes-headroom-is-a-report-ephor-is-given-and-it-vetoes-a-member-rather-than-ranking-the-list)).
+
+**The unit is a pool, and a pool is who serves the model.** A hand's pool is
+its provider where the roster gives it one, and its agent id where it does
+not. That is the smallest thing a window is actually bought against: two hands
+served by one provider spend one allowance whichever of them is asked, so
+evidence about either is evidence about both, while a hand whose profile names
+no provider has nothing smaller than the agent that carries it to be limited
+by. Keying evidence any finer would make a refusal that has already happened
+look like it happened to somebody else.
+
+**Two channels report it, and one of them costs nothing.** This is a seam, so
+it has the four parts [§REQ-001-boundary.1](../requirements/REQ-001-boundary.md#1-the-anatomy) requires of every seam, and the
+first channel is the shipped default that keeps it working unbound.
+
+The first is **the ledger**, which needs no configuration because ephor
+already writes it. The one authoritative thing a provider says about its own
+window is a refusal, and a refusal names the instant it lifts; it arrives as a
+start that failed, which ephor records in its own words already
+(§4). Where those words carry an instant ephor can read, that start is a
+**refusal on that hand's pool**, held until the instant and cleared by any
+observed success on the pool. Where they do not, nothing about a pool is
+claimed and the failure stays exactly what it was — one root's own back-off
+(§24) — because a failure ephor cannot date is not a window it may guess at.
+The record is site data, kept where ephor's other state is and never written
+into a project ([§REQ-001-boundary.4](../requirements/REQ-001-boundary.md#4-the-footprint-rule)); it stays ephor's record of ephor's own
+act and never becomes the truth about the work (§4). A count of what ephor
+spawned may be shown beside it and may never be read into the rule: counting
+one's own spawns is deriving a quota under another name, and it is wrong the
+first moment anything else — a session at a terminal, another machine — spends
+from the same credential.
+
+The second is **a bound verb**, richer and optional. `work.headroom` binds one
+command per pool at the site ([§REQ-001-boundary.2](../requirements/REQ-001-boundary.md#2-three-homes-one-resolution-order)), summoned exactly as every
+other command this interface names — environment in, exit code out, structure
+written to the file `$EPHOR_ANSWER` names ([§FS-006-project-interface.3](FS-006-project-interface.md#3-a-summons-environment-in-exit-code-and-answer-out)) — and
+its payload rides `data`, the envelope's own free passthrough
+([§FS-006-project-interface.4](FS-006-project-interface.md#4-the-answer-envelope)). Not standard output: stdout is the command's
+own and a contract that parsed it would make an honest log a protocol
+violation ([§FS-006-project-interface.3](FS-006-project-interface.md#3-a-summons-environment-in-exit-code-and-answer-out)). The payload is a list of **windows**,
+each with a name, how much of it is left as a fraction, and when it resets.
+Probing is fetching, so it runs where fetching runs — beneath the reading, on
+the same freshness discipline as every other source ([§FS-001-forge-interface.7](FS-001-forge-interface.md#7-a-fetch-runs-beneath-the-reading-never-in-front-of-it))
+— and never in front of a dispatch, which would put a network call between a
+reader and a ticket. How any one vendor is asked is volatile and stays outside
+ephor: what ships is a worked example per vendor beside it, never a literal
+inside it ([§REQ-001-boundary.5](../requirements/REQ-001-boundary.md#5-no-product-literal-outside-its-adapter)).
+
+**A number nobody reported is unknown, and unknown is never zero.** A window
+with no `remaining` is unknown; a pool with no readable window at all is
+unknown. This is the load-bearing rule, and it is load-bearing because absent
+is the *ordinary* case: the credentials that reach these providers show their
+usage to a person and publish no number a program may ask for, so a rule that
+read silence as exhaustion would veto every pool on the machine and stop the
+loop it exists to keep moving. ephor already keeps this distinction where the
+same mistake was available — an implementation with no notion of assignment
+has nothing counted as unclaimed, because nobody's claim is not a claim that
+nobody has it ([§FS-001-forge-interface.1](FS-001-forge-interface.md#1-capabilities)) — and the rule below makes it
+structural rather than advisory. The rule is a veto over what is *known
+spent*, never a ranking over what is known remaining, so there is no place in
+it for an unknown to be sorted against anything: no number cannot demote a
+member, because demotion is not something the rule can do at all.
+
+**A pool's effective remaining is the least of its known windows.** A window
+that is spent is spent whatever the others say — the shortest leash is the
+leash — and an unknown window is simply not among them, so one unreadable
+window never lowers a pool that another window has reported healthy.
+
+**The rule: known spent is passed over, and everything else keeps its place.**
+A member is passed over exactly when its pool is known spent — an unexpired
+refusal in the ledger, or an effective remaining at or under a floor, which is
+`0` unless the site names another. Every surviving member keeps the order its
+author wrote (§14). Where *every* member is vetoed the first still gets the
+ticket, carrying a note that names the earliest instant any of their pools
+resets: a ticket that is written and waits is work a person can see, start by
+hand, and reason about, and work that silently never dispatched is none of
+those things: who does the work was never what makes a ticket (§4).
+
+**Absence degrades to unknown, out loud.** A pool with no verb bound, a verb
+that exits non-zero, output that will not parse, and an answer holding no
+window ephor can read all read as unknown, with the reason shown beside the
+pool. None of them is an error that stops a dispatch, and none of them is
+silent: this is the degrade rule [§REQ-001-boundary.1](../requirements/REQ-001-boundary.md#1-the-anatomy) requires, and both halves
+of it are the requirement. A seam whose absence failed the dispatch would make
+an optional verb mandatory; one whose absence said nothing would leave a
+reader looking at a choice they cannot explain.
+
+**The choice is recorded where the work is.** Selection runs at every write
+ephor makes — a dispatch, a laying, a restart — and the member it chose, with
+whatever the choosing had to say, is written onto the ticket in ephor's own
+words, beside the dossier it already writes there (§2) rather than as a field
+in the runtime's plan language, which is the runtime's ([§REQ-001-boundary.1](../requirements/REQ-001-boundary.md#1-the-anatomy)).
+So the plan itself says who and why, and a reader who was not there can read
+both. Mid-plan exhaustion needs nobody steering: the spawn fails carrying the
+instant, the sync that reads the failure writes the ledger, and a restart is
+another write, which re-answers the pin of every step that has not run. That
+re-answering is a **recorded plan edit** and never a silent replay of the
+written line — a hand changing under a reader who is still reading the plan is
+the one thing worse than a hand that waited.
+
+**What is reported grows by addition.** `status` and `capabilities` gain a
+line per pool — the pool, its effective remaining or *unknown* with the reason
+it is unknown, and any unexpired refusal with the instant it lifts — and the
+JSON forms gain the matching fields ([§FS-011-command-line.7](FS-011-command-line.md#7---json-is-the-same-answer-not-a-second-one)). Nothing already
+printed changes, which is what the interface's own versioning asks of any
+growth ([§FS-006-project-interface.11](FS-006-project-interface.md#11-the-interface-is-versioned)).
