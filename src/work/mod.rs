@@ -9,6 +9,7 @@
 
 pub mod commands;
 pub mod dossier;
+pub mod headroom;
 pub mod ledger;
 mod ranking;
 pub mod recipe;
@@ -32,7 +33,7 @@ use crate::paths::for_shell;
 
 use dossier::Subject;
 use ledger::{Dispatch, Entry, Ledger, Snapshot};
-use recipe::{OrganizationWorkConfig, ProjectWorkConfig, Recipe, WorkConfig};
+use recipe::{HandList, OrganizationWorkConfig, ProjectWorkConfig, Recipe, WorkConfig};
 use runtime::plan::{self, Plan, Ticket, WorkRoot};
 
 /// What one dispatch did.
@@ -687,6 +688,32 @@ impl WorkAt<'_> {
     }
 }
 
+/// How the ticket says who this went to (§FS-005-dispatch.29). Ephor's own
+/// words, and named as ephor's, so a reader can tell what the runtime was
+/// asked from what ephor decided before asking it.
+fn chose(said: &str) -> String {
+    format!("**Who this went to.** {said}.")
+}
+
+/// What a dispatch pins on its ticket, and what it records there about the
+/// choosing (§FS-005-dispatch.14, §FS-005-dispatch.29).
+#[derive(Debug, Clone, Default)]
+pub struct Pinned {
+    /// The runtime's own execution line, where the choice has one.
+    pub target: Option<String>,
+    /// A model with no carrier of its own, for the same reason.
+    pub model: Option<String>,
+    /// What choosing among the pin's hands had to say, in ephor's own words.
+    /// Written into the ticket's body beside the brief rather than as a field
+    /// of the runtime's plan language, which is the runtime's
+    /// (§REQ-001-boundary.1). None where there was nothing to choose among.
+    pub said: Option<String>,
+    /// The pool the chosen hand's work is bought against, remembered on the
+    /// entry so a start that fails here can be recorded against what refused
+    /// it (§FS-005-dispatch.29).
+    pub pool: Option<String>,
+}
+
 /// Reads the work configuration, offers recipes, writes tickets, and keeps the
 /// ledger.
 pub struct Dispatcher {
@@ -848,11 +875,16 @@ impl Dispatcher {
         &mut self,
         project: &str,
         action: &str,
-        picked: Option<&recipe::HandPin>,
-        pinned: Option<&recipe::HandPin>,
+        picked: Option<&HandList>,
+        pinned: Option<&HandList>,
         root: &std::path::Path,
     ) -> runtime::roster::Choice {
         self.ensure_roster(root);
+        // What the pools have been reported to be, as of now: read from the
+        // record the last refresh left, never fetched here. Probing is
+        // fetching, and a network call between a reader and a ticket is what
+        // keeping it under `refresh` avoids (§FS-005-dispatch.29).
+        let evidence = headroom::Evidence::read(&self.global, &self.ledger, Utc::now());
         runtime::roster::resolve(
             &self.rosters[root],
             &self.global,
@@ -860,7 +892,37 @@ impl Dispatcher {
             action,
             picked,
             pinned,
+            &evidence,
         )
+    }
+
+    /// What every pool this site can reach says about itself right now
+    /// (§FS-005-dispatch.29): the pools the roster reaches and the pools a
+    /// verb is bound for, each with its effective remaining or the reason it
+    /// is unknown. What `capabilities` and `status` report, and read from the
+    /// same evidence the selection rule reads — one answer, two surfaces.
+    pub fn pools(&mut self, root: Option<&std::path::Path>) -> Vec<headroom::Standing> {
+        let roster = match root {
+            Some(root) => {
+                self.ensure_roster(root);
+                self.rosters[root].clone()
+            }
+            None => runtime::roster::roster(&self.global, None),
+        };
+        let evidence = headroom::Evidence::read(&self.global, &self.ledger, Utc::now());
+        let mut names = headroom::pools_of(&roster);
+        for pool in self.global.headroom.keys() {
+            if !names.iter().any(|have| have == pool) {
+                names.push(pool.clone());
+            }
+        }
+        names
+            .into_iter()
+            .map(|pool| {
+                let bound = self.global.headroom.contains_key(&pool);
+                evidence.standing(&pool, bound)
+            })
+            .collect()
     }
 
     /// The hands a picker may offer about this project's work, against the
@@ -975,9 +1037,9 @@ impl Dispatcher {
         &mut self,
         item: &Item,
         recipe: &Recipe,
-        picked: Option<&recipe::HandPin>,
+        picked: Option<&HandList>,
         root: &std::path::Path,
-    ) -> Result<(Option<String>, Option<String>)> {
+    ) -> Result<Pinned> {
         // One spelling per recipe: a hand is the checkable name for exactly
         // what `target`/`model` spell raw, and a recipe carrying both would
         // have one of them silently lose (§FS-006-project-interface.9).
@@ -1007,7 +1069,11 @@ impl Dispatcher {
             ) {
                 return Err(EphorError::Command(why));
             }
-            return Ok((recipe.target.clone(), recipe.model.clone()));
+            return Ok(Pinned {
+                target: recipe.target.clone(),
+                model: recipe.model.clone(),
+                ..Pinned::default()
+            });
         }
         let choice = self.hand(
             &item.project,
@@ -1022,7 +1088,13 @@ impl Dispatcher {
         if let Some(note) = choice.note() {
             self.note_once(note);
         }
-        Ok(choice.pin())
+        let (target, model) = choice.pin();
+        Ok(Pinned {
+            target,
+            model,
+            said: choice.said().map(str::to_string),
+            pool: choice.pool().map(str::to_string),
+        })
     }
 
     /// Say one thing about who got the work once, however many tickets raise
@@ -1448,14 +1520,19 @@ impl Dispatcher {
         &mut self,
         item: &Item,
         recipe: &Recipe,
-        picked: Option<&recipe::HandPin>,
+        picked: Option<&HandList>,
         dry_run: bool,
     ) -> Result<Outcome> {
         let site = self.site(item, recipe)?;
         // Who does it, before anything is written and before the opening move
         // is made: a refusal leaves nothing behind
         // (§FS-006-project-interface.9).
-        let (target, model) = self.pin(item, recipe, picked, &site.dir)?;
+        let Pinned {
+            target,
+            model,
+            said,
+            pool,
+        } = self.pin(item, recipe, picked, &site.dir)?;
         let states = self.states_yaml(&item.project)?;
         let plan_id = plan::plan_id(&item.id);
 
@@ -1606,6 +1683,12 @@ impl Dispatcher {
         if let Opening::Stopped(report) = &opening {
             brief = format!("{brief}\n\n{report}");
         }
+        // And who it went to, where there was a choice to make: the plan
+        // itself says who and why, so a reader who was not there can read both
+        // (§FS-005-dispatch.29).
+        if let Some(said) = &said {
+            brief = format!("{brief}\n\n{}", chose(said));
+        }
         let changes = self
             .ledger
             .entries
@@ -1684,6 +1767,7 @@ impl Dispatcher {
             plan_id: plan_id.clone(),
             plan: path.clone(),
             dispatches: Vec::new(),
+            pool: pool.clone(),
         });
         entry.title = item.title.clone();
         entry.url = item.url.clone();
@@ -1691,6 +1775,7 @@ impl Dispatcher {
         entry.checkout = site.checkout.workspace.clone();
         entry.branch = site.checkout.branch.clone();
         entry.plan = path;
+        entry.pool = pool;
         entry.dispatches.push(Dispatch {
             ticket: ticket_id,
             recipe: recipe.id.clone(),
@@ -1843,7 +1928,7 @@ impl Dispatcher {
         item: &Item,
         entry: &ActionConfig,
         typed: &BTreeMap<String, String>,
-        picked: Option<&recipe::HandPin>,
+        picked: Option<&HandList>,
     ) -> Result<Laying> {
         self.laying_with_values(item, entry, typed, &serde_json::Map::new(), false, picked)
     }
@@ -1857,7 +1942,7 @@ impl Dispatcher {
         typed: &BTreeMap<String, String>,
         file_values: &serde_json::Map<String, Value>,
         values_file_supplied: bool,
-        picked: Option<&recipe::HandPin>,
+        picked: Option<&HandList>,
     ) -> Result<Laying> {
         let ask = entry.workflow.clone().ok_or_else(|| {
             EphorError::Command(format!("action '{}' lays down no workflow", entry.id))
@@ -1913,6 +1998,8 @@ impl Dispatcher {
         if let Some(note) = choice.note() {
             self.note_once(note);
         }
+        let said = choice.said().map(str::to_string);
+        let pool = choice.pool().map(str::to_string);
         let hand = choice.pin().0;
         let named = self.named_hands(item, entry, &ask, &workflow, typed, file_values, &site.dir);
         let answered = crate::work::workflow::answer_with_values(
@@ -1937,6 +2024,8 @@ impl Dispatcher {
             output,
             preflight_runtime: values_file_supplied,
             site,
+            said,
+            pool,
         })
     }
 
@@ -1994,9 +2083,13 @@ impl Dispatcher {
             // parse nor a roster choice to make (§FS-005-dispatch.19).
             .filter(|name| !name.trim().is_empty())
             .map(|name| {
+                // One name per input here, never a list: an execution
+                // target is one line and a workflow's input has no place to
+                // put an alternate (§DA-006-hands-fill-a-workflows-targets).
                 let rendered = match recipe::HandPin::parse(&name) {
                     Err(why) => Err(why),
                     Ok(pin) => {
+                        let pin = HandList::one(pin);
                         match self.hand(&item.project, &entry.id, None, Some(&pin), root) {
                             runtime::roster::Choice::Refused(why) => Err(why),
                             runtime::roster::Choice::Unasked { .. } => Ok(None),
@@ -2132,9 +2225,20 @@ impl Dispatcher {
         // plan's heading, and a workflow's plan is not ephor's to write — so
         // without this the one thing every reader looks for first would be
         // the one thing missing (§FS-005-dispatch.2).
+        // A workflow's plan is the runtime's to write, so the choice is
+        // recorded in the one thing ephor does write beside it — the dossier
+        // it carries there (§FS-005-dispatch.29, §REQ-001-boundary.1).
+        let recorded = match &laying.said {
+            Some(said) => format!("\n\n{}", chose(said)),
+            None => String::new(),
+        };
         put(
             DOSSIER,
-            &format!("# {}\n\n{}", item.title, laying.site.dossier),
+            &format!(
+                "# {}\n\n{}{recorded}",
+                item.title,
+                laying.site.dossier.trim_end()
+            ),
         )?;
         put(ITEM, &identifiers(&laying.site.metadata))?;
         let values = put(VALUES, &values_json)?;
@@ -2165,6 +2269,7 @@ impl Dispatcher {
             plan_id: plan::plan_id(&item.id),
             plan: plan::plan_path_in(&root.dir, &plan::plan_id(&item.id)),
             dispatches: Vec::new(),
+            pool: laying.pool.clone(),
         });
         ledger_entry.title = item.title.clone();
         ledger_entry.url = item.url.clone();
@@ -2921,6 +3026,41 @@ impl Dispatcher {
                 says: says.to_string(),
             },
         );
+        self.pool_refused(root, says);
+    }
+
+    /// A failed start, read as what a provider said about its own window — but
+    /// only where the words carry an instant ephor can read
+    /// (§FS-005-dispatch.29).
+    ///
+    /// A refusal names when it lifts, and that instant is the whole of what
+    /// makes one start evidence about a *pool* rather than about one root.
+    /// Where the words carry none, nothing about a pool is claimed and the
+    /// failure stays exactly what the line above made it — this root's own
+    /// doubling back-off (§FS-005-dispatch.24) — because a failure ephor
+    /// cannot date is not a window it may guess at.
+    fn pool_refused(&mut self, root: &std::path::Path, says: &str) {
+        let Some(until) = headroom::instant_in(says) else {
+            return;
+        };
+        let Some(pool) = self.pool_of_root(root) else {
+            return;
+        };
+        let record = self.ledger.pools.entry(pool).or_default();
+        record.refused_until = Some(until);
+        record.says = Some(says.to_string());
+    }
+
+    /// Which pool a run started on this root spends from: the one the last
+    /// dispatch onto a matter living here chose. None where nothing was
+    /// chosen, or where the root holds work ephor never dispatched — in which
+    /// case ephor knows of no pool to claim anything about.
+    fn pool_of_root(&self, root: &std::path::Path) -> Option<String> {
+        self.ledger
+            .entries
+            .values()
+            .find(|entry| entry.root == root)
+            .and_then(|entry| entry.pool.clone())
     }
 
     /// Forget a root's failed starts: a run began there, so whatever was
@@ -2929,6 +3069,16 @@ impl Dispatcher {
     /// reads (§FS-005-dispatch.15).
     pub fn start_worked(&mut self, root: &std::path::Path) {
         self.ledger.starts.remove(&root_key(root));
+        // A start that worked is an observed success on the pool, which clears
+        // whatever it last refused (§FS-005-dispatch.29). The count beside it
+        // is shown and never read into the rule: counting one's own spawns is
+        // deriving a quota under another name.
+        if let Some(pool) = self.pool_of_root(root) {
+            let record = self.ledger.pools.entry(pool).or_default();
+            record.refused_until = None;
+            record.says = None;
+            record.spawns = record.spawns.saturating_add(1);
+        }
     }
 
     pub fn save(&self) -> Result<()> {
@@ -4096,6 +4246,11 @@ pub struct Laying {
     /// creation, so a rejected input cannot leave a partial workspace.
     preflight_runtime: bool,
     site: Site,
+    /// What choosing among the entry's hands had to say
+    /// (§FS-005-dispatch.29).
+    pub said: Option<String>,
+    /// The pool the chosen hand's work is bought against.
+    pub pool: Option<String>,
 }
 
 impl Laying {

@@ -326,7 +326,7 @@ fn actions_run(args: &ActionsRunArgs) -> Result<ExitCode> {
             )));
         }
         entry.picked =
-            Some(crate::work::recipe::HandPin::parse(hand).map_err(EphorError::Command)?);
+            Some(crate::work::recipe::HandList::parse(hand).map_err(EphorError::Command)?);
     }
     // The same for the answers a workflow's inputs take (§FS-005-dispatch.19).
     if !args.set.is_empty() && entry.action.workflow.is_none() {

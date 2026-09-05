@@ -242,11 +242,16 @@ pub fn capabilities(args: &CapabilitiesArgs) -> Result<ExitCode> {
         rows.push(diagnose(&registry_doc, &config, &project, feed.as_ref()));
     }
     let roster = crate::work::runtime::roster::roster(&config.work, None);
+    // What the providers behind that roster have left, as they were last
+    // reported (§FS-005-dispatch.29). Read from the record a refresh left, so
+    // this stays a reading that asks nothing of any forge or any vendor.
+    let pools = pools(&config);
 
     if args.json {
         let out = json!({
             "projects": rows.iter().map(Diagnosis::to_json).collect::<Vec<_>>(),
             "roster": roster_json(&roster, &config),
+            "pools": pools,
         });
         println!("{}", serde_json::to_string_pretty(&out).unwrap());
         return Ok(ExitCode::SUCCESS);
@@ -259,7 +264,63 @@ pub fn capabilities(args: &CapabilitiesArgs) -> Result<ExitCode> {
     }
     println!();
     render_roster(&roster, &config, &style);
+    render_pools(&pools, &style);
     Ok(ExitCode::SUCCESS)
+}
+
+/// What every pool the roster reaches says about itself. Empty where there is
+/// no roster to have pools behind it.
+fn pools(config: &StatusConfig) -> Vec<crate::work::headroom::Standing> {
+    match crate::work::Dispatcher::load(config) {
+        Ok(mut dispatcher) => dispatcher.pools(None),
+        // A ledger that will not load says nothing about any pool, and a
+        // reading of what a project can do is not the place to fail on it.
+        Err(_) => Vec::new(),
+    }
+}
+
+/// The pool line each surface grows (§FS-005-dispatch.29): the pool, its
+/// effective remaining or *unknown* with the reason it is unknown, and any
+/// unexpired refusal with the instant it lifts. Public because `status` prints
+/// the same line, and one fact should not read two ways depending on which
+/// command printed it.
+pub fn render_pools(pools: &[crate::work::headroom::Standing], style: &Style) {
+    if pools.is_empty() {
+        return;
+    }
+    println!();
+    println!("{}", style.bold("what their providers have left"));
+    for pool in pools {
+        println!("  {}", pool_line(pool, style));
+    }
+}
+
+/// One pool, in one line: what it has left or that nobody said, then when
+/// anything about it lifts, then the reason — composed here rather than found
+/// already written into the reason's own words.
+fn pool_line(pool: &crate::work::headroom::Standing, style: &Style) -> String {
+    let left = match pool.remaining {
+        Some(remaining) => format!("{remaining} of its window left"),
+        None => "unknown".to_string(),
+    };
+    let refused = match pool.refused_until {
+        Some(until) => format!(", refused until {}", crate::work::headroom::instant(&until)),
+        None => match pool.resets_at {
+            Some(at) if pool.remaining.is_some() => {
+                format!(", resetting at {}", crate::work::headroom::instant(&at))
+            }
+            _ => String::new(),
+        },
+    };
+    let why = match &pool.why {
+        Some(why) => format!(" — {why}"),
+        None => String::new(),
+    };
+    format!(
+        "{:<18} {}",
+        pool.pool,
+        style.dim(&format!("{left}{refused}{why}"))
+    )
 }
 
 /// The roster (§FS-005-dispatch.14): each hand, what it resolves to, and why

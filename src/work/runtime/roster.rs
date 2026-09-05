@@ -18,7 +18,8 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::work::recipe::{HandPin, DEFAULT_HAND};
+use crate::work::headroom::{self, Evidence, Member};
+use crate::work::recipe::{HandList, HandPin, DEFAULT_HAND};
 
 /// One entry of the roster (§FS-005-dispatch.14): a named choice that knows
 /// its carrier. The id is what configuration names; agent, model and provider
@@ -166,6 +167,18 @@ pub enum Choice {
         effort: Option<String>,
         whence: String,
         note: Option<String>,
+        /// The pool this hand's work is bought against
+        /// (§FS-005-dispatch.29), so that what refuses a start can be
+        /// recorded against what actually refused it.
+        pool: Option<String>,
+        /// What choosing among the list had to say, in ephor's own words —
+        /// which member it went to, which were passed over and until when.
+        /// None where there was nothing to choose among and nothing to say:
+        /// a single name with no evidence bearing on it answers exactly as a
+        /// bare name always did. Written onto the ticket rather than into the
+        /// runtime's plan language, which is the runtime's
+        /// (§REQ-001-boundary.1).
+        said: Option<String>,
     },
     /// The choice cannot stand here, and this is the whole reason
     /// (§FS-006-project-interface.9): never dropped, never quietly replaced.
@@ -178,6 +191,24 @@ impl Choice {
         match self {
             Choice::Unasked { note } | Choice::Chosen { note, .. } => note.as_deref(),
             Choice::Refused(_) => None,
+        }
+    }
+
+    /// What the ticket records about who got this work and why
+    /// (§FS-005-dispatch.29). None where nothing was chosen among.
+    pub fn said(&self) -> Option<&str> {
+        match self {
+            Choice::Chosen { said, .. } => said.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// The pool the chosen hand's work is bought against, where one was
+    /// chosen.
+    pub fn pool(&self) -> Option<&str> {
+        match self {
+            Choice::Chosen { pool, .. } => pool.as_deref(),
+            _ => None,
         }
     }
 
@@ -255,11 +286,12 @@ pub fn resolve(
     site: &crate::work::recipe::WorkConfig,
     project: Option<&crate::work::recipe::ProjectWorkConfig>,
     action: &str,
-    picked: Option<&HandPin>,
-    pinned: Option<&HandPin>,
+    picked: Option<&HandList>,
+    pinned: Option<&HandList>,
+    evidence: &Evidence,
 ) -> Choice {
     let permitted: &[String] = project.map_or(&[], |work| work.permitted_hands.as_slice());
-    let table = |work: Option<&BTreeMap<String, HandPin>>, key: &str| {
+    let table = |work: Option<&BTreeMap<String, HandList>>, key: &str| {
         work.and_then(|hands| hands.get(key)).cloned()
     };
     let project_hands = project.map(|work| &work.hands);
@@ -303,10 +335,20 @@ pub fn resolve(
             }),
         };
     };
-    // Against the name, not against the roster, so a policy holds with no
-    // runtime bound too (§FS-006-project-interface.9).
-    if let Some(why) = refuse_narrowed(permitted, &whence, &pin) {
-        return Choice::Refused(why);
+    // A step that answered has answered (§FS-005-dispatch.14): everything below
+    // is about the list it carried, and no later step is consulted because a
+    // member of it turned out to be unreachable.
+    //
+    // Permission first, and against every member: it is policy, and policy runs
+    // before evidence. One unpermitted name refuses the whole list — never
+    // filtered down to the permitted members, because a policy that quietly
+    // used the second choice is indistinguishable from one that was never
+    // asked (§FS-006-project-interface.9). Against the name rather than the
+    // roster, so it holds with no runtime bound too.
+    for member in pin.members() {
+        if let Some(why) = refuse_narrowed(permitted, &whence, member) {
+            return Choice::Refused(why);
+        }
     }
     // Nobody to be named to: the roster's own sentence — the workable rung's,
     // or the settings file that would not parse (§FS-005-dispatch.14). The
@@ -319,10 +361,52 @@ pub fn resolve(
             )),
         };
     }
-    match &pin {
+    // Every member is settled against the roster before any of them is chosen,
+    // so a name that is not a hand refuses the list rather than being skipped
+    // over: a member silently dropped is the same erosion of a written pin that
+    // a silently dropped narrowing is (§FS-006-project-interface.9).
+    let mut members: Vec<Member> = Vec::new();
+    for pin in pin.members() {
+        match settle(roster, pin, &whence) {
+            Ok(member) => members.push(member),
+            Err(why) => return Choice::Refused(why),
+        }
+    }
+    // Which of them can be reached right now — a fact about the world, and no
+    // judgment at all (§FS-005-dispatch.29). It may veto and it may not
+    // reorder, so what comes back is an index into the order as written.
+    let (index, mut said) = headroom::choose(&members, evidence);
+    let member = &members[index];
+    if said.is_none() && pin.is_alternates() {
+        said = Some(format!(
+            "'{}' takes this: it is the first of the hands named here, and nothing says \
+             its pool cannot be had",
+            member.hand.id
+        ));
+    }
+    chosen(
+        member.hand.clone(),
+        member.effort.clone(),
+        whence,
+        member.note.clone(),
+        Some(member.pool.clone()),
+        said,
+    )
+}
+
+/// One written member, settled against the roster: which hand it names, at
+/// what effort, and which pool its work would be bought against.
+fn settle(roster: &Roster, pin: &HandPin, whence: &str) -> std::result::Result<Member, String> {
+    let member = |hand: Hand, effort, note| Member {
+        pool: headroom::pool_of(&hand),
+        hand,
+        effort,
+        note,
+    };
+    match pin {
         HandPin::Named { id, effort } => {
             let Some(hand) = roster.hands.iter().find(|hand| &hand.id == id) else {
-                return Choice::Refused(format!(
+                return Err(format!(
                     "{whence} names '{id}', which is not a hand here (the roster has: {}); {}",
                     roster
                         .hands
@@ -333,10 +417,8 @@ pub fn resolve(
                     model_profile_help(Some(id))
                 ));
             };
-            match settle_effort(hand, effort.as_deref(), &whence) {
-                Ok((effort, note)) => chosen(hand.clone(), effort, whence, note),
-                Err(why) => Choice::Refused(why),
-            }
+            let (effort, note) = settle_effort(hand, effort.as_deref(), whence)?;
+            Ok(member(hand.clone(), effort, note))
         }
         // A pair the registry never enumerated is accepted with a note rather
         // than refused: ephor cannot prove it invalid, and a proxy serving a
@@ -350,17 +432,17 @@ pub fn resolve(
             hand.agent.as_deref() == Some(agent.as_str())
                 && hand.model.as_deref() == Some(model.as_str())
         }) {
-            Some(known) => match settle_effort(known, effort.as_deref(), &whence) {
-                Ok((effort, note)) => chosen(known.clone(), effort, whence, note),
-                Err(why) => Choice::Refused(why),
-            },
+            Some(known) => {
+                let (effort, note) = settle_effort(known, effort.as_deref(), whence)?;
+                Ok(member(known.clone(), effort, note))
+            }
             None => {
                 let note = format!(
                     "{whence} spells out {}, which the runtime's registry does not list — \
                      ephor cannot check the pair, and passes it through as written",
                     pin.describe()
                 );
-                chosen(
+                Ok(member(
                     Hand {
                         id: format!("{agent}:{model}"),
                         agent: Some(agent.clone()),
@@ -370,9 +452,8 @@ pub fn resolve(
                         available: None,
                     },
                     effort.clone(),
-                    whence,
                     Some(note),
-                )
+                ))
             }
         },
     }
@@ -492,7 +573,14 @@ fn settle_effort(
 /// for — appended to whatever the choosing itself had to say. All of it notes
 /// rather than refusals — a ticket is written before it is run, and who it is
 /// for is worth recording either way.
-fn chosen(hand: Hand, effort: Option<String>, whence: String, note: Option<String>) -> Choice {
+fn chosen(
+    hand: Hand,
+    effort: Option<String>,
+    whence: String,
+    note: Option<String>,
+    pool: Option<String>,
+    said: Option<String>,
+) -> Choice {
     let standing = match &hand.available {
         Some(why) => Some(format!("cannot be asked right now: {why}")),
         None => hand.target(effort.as_deref()).is_none().then(|| {
@@ -512,6 +600,8 @@ fn chosen(hand: Hand, effort: Option<String>, whence: String, note: Option<Strin
         effort,
         whence,
         note,
+        pool,
+        said,
     }
 }
 
@@ -1259,11 +1349,33 @@ mod tests {
         }
     }
 
-    fn pin(text: &str) -> HandPin {
-        HandPin::parse(text).unwrap()
+    /// The seven steps with nothing reported about any pool, which is the
+    /// ordinary case and the one every case below is about: evidence that says
+    /// nothing vetoes nothing, so what these pin down is the order alone.
+    fn resolve_(
+        roster: &Roster,
+        site: &crate::work::recipe::WorkConfig,
+        project: Option<&crate::work::recipe::ProjectWorkConfig>,
+        action: &str,
+        picked: Option<&HandList>,
+        pinned: Option<&HandList>,
+    ) -> Choice {
+        resolve(
+            roster,
+            site,
+            project,
+            action,
+            picked,
+            pinned,
+            &Evidence::default(),
+        )
     }
 
-    fn table(entries: &[(&str, &str)]) -> BTreeMap<String, HandPin> {
+    fn pin(text: &str) -> HandList {
+        HandList::parse(text).unwrap()
+    }
+
+    fn table(entries: &[(&str, &str)]) -> BTreeMap<String, HandList> {
         entries
             .iter()
             .map(|(action, hand)| ((*action).to_string(), pin(hand)))
@@ -1313,7 +1425,7 @@ mod tests {
         let picked = pin("gpt-5:high");
 
         // 1. What the reader picked for this dispatch alone.
-        let choice = resolve(
+        let choice = resolve_(
             &roster,
             &site,
             Some(&project),
@@ -1327,7 +1439,7 @@ mod tests {
         );
 
         // 2. The pin the action or recipe itself carries.
-        let choice = resolve(
+        let choice = resolve_(
             &roster,
             &site,
             Some(&project),
@@ -1341,7 +1453,7 @@ mod tests {
         );
 
         // 3. The project's hand for this action id.
-        let choice = resolve(&roster, &site, Some(&project), "rebase", None, None);
+        let choice = resolve_(&roster, &site, Some(&project), "rebase", None, None);
         assert_eq!(
             chose(&choice),
             ("luna", "this project's hand for 'rebase'", Some("high"))
@@ -1356,7 +1468,7 @@ mod tests {
         // 4. The project's default, for an id its table does not name. The
         // pin names no effort, and 'review-deep' declares exactly one — the
         // choice is completed to it, and the note says so.
-        let choice = resolve(&roster, &site, Some(&project), "fix-gate", None, None);
+        let choice = resolve_(&roster, &site, Some(&project), "fix-gate", None, None);
         assert_eq!(
             chose(&choice),
             ("review-deep", "this project's default hand", Some("high"))
@@ -1369,12 +1481,12 @@ mod tests {
         // 5–6. The site's table, read the same way: this id before its
         // default.
         let bare = project_of(&[], &[]);
-        let choice = resolve(&roster, &site, Some(&bare), "rebase", None, None);
+        let choice = resolve_(&roster, &site, Some(&bare), "rebase", None, None);
         assert_eq!(
             chose(&choice),
             ("gpt-5", "the site's hand for 'rebase'", Some("high"))
         );
-        let choice = resolve(&roster, &site, Some(&bare), "fix-gate", None, None);
+        let choice = resolve_(&roster, &site, Some(&bare), "fix-gate", None, None);
         assert_eq!(
             chose(&choice),
             ("sonnet", "the site's default hand", Some("yolo"))
@@ -1382,7 +1494,7 @@ mod tests {
 
         // 7. Nobody chose at all: the binding picks unasked, and nothing is
         // pinned onto the ticket.
-        let choice = resolve(&roster, &site_of(&[]), None, "fix-gate", None, None);
+        let choice = resolve_(&roster, &site_of(&[]), None, "fix-gate", None, None);
         assert_eq!(choice, Choice::Unasked { note: None });
         assert_eq!(choice.pin(), (None, None));
     }
@@ -1398,7 +1510,7 @@ mod tests {
         let project = project_of(&[("rebase", "luna:high")], &["luna", "sonnet"]);
 
         // The site's default, refused on a project that permits two others.
-        let why = match resolve(&roster, &site, Some(&project), "fix-gate", None, None) {
+        let why = match resolve_(&roster, &site, Some(&project), "fix-gate", None, None) {
             Choice::Refused(why) => why,
             other => panic!("the narrowing let it through: {other:?}"),
         };
@@ -1408,7 +1520,7 @@ mod tests {
 
         // What it does permit still runs.
         assert_eq!(
-            chose(&resolve(
+            chose(&resolve_(
                 &roster,
                 &site,
                 Some(&project),
@@ -1426,7 +1538,7 @@ mod tests {
         for (picked, pinned) in [(Some(&outside), None), (None, Some(&outside))] {
             assert!(
                 matches!(
-                    resolve(&roster, &site, Some(&project), "rebase", picked, pinned),
+                    resolve_(&roster, &site, Some(&project), "rebase", picked, pinned),
                     Choice::Refused(_)
                 ),
                 "{picked:?} {pinned:?}"
@@ -1441,13 +1553,13 @@ mod tests {
             effort: None,
         };
         assert!(matches!(
-            resolve(
+            resolve_(
                 &roster,
                 &site,
                 Some(&project),
                 "rebase",
                 None,
-                Some(&spelled)
+                Some(&HandList::one(spelled.clone()))
             ),
             Choice::Refused(_)
         ));
@@ -1455,7 +1567,7 @@ mod tests {
         // What a narrowing cannot bind is what nobody chose: the binding's
         // own unasked pick is not something ephor was told, and the silence
         // is said out loud rather than mistaken for the policy holding.
-        let choice = resolve(
+        let choice = resolve_(
             &roster,
             &site_of(&[]),
             Some(&project),
@@ -1480,10 +1592,10 @@ mod tests {
             effort: Some("yolo".to_string()),
         };
         let site = crate::work::recipe::WorkConfig {
-            hands: BTreeMap::from([("default".to_string(), spelled)]),
+            hands: BTreeMap::from([("default".to_string(), HandList::one(spelled))]),
             ..crate::work::recipe::WorkConfig::default()
         };
-        let choice = resolve(&roster, &site, None, "fix-gate", None, None);
+        let choice = resolve_(&roster, &site, None, "fix-gate", None, None);
         assert_eq!(
             choice.pin(),
             (Some("claude-code[yolo]:some-proxy-model".to_string()), None)
@@ -1500,10 +1612,10 @@ mod tests {
             effort: Some("high".to_string()),
         };
         let site = crate::work::recipe::WorkConfig {
-            hands: BTreeMap::from([("default".to_string(), known)]),
+            hands: BTreeMap::from([("default".to_string(), HandList::one(known))]),
             ..crate::work::recipe::WorkConfig::default()
         };
-        let choice = resolve(&roster, &site, None, "fix-gate", None, None);
+        let choice = resolve_(&roster, &site, None, "fix-gate", None, None);
         assert_eq!(
             chose(&choice),
             ("gpt-5", "the site's default hand", Some("high"))
@@ -1516,10 +1628,10 @@ mod tests {
             effort: None,
         };
         let site = crate::work::recipe::WorkConfig {
-            hands: BTreeMap::from([("default".to_string(), effortless)]),
+            hands: BTreeMap::from([("default".to_string(), HandList::one(effortless))]),
             ..crate::work::recipe::WorkConfig::default()
         };
-        let choice = resolve(&roster, &site, None, "fix-gate", None, None);
+        let choice = resolve_(&roster, &site, None, "fix-gate", None, None);
         assert_eq!(chose(&choice).2, Some("high"));
         assert!(
             choice.note().unwrap().contains("the one it declares"),
@@ -1534,7 +1646,7 @@ mod tests {
     fn a_name_the_roster_does_not_have_is_refused_with_what_it_does() {
         let roster = full_roster();
         let site = site_of(&[("default", "lnua")]);
-        let why = match resolve(&roster, &site, None, "fix-gate", None, None) {
+        let why = match resolve_(&roster, &site, None, "fix-gate", None, None) {
             Choice::Refused(why) => why,
             other => panic!("a typo went through: {other:?}"),
         };
@@ -1551,7 +1663,7 @@ mod tests {
         // An effort is checked against what the hand declares, before
         // anything is written — the binding refuses it at the spawn.
         let site = site_of(&[("default", "gpt-5:yolo")]);
-        let why = match resolve(&roster, &site, None, "fix-gate", None, None) {
+        let why = match resolve_(&roster, &site, None, "fix-gate", None, None) {
             Choice::Refused(why) => why,
             other => panic!("an undeclared effort went through: {other:?}"),
         };
@@ -1573,7 +1685,7 @@ mod tests {
             }],
             refusal: None,
         };
-        let why = match resolve(
+        let why = match resolve_(
             &plain,
             &site_of(&[("default", "pi:high")]),
             None,
@@ -1598,7 +1710,7 @@ mod tests {
         let roster = full_roster();
 
         // Several declared: refused, before anything is written.
-        let why = match resolve(
+        let why = match resolve_(
             &roster,
             &site_of(&[("default", "sonnet")]),
             None,
@@ -1614,7 +1726,7 @@ mod tests {
 
         // Exactly one declared: completed to it, and the pin carries it — an
         // effort-less selector would run without any of the hand's efforts.
-        let choice = resolve(
+        let choice = resolve_(
             &roster,
             &site_of(&[("default", "review-deep")]),
             None,
@@ -1648,7 +1760,7 @@ mod tests {
             }],
             refusal: None,
         };
-        let choice = resolve(
+        let choice = resolve_(
             &plain,
             &site_of(&[("default", "pi")]),
             None,
@@ -1694,7 +1806,7 @@ mod tests {
             ],
             refusal: None,
         };
-        let choice = resolve(
+        let choice = resolve_(
             &roster,
             &site_of(&[("default", "away")]),
             None,
@@ -1708,7 +1820,7 @@ mod tests {
             "{choice:?}"
         );
 
-        let choice = resolve(
+        let choice = resolve_(
             &roster,
             &site_of(&[("default", "plain-agent")]),
             None,
@@ -1732,7 +1844,7 @@ mod tests {
     fn a_choice_is_spelled_on_the_ticket_or_as_run_flags_never_both() {
         let roster = full_roster();
 
-        let carried = resolve(
+        let carried = resolve_(
             &roster,
             &site_of(&[("default", "luna:high")]),
             None,
@@ -1746,7 +1858,7 @@ mod tests {
         );
         assert_eq!(carried.flags(), None);
 
-        let alone = resolve(
+        let alone = resolve_(
             &roster,
             &site_of(&[("default", "claude-code:high")]),
             None,
@@ -1763,7 +1875,7 @@ mod tests {
             })
         );
 
-        let unasked = resolve(&roster, &site_of(&[]), None, "x", None, None);
+        let unasked = resolve_(&roster, &site_of(&[]), None, "x", None, None);
         assert_eq!(unasked.pin(), (None, None));
         assert_eq!(unasked.flags(), None);
     }
@@ -1815,7 +1927,7 @@ mod tests {
             ..crate::work::recipe::WorkConfig::default()
         };
         let roster = roster(&absent, None);
-        let choice = resolve(&roster, &absent, None, "fix-gate", None, None);
+        let choice = resolve_(&roster, &absent, None, "fix-gate", None, None);
         assert_eq!(choice.pin(), (None, None));
         let note = choice.note().expect("the silence is said");
         assert!(note.contains("'luna' at effort 'high'"), "{note}");

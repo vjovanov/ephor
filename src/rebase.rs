@@ -54,7 +54,7 @@ pub fn rebase(args: &RebaseArgs) -> Result<ExitCode> {
     // before the replay runs: the refusal of a pick that is not one is
     // computed here, not discovered on the conflicted run (§AR-002-summons.4).
     let picked = given::value(&args.hand, "HAND")?
-        .map(|text| crate::work::recipe::HandPin::parse(&text))
+        .map(|text| crate::work::recipe::HandList::parse(&text))
         .transpose()
         .map_err(EphorError::Command)?;
     if picked.is_some() && !args.dispatch {
@@ -253,7 +253,7 @@ struct Handed {
 fn hand_over(
     item: &Item,
     outcome: &git::Rebase,
-    picked: Option<&crate::work::recipe::HandPin>,
+    picked: Option<&crate::work::recipe::HandList>,
 ) -> Result<Handed> {
     let config = load_config()?;
     let mut dispatcher = Dispatcher::load(&config)?;

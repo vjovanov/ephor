@@ -423,7 +423,7 @@ fn dispatch_work(
     let picked = args
         .hand
         .as_deref()
-        .map(crate::work::recipe::HandPin::parse)
+        .map(crate::work::recipe::HandList::parse)
         .transpose()
         .map_err(EphorError::Command)?;
     let style = Style::detect();
@@ -696,7 +696,7 @@ fn dispatch_work(
 fn lay_autorun(
     dispatcher: &mut Dispatcher,
     item: &Item,
-    picked: Option<&crate::work::recipe::HandPin>,
+    picked: Option<&crate::work::recipe::HandList>,
     args: &crate::cli::WorkDispatchArgs,
     style: &Style,
     laid: &mut usize,
@@ -761,7 +761,7 @@ fn laying_for(
     dispatcher: &mut Dispatcher,
     item: &Item,
     entry: &crate::feed::config::ActionConfig,
-    picked: Option<&crate::work::recipe::HandPin>,
+    picked: Option<&crate::work::recipe::HandList>,
     dry_run: bool,
 ) -> Result<Landing> {
     let laying = dispatcher.laying(item, entry, &BTreeMap::new(), picked)?;
@@ -1010,7 +1010,7 @@ fn lay_workflow(config: &StatusConfig, args: &crate::cli::WorkLayArgs) -> Result
     let picked = args
         .hand
         .as_deref()
-        .map(crate::work::recipe::HandPin::parse)
+        .map(crate::work::recipe::HandList::parse)
         .transpose()
         .map_err(EphorError::Command)?;
     let entry = workflow_entry(&mut dispatcher, config, &item, &args.entry)?;

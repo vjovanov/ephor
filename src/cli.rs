@@ -303,7 +303,9 @@ pub struct WorkDispatchArgs {
     pub again: bool,
 
     /// Who does it, for this dispatch alone: a hand id from the roster,
-    /// optionally at an effort (`<hand>[:<effort>]`). Displaces every table
+    /// optionally at an effort (`<hand>[:<effort>]`), or an ordered list of
+    /// them separated by commas, best first — ephor writes to the first whose
+    /// pool is not known spent (§FS-005-dispatch.29). Displaces every table
     /// for exactly this dispatch and is remembered by nothing.
     #[arg(long)]
     pub hand: Option<String>,
@@ -375,7 +377,8 @@ pub struct WorkLayArgs {
     pub values: Vec<String>,
 
     /// Who does it, for this instantiation alone: a hand id from the roster,
-    /// optionally at an effort (`<hand>[:<effort>]`).
+    /// optionally at an effort (`<hand>[:<effort>]`), or an ordered list of
+    /// them separated by commas, best first.
     #[arg(long)]
     pub hand: Option<String>,
 
@@ -830,7 +833,8 @@ pub struct RebaseArgs {
 
     /// Who resolves a conflict this rebase hands over (`HAND`), for this
     /// dispatch alone: a hand id from the roster, optionally at an effort
-    /// (`<hand>[:<effort>]`). Rides `--dispatch` (§FS-005-dispatch.14).
+    /// (`<hand>[:<effort>]`), or an ordered list of them separated by commas.
+    /// Rides `--dispatch` (§FS-005-dispatch.14).
     #[arg(long)]
     pub hand: Option<String>,
 
@@ -1005,7 +1009,8 @@ pub struct ActionsRunArgs {
     pub command: Option<String>,
 
     /// Who does it, for this dispatch alone: a hand id from the roster,
-    /// optionally at an effort (`<hand>[:<effort>]`).
+    /// optionally at an effort (`<hand>[:<effort>]`), or an ordered list of
+    /// them separated by commas, best first.
     #[arg(long)]
     pub hand: Option<String>,
 

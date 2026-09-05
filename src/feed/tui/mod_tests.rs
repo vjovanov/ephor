@@ -959,6 +959,8 @@ fn with_no_runner_bound_the_work_is_still_offered_and_says_nobody_can_be_asked()
             },
             effort: Some("high".to_string()),
             whence: "the site's default hand".to_string(),
+            pool: Some("claude-code".to_string()),
+            said: None,
             note: None,
         },
         None,
