@@ -213,9 +213,16 @@ fn diagnose(
         answering,
         asked,
         configured,
+        // Asked of the project's checkout, never of the registry row's root:
+        // for a branch-addressable project that root is the container the
+        // workspaces sit in, and the files are one level down inside each of
+        // them (§FS-006-project-interface.12). One checkout answers for the
+        // project, the main branch's by preference. A project with nothing on
+        // disk has no checkout to read, which the missing *placed* rung says.
         deprecated: placement
             .as_ref()
-            .map(|placement| deprecated_layout(&placement.root))
+            .and_then(crate::branches::Placement::project_checkout)
+            .map(|checkout| deprecated_layout(&checkout))
             .unwrap_or_default(),
     }
 }
@@ -228,10 +235,10 @@ fn diagnose(
 /// module's judgement — the question has an owner, and every surface with
 /// something to say about the layout says that owner's sentence
 /// (§FS-010-doctor.1).
-fn deprecated_layout(root: &std::path::Path) -> Vec<String> {
+fn deprecated_layout(checkout: &std::path::Path) -> Vec<String> {
     crate::grounds::in_a_checkout()
         .iter()
-        .filter_map(|kept| kept.find(root)?.note)
+        .filter_map(|kept| kept.find(checkout)?.note)
         .collect()
 }
 

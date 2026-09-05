@@ -4,7 +4,7 @@
 mod common;
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use predicates::prelude::*;
 use serde_json::{json, Value};
@@ -829,4 +829,74 @@ fn doctor_names_a_project_still_keeping_its_tool_configuration_under_the_old_nam
         !report.contains(".agents/"),
         "a checkout on the new layout was reported anyway:\n{report}"
     );
+}
+
+/// Turn `widget` into the shape every branch-addressable project has: its
+/// registry root becomes the *container* of checkouts and the checkout itself
+/// is `<root>/main`. Returns that checkout.
+fn branch_addressable(tmp: &Path) -> PathBuf {
+    let registry = tmp.join("workspaces.json");
+    let mut doc: Value = serde_json::from_slice(&fs::read(&registry).unwrap()).unwrap();
+    doc["projects"][0]["branch_root_template"] = json!("{project_root}/{branch}");
+    fs::write(&registry, serde_json::to_string_pretty(&doc).unwrap()).unwrap();
+    let checkout = tmp.join("project/main");
+    fs::create_dir_all(&checkout).unwrap();
+    checkout
+}
+
+/// The layout is read in the project's *checkout*, not in the registry root
+/// above it (§FS-006-project-interface.12, §FS-010-doctor.1).
+///
+/// A project carrying a `branch_root_template` keeps its root as the container
+/// its workspaces sit in, so the toolchain's files are one level down in each
+/// of them. That is the shape of every project in a real registry, and asking
+/// the root instead answers about a directory no checkout ever writes: the old
+/// name goes unreported where it is, and a stray file in the container gets
+/// reported where nobody keeps one.
+#[test]
+fn doctor_reads_the_layout_where_the_checkout_is_rather_than_the_root_above_it() {
+    let tmp = tempdir();
+    fixture(tmp.path(), json!([{ "provider": "demo" }]));
+    let checkout = branch_addressable(tmp.path());
+    // The deprecated name in the checkout, where a project actually keeps it.
+    let old = checkout.join(".agents");
+    fs::create_dir_all(&old).unwrap();
+    fs::write(old.join("grund.toml"), "project_name = \"widget\"\n").unwrap();
+    // And a file in the container above it, which is nobody's layout.
+    let above = tmp.path().join("project/.agents");
+    fs::create_dir_all(&above).unwrap();
+    fs::write(above.join("fissile.toml"), "fissile_config_version = 1\n").unwrap();
+
+    let out = ephor(tmp.path())
+        .args(["doctor", "--skip-self", "--project", "widget"])
+        .output()
+        .unwrap();
+    let report = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        report.contains(&old.join("grund.toml").display().to_string()),
+        "the checkout's deprecated name went unreported:\n{report}"
+    );
+    assert!(
+        !report.contains("fissile.toml"),
+        "a file in the container above the checkout was read as the project's layout:\n{report}"
+    );
+    // Still news rather than a fault, in the templated shape as in the flat one.
+    assert!(
+        out.status.success(),
+        "a deprecated path moved the exit code: {:?}",
+        out.status.code()
+    );
+
+    // And the same reading answers a program (§REQ-002-parity.3).
+    let out = ephor(tmp.path())
+        .args(["doctor", "--skip-self", "--project", "widget", "--json"])
+        .output()
+        .unwrap();
+    let rows: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let widget = rows["projects"][0].to_string();
+    assert!(
+        widget.contains("main/.agents/grund.toml"),
+        "the machine form left the checkout's layout out: {widget}"
+    );
+    assert_eq!(rows["projects"][0]["health"], "well");
 }
