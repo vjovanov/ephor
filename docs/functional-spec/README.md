@@ -20,6 +20,7 @@ Behavior and requirements, one declaration per file. Each H1 declares an
 | [FS-012-file-size](FS-012-file-size.md) | every file is measured against a budget set by how it is read |
 | [FS-013-burn](FS-013-burn.md) | what this machine spends on agents is a reading like any other |
 | [FS-014-work-root-scopes](FS-014-work-root-scopes.md) | a plan lives in the smallest scope that can see everything it touches |
+| [FS-015-spend-ceiling](FS-015-spend-ceiling.md) | what unattended work may spend is the person's number, and the sweep stops at it |
 | [§FS-001-forge-interface](FS-001-forge-interface.md#fs-001-forge-interface-ephor-reaches-every-forge-and-issue-tracker-through-one-provider-interface) | ephor reaches every forge and issue tracker through one provider interface |
 | [§FS-002-release](FS-002-release.md#fs-002-release-ephor-releases-from-a-tag-with-a-changelog-entry-per-change) | ephor releases from a tag, with a changelog entry per change |
 | [§FS-003-feed-categories](FS-003-feed-categories.md#fs-003-feed-categories-the-feed-sorts-itself-into-categories-and-finished-work-lands-in-recent) | the feed sorts itself into categories, and finished work lands in Recent |
@@ -34,6 +35,7 @@ Behavior and requirements, one declaration per file. Each H1 declares an
 | [§FS-012-file-size](FS-012-file-size.md#fs-012-file-size-every-file-is-measured-against-a-budget-set-by-how-it-is-read) | every file is measured against a budget set by how it is read |
 | [§FS-013-burn](FS-013-burn.md#fs-013-burn-what-this-machine-spends-on-agents-is-a-reading-like-any-other) | what this machine spends on agents is a reading like any other |
 | [§FS-014-work-root-scopes](FS-014-work-root-scopes.md#fs-014-work-root-scopes-a-plan-lives-in-the-smallest-scope-that-can-see-everything-it-touches) | a plan lives in the smallest scope that can see everything it touches |
+| [§FS-015-spend-ceiling](FS-015-spend-ceiling.md#fs-015-spend-ceiling-what-unattended-work-may-spend-is-the-persons-number-and-the-sweep-stops-at-it) | what unattended work may spend is the person's number, and the sweep stops at it |
 
 This index is navigational — citations should target the declaration's ID
 directly, never this file.
