@@ -338,7 +338,7 @@ def is_out_of_line_tests(path: str) -> bool:
     A source file that outgrows its size budget moves its inline
     `#[cfg(test)] mod tests` whole to `<name>_tests.rs` and attaches it with
     `#[cfg(test)] #[path = "<name>_tests.rs"] mod tests;` -- the first seam
-    `.agents/fissile.toml` names for an oversized source file. The
+    `.agent-grounds/fissile.toml` names for an oversized source file. The
     `#[cfg(test)]` then sits on the attachment in the parent, so the file
     carries no marker of its own and `mark_test_bodies` would read its
     fixtures as production code. The name is what says it, and every line of

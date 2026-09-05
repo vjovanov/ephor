@@ -703,6 +703,13 @@ answer cannot say whether a source still answers — and then reads each
 project's ladder (§7.5). It adds no opinion of its own: the sentence it
 prints for a missing rung is the same one a greyed menu entry shows.
 
+It also names, per project, any checkout still keeping a piece of the
+toolchain's own configuration under the deprecated `.agents/` name — the
+grounding configuration or the file-size budget ([§4.3.3](#433-where-the-toolchain-keeps-its-own-files)). That line is news
+rather than a fault: it says which file was found and where it belongs now,
+and it moves neither the project's health nor the exit code. It appears in
+`--json` too, as `deprecated` on the project.
+
 **The self pass** builds a throwaway project in a temporary place — its own
 state directory, registry, configuration and checkout — and walks the seams
 against it: a forge reached out of process, a refresh that categorizes what
@@ -773,6 +780,34 @@ own words. `--json` carries the same two halves as `{ "projects": …,
 The final note appears only when every roster entry uses its agent's default
 model. It is configuration guidance rather than another roster field, so the
 JSON shape stays unchanged.
+
+### 4.3.3 Where the toolchain keeps its own files
+
+`.agents/` is, by convention, where an agent's *instructions* live, and an
+agent runtime treats it that way — one of them mounts it read-only inside a
+checkout, so a tool asked to maintain a file there cannot write it. Tool
+configuration is not instructions, so each of these files has a home of its
+own ([§FS-006-project-interface.12](functional-spec/FS-006-project-interface.md#12-what-the-toolchain-keeps-in-a-checkout-has-a-home-and-a-deprecated-one)):
+
+| File | Where it lives | What it is |
+|---|---|---|
+| `grund.toml` | the repository root | the grounding configuration, at the root so a glance says the repository is a grounded tree |
+| `.agent-grounds/fissile.toml` | under `.agent-grounds/` | the file-size budgets |
+| `.agent-grounds/<runner>/settings.json` | under `.agent-grounds/` in a work root | the runtime settings overlay that work root carries (§8.4) |
+| `.agents/` | — | agent instructions, and nothing the toolchain maintains |
+
+`.agents/` is the deprecated former name for all three. Looking for one of
+them is a single probe in one fixed order — its home first, `.agents/` second
+— so both names go on working and a root carrying both is answered by the home
+with the other passed over rather than merged. Reading the deprecated name
+produces one sentence naming the file and where it belongs now, and nothing
+else: nothing is refused, no list is emptied, and no exit code moves.
+
+ephor reads both names and **writes neither**. It creates no tool
+configuration in a checkout, moves none and rewrites none — the only file it
+writes into a project is `AGENTS.md` (§1.3). Where a project of yours keeps
+these files is yours to change; `ephor doctor` will say when one of them is
+still under the old name (§4.3.1).
 
 ### 4.4 What a failing source does
 
@@ -1857,6 +1892,14 @@ tickets themselves; see the hands paragraphs below. With nothing on `PATH` under
 part of dispatch except the running still holds: tickets are written, read and
 reopened, and only running refuses, naming the runner it looked for
 ([§7.5](#75-why-something-is-not-offered)).
+
+**The roster's own settings** come from two places, in order: the person's
+file in their configuration directory, and the overlay this work root carries
+at `.agent-grounds/<runner>/settings.json` — with `.agents/<runner>/settings.json`
+the deprecated name it still answers to ([§4.3.3](#433-where-the-toolchain-keeps-its-own-files)). A work root on the
+old name produces exactly the roster its home produces; dispatch says which
+file it read in a note beside the work, in prose and in `--json` alike, and
+takes no hand away for it.
 
 **Who does which action** — `work.hands` maps an action's id to the hand that
 does it, with `default` answering for every id it does not name

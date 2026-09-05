@@ -80,11 +80,15 @@ jobs:
 
           # A patch release is warranted only if something a user could observe
           # changed. Pure-docs runs and workflow tweaks do not move the
-          # published binary or the crates.io package.
+          # published binary or the crates.io package, and neither does the
+          # toolchain's own configuration — `.agent-grounds/` and the root
+          # `grund.toml` are where that lives now, `.agents/` the deprecated
+          # name it answers to (§FS-006-project-interface.12), and an edit to
+          # any of them must not cut a release.
           substantive="$(git diff --name-only "$tag"..HEAD \
-            | grep -Ev '^(docs/|\.github/|\.agents/|tests/e2e/)' \
+            | grep -Ev '^(docs/|\.github/|\.agents/|\.agent-grounds/|tests/e2e/)' \
             | grep -Ev '\.md$' \
-            | grep -Ev '^(LICENSE|AGENTS\.md|CLAUDE\.md)$' \
+            | grep -Ev '^(LICENSE|AGENTS\.md|CLAUDE\.md|grund\.toml)$' \
             || true)"
 
           if [ -z "$substantive" ]; then

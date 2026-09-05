@@ -74,9 +74,11 @@ repos:
         stages: [pre-commit]
       # `fissile check` holds every file to the budget its reader sets
       # (§FS-012-file-size.2): the rules and their derivations are in
-      # `.agents/fissile.toml`. Like `grund`, this calls an installed binary
-      # rather than `cargo run` — it is a third-party tool, not this
-      # repository's own (cargo install fissile --version 0.8.1). Soft overflows
+      # `.agent-grounds/fissile.toml`, which fissile discovers on its own from
+      # 0.8.3 forward — no `--config` flag anywhere
+      # (§FS-006-project-interface.12). Like `grund`, this calls an installed
+      # binary rather than `cargo run` — it is a third-party tool, not this
+      # repository's own (cargo install fissile --version 0.8.3). Soft overflows
       # warn and exit 0; the only way past a hard one is a reviewed entry in
       # `docs/file-size-human-exceptions.toml`. `pass_filenames` is true so the
       # hook measures exactly the files the commit touches, and

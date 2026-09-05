@@ -21,11 +21,16 @@
 fissile_config_version = 1
 
 [scan]
-# Everything this repository writes, `.agents/` included — the config that sets
-# these budgets is a file like any other. `Cargo.lock` is generated, `target/`
-# and `panta/` are gitignored, and `respect_gitignore` covers both.
+# Everything this repository writes, the toolchain's own configuration
+# included — the file that sets these budgets is a file like any other, and so
+# is the grounding configuration beside it. Both moved off `.agents/`, which is
+# where an agent's instructions live (§FS-006-project-interface.12): the budget
+# to `.agent-grounds/` and the grounding configuration to the root, so the list
+# names each of them where it is now. `Cargo.lock` is generated, `target/` and
+# `panta/` are gitignored, and `respect_gitignore` covers both.
 include = [
-  ".agents",
+  ".agent-grounds",
+  "grund.toml",
   "src",
   "tests",
   "docs",

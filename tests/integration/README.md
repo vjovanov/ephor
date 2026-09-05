@@ -2,7 +2,7 @@
 
 Integration tests prove the How: that the parts fit as designed. This is the
 home of the non-citable `integration` kind — no file here carries an ID, and
-`[citations.integration]` in `.agents/grund.toml` says the home should cite
+`[citations.integration]` in `grund.toml` says the home should cite
 `AR`. A test belongs here when its subject spans more than one part: a command
 end to end against a real checkout and registry, or a repository-hygiene
 script that holds the tree itself to a rule. A claim about one module is a

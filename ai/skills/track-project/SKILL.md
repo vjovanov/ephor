@@ -106,6 +106,18 @@ If user requested initialization:
 ephor ensure-agents --workspace project-id
 ```
 
+`ephor ensure-agents` writes `AGENTS.md` and nothing else. It never creates,
+moves or rewrites a project's own tool configuration — where that lives is the
+project's to decide. Where the project uses the toolchain, the layout is:
+
+- `grund.toml` at the repository root, so a glance says it is a grounded tree
+- `fissile.toml` under `.agent-grounds/`
+- `.agents/` reserved for agent instructions, which a sandboxed runtime may
+  mount read-only
+
+`.agents/` is the deprecated former name for the first two: both still work,
+and `ephor doctor` names a checkout still on the old name without failing it.
+
 **For product-workspace:**
 1. Create root directory if it doesn't exist
 2. Show instructions for cloning repos:
