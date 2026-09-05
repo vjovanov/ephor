@@ -75,11 +75,36 @@ esac
 /// The case is about which starts are admitted, not about what a run does, so
 /// a run that is over by the time the launcher returns leaves no lock behind
 /// to confuse the next command (§FS-005-dispatch.20).
+///
+/// It also carries one workflow, so the person's other way of putting work
+/// down — `work lay` — has something to lay. It asks for nothing, because what
+/// the plan says is not this case's subject: whether a full ceiling is said
+/// over it is (§FS-015-spend-ceiling.6).
 const ACME_RUNTIME: &str = r#"#!/usr/bin/env bash
 set -euo pipefail
 verb="$1"; shift
 if [ "$verb" = run ] && [ "${1:-}" = --help ]; then
   printf '%s\n' '      --headless  Detach the run'
+  exit 0
+fi
+if [ "$verb" = templates ]; then
+  printf '%s\n' '[ { "name": "tidy", "version": "1.0.0", "source": "user",
+    "path": "tidy", "description": "Tidy the change.", "inputs": [] } ]'
+  exit 0
+fi
+if [ "$verb" = instantiate ]; then
+  output=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --output) output="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  if [ -n "$output" ]; then
+    mkdir -p "$output"
+    printf '# tidy\n' > "$output/index.rhei.md"
+  fi
+  printf '%s\n' 'laid tidy down'
   exit 0
 fi
 printf '%s\n' '{"id":"acme-run","status":"finished"}'
@@ -383,6 +408,53 @@ fn the_person_who_types_the_command_is_warned_and_never_refused() {
         String::from_utf8_lossy(&named.stderr).contains("global work.max_spend"),
         "the person is told what would have stopped the sweep: {}",
         String::from_utf8_lossy(&named.stderr)
+    );
+}
+
+/// The person's other way of putting work down is `ephor work lay`, and it is
+/// the same person: the ceiling is said and the plan is laid. Said on the
+/// error stream, where a warning belongs and where it leaves the machine form
+/// on standard output a reading somebody can parse
+/// (§FS-015-spend-ceiling.6, §REQ-002-parity.3).
+#[test]
+fn a_workflow_the_person_lays_down_is_warned_about_and_still_laid() {
+    let world = watching(json!({
+        "max_spend": { "amount": 50, "currency": "USD", "per": "24h" }
+    }));
+    let at = span_start(Utc::now() - Duration::hours(2));
+    spent(&world, "priced-work", at, 1_000_000, Some(52.40));
+
+    // A run asked what it would do makes nothing at all, so there is no
+    // laying for a ceiling to be said over — the same silence `work dispatch
+    // --dry-run` keeps, and the reason a ceiling is never announced at
+    // nobody.
+    world
+        .ephor()
+        .args(["work", "lay", "tidy", "--item", ITEM, "--dry-run"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("max_spend").not());
+
+    let laid = world
+        .ephor()
+        .args(["work", "lay", "tidy", "--item", ITEM, "--json"])
+        .output()
+        .expect("the laying runs");
+    assert!(laid.status.success(), "{laid:?}");
+    assert!(
+        String::from_utf8_lossy(&laid.stderr).contains("global work.max_spend 50 USD per 24h"),
+        "the person is told what would have stopped the sweep: {}",
+        String::from_utf8_lossy(&laid.stderr)
+    );
+
+    // And the plan is there: a budget refuses the sweep and never the person.
+    let reading = json_of(&laid);
+    assert_eq!(reading["workflow"], "tidy", "{reading}");
+    assert_eq!(reading["dry_run"], false, "{reading}");
+    let plan = reading["plan"].as_str().unwrap_or_default();
+    assert!(
+        std::path::Path::new(plan).exists(),
+        "the laying went through: {reading}"
     );
 }
 

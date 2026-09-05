@@ -58,8 +58,9 @@ impl Currency {
 ///
 /// Exactly the windows the store can answer, because a window the store cannot
 /// answer is a budget that cannot bind. `day` and `week` are spellings of the
-/// last two and are aliases rather than variants, so an unreadable window is
-/// refused naming the four rather than six.
+/// last two, written as aliases, and serde lists an alias beside the variant it
+/// spells — so an unreadable window is refused naming all six accepted
+/// spellings rather than only the four windows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
 pub enum Per {
     #[serde(rename = "1h")]
@@ -149,7 +150,10 @@ impl Scope {
 
     /// Whether this scope's ceiling counts what one project spent. An
     /// organization's total includes every project the registry places in it,
-    /// which is what makes the outer number the wider one.
+    /// which is what makes the outer number the wider one. The site counts
+    /// every bucket the reading carries, `other` included — the site total is
+    /// the total `burn` prints, so spend no watched project claimed is still
+    /// spend this machine made (§FS-015-spend-ceiling.1).
     fn holds(&self, project: &str, membership: &BTreeMap<String, String>) -> bool {
         match self {
             Scope::Site => true,
