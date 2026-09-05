@@ -935,19 +935,20 @@ fn with_no_runner_bound_the_work_is_still_offered_and_says_nobody_can_be_asked()
     .expect("a runner that is not on PATH is refused");
     assert!(unbound.contains("no-such-runner-here"), "{unbound}");
 
+    use crate::api::session::who_gets_it;
     use crate::work::runtime::roster::{Choice, Hand};
-    let nobody = crate::api::session::who_gets_it(&Choice::Unasked { note: None }, Some(&unbound));
+    let nobody = who_gets_it(&Choice::Unasked { note: None }, Some(&unbound));
     assert_eq!(nobody.says, unbound);
     // Said, not refused: the ticket is written all the same.
     assert!(nobody.refusal.is_none());
 
     // With a runner there and nobody named, the runtime picks unasked.
-    let unasked = crate::api::session::who_gets_it(&Choice::Unasked { note: None }, None);
+    let unasked = who_gets_it(&Choice::Unasked { note: None }, None);
     assert_eq!(unasked.says, "whoever the runtime picks");
 
     // A chosen hand names itself, and carries why it cannot be asked right
     // now rather than vanishing (§FS-005-dispatch.14).
-    let chosen = crate::api::session::who_gets_it(
+    let chosen = who_gets_it(
         &Choice::Chosen {
             hand: Hand {
                 id: "luna".to_string(),
@@ -972,8 +973,7 @@ fn with_no_runner_bound_the_work_is_still_offered_and_says_nobody_can_be_asked()
     assert!(chosen.refusal.is_none());
 
     // And a choice that cannot stand is the whole reason, and refuses.
-    let refused =
-        crate::api::session::who_gets_it(&Choice::Refused("permits only sonnet".to_string()), None);
+    let refused = who_gets_it(&Choice::Refused("permits only sonnet".to_string()), None);
     assert_eq!(refused.refusal.as_deref(), Some("permits only sonnet"));
 }
 
