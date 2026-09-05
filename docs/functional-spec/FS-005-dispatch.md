@@ -602,6 +602,16 @@ added, which is worse than no list. Nothing else changes — every other rung
 resolves, and tickets are still written and read on disk
 ([§REQ-001-boundary.1](../requirements/REQ-001-boundary.md#1-the-anatomy)).
 
+**The work root's overlay is found where the toolchain keeps its own files**
+([§FS-006-project-interface.12](FS-006-project-interface.md#12-what-the-toolchain-keeps-in-a-checkout-has-a-home-and-a-deprecated-one)): under `.agent-grounds/` first, then the
+deprecated `.agents/` name. A work root carrying only the deprecated name
+produces exactly the roster the same file produces from the home, and reading it
+is said in a note beside the work rather than as a refusal — every hand the
+roster had it keeps, and no command exits differently for it. That is the whole
+difference between a deprecation and the unparsable file above: one takes the
+hands away because it cannot know them, the other knows them perfectly well and
+only found them somewhere else.
+
 ## 15. Every operation is visible in one place
 
 The watch can say what is being done about any one item — the lines its work

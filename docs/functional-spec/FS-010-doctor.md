@@ -26,6 +26,15 @@ project is checkout-able would be a diagnosis that drifts from the one the
 menu refuses with, and a reader holding two answers has none: the sentence
 `doctor` prints and the sentence a greyed entry shows are the same sentence.
 
+A third fact composes the same way. Where a project's checkout still keeps a
+piece of tool configuration under the deprecated `.agents/` name, that is the
+probe's answer and never `doctor`'s ([§FS-006-project-interface.12](FS-006-project-interface.md#12-what-the-toolchain-keeps-in-a-checkout-has-a-home-and-a-deprecated-one)): `doctor`
+prints the sentence the probe wrote, per project, in the report a person reads
+and in the machine form a program reads alike ([§REQ-002-parity.3](../requirements/REQ-002-parity.md#3-every-reading-answers-a-program)). It is news
+rather than a fault, so it moves neither the project's health nor the exit code
+(§5) — a deprecated path stops the project doing nothing, and the ladder has no
+rung for it ([§FS-006-project-interface.10](FS-006-project-interface.md#10-capability-rung-by-rung)).
+
 ## 2. The ladder is answerable on its own
 
 The same table is worth having without a sweep. **`capabilities`** prints one
