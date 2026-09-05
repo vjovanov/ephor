@@ -329,9 +329,12 @@ pub fn instant(at: &DateTime<Utc>) -> String {
 ///
 /// Nothing here knows any vendor's phrasing (§REQ-001-boundary.5). It looks for
 /// a timestamp, in the one spelling a machine-readable instant is written in,
-/// and takes the earliest it finds: a message naming several is naming the
-/// soonest thing that could lift.
-pub fn instant_in(says: &str) -> Option<DateTime<Utc>> {
+/// and takes the earliest it finds that is *still ahead of `now`*: a message
+/// naming several is naming the soonest thing that could lift, and an instant
+/// already past is not something that can lift. The words are a whole run's
+/// merged output rather than one curated line, so a log line stamped with the
+/// hour it was written is the ordinary company a reset instant keeps.
+pub fn instant_in(says: &str, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
     says.split(|character: char| character.is_whitespace())
         .filter_map(|word| {
             let word = word.trim_matches(|character: char| {
@@ -340,6 +343,7 @@ pub fn instant_in(says: &str) -> Option<DateTime<Utc>> {
             DateTime::parse_from_rfc3339(word).ok()
         })
         .map(|at| at.with_timezone(&Utc))
+        .filter(|at| *at > now)
         .min()
 }
 

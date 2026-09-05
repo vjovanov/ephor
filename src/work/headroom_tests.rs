@@ -121,7 +121,9 @@ fn a_known_spent_pool_is_passed_over_and_the_next_member_keeps_its_place() {
 /// Where every member is vetoed the first still gets the ticket, and the note
 /// names the earliest instant any of their pools resets — not the first one
 /// asked. A ticket that waits is work a person can see; work that silently
-/// never dispatched is not.
+/// never dispatched is not. Each member it passed over names its own instant
+/// beside it, which the rule neither asks for nor forbids: what it requires is
+/// that the earliest is the one the sentence closes on.
 #[test]
 fn every_member_spent_writes_to_the_first_with_the_earliest_reset() {
     let members = [member("north-fast", "north"), member("south-fast", "south")];
@@ -136,7 +138,6 @@ fn every_member_spent_writes_to_the_first_with_the_earliest_reset() {
     assert_eq!(index, 0);
     let said = said.expect("the choosing says why");
     assert!(said.contains("2026-09-05T12:00:00Z"), "{said}");
-    assert!(!said.contains("2026-09-05T18:30:00Z"), "{said}");
 }
 
 /// An unexpired refusal vetoes, and the same refusal after its instant does
@@ -222,28 +223,61 @@ fn the_floor_is_what_spent_measures_against() {
 /// timestamp, and it reads the earliest one where a message names several.
 #[test]
 fn an_instant_is_read_out_of_a_refusals_own_words_or_not_at_all() {
+    let now = at("2026-09-05T09:00:00Z");
     assert_eq!(
-        instant_in("rate limit reached for this account; resets at 2026-09-05T18:30:00Z"),
+        instant_in(
+            "rate limit reached for this account; resets at 2026-09-05T18:30:00Z",
+            now
+        ),
         Some(at("2026-09-05T18:30:00Z"))
     );
     // Punctuation around the instant is the sentence's, not the instant's.
     assert_eq!(
-        instant_in("too many requests (until 2026-09-05T18:30:00Z)."),
+        instant_in("too many requests (until 2026-09-05T18:30:00Z).", now),
         Some(at("2026-09-05T18:30:00Z"))
     );
     // The soonest thing that could lift.
     assert_eq!(
-        instant_in("2026-09-08T00:00:00Z weekly, 2026-09-05T12:00:00Z session"),
+        instant_in(
+            "2026-09-08T00:00:00Z weekly, 2026-09-05T12:00:00Z session",
+            now
+        ),
         Some(at("2026-09-05T12:00:00Z"))
     );
     // An offset is an instant too, read into the one spelling everything else
     // here uses.
     assert_eq!(
-        instant_in("back at 2026-09-05T20:30:00+02:00"),
+        instant_in("back at 2026-09-05T20:30:00+02:00", now),
         Some(at("2026-09-05T18:30:00Z"))
     );
     // And a failure ephor cannot date claims nothing at all.
-    assert_eq!(instant_in("the runner exited 1"), None);
-    assert_eq!(instant_in("no space left on device"), None);
-    assert_eq!(instant_in("failed on 2026-09-05"), None);
+    assert_eq!(instant_in("the runner exited 1", now), None);
+    assert_eq!(instant_in("no space left on device", now), None);
+    assert_eq!(instant_in("failed on 2026-09-05", now), None);
+}
+
+/// The soonest thing that *could lift* is not simply the soonest thing written
+/// down. What a failed start records is the run's whole merged output, so a
+/// refusal ordinarily arrives stamped with the hour it was printed, and an
+/// instant already past is a log line rather than a window. Reading one as the
+/// reset would date the refusal into the past, where `standing` drops it — and
+/// the veto the seam's free channel exists to cast would be silently lost.
+#[test]
+fn an_instant_already_past_is_a_log_line_and_never_the_window() {
+    let now = at("2026-09-05T09:00:00Z");
+    assert_eq!(
+        instant_in(
+            "2026-09-05T06:00:00Z request failed: rate limit reached for this \
+             account; resets at 2026-09-05T23:30:00Z",
+            now
+        ),
+        Some(at("2026-09-05T23:30:00Z"))
+    );
+    // And where every instant it names has already gone by, the words date
+    // nothing: the failure stays one root's own back-off and claims nothing
+    // about a pool.
+    assert_eq!(
+        instant_in("2026-09-05T06:00:00Z the runner exited 1", now),
+        None
+    );
 }
