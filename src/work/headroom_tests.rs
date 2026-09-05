@@ -281,3 +281,41 @@ fn an_instant_already_past_is_a_log_line_and_never_the_window() {
         None
     );
 }
+
+/// A refusal that has lifted names no instant on any surface. The veto reads
+/// the refusal filtered against now, and the reported reset reads the same
+/// filtered value — so the text line and the JSON one say the same thing about
+/// the pool rather than the reading suppressing what the document still
+/// carries (§FS-011-command-line.7).
+#[test]
+fn a_lifted_refusal_stops_naming_its_instant_in_the_report_too() {
+    let record = PoolRecord {
+        refused_until: Some(at("2026-09-05T18:30:00Z")),
+        says: Some("rate limit reached".to_string()),
+        ..PoolRecord::default()
+    };
+    // Still standing: the instant is both the veto's and the report's.
+    let before = standing("north", &record, at("2026-09-05T09:00:00Z"));
+    assert_eq!(before.refused_until, Some(at("2026-09-05T18:30:00Z")));
+    assert_eq!(before.resets_at, Some(at("2026-09-05T18:30:00Z")));
+    // Lifted: neither field names it, and nothing else about the pool is known.
+    let after = standing("north", &record, at("2026-09-05T19:00:00Z"));
+    assert_eq!(after.refused_until, None);
+    assert_eq!(after.resets_at, None);
+    assert_eq!(after.remaining, None);
+    // A window of its own still reports its reset: only the refusal's instant
+    // goes with the refusal.
+    let with_window = standing(
+        "north",
+        &PoolRecord {
+            windows: vec![Window {
+                name: Some("weekly".to_string()),
+                remaining: None,
+                resets_at: Some(at("2026-09-08T00:00:00Z")),
+            }],
+            ..record.clone()
+        },
+        at("2026-09-05T19:00:00Z"),
+    );
+    assert_eq!(with_window.resets_at, Some(at("2026-09-08T00:00:00Z")));
+}
