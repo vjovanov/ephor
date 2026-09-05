@@ -14,6 +14,7 @@ pub mod ledger;
 mod ranking;
 pub mod recipe;
 pub mod runtime;
+pub mod spend;
 pub mod workflow;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -2852,6 +2853,7 @@ impl Dispatcher {
         projects: &[String],
         runner_args: &[String],
         max_concurrent: Option<usize>,
+        budget: spend::Budget,
     ) -> Result<Sweep> {
         // The runtime is a rung like any other capacity, and with nothing
         // bound there is no run to start (§AR-005-capabilities.2).
@@ -2865,6 +2867,10 @@ impl Dispatcher {
         // launches and their failed-start back-off are committed.
         let _autorun = autorun_lock()?;
         self.ledger = ledger::load()?;
+        // What the budgets have spent, read once for the whole sweep: the
+        // answer is about the window rather than about any one root
+        // (§FS-015-spend-ceiling.1).
+        let budgets = self.budgets(now);
         let roots = self.work_roots();
         let ceilings = Ceilings {
             // `--max-concurrent N` replaces the configured aggregate ceiling
@@ -2908,7 +2914,10 @@ impl Dispatcher {
             self.note_once(&inversion);
         }
         let live = LiveRuns::read(&self.global, &roots, &ceilings.membership);
-        let mut capacity = Capacity::new(ceilings, live);
+        let mut capacity = Capacity::new(ceilings, live).against(budgets, budget);
+        // Budgets that are full where a person asked for this sweep, said once
+        // rather than once per root (§FS-015-spend-ceiling.6).
+        let mut warned: Vec<String> = Vec::new();
         // The trees this sweep's own launches have taken, checkout to the root
         // the run was started from. The due list was read from a snapshot
         // older than every launch below, so two due roots over one working
@@ -2941,6 +2950,13 @@ impl Dispatcher {
                 {
                     let why = live_in_this_checkout(&self.global, held_by);
                     return Launched::passed_over(&root, why);
+                }
+                if let Some(said) = capacity
+                    .warning(&root.projects)
+                    .map(str::to_string)
+                    .filter(|said| !warned.contains(said))
+                {
+                    warned.push(said);
                 }
                 if let Some(why) = capacity.refusal(&root.projects) {
                     return Launched::passed_over(&root, why);
@@ -3003,6 +3019,7 @@ impl Dispatcher {
         Ok(Sweep {
             runs,
             capacity: capacity.standing(),
+            warned,
         })
     }
 
@@ -3390,6 +3407,12 @@ impl Ceilings {
 #[derive(Debug)]
 struct Capacity {
     ceilings: Ceilings,
+    /// The site's budgets and what they have spent — a second dimension asked
+    /// at each scope beside that scope's own two (§FS-015-spend-ceiling.5).
+    budgets: spend::Budgets,
+    /// Whether a full budget refuses this sweep or is only said to it
+    /// (§FS-015-spend-ceiling.6).
+    budget: spend::Budget,
     global_live: Counts,
     organization_live: BTreeMap<String, usize>,
     project_live: BTreeMap<String, Counts>,
@@ -3399,10 +3422,22 @@ impl Capacity {
     fn new(ceilings: Ceilings, live: LiveRuns) -> Capacity {
         Capacity {
             ceilings,
+            budgets: spend::Budgets::default(),
+            budget: spend::Budget::Binds,
             global_live: live.global,
             organization_live: live.organizations,
             project_live: live.projects,
         }
+    }
+
+    /// The budgets this sweep reads, and whether a full one refuses it or is
+    /// only said to whoever asked (§FS-015-spend-ceiling.6). Apart from
+    /// [`Capacity::new`] because a site that wrote none is a site with none,
+    /// and every existing question about capacity is asked exactly as it was.
+    fn against(mut self, budgets: spend::Budgets, budget: spend::Budget) -> Capacity {
+        self.budgets = budgets;
+        self.budget = budget;
+        self
     }
 
     /// The organizations a root's projects put it in, each once and in the
@@ -3420,9 +3455,18 @@ impl Capacity {
     }
 
     /// Why this root may not start, asked outermost first so the reason names
-    /// the widest ceiling that was actually full (§FS-005-dispatch.24).
+    /// the widest ceiling that was actually full (§FS-005-dispatch.24) — and
+    /// within one scope in a fixed order: roots in flight, working roots,
+    /// money, then tokens (§FS-015-spend-ceiling.5).
+    ///
+    /// A budget answers here only where this sweep is bound by one: where a
+    /// person asked for it, [`Capacity::warning`] says what would have refused
+    /// and nothing refuses (§FS-015-spend-ceiling.6).
     fn refusal(&self, projects: &[String]) -> Option<String> {
         if let Some(why) = self.ceilings.site.full(self.global_live, "global work") {
+            return Some(why);
+        }
+        if let Some(why) = self.spent(&spend::Scope::Site) {
             return Some(why);
         }
         for organization in self.organizations_of(projects) {
@@ -3442,17 +3486,43 @@ impl Capacity {
                      ({count} live run(s))"
                 ));
             }
+            if let Some(why) = self.spent(&spend::Scope::Organization(organization.to_string())) {
+                return Some(why);
+            }
         }
         for project in projects {
-            let Some(limits) = self.ceilings.projects.get(project) else {
-                continue;
-            };
-            let live = self.project_live.get(project).copied().unwrap_or_default();
-            if let Some(why) = limits.full(live, &format!("projects.{project}.work")) {
+            if let Some(limits) = self.ceilings.projects.get(project) {
+                let live = self.project_live.get(project).copied().unwrap_or_default();
+                if let Some(why) = limits.full(live, &format!("projects.{project}.work")) {
+                    return Some(why);
+                }
+            }
+            if let Some(why) = self.spent(&spend::Scope::Project(project.clone())) {
                 return Some(why);
             }
         }
         None
+    }
+
+    /// One scope's budget, where it refuses this sweep. A sweep a person asked
+    /// for is refused by no budget at all, so this answers nothing there and
+    /// the walk carries on to the concurrency ceilings further in
+    /// (§FS-015-spend-ceiling.6).
+    fn spent(&self, scope: &spend::Scope) -> Option<String> {
+        match self.budget {
+            spend::Budget::Binds => self.budgets.at(scope).map(|full| full.says.clone()),
+            spend::Budget::Warns => None,
+        }
+    }
+
+    /// What a person who asked for this sweep is told about a budget that is
+    /// full: the outermost ceiling that would have refused, which is the one
+    /// they would have been sent to (§FS-015-spend-ceiling.6).
+    fn warning(&self, projects: &[String]) -> Option<&str> {
+        match self.budget {
+            spend::Budget::Warns => self.budgets.over(projects).map(|full| full.says.as_str()),
+            spend::Budget::Binds => None,
+        }
     }
 
     fn started(&mut self, projects: &[String], remains_live: bool) {
@@ -3534,6 +3604,10 @@ impl Standing {
 pub struct Sweep {
     pub runs: Vec<Launched>,
     pub capacity: Standing,
+    /// The budgets that were full and were not allowed to refuse, because a
+    /// person asked for this sweep (§FS-015-spend-ceiling.6). Said once each,
+    /// on the error stream where a warning belongs.
+    pub warned: Vec<String>,
 }
 
 /// How a work root is named in the ledger's record of starts. The path as

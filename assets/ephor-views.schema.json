@@ -1070,7 +1070,26 @@
     "status": {
       "description": "`ephor status --json` — one cached feed per project: when it was fetched, what it holds, and what it lost. The matters inside it are the source's own documents, as for `feed` above.",
       "type": "array",
-      "items": { "type": "object" }
+      "items": {
+        "type": "object",
+        "properties": {
+          "autorun_paused": {
+            "type": "object",
+            "description": "A spend ceiling holding this project is currently full, so the autorun sweep starts nothing new under it (FS-015-spend-ceiling.10). Absent when no ceiling binds, which is what makes its presence the signal. The totals and the coverage are not here: `burn` is the spend reading and this is a pause.",
+            "required": ["scope"],
+            "properties": {
+              "scope": {
+                "type": "string",
+                "description": "The key that carries the full ceiling, spelled as configuration writes it: `global work.max_spend`, `organizations.<id>.work.max_tokens`, and so on."
+              },
+              "resumes_at": {
+                "type": "string",
+                "description": "The earliest instant the trailing window is no longer full, RFC 3339 to the second in UTC. Absent under a ceiling of `0`, which is a pause its author meant rather than a window that will pass (FS-015-spend-ceiling.8)."
+              }
+            }
+          }
+        }
+      }
     },
     "check": {
       "description": "`ephor check --json` (FS-006-project-interface.5, FS-009-shipped-actions.1) — the project's own check verbs, run from its checkout, and what each one came to. The verbs' own output goes to the error stream under this flag, so what is here is the account and not the build log (FS-011-command-line.7). Exits `0` where none failed and `1` where any did; `--list-features` answers a different question and prints `features` below.",

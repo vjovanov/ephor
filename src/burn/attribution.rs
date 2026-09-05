@@ -61,6 +61,30 @@ impl Roots {
     }
 }
 
+/// Every place the registry puts a project on disk: its checkout, and each
+/// branch workspace its template names (§FS-013-burn.4).
+///
+/// One derivation, because two readings that attributed a directory
+/// differently would be two answers about one machine's spend — and a ceiling
+/// bound on a number the reading it quotes does not agree with is a ceiling
+/// nobody can check (§AR-009-surfaces.1, §FS-015-spend-ceiling.1).
+pub fn roots_of(placements: &[crate::branches::Placement]) -> Roots {
+    let mut places: Vec<(PathBuf, String)> = Vec::new();
+    for placement in placements {
+        places.push((placement.root.clone(), placement.project.clone()));
+        for branch in &placement.branches {
+            if let Some(workspace) = crate::branches::expand_workspace(
+                placement.template.as_deref(),
+                &placement.root,
+                &branch.branch,
+            ) {
+                places.push((workspace, placement.project.clone()));
+            }
+        }
+    }
+    Roots::new(places)
+}
+
 /// Whether `path` is `place` or sits inside it. Compared by path component,
 /// never by string prefix: `/w/app-old` starts with `/w/app` and is a
 /// different project.

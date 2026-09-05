@@ -23,20 +23,8 @@ impl super::Session {
     /// and the command attribute a directory the same way they attribute a
     /// matter.
     pub fn burn_roots(&self) -> attribution::Roots {
-        let mut places: Vec<(PathBuf, String)> = Vec::new();
-        for placement in self.placements.values() {
-            places.push((placement.root.clone(), placement.project.clone()));
-            for branch in &placement.branches {
-                if let Some(workspace) = crate::branches::expand_workspace(
-                    placement.template.as_deref(),
-                    &placement.root,
-                    &branch.branch,
-                ) {
-                    places.push((workspace, placement.project.clone()));
-                }
-            }
-        }
-        attribution::Roots::new(places)
+        let places: Vec<crate::branches::Placement> = self.placements.values().cloned().collect();
+        attribution::roots_of(&places)
     }
 
     /// Read the transcripts, but only where the store has gone stale
@@ -47,11 +35,7 @@ impl super::Session {
     /// called while drawing — a command calls it before it reads, and the
     /// interface calls it from the tick.
     pub fn burn_refresh(&self, force: bool) -> Option<crate::burn::Scan> {
-        let dir = store::dir();
-        if !force && !store::stale(&dir) {
-            return None;
-        }
-        crate::burn::refresh(&dir, &crate::burn::Sources::of_home(), &self.burn_roots()).ok()
+        crate::burn::refreshed(&self.burn_roots(), force)
     }
 
     /// What was spent over `window`, grouped by `by` (§FS-013-burn.6).
