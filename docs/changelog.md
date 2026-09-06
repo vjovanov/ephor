@@ -30,6 +30,14 @@ ships, the previous "latest" section moves verbatim to
 
 ### Added
 
+- **Every new issue arrives carrying its kind.** `.github/ISSUE_TEMPLATE/`
+  carries four GitHub issue forms — bug report, feature request, usability
+  report, and token or time waste — each applying the matching kind label
+  (`bug`, `enhancement`, `usability`, `tokens`) as the issue is opened, and
+  `config.yml` turns blank issues off so no issue can arrive without a kind.
+  Every form asks for the fields that make a report actionable: the context
+  (command, directory, version), what happened, what was expected, an optional
+  workaround, and, on the token form, the cost. (PR #N)
 - **A pin may name alternates, and reported headroom vetoes a spent pool**
   ([§FS-005-dispatch.14](functional-spec/FS-005-dispatch.md#14-who-does-the-work-is-chosen-and-defaulted-per-project),
   [§FS-005-dispatch.29](functional-spec/FS-005-dispatch.md#29-headroom-is-reported-to-ephor-and-vetoes-a-member-it-never-reorders),
