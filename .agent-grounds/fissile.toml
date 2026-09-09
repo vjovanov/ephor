@@ -5,13 +5,16 @@
 # entrypoint is loaded whole into every session and every line is charged to
 # every one of them; a manual is read front to back; a changelog is appended to
 # and never read whole at all; code is opened whole by whoever changes it; a
-# shipped schema or example is copied, not composed. Six readers, six budgets —
-# §FS-012-file-size.1 is the list, and this file is where it is configured.
+# shipped schema or example is copied, not composed. §FS-012-file-size.1 is the
+# list; this benchmark keeps those readers distinct while assigning each the
+# same deliberately loose control thresholds.
 #
-# Every number below was chosen from what this tree measures, and the comment
-# on each rule says from what. Where the foundation's other repositories
-# already carry a number that fits, this takes theirs unchanged rather than
-# inventing a second opinion.
+# Benchmark control: these limits are intentionally too high to guide ordinary
+# work. We will compare the token efficiency of agents working in this repo
+# against runs with normal Fissile budgets. Fissile stays in the commit and CI
+# workflows, and matching/counting stays unchanged, so the experiment removes
+# the file-size intervention without removing the tool's own workflow cost
+# (§FS-012-file-size.2).
 #
 # `grund` does not scan `.toml`, so the `§` citations here are for the reader
 # and are not checked by `grund check` — the checked citation for this gate is
@@ -62,8 +65,8 @@ color = "auto"
 success = "ok"
 
 [exceptions]
-soft_registry = "docs/file-size-agent-exceptions.toml"
-hard_registry = "docs/file-size-human-exceptions.toml"
+soft_registry = "docs/file-size-benchmark-agent-exceptions.toml"
+hard_registry = "docs/file-size-benchmark-human-exceptions.toml"
 stale = "warn"
 
 [tokens]
@@ -87,7 +90,7 @@ fissile exception add <path> --severity soft --rule {rule}
 [[messages]]
 id = "split-source-hard"
 text = """
-Must split before more code lands here: this file is past the 2000-line ceiling this rule sets for a source file, enforcing the budget in §FS-012-file-size.1. Move cohesive groups into sibling modules along a boundary the code already has, and change nothing else — the split is a pure refactor, so `cargo test` and `python scripts/check_boundary.py` must pass on the moved code unedited.
+Must split before more code lands here: this file is past the configured hard ceiling for a source file, enforcing the budget in §FS-012-file-size.1. Move cohesive groups into sibling modules along a boundary the code already has, and change nothing else — the split is a pure refactor, so `cargo test` and `python scripts/check_boundary.py` must pass on the moved code unedited.
 Do not invent an abstraction or shuffle lines to get under the limit; a worse layout under budget is not the goal.
 If you cannot see a split that leaves the architecture intact, stop and ask a human. The only other way past this gate is a reviewed exception:
 fissile exception add <path> --severity hard --rule {rule}
@@ -127,7 +130,7 @@ fissile exception add <path> --severity soft --rule {rule}
 [[messages]]
 id = "split-spec-hard"
 text = """
-Must split before adding more: this document is past the 2000-line ceiling this rule sets for a citable spec, enforcing the budget in §FS-012-file-size.1; at that point it has stopped being one document. Give any section that carries its own behavior a declared ID, and move it to its own file — where a kind's home is a single file, `grund.toml` can make it a `folder` instead, and every `§` citation into it keeps resolving.
+Must split before adding more: this document is past the configured hard ceiling for a citable spec, enforcing the budget in §FS-012-file-size.1; at that point it has stopped being one document. Give any section that carries its own behavior a declared ID, and move it to its own file — where a kind's home is a single file, `grund.toml` can make it a `folder` instead, and every `§` citation into it keeps resolving.
 If no split keeps the document coherent, ask a human rather than cutting at an arbitrary heading.
 """
 
@@ -142,8 +145,8 @@ fissile exception add <path> --severity soft --rule {rule}
 [[messages]]
 id = "split-entrypoint-hard"
 text = """
-Must shrink before more is added: an entrypoint past 500 lines costs every session that loads it, and nothing addresses it by citation, so nothing can fetch just the part it needed. Move whole sections into `docs/manual.md` — or into a `§`-declared document, which can then be cited — and leave a link.
-If a section genuinely has to greet a first-time reader here, that is an argument, and it goes in `docs/file-size-human-exceptions.toml` rather than in a commit message.
+Must shrink before more is added: an entrypoint past the configured hard ceiling costs every session that loads it, and nothing addresses it by citation, so nothing can fetch just the part it needed. Move whole sections into `docs/manual.md` — or into a `§`-declared document, which can then be cited — and leave a link.
+If a section genuinely has to greet a first-time reader here, that is an argument, and it goes in the configured human exceptions registry rather than in a commit message.
 """
 
 [[messages]]
@@ -164,7 +167,7 @@ fissile exception add <path> --severity soft --rule {rule}
 [[messages]]
 id = "split-script-hard"
 text = """
-Must split before more is added: extract cohesive stages into functions with their own tests under `tests/integration/`, or promote the job into the binary. A 500-line untested script is the least reviewable code in the repository.
+Must split before more is added: extract cohesive stages into functions with their own tests under `tests/integration/`, or promote the job into the binary. An untested script past the configured hard ceiling is the least reviewable code in the repository.
 fissile exception add <path> --severity hard --rule {rule}
 """
 
@@ -196,96 +199,58 @@ Large file for its type, and no rule claims it. Exclude it in [scan].exclude if 
 """
 
 # ---------------------------------------------------------------------------
-# Rules. Line rules count code lines only — blank and comment lines are free.
-# That is deliberate: this repository's method puts citations and rationale in
-# doc comments, and a budget that taxed comments would pay an agent to delete
-# the grounding the tree exists to keep. The bytes rule below is the backstop
-# that still catches a file too expensive to read.
+# Rules. For the benchmark control, every line rule uses 20,000/25,000 and every
+# byte rule uses 20,000,000/25,000,000. Matching, priorities, messages, and line
+# counting stay intact so later comparisons change the intervention rather than
+# the mechanics around it.
 # ---------------------------------------------------------------------------
 
 [[rules]]
 id = "large-file-default"
 include = ["**/*"]
 unit = "bytes"
-soft = 262144
-hard = 524288
+soft = 20000000
+hard = 25000000
 message = "large-file-default"
 
-# `src/` is 92 files and 46,879 non-blank non-comment lines, of which 15,794
-# (34%) are inline `#[cfg(test)] mod tests`: this repository keeps unit tests in
-# the file they test. So grund's implementation-only 350/500 is not the
-# comparable number here — the comparable number is grund's implementation
-# budget plus its test-module budget, 350+450 = 800 soft and 500+700 = 1200
-# hard, for the same material.
-#
-# 800 is therefore the soft tier, and it lands where this tree's own p95 of
-# implementation-minus-tests does (908) — two derivations, one number. 20 of 92
-# files are over it and each is real debt this rule now names.
-#
-# The hard tier is 2000, not 1200: it is the ceiling `rhei`'s
-# §AR-source-file-size.1 already declares and the same backstop the citable-spec
-# rule below uses, and a first measurement should name debt rather than block on
-# it. Two files are past it, both recorded in
-# `docs/file-size-human-exceptions.toml` with the boundary each is missing.
+# Source matching and code-line counting are retained from the normal profile.
 [[rules]]
 id = "source"
 include = ["src/**/*.rs"]
 unit = "lines"
-soft = 800
-hard = 2000
+soft = 20000
+hard = 25000
 count_blank_lines = false
 count_comment_lines = false
 soft_message = "split-source-soft"
 hard_message = "split-source-hard"
 
-# Out-of-line tests: `tests/e2e/cases/` (one scenario per `§FS` point) and
-# `tests/integration/`. These carry no implementation, so grund's test rule —
-# 450/700 — is directly comparable. It becomes the soft tier here rather than
-# the ceiling: an e2e case is one scenario and a scenario is not divisible, and
-# the largest, `E2E-012-command-line-parity.rs` at 1298 lines, walks every
-# command and its JSON form in a single pass because that is the scenario. Three
-# files are over 700 and say so; the hard tier is the same 2000 backstop the
-# source rule uses, and nothing is near it.
+# Rust test matching and code-line counting are retained from the normal profile.
 [[rules]]
 id = "tests"
 include = ["tests/**/*.rs"]
 unit = "lines"
-soft = 700
-hard = 2000
+soft = 20000
+hard = 25000
 count_blank_lines = false
 count_comment_lines = false
 priority = 20
 soft_message = "split-tests-soft"
 hard_message = "split-tests-hard"
 
-# The Python suite gating this repository's own scripts. grund's 450/700 taken
-# unchanged, because it fits: the largest here is
-# `tests/integration/test_check_boundary.py` at 149 lines, so the soft tier
-# leaves room to triple before it says anything.
+# Python test matching and code-line counting are retained from the normal profile.
 [[rules]]
 id = "python-tests"
 include = ["tests/**/*.py"]
 unit = "lines"
-soft = 450
-hard = 700
+soft = 20000
+hard = 25000
 count_blank_lines = false
 count_comment_lines = false
 priority = 20
 message = "split-python-tests"
 
-# The citable tree: the `§FS`, `§GRUND`, `§GOAL`, `§REQ`, `§AR`, `§DF`, `§DA`
-# and `§RM` documents under `docs/`. It
-# gets two to three times the code budgets because grund changes who pays for a
-# document's length: a reader arrives through a citation and `grund <ID>` gives
-# them a lead, a section, or a map — never the file — so length here is not
-# charged to every read the way it is for a source file an agent opens whole.
-#
-# 750 soft is the number grund's own docs rule carries, and it leaves most of
-# this tree below the suggestion. `FS-005-dispatch.md` remains over that soft
-# budget and deliberately reports the next worthwhile split. 2000 hard is the
-# ceiling `rhei`'s §AR-source-file-size.1 declares; every `§FS` document is
-# below it, so the old exception for their combined home is retired outright.
-#
+# The citable tree keeps the normal profile's explicit kind-home matching.
 # `count_comment_lines` is true because in Markdown a `#` line is a heading, not
 # a comment: counting them out would stop measuring the document's structure,
 # which is the thing this rule is about.
@@ -311,28 +276,14 @@ include = [
   "docs/registry.md",
 ]
 unit = "lines"
-soft = 750
-hard = 2000
+soft = 20000
+hard = 25000
 count_blank_lines = false
 count_comment_lines = true
 soft_message = "split-spec-soft"
 hard_message = "split-spec-hard"
 
-# Entrypoints are the exception to the paragraph above: nothing addresses them
-# by citation, so they are read whole — `CLAUDE.md` into every session's
-# context, `README.md` by whoever arrives first, a `SKILL.md` when the skill
-# loads. Length here is charged to every one of those reads, so these keep the
-# tight 250/500 tier.
-#
-# This is a choice, and the foundation's repositories disagree on it: `fissile`
-# gives its own README 1800/2000 on the view that the README is the front door
-# and a front door may be long. ephor takes grund's 250/500 instead, for a
-# reason that is this repository's own rather than a preference: `README.md`
-# line 9 says "**docs/manual.md** is the manual; this page is the tour". A
-# repository that has already declared where its depth lives has no argument for
-# a 525-line tour. The overflow is recorded in
-# `docs/file-size-human-exceptions.toml` — the README is not trimmed to fit a
-# number, and the number is not raised to spare the README.
+# Entrypoint matching and full-line counting are retained from the normal profile.
 [[rules]]
 id = "entrypoints"
 include = [
@@ -344,94 +295,66 @@ include = [
   "tests/**/README.md",
 ]
 unit = "lines"
-soft = 250
-hard = 500
+soft = 20000
+hard = 25000
 count_blank_lines = false
 count_comment_lines = true
 priority = 20
 soft_message = "split-entrypoint-soft"
 hard_message = "split-entrypoint-hard"
 
-# The manual is neither a citable spec nor an entrypoint, so it gets a rule of
-# its own. Nothing reaches into it by `§`, which means a reader who wants one
-# field cannot fetch a section and pays for the file — so it should not get a
-# looser budget than a spec, which can be fetched by section. Its soft tier is
-# therefore 2000, the spec rule's *ceiling*: the point at which a document that
-# cannot be addressed piecewise has to justify still being one document.
-#
-# It is over that today, at 2797, and is deliberately left over it. The manual
-# has twelve chapters with a median of about 100 non-blank lines and one, "8.
-# Work", of 1251 — 45% of the file on its own. That is a document in hiding, and
-# a standing soft finding is the honest way to say so; silencing it with an
-# exception would file the argument away instead of making it.
-#
-# 3200 is where it blocks: 2797 plus 390, the largest chapter that is not
-# chapter 8, rounded up. One more genuine chapter of growth fits; a second
-# chapter 8 cannot appear without a decision.
+# The manual remains independently matched so benchmark measurements retain its
+# normal reader classification.
 [[rules]]
 id = "manual"
 include = ["docs/manual.md"]
 unit = "lines"
-soft = 2000
-hard = 3200
+soft = 20000
+hard = 25000
 count_blank_lines = false
 count_comment_lines = true
 priority = 30
 message = "manual-chapter"
 
-# Append-only, so not line-measured: a changelog grows by construction and a
-# line budget on one only asks it to cut a release in half. §FS-002-release.1
-# already bounds it the way it can be bounded — each release rotates out to
-# `docs/changelog/<version>.md` when the next ships. What is left is the bytes
-# backstop, at 512 KiB against today's 161 KiB.
+# The append-only changelog remains byte-measured (§FS-002-release.1).
 [[rules]]
 id = "changelog"
 include = ["docs/changelog.md", "docs/changelog/**/*.md"]
 unit = "bytes"
-soft = 524288
-hard = 1048576
+soft = 20000000
+hard = 25000000
 priority = 30
 message = "append-only"
 
-# grund's 300/500 taken unchanged: the largest script here is
-# `scripts/check_boundary.py` at 413 lines, so 500 leaves headroom and 300 names
-# the three that have grown past a single job. `ai/link-global-skills.sh` is the
-# same kind of thing wearing a different directory.
+# Script matching and code-line counting are retained from the normal profile.
 [[rules]]
 id = "scripts"
 include = ["scripts/**/*.py", "scripts/**/*.sh", "ai/**/*.sh"]
 unit = "lines"
-soft = 300
-hard = 500
+soft = 20000
+hard = 25000
 count_blank_lines = false
 count_comment_lines = false
 soft_message = "split-script-soft"
 hard_message = "split-script-hard"
 
-# CI YAML splits only into composite actions or reusable workflows, which is a
-# real but heavier move, so this warns well before it blocks. grund's 300/600
-# taken unchanged and it fits: `release.yml` at 454 is the only file over the
-# soft tier, and the composite actions it would split into already exist.
+# Workflow matching and code-line counting are retained from the normal profile.
 [[rules]]
 id = "workflows"
 include = [".github/workflows/*.yml", ".github/workflows/*.yaml", ".github/actions/**/*.yml"]
 unit = "lines"
-soft = 300
-hard = 600
+soft = 20000
+hard = 25000
 count_blank_lines = false
 count_comment_lines = false
 message = "split-workflow"
 
-# Published schemas and worked examples: content is the artifact, so bytes, and
-# never hand-trimmed. The largest is `assets/ephor-views.schema.json` at 55 KiB
-# and `config/ci-green.example.states.yaml` at 32 KiB, so the 64 KiB soft tier
-# is the next doubling of the biggest thing here rather than a number chosen to
-# clear it.
+# Published schemas and worked examples remain byte-measured.
 [[rules]]
 id = "shipped-artifacts"
 include = ["assets/**", "config/**"]
 unit = "bytes"
-soft = 65536
-hard = 262144
+soft = 20000000
+hard = 25000000
 priority = 30
 message = "shipped-artifact"

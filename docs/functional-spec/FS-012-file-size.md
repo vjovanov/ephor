@@ -42,6 +42,13 @@ is the seam it is missing — never a trim to fit.
 in CI against the whole tree. It is not advisory: a hard overflow fails the
 build, and the tree passes or a recorded exception says why it does not.
 
+For the token-efficiency benchmark, the gate remains installed and continues to
+scan the same file classes, but its thresholds are deliberately non-binding:
+line rules warn at 20,000 lines and fail at 25,000, while byte rules warn at
+20,000,000 bytes and fail at 25,000,000. This is the control profile: it keeps
+the cost of running Fissile in the workflow while removing its file-size
+guidance as an influence on ordinary agent work.
+
 ## 3. An overflow is recorded with the boundary it is missing
 
 A file that cannot meet its budget is written down, not argued in a commit

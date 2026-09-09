@@ -1,0 +1,5 @@
+fissile_exceptions_version = 2
+
+# The benchmark uses an empty registry because its deliberately high limits
+# supersede the ordinary profile's accepted soft debt without deleting that
+# historical record.
