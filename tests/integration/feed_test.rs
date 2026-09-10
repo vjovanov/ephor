@@ -335,6 +335,86 @@ fn issues_arrive_by_role_from_repositories_nobody_configured() {
         .stdout(predicate::str::contains("other/lib#12"));
 }
 
+/// A fake `gh` whose one enabled role question fills its configured limit and
+/// says there is another page. The fixture serves authored and participating
+/// questions separately so neither can inherit the label-only completeness
+/// check by accident.
+const FAKE_GH_FULL_ROLE_QUESTION: &str = r#"#!/usr/bin/env bash
+set -euo pipefail
+args="$*"
+full() {
+  first='{"number": 1, "title": "First matching issue", "url": "https://github.com/acme/widget/issues/1", "updatedAt": "2026-08-01T10:00:00Z", "state": "OPEN", "repository": {"nameWithOwner": "acme/widget"}, "comments": {"totalCount": 0}}'
+  second='{"number": 2, "title": "Second matching issue", "url": "https://github.com/acme/widget/issues/2", "updatedAt": "2026-08-01T09:00:00Z", "state": "OPEN", "repository": {"nameWithOwner": "acme/widget"}, "comments": {"totalCount": 0}}'
+  printf '{"data":{"q0":{"pageInfo":{"hasNextPage":true,"endCursor":"next"},"nodes":[%s,%s]}}}' "$first" "$second"
+}
+case "$args" in
+  *"search(query:"*"author:@me"*) full ;;
+  *"search(query:"*"involves:@me"*) full ;;
+  *) echo "unexpected gh call: $args" >&2; exit 1 ;;
+esac
+"#;
+
+/// §FS-001-forge-interface.1: every role question is a complete answer or a
+/// visible failure. Reaching its configured limit may hide matching work, so
+/// refresh identifies the question and remedy instead of caching the prefix.
+#[test]
+fn role_issue_question_that_fills_its_limit_fails_instead_of_hiding_matching_work() {
+    for (question, authored, participating) in
+        [("authored", true, false), ("participating", false, true)]
+    {
+        let tmp = tempdir();
+        write_feed_fixture(tmp.path());
+        let fake_bin = tmp.path().join("fakebin");
+        fs::create_dir_all(&fake_bin).unwrap();
+        make_executable(&fake_bin.join("gh"), FAKE_GH_FULL_ROLE_QUESTION);
+        let path = format!(
+            "{}:{}",
+            fake_bin.to_string_lossy(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+
+        fs::write(
+            tmp.path().join("status.json"),
+            serde_json::to_string_pretty(&json!({
+                "defaults": {
+                    "ttl_seconds": 600,
+                    "provider_timeout_seconds": 10,
+                    "github_user": "tester"
+                },
+                "projects": {
+                    "demo": {
+                        "providers": [{
+                            "provider": "github-issues",
+                            "authored": authored,
+                            "participating": participating,
+                            "comments": false,
+                            "limit": 2
+                        }]
+                    }
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let mut cmd = ephor_cmd();
+        cmd.env("PATH", &path);
+        for (key, value) in feed_env(tmp.path()) {
+            cmd.env(key, value);
+        }
+        cmd.args(["refresh", "demo"])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("demo"))
+            .stderr(predicate::str::contains("github-issues"))
+            .stderr(predicate::str::contains(question))
+            .stderr(predicate::str::contains("limit"))
+            .stderr(predicate::str::contains("2"))
+            .stderr(predicate::str::contains("matching work may remain"))
+            .stderr(predicate::str::contains("raise `limit`"));
+    }
+}
+
 /// A fake `gh` for a source that follows a label: only the label search is
 /// answered, and either role search is a hard failure — the label question is
 /// the whole of what this fixture asks. With every question in one request,
