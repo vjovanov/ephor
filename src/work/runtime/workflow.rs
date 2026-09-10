@@ -209,29 +209,47 @@ impl Offered {
 
 /// What the binding offers, asked at `at` — the place matters, because a
 /// project keeps workflows of its own beside its checkout and the binding
-/// resolves those relative to where it is run.
-pub fn offered(config: &WorkConfig, at: &Path) -> Offered {
+/// resolves those relative to where it is run. `Err` means the listing could
+/// not be invoked or did not finish successfully; only `Ok` may mean empty.
+pub fn offered(config: &WorkConfig, at: &Path) -> Result<Offered> {
     if let Some(refusal) = super::refusal(config) {
-        return Offered {
+        return Ok(Offered {
             workflows: Vec::new(),
             refusal: Some(refusal),
-        };
+        });
     }
     let command = format!("{} templates --json", runner(config));
-    let listed = summons::run(
+    let answer = summons::run(
         &Summons::new(VERB, command),
         &Site::root(at),
         Mode::Captured(LIST_TIMEOUT),
     )
-    .ok()
-    .filter(summons::Answer::is_done)
-    .and_then(|answer| answer.output)
-    .and_then(|output| parse(&output))
-    .unwrap_or_default();
-    Offered {
+    .map_err(|err| EphorError::Command(format!("workflow listing failed: {err}")))?;
+    if !answer.is_done() {
+        let refusal = said(answer.errors.as_deref().unwrap_or(""));
+        let refusal = match refusal.is_empty() {
+            true => said(answer.output.as_deref().unwrap_or("")),
+            false => refusal,
+        };
+        return Err(EphorError::Command(match refusal.is_empty() {
+            true => format!(
+                "workflow listing failed: {}",
+                answer.refusal(&format!("{} templates", runner(config)))
+            ),
+            false => format!(
+                "workflow listing failed: {} templates refused — {refusal}",
+                runner(config)
+            ),
+        }));
+    }
+    let listed = answer
+        .output
+        .and_then(|output| parse(&output))
+        .unwrap_or_default();
+    Ok(Offered {
         workflows: listed,
         refusal: None,
-    }
+    })
 }
 
 /// The binding's listing, as workflows. None where it did not parse — the

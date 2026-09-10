@@ -133,14 +133,20 @@ impl Session {
                     .unwrap_or_default();
                 // The third home an entry may live in: beside the workflow
                 // itself (§FS-005-dispatch.19).
-                let beside = self
-                    .dispatcher
-                    .as_mut()
-                    .map(|dispatcher| dispatcher.workflow_entries(&item.project))
-                    .unwrap_or_default();
-                let has_workflows = self.dispatcher.as_mut().is_some_and(|dispatcher| {
-                    !dispatcher.workflows(&item.project).workflows.is_empty()
-                });
+                let (beside, has_workflows) = match self.dispatcher.as_mut() {
+                    Some(dispatcher) => {
+                        let beside = dispatcher
+                            .workflow_entries(&item.project)
+                            .map_err(|err| err.to_string())?;
+                        let has_workflows = !dispatcher
+                            .workflows(&item.project)
+                            .map_err(|err| err.to_string())?
+                            .workflows
+                            .is_empty();
+                        (beside, has_workflows)
+                    }
+                    None => (Vec::new(), false),
+                };
                 let applicable = self.actions_with(&item, &recipes, &beside);
                 (Some(item), applicable, has_workflows)
             }
