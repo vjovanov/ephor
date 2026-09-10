@@ -99,7 +99,13 @@ ephor degrades to what is answered rather than failing.
   exactly like one that is finished
   ([§FS-003-feed-categories.4](FS-003-feed-categories.md#4-a-conversation-is-answered-in-whatever-form-the-forge-recorded-it)).
   An implementation with no notion of assignment omits it, and nothing it
-  reports is ever counted as unclaimed.
+  reports is ever counted as unclaimed. Each issue also carries the issues it
+  is **blocked by**, where the forge has first-class issue dependencies: the
+  dependency's key, title, url, and state as the forge spells it. Closed
+  dependencies remain in that list as history; policy, not the implementation,
+  decides whether any of them still prevents work. An implementation with no
+  notion of issue dependencies omits the list, which is different from claiming
+  that the issue has none.
 
   Where a source is configured to **follow a label**, an implementation also
   reports the open issues carrying it, whoever is in them. A label is the
@@ -313,4 +319,3 @@ direction that punishes exactly the busiest reader.
 
 None of this licenses asking for more than is needed: the cheap form of a
 question is still only asked because the answer is read.
-

@@ -131,6 +131,42 @@ impl Item {
         is_terminal(self.state.as_deref())
     }
 
+    /// The first-class issue dependencies that still block this item
+    /// (§FS-003-feed-categories.4). Missing or unknown state is unfinished by
+    /// the same degrade rule as every other free-form forge state; only an
+    /// explicitly terminal state releases it.
+    pub fn open_blockers(&self) -> Vec<String> {
+        let mut blockers: Vec<String> = self
+            .raw
+            .get("blocked_by")
+            .and_then(Value::as_array)
+            .map(|dependencies| {
+                dependencies
+                    .iter()
+                    .filter(|dependency| {
+                        !is_terminal(dependency.get("status").and_then(Value::as_str))
+                    })
+                    .filter_map(|dependency| dependency.get("key").and_then(Value::as_str))
+                    .map(String::from)
+                    .collect()
+            })
+            .unwrap_or_default();
+        blockers.sort();
+        blockers.dedup();
+        blockers
+    }
+
+    /// Whether the forge says another unfinished issue must land first.
+    pub fn is_blocked(&self) -> bool {
+        !self.open_blockers().is_empty()
+    }
+
+    /// One sentence fragment for rows, dossiers, and work refusals.
+    pub fn blocking_reason(&self) -> Option<String> {
+        let blockers = self.open_blockers();
+        (!blockers.is_empty()).then(|| format!("blocked by {}", blockers.join(", ")))
+    }
+
     /// Whether a finished item is recent enough to still be shown, against a
     /// window in days. A window of zero shows nothing finished
     /// (§FS-003-feed-categories.3).
@@ -322,6 +358,31 @@ mod tests {
         note_unanswered(&mut carrying);
         assert_eq!(carrying["repo"], serde_json::json!("acme/widget"));
         assert_eq!(carrying[UNANSWERED], serde_json::json!(true));
+    }
+
+    /// Issue relationships, not labels or prose, decide whether the item is
+    /// blocked (§FS-003-feed-categories.4). Only a terminal prerequisite
+    /// releases it; duplicates cannot make the same ticket appear twice.
+    #[test]
+    fn open_issue_dependencies_are_the_blockers() {
+        let mut dependent = item(Some("open"), Utc::now());
+        dependent.raw = serde_json::json!({
+            "blocked_by": [
+                { "key": "acme/widget#9", "status": "open" },
+                { "key": "acme/widget#8", "status": "closed" },
+                { "key": "acme/widget#9" }
+            ],
+            "labels": ["state:blocked"]
+        });
+        assert_eq!(dependent.open_blockers(), ["acme/widget#9"]);
+        assert!(dependent.is_blocked());
+        assert_eq!(
+            dependent.blocking_reason().as_deref(),
+            Some("blocked by acme/widget#9")
+        );
+
+        dependent.raw = serde_json::json!({ "labels": ["state:blocked"] });
+        assert!(!dependent.is_blocked(), "a label is not a dependency");
     }
 
     #[test]

@@ -176,6 +176,7 @@ impl Subject<'_> {
             }
         };
         push("state", item.state.clone());
+        push("blocked by", Some(item.open_blockers().join(", ")));
         push("url", item.url.clone());
         // Where the branch is not on disk, say so: the work is running in the
         // project's own checkout, and an agent told only the branch name would

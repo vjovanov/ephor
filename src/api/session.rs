@@ -254,6 +254,7 @@ impl Session {
         menu.retain(|entry| match (&entry.agent, &entry.workflow) {
             (Some(recipe), _) => {
                 !item.is_finished()
+                    && !item.is_blocked()
                     && offered(recipe.needs_checkout, &recipe.branch)
                     && serves(&recipe.branch)
             }
@@ -261,6 +262,7 @@ impl Session {
             // (§FS-005-dispatch.19).
             (None, Some(_)) => {
                 !item.is_finished()
+                    && !item.is_blocked()
                     && offered(entry.requires_checkout, &entry.branch)
                     && serves(&entry.branch)
             }

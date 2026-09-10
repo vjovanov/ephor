@@ -110,6 +110,16 @@ it is the whole point; among issues they merely commented on somewhere it
 would turn every stranger's open bug into their work. So it is configuration
 on the source rather than a rule everywhere, and off unless asked for.
 
+**A first-class issue dependency outranks all four forms above.** An issue
+blocked by any unfinished issue awaits that prerequisite, not the reader: it
+stays visible with the blocking tickets named, but is not bolded as needing an
+answer and offers no work hand-off. A closed dependency remains visible as
+history and blocks nothing. This is read from the forge's relationship, never
+from a `blocked` label or a word in the issue body: those name no prerequisite,
+cannot distinguish stale state from live work, and cannot release the issue
+when the prerequisite closes
+([§FS-001-forge-interface.1](FS-001-forge-interface.md#1-capabilities)).
+
 ## 5. One subject is one row, however many sources reported it
 
 Sources overlap on purpose. A source that searches by role and a source that
@@ -136,4 +146,3 @@ established is left alone rather than guessed at. A duplicate shown is a small
 insult to the reader; a distinct piece of work silently swallowed is the
 failure [§FS-001-forge-interface.6](FS-001-forge-interface.md#6-a-source-that-did-not-answer-says-so-and-says-which-kind-of-not)
 is about.
-

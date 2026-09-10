@@ -80,6 +80,12 @@ only where it would work
 work about a change is offered where the change is on the machine, and never
 about an item that is finished
 ([§6](#6-dispatch-is-offered-where-it-would-work-and-refuses-where-it-would-not)).
+An issue with an unfinished first-class dependency is likewise offered no
+recipe or workflow: the prerequisite ticket is the work to schedule, and
+handing the dependent over creates concurrent work whose own forge says it
+cannot yet proceed ([§FS-003-feed-categories.4](FS-003-feed-categories.md#4-a-conversation-is-answered-in-whatever-form-the-forge-recorded-it)). This is a gate over every work
+entry, not a selector authors must remember to repeat; non-work quick actions
+remain available.
 
 Where an entry already in the menu carries a recipe's name, that recipe is
 what the entry hands over when it cannot finish, not a second thing to do
@@ -166,8 +172,11 @@ New comments arrive; the gate turns red again; the state changes. The ticket
 that was finished is now finished about something that no longer exists.
 
 So ephor **fingerprints** the item at dispatch — its last activity, its state,
-its gate, how much conversation it had — and a change to any of those makes the
-work **stale**. Stale work is reopened by appending a ticket to the same plan
+its gate, how much conversation it had, and the open issue dependencies that
+block it — and a change to any of those makes the work **stale**. Closing the
+last prerequisite is therefore the same observable move as a gate turning
+green: the next sync may hand the dependent over, without a label edit or a
+person releasing it. Stale work is reopened by appending a ticket to the same plan
 that says what changed since the last one and asks for the difference, ordered
 after it — after the last ticket that was not cancelled
 ([§16](#16-work-that-should-not-go-on-is-cancelled-and-the-plan-says-so)),

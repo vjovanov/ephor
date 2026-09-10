@@ -30,7 +30,7 @@ use crate::feed::provider::{
 };
 use crate::feed::providers::github;
 use crate::feed::providers::{gh_command, github_login, parse_config, parse_github_time};
-use crate::forge::{policy, Issue, Message, Role};
+use crate::forge::{policy, Issue, IssueDependency, Message, Role};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -102,7 +102,8 @@ reactions(first:50){nodes{content user{login}}}}}}}}";
 /// says whose it is (§FS-001-forge-interface.1).
 const SEARCH_SELECTION: &str = "... on Issue{\
 number title url updatedAt state repository{nameWithOwner} \
-author{login} assignees(first:20){nodes{login}} comments{totalCount}}";
+author{login} assignees(first:20){nodes{login}} comments{totalCount} \
+blockedBy(first:50){nodes{number title url state repository{nameWithOwner}}}}";
 
 /// One question a search asks of the forge. The two role questions know the
 /// reader's role by construction; the label question does not.
@@ -332,9 +333,35 @@ impl GithubIssues {
                 .pointer("/assignees/nodes")
                 .and_then(Value::as_array)
                 .map(|assignees| !assignees.is_empty()),
+            blocked_by: found
+                .pointer("/blockedBy/nodes")
+                .and_then(Value::as_array)
+                .map(|nodes| nodes.iter().filter_map(dependency).collect()),
             messages,
         })
     }
+}
+
+/// A dependency node from the same search result as its issue. Kept in the
+/// batched selection so a refresh does not make one API call per ticket
+/// (§FS-001-forge-interface.8).
+fn dependency(found: &Value) -> Option<IssueDependency> {
+    let number = found.get("number").and_then(Value::as_u64)?;
+    let repo = repo_of(found)?;
+    Some(IssueDependency {
+        key: format!("{repo}#{number}"),
+        title: found
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        status: found
+            .get("state")
+            .and_then(Value::as_str)
+            .filter(|state| !state.is_empty())
+            .map(|state| state.to_lowercase()),
+        url: found.get("url").and_then(Value::as_str).map(String::from),
+    })
 }
 
 /// `owner/name` for a search result: from `repository.nameWithOwner`, or from
@@ -465,6 +492,25 @@ mod tests {
     }
 
     #[test]
+    fn a_blocking_issue_keeps_its_identity_and_state() {
+        let node = json!({
+            "number": 225,
+            "title": "Keep coordinates inside declaration bodies",
+            "url": "https://github.com/vjovanov/grund/issues/225",
+            "state": "CLOSED",
+            "repository": { "nameWithOwner": "vjovanov/grund" }
+        });
+        let dependency = dependency(&node).unwrap();
+        assert_eq!(dependency.key, "vjovanov/grund#225");
+        assert_eq!(dependency.status.as_deref(), Some("closed"));
+        assert_eq!(
+            dependency.url.as_deref(),
+            Some("https://github.com/vjovanov/grund/issues/225")
+        );
+        assert!(SEARCH_SELECTION.contains("blockedBy(first:50)"));
+    }
+
+    #[test]
     fn a_comment_node_becomes_a_message_that_knows_whose_it_is() {
         let node = json!({
             "id": "IC_1",
@@ -513,6 +559,7 @@ mod tests {
             updated_at: Utc::now(),
             role: Role::Author,
             assigned: None,
+            blocked_by: None,
             messages: Vec::new(),
         };
         let item = policy::issue_item("github-issues", "hub", &issue, policy::Unclaimed::Ignored);

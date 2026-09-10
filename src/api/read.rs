@@ -804,9 +804,17 @@ impl Session {
         // *run* here, and whether the menu the offers come from could be
         // assembled at all. A reader told neither, and shown an empty list,
         // would read an oversight (§REQ-001-boundary.1).
-        let (offers, unavailable) = match self.work_offers(item) {
-            Ok(offers) => (offers, None),
-            Err(refusal) => (Vec::new(), Some(refusal)),
+        let (offers, unavailable) = match item.blocking_reason() {
+            Some(reason) => (
+                Vec::new(),
+                Some(format!(
+                    "this issue is {reason}; finish those prerequisite tickets first"
+                )),
+            ),
+            None => match self.work_offers(item) {
+                Ok(offers) => (offers, None),
+                Err(refusal) => (Vec::new(), Some(refusal)),
+            },
         };
         // Recipes considered and refused, read the same way `work_offers`
         // reads what matched (§FS-005-dispatch.27): nothing to say where the
