@@ -50,8 +50,8 @@ struct Config {
     #[serde(default = "crate::feed::providers::enabled")]
     participating: bool,
     /// Labels to follow: the open issues carrying any of them are reported
-    /// whoever is in them (§FS-001-forge-interface.1). One search per label,
-    /// and a search that comes back full fails rather than answering in part.
+    /// whoever is in them (§FS-001-forge-interface.1). One search per label;
+    /// like each role search, a full answer fails rather than answering in part.
     #[serde(default)]
     labels: Vec<String>,
     /// How far back to look. Older issues are not fetched at all, whatever
@@ -59,7 +59,7 @@ struct Config {
     /// removes the bound.
     #[serde(default = "default_window_days")]
     updated_within_days: u64,
-    /// Maximum issues per search, per role.
+    /// Maximum issues per search question.
     #[serde(default = "default_limit")]
     limit: u32,
     /// Fetch each issue's comments, for the thread view and for deciding
@@ -147,17 +147,38 @@ fn quoted(label: &str) -> String {
     }
 }
 
-/// A label search that returned as many issues as it was allowed to has not
-/// answered: it delivered a prefix nobody can size, and a queue shown as a
-/// fraction of itself reads as the whole queue (§FS-001-forge-interface.6).
-fn label_search_is_full(label: &str, found: usize, limit: u32) -> Result<(), ProviderError> {
-    if found as u64 >= u64::from(limit) {
-        return Err(ProviderError(format!(
-            "{found} open issues carry the label `{label}`, which is this source's `limit` — \
-             raise `limit` or narrow `labels`, rather than be shown an unknown fraction of them"
-        )));
+/// A search question that returned as many issues as it was allowed to has not
+/// answered: it may have delivered a prefix nobody can size, and a queue shown
+/// as a fraction of itself reads as the whole queue
+/// (§FS-001-forge-interface.1, §FS-001-forge-interface.6).
+fn search_is_full(question: Question<'_>, found: usize, limit: u32) -> Result<(), ProviderError> {
+    if (found as u64) < u64::from(limit) {
+        return Ok(());
     }
-    Ok(())
+
+    let (answer, remedy) = match question {
+        Question::Authored => (
+            format!("{found} issues matched the authored question"),
+            "raise `limit`, narrow `repos`, or shorten `updated_within_days`",
+        ),
+        Question::Involves => (
+            format!("{found} issues matched the participating question"),
+            "raise `limit`, narrow `repos`, or shorten `updated_within_days`",
+        ),
+        Question::Labelled(label) => (
+            format!("{found} open issues carry the label `{label}`"),
+            "raise `limit`, narrow `repos` or `updated_within_days`, or narrow `labels`",
+        ),
+    };
+    Err(ProviderError(format!(
+        "{answer}, which is this source's `limit` of {limit}; matching work may remain — \
+         {remedy} to obtain a complete answer"
+    )))
+}
+
+#[cfg(test)]
+fn label_search_is_full(label: &str, found: usize, limit: u32) -> Result<(), ProviderError> {
+    search_is_full(Question::Labelled(label), found, limit)
 }
 
 impl GithubIssues {
@@ -246,11 +267,7 @@ impl GithubIssues {
         let mut found = Vec::new();
         for (index, question) in questions.iter().enumerate() {
             let nodes = answers.remove(&format!("q{index}")).unwrap_or_default();
-            // Only the label searches are held to this. The role searches have
-            // always truncated silently and are left as they are.
-            if let Question::Labelled(label) = question {
-                label_search_is_full(label, nodes.len(), self.config.limit)?;
-            }
+            search_is_full(*question, nodes.len(), self.config.limit)?;
             found.push((*question, nodes));
         }
         Ok(found)
