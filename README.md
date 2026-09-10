@@ -62,7 +62,7 @@ before a first release is in
 
 ## Requirements and releases
 
-The repository is a [grund](https://github.com/vjovanov/grund) tree:
+The repository is a [grund](https://github.com/agent-grounds/grund) tree:
 [docs/functional-spec/](docs/functional-spec/) declares what ephor must do,
 [docs/roadmap.md](docs/roadmap.md) sequences what is not built yet, and
 `grund check` verifies that every `§ID` citation resolves.

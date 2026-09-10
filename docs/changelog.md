@@ -30,6 +30,10 @@ ships, the previous "latest" section moves verbatim to
 
 ### Changed
 
+- `grund` joined the `agent-grounds` organization after the sweep above, so the
+  README's pointer at the grund tree and the issue-dependency test fixture in
+  the GitHub issues provider now name it too. (PR #85)
+
 - `ephor`, `fissile` and `rhei` moved to the `agent-grounds` GitHub
   organization, and every live reference here now names it: the setup action's
   default repository, the two reusable workflows' checkout and their usage
