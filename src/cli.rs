@@ -883,8 +883,10 @@ pub struct CheckoutArgs {
     #[arg(long)]
     pub item: Option<String>,
 
-    /// Grow a branch the repository does not have from this instead of the
-    /// project's main branch (`FROM`).
+    /// Grow a branch the repository does not have from this one instead of
+    /// the project's main branch (`FROM`); what it takes is a branch name on
+    /// the project's remote — `main`, not `origin/main`, because the remote is
+    /// ephor's to supply (§FS-004-quick-actions.7.4).
     #[arg(long)]
     pub from: Option<String>,
 
