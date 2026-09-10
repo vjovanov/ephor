@@ -293,7 +293,7 @@ mod tests {
     #[test]
     fn a_plan_a_workflow_laid_down_reaches_the_matter_it_was_for() {
         let ledger = r#"{
-          "github-issues:vjovanov/ephor#39": {
+          "github-issues:agent-grounds/ephor#39": {
             "project": "ephor", "title": "Burn: a token-burn page in the TUI",
             "root": "/w/ephor/panta",
             "plan_id": "github-issues-vjovanov-ephor-39",
@@ -318,7 +318,7 @@ mod tests {
                 "github-issues-vjovanov-ephor-39-fix-issue".to_string(),
             ))
             .expect("the plan the workflow laid down reaches no matter");
-        assert_eq!(laid.0, "github-issues:vjovanov/ephor#39");
+        assert_eq!(laid.0, "github-issues:agent-grounds/ephor#39");
         // And the entry's own plan still does, for work dispatched as a
         // ticket rather than as a workflow.
         assert!(matters.contains_key(&(root, "github-issues-vjovanov-ephor-39".to_string())));

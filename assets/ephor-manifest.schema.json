@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/vjovanov/ephor/schemas/manifest/v1",
+  "$id": "https://github.com/agent-grounds/ephor/schemas/manifest/v1",
   "title": "ephor project manifest (ephor.json)",
   "description": "What a project may offer ephor, placed as 'ephor.json' at the forest root (FS-006-project-interface.2). Offered, never required: every field is optional, an empty object is valid, and nothing here gates a capability that probing or site configuration could not establish alone. Resolution is always site configuration over manifest over probe (REQ-001-boundary.2). Identity fields are hints the registry row adopts unless it overrides — the row is authoritative. Commands run relative to the forest root with the trust the person extends to the project's own build; the row's trust switch can narrow this to descriptions only.",
   "type": "object",

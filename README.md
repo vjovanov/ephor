@@ -372,7 +372,7 @@ same next move — read the failures and fix them, answer the question, read the
 change. ephor can hand that over
 ([§FS-005-dispatch](docs/functional-spec/FS-005-dispatch.md#fs-005-dispatch-what-ephor-watches-it-can-hand-to-an-agent-runtime)):
 an item plus a **recipe** becomes a ticket in a
-[rhei](https://github.com/vjovanov/rhei) plan, written into the checkout the
+[rhei](https://github.com/agent-grounds/rhei) plan, written into the checkout the
 item's branch resolves to. ephor writes files and nothing else — no comment, no
 push, no pull request — and then keeps the ledger.
 

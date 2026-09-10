@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/vjovanov/ephor/schemas/views/v1",
+  "$id": "https://github.com/agent-grounds/ephor/schemas/views/v1",
   "title": "ephor command-line readings",
   "description": "What every command prints under --json (REQ-002-parity.3, AR-009-surfaces.3). One entry per view name; `ephor schema views` prints this document, and it is the stability surface REQ-002-parity.4 promises: a field is added freely, and renaming or removing one is a release note. The views are the same values the interface renders, so a screen and a command cannot describe one fact two ways.",
   "$defs": {

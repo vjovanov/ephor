@@ -14,7 +14,7 @@ whether the item has moved since. Watching and working are one loop, ephor is
 the half that remembers, and the routine moves leave the reader's hands
 ([§GOAL-004-handover](../goals.md#goal-004-handover-routine-moves-leave-the-persons-hands)).
 
-The runtime is a binding with [rhei](https://github.com/vjovanov/rhei) as the
+The runtime is a binding with [rhei](https://github.com/agent-grounds/rhei) as the
 shipped default ([§REQ-001-boundary.1](../requirements/REQ-001-boundary.md#1-the-anatomy), decided with its tradeoff recorded in
 [§DA-001-runtime-bound-default](../decisions/architectural/DA-001-runtime-bound-default.md#da-001-runtime-bound-default-the-runtime-is-a-bound-default-not-a-named-coupling)). What ephor writes is a plan file in a
 documented plain-text language, and that language — together with the runner
@@ -1978,7 +1978,7 @@ What it can do is read one a project already wrote.
 
 **The ranking arrives as a file: an ordered list of item ids, one per line,
 most important first.** The id is the one `ephor feed` prints and `--item`
-already takes everywhere else — `github-issues:vjovanov/rhei#95` — never a
+already takes everywhere else — `github-issues:agent-grounds/rhei#95` — never a
 URL, because a matter without one (a project's own task,
 [§FS-006-project-interface.7](FS-006-project-interface.md#7-the-projects-own-tasks-are-read-where-they-live))
 would otherwise be permanently unrankable. Order in the file *is* the rank:

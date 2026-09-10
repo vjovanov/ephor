@@ -357,7 +357,7 @@ def main() -> None:
     <main class="prose">{markup}
       <footer>
         Generated from <code>docs/manual.md</code> ·
-        <a href="https://github.com/vjovanov/ephor">github.com/vjovanov/ephor</a>
+        <a href="https://github.com/agent-grounds/ephor">github.com/agent-grounds/ephor</a>
       </footer>
     </main>
   </div>
