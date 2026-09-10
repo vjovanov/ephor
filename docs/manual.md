@@ -870,7 +870,7 @@ asked at all.
   "labels": [],                 // issues carrying any of these labels, whoever is in
                                 //   them — open only, one search per label
   "updated_within_days": 30,    // 0 removes the bound
-  "limit": 30,                  // per search
+  "limit": 30,                  // per question; reaching it fails the source
   "comments": true,             // fetch comments (one call per issue that has any)
   "host": null }
 
@@ -891,6 +891,14 @@ asked at all.
   "cwd": "{project_root}/app" } // defaults to the project root
 ```
 
+**Issue question completeness.** The authored search, the participating
+search, and every followed-label search are separate questions. If any one
+returns exactly `limit` issues, `github-issues` fails instead of presenting a
+possibly incomplete answer: matching work may remain beyond that boundary.
+Raise `limit` or narrow `repos` or the `updated_within_days` window until every
+enabled question answers below the boundary; a followed-label source may also
+follow fewer or narrower `labels`.
+
 **Following a label.** `labels` asks a different question from the two role
 searches: not *which issues am I in* but *which issues carry this word* —
 `priority`, `regression`, whatever a project calls the work it wants followed.
@@ -899,11 +907,9 @@ nobody has ever touched arrive too, and each lands under the role its author
 gives it: **My Issues** where you opened it, **Participating** otherwise
 ([§FS-001-forge-interface.1](functional-spec/FS-001-forge-interface.md#1-capabilities)). Only open
 issues are asked for — a label search that took the closed too would spend its
-`limit` on history rather than on the queue. And a label search that comes back
-with exactly `limit` issues **fails the source** rather than showing you part
-of a queue as if it were the whole of it: raise `limit`, or narrow `labels`. A
-block with `authored` off, `participating` off, and no `labels` asks nothing
-and is refused when it is read.
+`limit` on history rather than on the queue. A block with `authored` off,
+`participating` off, and no `labels` asks nothing and is refused when it is
+read.
 
 **`custom-status`** runs its command as a summons like everything else ephor
 asks of a project
