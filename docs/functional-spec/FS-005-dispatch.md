@@ -1069,6 +1069,19 @@ changes: the plans a workflow already laid down go on being found by looking
 and read from disk, like every other plan there
 ([§15](#15-every-operation-is-visible-in-one-place)).
 
+**Asking what the runtime offers is an operation, not a best-effort probe.** A
+bound runtime's workflow-listing summons that cannot start or cannot reserve
+its answer file, or that finishes with a non-zero exit code, fails the
+enumeration wherever it was asked. Ephor reports that the workflow-listing
+invocation failed, preserving useful refusal words from the runtime, and
+neither caches nor consumes that failure as an empty offer set. A completed
+invocation that lists no workflows remains an authoritative empty answer,
+just as no bound runtime remains the *workable* rung's refusal; a completed
+populated listing remains the binding's answer. This distinction is about
+whether the summons ran and completed successfully: it does not redefine an
+exit-zero listing whose output cannot be read as workflows
+([§FS-006-project-interface.3](FS-006-project-interface.md#3-a-summons-environment-in-exit-code-and-answer-out)).
+
 **An entry names a workflow, and that is what makes it an action.** The entry
 is the one the menu already has
 ([§FS-006-project-interface.9](FS-006-project-interface.md#9-offers-the-projects-actions)) — an id, an

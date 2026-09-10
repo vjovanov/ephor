@@ -68,6 +68,13 @@ set -euo pipefail
 verb="$1"; shift
 
 if [ "$verb" = templates ]; then
+  if [ -n "${WORKFLOW_LISTING_CALLED:-}" ]; then
+    printf 'called\n' > "$WORKFLOW_LISTING_CALLED"
+  fi
+  if [ "${REFUSE_WORKFLOW_LISTING:-}" = yes ]; then
+    printf '× runtime could not list workflows\n' >&2
+    exit 9
+  fi
   cat <<JSON
 [
   { "name": "changeset-review", "version": "1.1.0", "source": "project",
@@ -308,6 +315,80 @@ fn the_runtime_is_asked_what_workflows_it_offers() {
         .stdout(predicate::str::contains("change_ref"))
         .stdout(predicate::str::contains("required"))
         .stdout(predicate::str::contains("names who does the work"));
+}
+
+/// Failure to reserve the answer file happens before the bound runtime can be
+/// invoked. That is a failed workflow enumeration, never authoritative proof
+/// that the runtime offers nothing (§FS-005-dispatch.19).
+#[test]
+fn workflow_listing_answer_file_failure_is_not_an_empty_registry() {
+    let world = watching();
+    let called = world.path().join("workflow-listing-called");
+    let unusable = world.path().join("not-a-temporary-directory");
+    std::fs::write(&unusable, "a file cannot hold temporary files\n")
+        .expect("the unusable temporary directory");
+
+    let output = world
+        .ephor()
+        .env("TMPDIR", &unusable)
+        .env("WORKFLOW_LISTING_CALLED", &called)
+        .args(["work", "workflows", "--project", PROJECT, "--json"])
+        .output()
+        .expect("the workflow listing");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        !output.status.success(),
+        "an answer-file failure became a successful workflow registry:\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(stdout.is_empty(), "a failed listing printed: {stdout}");
+    assert!(
+        stderr.contains("workflow") && stderr.contains("cannot make a place for the answer"),
+        "the failure does not identify the workflow-listing invocation:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("The runtime offers no workflows here."),
+        "the invocation failure was described as an empty registry:\n{stderr}"
+    );
+    assert!(
+        !called.exists(),
+        "the runtime was invoked before its answer file existed"
+    );
+}
+
+/// Once the bound runtime is invoked, its non-zero exit code is still the
+/// summons's authoritative failure and its refusal remains visible
+/// (§FS-005-dispatch.19, §FS-006-project-interface.3).
+#[test]
+fn workflow_listing_non_zero_exit_is_not_an_empty_registry() {
+    let world = watching();
+    let called = world.path().join("workflow-listing-called");
+
+    let output = world
+        .ephor()
+        .env("WORKFLOW_LISTING_CALLED", &called)
+        .env("REFUSE_WORKFLOW_LISTING", "yes")
+        .args(["work", "workflows", "--project", PROJECT, "--json"])
+        .output()
+        .expect("the workflow listing");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        !output.status.success(),
+        "a non-zero runtime exit became a successful workflow registry:\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(stdout.is_empty(), "a failed listing printed: {stdout}");
+    assert!(
+        stderr.contains("workflow") && stderr.contains("runtime could not list workflows"),
+        "the failure does not carry the runtime's workflow-listing refusal:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("The runtime offers no workflows here."),
+        "the runtime's failure was described as an empty registry:\n{stderr}"
+    );
+    assert!(called.exists(), "the refusing runtime was not invoked");
 }
 
 /// A workflow the runtime keeps inside itself — no directory beside it, and so
