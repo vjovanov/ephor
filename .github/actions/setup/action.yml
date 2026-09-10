@@ -16,7 +16,7 @@ inputs:
   repository:
     description: The repository releases are downloaded from.
     required: false
-    default: vjovanov/ephor
+    default: agent-grounds/ephor
   token:
     description: Token used to download the release asset.
     required: false

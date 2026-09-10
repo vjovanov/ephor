@@ -10,7 +10,7 @@ set -euo pipefail
 # registry as bindings land.
 
 ua="ephor-release-name-check/0.1"
-repo_pattern='github.com[/:]vjovanov/ephor'
+repo_pattern='github.com[/:]agent-grounds/ephor'
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 

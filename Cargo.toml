@@ -4,8 +4,8 @@ version = "0.1.0-dev"
 edition = "2021"
 description = "Project registry, AGENTS.md rendering, workspace updates, and per-project status feed"
 license = "MIT"
-repository = "https://github.com/vjovanov/ephor"
-homepage = "https://github.com/vjovanov/ephor"
+repository = "https://github.com/agent-grounds/ephor"
+homepage = "https://github.com/agent-grounds/ephor"
 # §FS-001-forge-interface.5 / §FS-002-release.4: a published artifact carries no
 # one person's registry or feed configuration, and none of the inherited
 # documentation set. `scripts/check-no-site-specific.sh` enforces it before a

@@ -2,7 +2,7 @@
   "identity": {
     "name": "ephor",
     "aliases": ["ephor"],
-    "repos": ["vjovanov/ephor"]
+    "repos": ["agent-grounds/ephor"]
   },
   "checks": {
     "check": "just check",

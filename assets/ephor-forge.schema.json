@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/vjovanov/ephor/schemas/forge/v1",
+  "$id": "https://github.com/agent-grounds/ephor/schemas/forge/v1",
   "title": "ephor out-of-process forge protocol",
   "description": "The protocol of FS-001-forge-interface.2: an executable named 'ephor-forge-<name>', resolved on PATH, invoked as 'ephor-forge-<name> <subcommand>' with a request as JSON on stdin and the answer as JSON on stdout. Diagnostics go to stderr; a non-zero exit is a failure, never an empty answer (FS-001-forge-interface.6). Subcommands: capabilities, pull-requests, issues, failures, restart, resolve-task, react, reply. An implementation answers the subcommands whose capabilities it declared; ephor never calls an undeclared one. This document defines the request shape and one response shape per subcommand; message, gate, and failure shapes are the answer envelope's $defs, referenced here so the two transports cannot drift (FS-001-forge-interface.2).",
   "$defs": {
@@ -89,14 +89,14 @@
               },
               "messages": {
                 "type": "array",
-                "items": { "$ref": "https://github.com/vjovanov/ephor/schemas/answer/v1#/$defs/message" }
+                "items": { "$ref": "https://github.com/agent-grounds/ephor/schemas/answer/v1#/$defs/message" }
               }
             }
           },
           "description": "The conversation as ordered threads (FS-001-forge-interface.1). The channel is implicitly the pull request's review threads."
         },
         "gate": {
-          "$ref": "https://github.com/vjovanov/ephor/schemas/answer/v1#/$defs/gate",
+          "$ref": "https://github.com/agent-grounds/ephor/schemas/answer/v1#/$defs/gate",
           "description": "Omitted entirely where the gate has no jobs and no verdict."
         }
       }
@@ -119,7 +119,7 @@
         "assigned": { "type": "boolean", "description": "Whether anyone has taken this issue, where the tracker holds that (FS-001-forge-interface.1). Omit it where the tracker has no notion of assignment: omitted and false mean different things, and what nobody claimed about is never counted as unclaimed work." },
         "messages": {
           "type": "array",
-          "items": { "$ref": "https://github.com/vjovanov/ephor/schemas/answer/v1#/$defs/message" },
+          "items": { "$ref": "https://github.com/agent-grounds/ephor/schemas/answer/v1#/$defs/message" },
           "description": "The comment tail, most recent last; bounded by the implementation."
         }
       }
@@ -130,7 +130,7 @@
     },
     "failures_response": {
       "type": "array",
-      "items": { "$ref": "https://github.com/vjovanov/ephor/schemas/answer/v1#/$defs/failure" },
+      "items": { "$ref": "https://github.com/agent-grounds/ephor/schemas/answer/v1#/$defs/failure" },
       "description": "What failed under the red gate of request.repo/request.number. The empty array is an answer — 'the gate is red and nothing failed', a gate blocked on approvals or unstarted jobs — and ephor then shows the blockers it already has. Asked on demand, never during refresh (FS-001-forge-interface.1)."
     },
     "restart_response": {

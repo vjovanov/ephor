@@ -7,7 +7,7 @@ It has two halves, and they are one loop. The **watch** aggregates what is
 happening across your projects — pull requests, gates, issues, conversations,
 whatever a shell command wants to say — into one inbox that is worth believing
 when it says there is nothing to do. The **work** hands any of it to
-[rhei](https://github.com/vjovanov/rhei) as a ticket carrying everything the
+[rhei](https://github.com/agent-grounds/rhei) as a ticket carrying everything the
 watch already knew, and then keeps the ledger: what is being done, what it
 reached, and whether the item has moved since.
 
@@ -3507,7 +3507,7 @@ the page.
 **The work lens says what it did not measure.** The runtime records an
 invocation whether or not the tool it ran reported any usage, and some do not
 — today a `claude-code` invocation records nothing, so the work lens is
-codex-and-`pi`-only until [vjovanov/rhei#121](https://github.com/vjovanov/rhei/issues/121)
+codex-and-`pi`-only until [agent-grounds/rhei#121](https://github.com/agent-grounds/rhei/issues/121)
 lands. Rather than showing a plan costing a third of what it cost, the reading
 carries how many invocations recorded no usage and which agents did report, in
 prose and in `--json` ([§FS-013-burn.2](functional-spec/FS-013-burn.md#2-the-work-lens-says-what-it-did-not-measure)).
@@ -3698,13 +3698,13 @@ As whole jobs:
 ```yaml
 jobs:
   materials:
-    uses: vjovanov/ephor/.github/workflows/ephor-validate.yml@v0.1.0
+    uses: agent-grounds/ephor/.github/workflows/ephor-validate.yml@v0.1.0
     with:
       version: "0.1.0"
       registry: infra/workspaces.json   # omit where you keep none
 
   gate:
-    uses: vjovanov/ephor/.github/workflows/ephor-check.yml@v0.1.0
+    uses: agent-grounds/ephor/.github/workflows/ephor-check.yml@v0.1.0
     with:
       version: "0.1.0"
       per-feature: true                 # one job per feature your smoke lists
@@ -3719,9 +3719,9 @@ tag that does not exist fails at the fetch rather than three steps later.
 Or as steps, when you are composing something of your own:
 
 ```yaml
-      - uses: vjovanov/ephor/.github/actions/setup@v0.1.0
+      - uses: agent-grounds/ephor/.github/actions/setup@v0.1.0
         with: { version: "0.1.0" }
-      - uses: vjovanov/ephor/.github/actions/check@v0.1.0
+      - uses: agent-grounds/ephor/.github/actions/check@v0.1.0
         with: { verbs: "style smoke" }
 ```
 

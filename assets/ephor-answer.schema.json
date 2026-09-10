@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/vjovanov/ephor/schemas/answer/v1",
+  "$id": "https://github.com/agent-grounds/ephor/schemas/answer/v1",
   "title": "ephor answer envelope",
   "description": "What a summoned command may write to the file named by $EPHOR_ANSWER (FS-006-project-interface.4). The exit code is always authoritative (0 done, non-zero failed, 75 parked); this envelope is optional structure on top. Every field is optional; unknown fields are ignored (must-ignore). Fields that describe 'the matter of this summons' (gate, failures, features, summary, url, needs_response) need no matter key: the summons's EPHOR_* environment already names it. Sources reporting more than one subject use matters/discussions/events with explicit keys.",
   "type": "object",

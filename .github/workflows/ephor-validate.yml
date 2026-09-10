@@ -5,7 +5,7 @@
 #
 #     jobs:
 #       ephor:
-#         uses: vjovanov/ephor/.github/workflows/ephor-validate.yml@v0.1.0
+#         uses: agent-grounds/ephor/.github/workflows/ephor-validate.yml@v0.1.0
 #         with:
 #           version: "0.1.0"
 name: ephor validate
@@ -49,7 +49,7 @@ jobs:
       # than in it, and after their own checkout, which cleans the workspace.
       - uses: actions/checkout@v6
         with:
-          repository: vjovanov/ephor
+          repository: agent-grounds/ephor
           ref: v${{ inputs.version }}
           path: .ephor-steps
 

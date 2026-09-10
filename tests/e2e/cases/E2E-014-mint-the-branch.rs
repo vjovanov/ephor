@@ -1127,7 +1127,7 @@ fn the_offer_follows_the_template_on_both_surfaces() {
 /// checkout every workspace here is grown from — is minted a branch of its
 /// own exactly like one with no branch at all: the main branch is the trunk,
 /// never a matter's own, so it never silently resolves inside the main
-/// checkout (§FS-005-dispatch.25, the defect `vjovanov/ephor#37` reported).
+/// checkout (§FS-005-dispatch.25, the defect `agent-grounds/ephor#37` reported).
 #[test]
 fn an_issue_matched_only_to_the_main_branch_mints_its_own_branch() {
     let world = watching(Some("fix/issue-{number}"), true);
@@ -1263,7 +1263,7 @@ fn a_freehand_command_about_the_main_attributed_matter_runs_in_the_main_checkout
 /// work: it needs no checkout and carries no branch template, so nothing
 /// mints and nothing is refused, and the work root is the only question left
 /// (§FS-005-dispatch.25, review round 2's R2-01 — the misplacement
-/// `vjovanov/ephor#37` reported, reached through a recipe that edits
+/// `agent-grounds/ephor#37` reported, reached through a recipe that edits
 /// nothing).
 #[test]
 fn work_that_only_reads_the_main_attributed_matter_is_laid_outside_the_main_checkout() {
