@@ -118,11 +118,18 @@ ephor degrades to what is answered rather than failing.
   lands where its kind lands
   ([§FS-003-feed-categories.1](FS-003-feed-categories.md#1-the-categories)). Only what is open is asked
   for: following a label is following work, and a search that took the closed
-  too would spend its bound on history rather than on the queue. And a label
-  search that comes back as full as it was allowed to be has not answered
-  ([§6](#6-a-source-that-did-not-answer-says-so-and-says-which-kind-of-not)) —
-  it delivered a prefix nobody can size — so an implementation fails there
-  rather than showing a fraction of a queue as if it were the queue.
+  too would spend its bound on history rather than on the queue.
+
+  Each enabled issue question — authored, participating, and every label being
+  followed — is an answer in its own right. A question that comes back as full
+  as its configured limit has not answered
+  ([§6](#6-a-source-that-did-not-answer-says-so-and-says-which-kind-of-not)):
+  it may have delivered only a prefix nobody can size. The implementation
+  therefore fails the source rather than showing that unknown fraction as the
+  whole answer. Its diagnosis names the question and the limit it reached,
+  says that matching work may remain, and tells the reader how to obtain a
+  complete answer. Questions that return fewer results than their limit remain
+  complete and do not fail.
 - **Notices** — what the forge itself says is directed at the user: one entry
   per thing it decided to tell them, carrying the reason it gives, the subject
   it concerns, when it arrived, and whether the forge considers it read. This
