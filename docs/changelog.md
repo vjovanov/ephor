@@ -146,7 +146,7 @@ ships, the previous "latest" section moves verbatim to
   ran. Only successful workflow listings enter the dispatcher cache, so a
   summons failure can no longer become an authoritative empty offer set.
   Successful empty and populated listings, and the explicitly unbound runtime,
-  keep their existing behavior. (PR #N)
+  keep their existing behavior. (PR #83)
 
 - **A JSON array under a hand is a list of hands, not a pair read
   positionally**
