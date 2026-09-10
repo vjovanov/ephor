@@ -136,7 +136,7 @@ ships, the previous "latest" section moves verbatim to
   Every authored, participating, and followed-label question now fails the
   source when it reaches its configured `limit`, naming the question and ways
   to obtain a complete answer. The default limit, query scope, recent closed
-  issues, and below-limit answers are unchanged. (PR #TBD)
+  issues, and below-limit answers are unchanged. (PR #82)
 
 - **A JSON array under a hand is a list of hands, not a pair read
   positionally**
