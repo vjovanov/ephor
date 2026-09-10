@@ -160,7 +160,7 @@ ships, the previous "latest" section moves verbatim to
   the checkout was refused for a branch nobody asked about. The entry now says
   it takes a branch name on the project's remote and that the remote is
   ephor's to supply. What `--from` accepts is unchanged — the bare branch name
-  it always took, with `HEAD`, a revision expression and a tag still refused.
+  it always took, with `HEAD` and a revision expression refused as before.
   (PR #86)
 
 - **GitHub issue searches no longer silently hide matching work beyond their

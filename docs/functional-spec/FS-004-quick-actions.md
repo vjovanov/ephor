@@ -318,9 +318,12 @@ is that input. What it takes is a **branch name on the project's remote** —
 `main`, not `origin/main`. The remote is ephor's to supply, because the
 checkout resolves the start point against the repository's own remote, so a
 value that named a remote as well would name one twice. Nor is it a revision:
-`HEAD`, a revision expression such as `HEAD~1`, and a tag are refused with
-every other name git will not take as a branch, naming the input they came in
-on ([§FS-011-command-line.9](FS-011-command-line.md#9-a-scope-selector-is-honoured-or-refused)).
+`HEAD` and a revision expression such as `HEAD~1` are refused with every other
+name git will not take as a branch, naming the input they came in on
+([§FS-011-command-line.9](FS-011-command-line.md#9-a-scope-selector-is-honoured-or-refused)).
+A tag is not among them, because a tag name is a legal branch name: it is
+carried through like any other and the checkout is refused later, for a branch
+the remote does not have.
 
 A contract only the code knows is one the reader pays for. `origin/main` is
 itself a legal branch name, so nothing downstream can tell it from a branch

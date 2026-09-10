@@ -415,7 +415,10 @@ ephor doctor [--project P] [--skip-self|--self-only] [--json]
   tree per repository, and is what the quick action on a missing checkout runs
   ([§7.1](#71-quick-actions)). It needs nothing but the registry, which says where
   the workspace goes, which repositories it holds, and what a new branch grows
-  from. Where it goes is settled before anything is made — git takes the name, its
+  from — `--from` says that instead, and takes a branch name on the project's
+  remote, `main` and not `origin/main`, because the remote is ephor's to supply
+  ([§FS-004-quick-actions.7.4](functional-spec/FS-004-quick-actions.md#74-what-a-branch-is-grown-from-is-a-branch-on-the-projects-remote)).
+  Where it goes is settled before anything is made — git takes the name, its
   path stays in the area `branch_root_template` puts branch workspaces in, and it
   is neither the work root nor inside it, or exit `2` with nothing on disk. A
   workspace *partly* there is completed rather than reported as already there:
