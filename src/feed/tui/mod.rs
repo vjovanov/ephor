@@ -1140,7 +1140,13 @@ impl App {
             self.message = "Work needs the registry, which could not be read".to_string();
             return;
         };
-        let offered = dispatcher.workflows(&project);
+        let offered = match dispatcher.workflows(&project) {
+            Ok(offered) => offered,
+            Err(err) => {
+                self.message = err.to_string();
+                return;
+            }
+        };
         if let Some(refusal) = &offered.refusal {
             self.message = refusal.clone();
             return;
@@ -1149,7 +1155,13 @@ impl App {
             self.message = "The runtime offers no workflows here".to_string();
             return;
         }
-        let named = dispatcher.workflow_entries(&project);
+        let named = match dispatcher.workflow_entries(&project) {
+            Ok(named) => named,
+            Err(err) => {
+                self.message = err.to_string();
+                return;
+            }
+        };
         let entries: Vec<ActionConfig> = offered
             .workflows
             .iter()

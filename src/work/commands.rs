@@ -518,7 +518,7 @@ fn dispatch_work(
                     &mut laid,
                     &mut refused,
                     &mut landed,
-                );
+                )?;
             }
             continue;
         };
@@ -733,13 +733,13 @@ fn lay_autorun(
     laid: &mut usize,
     refused: &mut usize,
     landed: &mut Vec<serde_json::Value>,
-) {
+) -> Result<()> {
     let Some(entry) = dispatcher
-        .workflow_offers(item)
+        .workflow_offers(item)?
         .into_iter()
         .find(|entry| entry.workflow.as_ref().is_some_and(|ask| ask.autorun))
     else {
-        return;
+        return Ok(());
     };
     match laying_for(dispatcher, item, &entry, picked, args.dry_run) {
         Ok(landing) => {
@@ -774,6 +774,7 @@ fn lay_autorun(
             eprintln!("note: {}: {err}", item.id);
         }
     }
+    Ok(())
 }
 
 /// What one laying came to, in the words both forms of the reading use.
@@ -892,7 +893,7 @@ fn list_workflows(config: &StatusConfig, args: &crate::cli::WorkWorkflowsArgs) -
             .cloned()
             .ok_or_else(|| EphorError::Command("No project is configured.".to_string()))?,
     };
-    let offered = dispatcher.workflows(&project);
+    let offered = dispatcher.workflows(&project)?;
     // Nothing offered is an answer, and under `--json` it is an empty array
     // rather than a line of prose: the three ways there can be no workflows —
     // a refusal from the binding, a name that matches none, none at all — used
@@ -949,7 +950,7 @@ fn list_workflows(config: &StatusConfig, args: &crate::cli::WorkWorkflowsArgs) -
     // An entry beside a workflow is what makes it an action, so the listing
     // says which ones already have one (§FS-005-dispatch.19).
     let entries: Vec<(String, String)> = dispatcher
-        .workflow_entries(&project)
+        .workflow_entries(&project)?
         .into_iter()
         .filter_map(|(_, entry)| {
             entry
@@ -1224,13 +1225,13 @@ fn workflow_entry(
         return Ok(action.clone());
     }
     if let Some((_, entry)) = dispatcher
-        .workflow_entries(&item.project)
+        .workflow_entries(&item.project)?
         .into_iter()
         .find(|(_, entry)| entry.id == named)
     {
         return Ok(entry);
     }
-    let offered = dispatcher.workflows(&item.project);
+    let offered = dispatcher.workflows(&item.project)?;
     let workflow = offered.find(named).ok_or_else(|| {
         EphorError::Command(match &offered.refusal {
             Some(why) => format!("'{named}' cannot be laid down: {why}"),

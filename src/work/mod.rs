@@ -1808,20 +1808,22 @@ impl Dispatcher {
     /// What the runtime offers about this project's work
     /// (§FS-005-dispatch.19). Asked at the project's own root, because a
     /// project keeps workflows of its own beside its checkout — and asked
-    /// once per root, since a sweep asks about the same handful over and over.
-    pub fn workflows(&mut self, project: &str) -> runtime::workflow::Offered {
+    /// once successfully per root, since a sweep asks about the same handful
+    /// over and over. A failed operation is returned and never cached as an
+    /// empty answer.
+    pub fn workflows(&mut self, project: &str) -> Result<runtime::workflow::Offered> {
         let Some(at) = self
             .placement(project)
             .map(|placement| placement.root.clone())
         else {
-            return runtime::workflow::Offered::default();
+            return Ok(runtime::workflow::Offered::default());
         };
         if let Some(offered) = self.workflows.get(&at) {
-            return offered.clone();
+            return Ok(offered.clone());
         }
-        let offered = runtime::workflow::offered(&self.global, &at);
+        let offered = runtime::workflow::offered(&self.global, &at)?;
         self.workflows.insert(at, offered.clone());
-        offered
+        Ok(offered)
     }
 
     /// The entries written beside the workflows this project can reach — the
@@ -1833,8 +1835,8 @@ impl Dispatcher {
     pub fn workflow_entries(
         &mut self,
         project: &str,
-    ) -> Vec<(runtime::workflow::Source, ActionConfig)> {
-        let offered = self.workflows(project);
+    ) -> Result<Vec<(runtime::workflow::Source, ActionConfig)>> {
+        let offered = self.workflows(project)?;
         let mut entries = Vec::new();
         for workflow in &offered.workflows {
             match crate::work::workflow::beside(workflow) {
@@ -1843,7 +1845,7 @@ impl Dispatcher {
                 Err(why) => self.note_once(&why),
             }
         }
-        entries
+        Ok(entries)
     }
 
     /// Every workflow entry this project has, in the menu's own provenance
@@ -1857,8 +1859,8 @@ impl Dispatcher {
     /// What it leaves out is the menu's gating — which is a question about a
     /// keystroke, and a sweep answers it by laying the entry down and
     /// reporting the refusal (§FS-005-dispatch.28).
-    pub fn workflow_actions(&mut self, project: &str) -> Vec<ActionConfig> {
-        let beside = self.workflow_entries(project);
+    pub fn workflow_actions(&mut self, project: &str) -> Result<Vec<ActionConfig>> {
+        let beside = self.workflow_entries(project)?;
         let from = |want: runtime::workflow::Source| -> Vec<ActionConfig> {
             beside
                 .iter()
@@ -1894,7 +1896,7 @@ impl Dispatcher {
             [configured, from(runtime::workflow::Source::Person)].concat(),
         ]);
         entries.retain(|entry| entry.workflow.is_some());
-        entries
+        Ok(entries)
     }
 
     /// The workflow entries offered on one matter, in that same order
@@ -1906,12 +1908,12 @@ impl Dispatcher {
     /// (§FS-005-dispatch.6): a merged pull request with a red gate stays in
     /// the feed as news, and handing news to an agent is asking it to invent
     /// something to do.
-    pub fn workflow_offers(&mut self, item: &Item) -> Vec<ActionConfig> {
+    pub fn workflow_offers(&mut self, item: &Item) -> Result<Vec<ActionConfig>> {
         if item.is_finished() || item.is_blocked() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
         let facts = self.facts(item);
-        let mut entries = self.workflow_actions(&item.project);
+        let mut entries = self.workflow_actions(&item.project)?;
         let placement = self.placement(&item.project).cloned();
         entries.retain(|entry| {
             entry.matches(item, &facts)
@@ -1921,19 +1923,20 @@ impl Dispatcher {
                     })
                 })
         });
-        entries
+        Ok(entries)
     }
 
     /// The ids of this project's workflow entries that asked to run
     /// themselves (§FS-005-dispatch.28). What the due sweep matches a laid
     /// plan's laying entry against: silence is the key, so an id that is not
     /// here is nobody's to start.
-    pub fn autorun_workflows(&mut self, project: &str) -> BTreeSet<String> {
-        self.workflow_actions(project)
+    pub fn autorun_workflows(&mut self, project: &str) -> Result<BTreeSet<String>> {
+        Ok(self
+            .workflow_actions(project)?
             .into_iter()
             .filter(|entry| entry.workflow.as_ref().is_some_and(|ask| ask.autorun))
             .map(|entry| entry.id)
-            .collect()
+            .collect())
     }
 
     /// Everything one workflow entry would write, with nothing written yet
@@ -1970,7 +1973,7 @@ impl Dispatcher {
         let ask = entry.workflow.clone().ok_or_else(|| {
             EphorError::Command(format!("action '{}' lays down no workflow", entry.id))
         })?;
-        let offered = self.workflows(&item.project);
+        let offered = self.workflows(&item.project)?;
         let workflow = offered.find(&ask.name).cloned().ok_or_else(|| {
             EphorError::Command(match &offered.refusal {
                 Some(why) => format!("'{}' lays down '{}', and {why}", entry.id, ask.name),
@@ -2504,7 +2507,7 @@ impl Dispatcher {
     /// one run — and asks nothing about what it did last time, apart from the
     /// one thing it must remember: a root whose start failed rests before it
     /// is tried again.
-    pub fn due(&mut self, now: DateTime<Utc>) -> Vec<Due> {
+    pub fn due(&mut self, now: DateTime<Utc>) -> Result<Vec<Due>> {
         let roots = self.work_roots();
         self.due_in(&roots, now)
     }
@@ -2513,7 +2516,11 @@ impl Dispatcher {
     /// its live counts from this same snapshot, so discovery cannot disagree
     /// with capacity accounting halfway through a sweep
     /// (§FS-005-dispatch.24).
-    fn due_in(&mut self, roots: &[runtime::watch::RootPlans], now: DateTime<Utc>) -> Vec<Due> {
+    fn due_in(
+        &mut self,
+        roots: &[runtime::watch::RootPlans],
+        now: DateTime<Utc>,
+    ) -> Result<Vec<Due>> {
         let projects: BTreeSet<String> = roots
             .iter()
             .flat_map(|group| group.plans.iter().map(|plan| plan.project.clone()))
@@ -2553,10 +2560,10 @@ impl Dispatcher {
         let workflow_autoruns: BTreeMap<String, BTreeSet<String>> = asking
             .into_iter()
             .map(|project| {
-                let asked = self.autorun_workflows(&project);
-                (project, asked)
+                self.autorun_workflows(&project)
+                    .map(|asked| (project, asked))
             })
-            .collect();
+            .collect::<Result<_>>()?;
         let mut due = due_among(
             &self.global,
             roots,
@@ -2569,7 +2576,7 @@ impl Dispatcher {
             let reading = ranking::read(&crate::paths::resolve_path(path));
             due = rank_due(due, &reading.order);
         }
-        due
+        Ok(due)
     }
 }
 
@@ -2948,7 +2955,7 @@ impl Dispatcher {
         // in here — [`due_among`] wrote that on the root itself.
         let mut taken: BTreeMap<PathBuf, PathBuf> = BTreeMap::new();
         let runs = self
-            .due_in(&roots, now)
+            .due_in(&roots, now)?
             .into_iter()
             .filter(|root| {
                 projects.is_empty()
