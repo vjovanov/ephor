@@ -513,16 +513,16 @@ mod tests {
         let node = json!({
             "number": 225,
             "title": "Keep coordinates inside declaration bodies",
-            "url": "https://github.com/vjovanov/grund/issues/225",
+            "url": "https://github.com/agent-grounds/grund/issues/225",
             "state": "CLOSED",
-            "repository": { "nameWithOwner": "vjovanov/grund" }
+            "repository": { "nameWithOwner": "agent-grounds/grund" }
         });
         let dependency = dependency(&node).unwrap();
-        assert_eq!(dependency.key, "vjovanov/grund#225");
+        assert_eq!(dependency.key, "agent-grounds/grund#225");
         assert_eq!(dependency.status.as_deref(), Some("closed"));
         assert_eq!(
             dependency.url.as_deref(),
-            Some("https://github.com/vjovanov/grund/issues/225")
+            Some("https://github.com/agent-grounds/grund/issues/225")
         );
         assert!(SEARCH_SELECTION.contains("blockedBy(first:50)"));
     }
