@@ -310,6 +310,32 @@ configuration, none of them asking the disk:
 A name that fails one of them is refused, saying which value and which rule,
 and nothing is made.
 
+### 7.4 What a branch is grown from is a branch on the project's remote
+
+A branch the forge does not have is grown from somewhere, and the reader may
+say from where rather than take the project's `main_branch`: `--from` (`FROM`)
+is that input. What it takes is a **branch name on the project's remote** —
+`main`, not `origin/main`. The remote is ephor's to supply, because the
+checkout resolves the start point against the repository's own remote, so a
+value that named a remote as well would name one twice. Nor is it a revision:
+`HEAD`, a revision expression such as `HEAD~1`, and a tag are refused with
+every other name git will not take as a branch, naming the input they came in
+on ([§FS-011-command-line.9](FS-011-command-line.md#9-a-scope-selector-is-honoured-or-refused)).
+
+A contract only the code knows is one the reader pays for. `origin/main` is
+itself a legal branch name, so nothing downstream can tell it from a branch
+genuinely called that: it is carried through, looked for as
+`origin/origin/main`, and the checkout is refused for a branch nobody asked
+about. And it is the spelling a reader who knows git reaches for first, which
+makes the first guess the wrong one unless something says otherwise. So **every
+place that names the input says what it takes**: the manual, and the flag's own
+help, which is what the reader running `--help` has instead of the manual. Help
+that names a value without saying what kind of value it is has told the reader
+where to type and left them to find out what by running the command — the same
+answer-by-failure that a flag which parses and changes nothing gives
+([§FS-011-command-line.9](FS-011-command-line.md#9-a-scope-selector-is-honoured-or-refused)),
+one command later.
+
 ## 8. A branch that trails its own published copy is offered the rebase onto it
 
 Main moving under a branch is one thing that happens to it. The branch moving
