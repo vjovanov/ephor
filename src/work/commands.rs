@@ -893,7 +893,20 @@ fn list_workflows(config: &StatusConfig, args: &crate::cli::WorkWorkflowsArgs) -
             .cloned()
             .ok_or_else(|| EphorError::Command("No project is configured.".to_string()))?,
     };
-    let offered = dispatcher.workflows(&project)?;
+    let offered = match dispatcher.workflows(&project) {
+        Ok(offered) => offered,
+        Err(err) => {
+            // A failed enumeration produced no authoritative reading. Keep
+            // its diagnostic and exit status, but do not let the top-level
+            // JSON refusal renderer put a different document on stdout.
+            let code = match &err {
+                EphorError::Registry(_) => 2,
+                EphorError::Command(_) => 1,
+            };
+            eprintln!("ERROR: {err}");
+            return Ok(ExitCode::from(code));
+        }
+    };
     // Nothing offered is an answer, and under `--json` it is an empty array
     // rather than a line of prose: the three ways there can be no workflows —
     // a refusal from the binding, a name that matches none, none at all — used
