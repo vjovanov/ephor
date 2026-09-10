@@ -390,12 +390,30 @@ pub fn issue_item(forge: &str, project: &str, issue: &Issue, unclaimed: Unclaime
     // implementation with no notion of assignment, and reading that as
     // unclaimed would invent work out of a silence (§FS-001-forge-interface.1).
     let unclaimed = unclaimed == Unclaimed::Awaits && issue.assigned == Some(false);
-    let pending = unclaimed || thread_pending(&thread);
+    // A dependent issue awaits its prerequisite, not its reader. The
+    // relationship outranks both an unclaimed backlog and a conversation
+    // (§FS-003-feed-categories.4).
+    let blocked = issue.blocked_by.as_ref().is_some_and(|dependencies| {
+        dependencies
+            .iter()
+            .any(|dependency| !crate::feed::model::is_terminal(dependency.status.as_deref()))
+    });
+    let pending = !blocked && (unclaimed || thread_pending(&thread));
     let threads = threads_json(std::slice::from_ref(&thread));
-    let raw = if threads.as_array().is_some_and(|list| list.is_empty()) {
+    let mut raw = serde_json::Map::new();
+    if threads.as_array().is_some_and(|list| !list.is_empty()) {
+        raw.insert("threads".to_string(), threads);
+    }
+    if let Some(blocked_by) = &issue.blocked_by {
+        raw.insert(
+            "blocked_by".to_string(),
+            serde_json::to_value(blocked_by).unwrap_or_else(|_| json!([])),
+        );
+    }
+    let raw = if raw.is_empty() {
         Value::Null
     } else {
-        json!({ "threads": threads })
+        Value::Object(raw)
     };
 
     // The key leads the title; the status is not repeated into it, because
@@ -975,6 +993,7 @@ mod tests {
             updated_at: Utc::now(),
             role: Role::Author,
             assigned: None,
+            blocked_by: None,
             messages: vec![message("them", false)],
         };
         let item = issue_item("tracker", "widget", &issue, Unclaimed::Ignored);
@@ -1000,6 +1019,7 @@ mod tests {
             updated_at: Utc::now(),
             role: Role::Author,
             assigned: None,
+            blocked_by: None,
             messages: vec![message("me", true), message("them", false)],
         };
         let item = issue_item("github-issues", "widget", &issue, Unclaimed::Ignored);
@@ -1026,6 +1046,7 @@ mod tests {
             updated_at: Utc::now(),
             role: Role::Author,
             assigned: None,
+            blocked_by: None,
             messages: vec![message("me", true), message("them", false)],
         };
         let item = issue_item("github-issues", "widget", &commented, Unclaimed::Ignored);
@@ -1062,6 +1083,7 @@ mod tests {
             updated_at: Utc::now(),
             role: Role::Author,
             assigned: Some(false),
+            blocked_by: None,
             // The reader's own issue, never answered: silent in the most
             // misleading way available.
             messages: vec![message("me", true)],
@@ -1099,6 +1121,54 @@ mod tests {
         assert!(!issue_item("github-issues", "widget", &closed, Unclaimed::Awaits).needs_response);
     }
 
+    /// A dependency is the forge saying which work comes first, so it
+    /// outranks both the unclaimed backlog and the issue conversation
+    /// (§FS-003-feed-categories.4).
+    #[test]
+    fn an_issue_with_an_open_dependency_awaits_the_ticket_not_the_reader() {
+        let issue = Issue {
+            key: "acme/widget#7".to_string(),
+            title: "Add strict headings".to_string(),
+            status: Some("open".to_string()),
+            url: None,
+            updated_at: Utc::now(),
+            role: Role::Author,
+            assigned: Some(false),
+            blocked_by: Some(vec![crate::forge::IssueDependency {
+                key: "acme/widget#6".to_string(),
+                title: "Repair section ownership".to_string(),
+                status: Some("open".to_string()),
+                url: Some("https://example.invalid/acme/widget/issues/6".to_string()),
+            }]),
+            messages: vec![message("them", false)],
+        };
+
+        let blocked = issue_item("github-issues", "widget", &issue, Unclaimed::Awaits);
+        assert!(!blocked.needs_response);
+        assert!(blocked.is_blocked());
+        assert_eq!(blocked.open_blockers(), vec!["acme/widget#6"]);
+        assert_eq!(
+            blocked.raw["blocked_by"][0]["title"],
+            "Repair section ownership"
+        );
+
+        let closed_dependency = Issue {
+            blocked_by: Some(vec![crate::forge::IssueDependency {
+                status: Some("closed".to_string()),
+                ..issue.blocked_by.clone().unwrap().remove(0)
+            }]),
+            ..issue
+        };
+        let released = issue_item(
+            "github-issues",
+            "widget",
+            &closed_dependency,
+            Unclaimed::Awaits,
+        );
+        assert!(released.needs_response, "the unclaimed issue is work again");
+        assert!(!released.is_blocked());
+    }
+
     /// An issue the user did not open is theirs to follow, but under
     /// Participating rather than My Issues (§FS-003-feed-categories.1).
     #[test]
@@ -1111,6 +1181,7 @@ mod tests {
             updated_at: Utc::now(),
             role: Role::Reviewer,
             assigned: None,
+            blocked_by: None,
             messages: Vec::new(),
         };
         let item = issue_item("github-issues", "widget", &issue, Unclaimed::Ignored);

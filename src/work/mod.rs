@@ -799,6 +799,9 @@ impl Dispatcher {
     /// this matter has empty does not serve it, so it is withheld from dispatch
     /// selection rather than selected and refused (§FS-005-dispatch.25).
     pub fn offers(&mut self, item: &Item) -> Vec<Recipe> {
+        if item.is_blocked() {
+            return Vec::new();
+        }
         let facts = self.facts(item);
         let mut offers = recipe::applicable(&self.recipes(&item.project), item, &facts);
         let Some(placement) = self.placement(&item.project).cloned() else {
@@ -1531,6 +1534,12 @@ impl Dispatcher {
         picked: Option<&HandList>,
         dry_run: bool,
     ) -> Result<Outcome> {
+        if let Some(reason) = item.blocking_reason() {
+            return Err(EphorError::Command(format!(
+                "{} is {reason}; finish those prerequisite tickets before handing it over",
+                item.id
+            )));
+        }
         let site = self.site(item, recipe)?;
         // Who does it, before anything is written and before the opening move
         // is made: a refusal leaves nothing behind
@@ -1898,7 +1907,7 @@ impl Dispatcher {
     /// the feed as news, and handing news to an agent is asking it to invent
     /// something to do.
     pub fn workflow_offers(&mut self, item: &Item) -> Vec<ActionConfig> {
-        if item.is_finished() {
+        if item.is_finished() || item.is_blocked() {
             return Vec::new();
         }
         let facts = self.facts(item);
@@ -1952,6 +1961,12 @@ impl Dispatcher {
         values_file_supplied: bool,
         picked: Option<&HandList>,
     ) -> Result<Laying> {
+        if let Some(reason) = item.blocking_reason() {
+            return Err(EphorError::Command(format!(
+                "{} is {reason}; finish those prerequisite tickets before handing it over",
+                item.id
+            )));
+        }
         let ask = entry.workflow.clone().ok_or_else(|| {
             EphorError::Command(format!("action '{}' lays down no workflow", entry.id))
         })?;

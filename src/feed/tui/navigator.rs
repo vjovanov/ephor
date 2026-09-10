@@ -1147,6 +1147,12 @@ fn item_line(row: &Row, seen: &Seen, now: chrono::DateTime<Utc>) -> Line<'static
             Style::default().fg(Color::DarkGray),
         ));
     }
+    if let Some(reason) = item.blocking_reason() {
+        spans.push(Span::styled(
+            format!("  {reason}"),
+            Style::default().fg(Color::Red),
+        ));
+    }
     if let Some(gate) = Gate::of(item) {
         spans.extend(gate_spans(&gate));
     }

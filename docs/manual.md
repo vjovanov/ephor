@@ -1040,6 +1040,10 @@ An item is in **exactly one**, so the size of a category is the size of that
 pile of work. Finished work — closed, merged, done, resolved, declined —
 leaves its category for **Recent** and leaves the feed entirely once it ages
 past the window. Finished work never awaits a response: it is news, not a task.
+An issue with an open GitHub **blocked by** relationship remains visible in its
+ordinary category and names the prerequisite beside its state, but awaits that
+ticket rather than a response from you. A label or a sentence in the issue
+body is never interpreted as a dependency.
 
 ### 6.2 Reading a row
 
@@ -1563,6 +1567,12 @@ ephor work                                        # what it made of it
 and afterwards, whenever the world moves — a new comment, a gate that turned
 red — `ephor refresh && ephor work sync` writes the next round and
 `ephor work run` works it.
+
+An issue GitHub says is blocked by another open issue is not eligible for a
+recipe, an ad-hoc ask, or a workflow hand-off. Non-work actions remain
+available. Closing the final prerequisite is item movement even when the
+dependent issue's timestamp does not change: the next refresh makes it
+eligible, and `dispatch` or `sync` can continue it.
 
 ### 8.2 What a ticket carries
 
@@ -2466,7 +2476,8 @@ ephor work states
   yet. It takes the *first* matching recipe unless `--recipe` names one. It
   skips items that already have work — naming `--recipe` asks for that work
   specifically and lands as another ticket; `--again` overrides the skip
-  entirely. `--hand <hand>[:<effort>]` is your pick of who does it, for this
+  entirely. Issues with an open GitHub prerequisite are skipped until it
+  closes. `--hand <hand>[:<effort>]` is your pick of who does it, for this
   invocation alone (§8.4). Eligible items dispatch newest `updated_at` first
   unless a **ranking** orders them: `work.ranking` (below) or `--ranking PATH`
   for this run alone names a file of item ids, one per line, most important

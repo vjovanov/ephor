@@ -235,6 +235,12 @@ pub struct Snapshot {
     pub running: u64,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub blocked: bool,
+    /// First-class issue prerequisites still open at this reading. Kept apart
+    /// from a pull request gate's merge refusal: closing the final issue is
+    /// movement even when the dependent issue's own timestamp does not move
+    /// (§FS-005-dispatch.5).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blockers: Vec<String>,
     /// How much conversation there was.
     #[serde(default)]
     pub messages: usize,
@@ -250,6 +256,7 @@ impl Snapshot {
             failed: gate.failed(),
             running: gate.running(),
             blocked: gate.blocked,
+            blockers: item.open_blockers(),
             messages: message_count(item),
         }
     }
@@ -276,6 +283,19 @@ impl Snapshot {
                     }
                 ));
             }
+        }
+        match (self.blockers.is_empty(), now.blockers.is_empty()) {
+            (true, false) => changes.push(format!("now blocked by {}", now.blockers.join(", "))),
+            (false, true) => changes.push(format!(
+                "prerequisites closed — was blocked by {}",
+                self.blockers.join(", ")
+            )),
+            (false, false) if self.blockers != now.blockers => changes.push(format!(
+                "blocking prerequisites changed — now {}, was {}",
+                now.blockers.join(", "),
+                self.blockers.join(", ")
+            )),
+            _ => {}
         }
         // A gate is red for two independent reasons — jobs that failed, and a
         // forge that refuses — and they move independently. Reporting the two
@@ -490,6 +510,27 @@ mod tests {
         // Activity nothing else explains is still activity.
         let later = Snapshot::of(&item(gate(0, false), "open", 0));
         assert_eq!(before.changes(&later), ["there is new activity"]);
+    }
+
+    /// A blocker's state can move without touching the dependent issue's own
+    /// timestamp. The relationship is therefore part of the fingerprint
+    /// (§FS-005-dispatch.5), and its closure is enough to wake sync.
+    #[test]
+    fn closing_the_last_prerequisite_is_item_movement() {
+        let observed_at = Utc::now();
+        let mut blocked = item(Value::Null, "open", 0);
+        blocked.updated_at = observed_at;
+        blocked.raw = json!({
+            "blocked_by": [{ "key": "acme/widget#9", "status": "open" }]
+        });
+        let before = Snapshot::of(&blocked);
+
+        blocked.raw["blocked_by"][0]["status"] = json!("closed");
+        let after = Snapshot::of(&blocked);
+        assert_eq!(
+            before.changes(&after),
+            ["prerequisites closed — was blocked by acme/widget#9"]
+        );
     }
 }
 

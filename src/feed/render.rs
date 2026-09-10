@@ -172,6 +172,9 @@ pub fn render_item_line(
     if let Some(state) = &item.state {
         title = format!("{title}  [{state}]");
     }
+    if let Some(reason) = item.blocking_reason() {
+        title = format!("{title}  {}", style.red(&reason));
+    }
     if let Some(gate) = crate::feed::gate::Gate::of(item) {
         title = format!("{title}  {}", gate.summary());
         let breakdown = gate.breakdown();

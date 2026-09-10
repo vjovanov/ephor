@@ -341,8 +341,27 @@ pub struct Issue {
     /// made must never be counted as unclaimed work.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assigned: Option<bool>,
+    /// The forge's first-class dependencies for this issue
+    /// (§FS-001-forge-interface.1). `None` means the implementation has no
+    /// dependency notion; `Some([])` means it asked and there are none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocked_by: Option<Vec<IssueDependency>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub messages: Vec<Message>,
+}
+
+/// One issue another issue is blocked by (§FS-001-forge-interface.1).
+///
+/// Kept smaller than [`Issue`]: dependency policy needs identity and state,
+/// not another issue's conversation, assignment, or dependency graph.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IssueDependency {
+    pub key: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
 }
 
 /// What kind of thing a notice is about. `Other` is not a failure to

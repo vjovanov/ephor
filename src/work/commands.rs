@@ -471,6 +471,28 @@ fn dispatch_work(
                 continue;
             }
         }
+        // The ordinary sweep silently withholds work whose prerequisite is
+        // still open. Naming that one matter is a question, so answer it with
+        // the relationship that refused the hand-off (§FS-005-dispatch.1).
+        if let Some(reason) = item.blocking_reason() {
+            if asked_for_one {
+                let says = format!(
+                    "{} is {reason}; finish those prerequisite tickets before handing it over",
+                    item.id
+                );
+                refused += 1;
+                landed.push(serde_json::json!({
+                    "item": item.id,
+                    "title": item.title,
+                    "outcome": "refused",
+                    "says": says,
+                }));
+                if !args.json {
+                    eprintln!("note: {says}");
+                }
+            }
+            continue;
+        }
         let offers = dispatcher.offers(item);
         let recipe = match &args.recipe {
             Some(wanted) => offers.iter().find(|recipe| &recipe.id == wanted).cloned(),
