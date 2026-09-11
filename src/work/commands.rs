@@ -2181,12 +2181,19 @@ fn would_sweep(
 /// The work roots `--except` names, each with the value it was named by
 /// (§FS-005-dispatch.24).
 ///
-/// A value is a work root where a directory is on disk at it, and otherwise
-/// the matter the ledger knows by that id — so a driver that knows which item
-/// is stuck need not know where its work root is. One that is neither is
-/// refused quoting what it held: an exclusion that silently bound nothing
-/// would tell a driver its own back-off is working when it is not
+/// A value is a work root where one is on disk at it, and otherwise the matter
+/// the ledger knows by that id — so a driver that knows which item is stuck
+/// need not know where its work root is. One that is neither is refused
+/// quoting what it held: an exclusion that silently bound nothing would tell a
+/// driver its own back-off is working when it is not
 /// (§FS-011-command-line.9).
+///
+/// A work root, not any directory: the realistic mistake is a driver naming
+/// the checkout where the root beneath it was meant, and both of those are
+/// directories. So the test is the one the sweep itself applies — a root is a
+/// directory that declares the machine its plans run under
+/// (§FS-005-dispatch.24) — and a directory that is not one falls through to
+/// the matter lookup and then to the refusal.
 fn excluded(
     dispatcher: &Dispatcher,
     args: &crate::cli::WorkRunArgs,
@@ -2194,7 +2201,11 @@ fn excluded(
     let mut named: Vec<(std::path::PathBuf, String)> = Vec::new();
     for value in &args.except {
         let path = crate::paths::resolve_path(value);
-        if path.is_dir() {
+        if runtime::plan::WorkRoot::open(&path)
+            .ok()
+            .flatten()
+            .is_some()
+        {
             named.push((path, value.clone()));
             continue;
         }

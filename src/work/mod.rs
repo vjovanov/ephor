@@ -3108,9 +3108,22 @@ fn rests(judged: &Judged, now: DateTime<Utc>) -> Option<String> {
         format!(
             "the last run here ({}) advanced nothing — this root is tried again in {}",
             judged.run,
-            crate::feed::render::age(judged.ready_at(), now)
+            in_a_while(judged.ready_at(), now)
         )
     })
+}
+
+/// How long is left of a rest, for the reader of one row
+/// (§FS-005-dispatch.24).
+///
+/// The feed's own interval is what this is, with the last minute said in
+/// words: that renderer answers *now* under a minute, which reads as *tried
+/// again in now* in a sentence that is about a moment still to come.
+fn in_a_while(ready_at: DateTime<Utc>, now: DateTime<Utc>) -> String {
+    match (ready_at - now).num_minutes() < 1 {
+        true => "under a minute".to_string(),
+        false => crate::feed::render::age(ready_at, now),
+    }
 }
 
 /// What a sweep read of the last run on one root — what an acting sweep

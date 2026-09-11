@@ -714,6 +714,11 @@ fn a_wide_run_names_the_roots_it_would_run() {
                 .contains("work run reaches 3 projects"),
             "{verb:?}: {reading:#}"
         );
+        // The gated reading is published like any other, and a `would-run` row
+        // is printed nowhere else — so no other case could hold one to the
+        // shape it is published under (§REQ-002-parity.4).
+        let problems = ephor::api::schema::holds("work-run", &reading);
+        assert!(problems.is_empty(), "{verb:?}: {problems:?}\n{reading:#}");
         for row in reading["runs"].as_array().expect("the runs it would make") {
             assert_eq!(row["outcome"], json!("would-run"), "{row:#}");
         }

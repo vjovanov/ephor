@@ -371,6 +371,29 @@ fn an_exclusion_that_binds_nothing_and_one_that_resolves_to_nothing_are_refused(
         said.contains("nowhere-at-all"),
         "a refused value is quoted: {said}"
     );
+
+    // A directory is not thereby a work root, and this is the mistake the
+    // refusal is really for: a driver naming the checkout where the work root
+    // beneath it was meant. Both are directories, so a value taken at its word
+    // here would bind nothing and say nothing, and the driver would read its
+    // own back-off as working.
+    let checkout = world.forest().to_string_lossy().into_owned();
+    assert!(
+        std::path::Path::new(&checkout).is_dir(),
+        "the checkout is a directory, which is what makes this the mistake it is"
+    );
+    let not_a_root = world
+        .ephor_raw()
+        .args(["work", "run", "--due", "--except", &checkout])
+        .output()
+        .expect("ran");
+    assert_eq!(not_a_root.status.code(), Some(2), "{not_a_root:?}");
+    let said = String::from_utf8_lossy(&not_a_root.stderr).into_owned();
+    assert!(
+        said.contains(&checkout),
+        "a directory that is not a work root is refused quoting it: {said}"
+    );
+
     assert_eq!(starts(&world), 0, "a refusal happens instead of the work");
 }
 
@@ -382,6 +405,25 @@ fn an_exclusion_that_binds_nothing_and_one_that_resolves_to_nothing_are_refused(
 #[test]
 fn an_exclusion_never_narrows_the_width_the_act_gate_is_counted_over() {
     let world = watching(true);
+
+    // A verdict for the gated sweep to be wrong about. One acting sweep at one
+    // project's width leaves a finished run that advanced nothing, and the
+    // verdict on it is taken by whichever sweep next reads that stream — which
+    // is the gated one below. Without this the ledger assertion at the end
+    // would pass on a machine where nothing had run at all.
+    the_next_run_advances(&world, false);
+    let acted = sweep(&world, &[]);
+    assert!(acted.status.success(), "{acted:?}");
+    assert_eq!(
+        starts(&world),
+        1,
+        "a sweep at one project's width acts: {acted:?}"
+    );
+    assert!(
+        !ledger_names_a_rest(&world),
+        "the verdict is the next sweep's to take, and the next sweep is the gated one"
+    );
+
     watch_a_second_project(&world);
 
     let root = work_root(&world).to_string_lossy().into_owned();
@@ -402,10 +444,10 @@ fn an_exclusion_never_narrows_the_width_the_act_gate_is_counted_over() {
         "the report says what the sweep would say, exclusions included, rather \
          than promising a run it would not make: {held:#}"
     );
-    assert_eq!(starts(&world), 0, "a gated sweep started a run");
+    assert_eq!(starts(&world), 1, "a gated sweep started a run");
     assert!(
-        !world.path().join("state/ephor/work.json").exists() || !ledger_names_a_rest(&world),
-        "a gated sweep wrote a verdict into the ledger"
+        !ledger_names_a_rest(&world),
+        "a gated sweep wrote into the ledger the verdict it had just read"
     );
 }
 
