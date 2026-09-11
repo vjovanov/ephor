@@ -4,7 +4,7 @@
 //! Nothing here is a second rebase. Per checkout it is exactly the move
 //! [`crate::rebase`] makes for one, through the one replay in [`crate::git`],
 //! and the only thing this module adds is which checkouts it is asked about
-//! and what it refuses to ask about — the four questions, the review reading
+//! and what it refuses to ask about — the three questions, the review reading
 //! behind one of them, and the restoring disposition, because nobody is
 //! waiting on a replay a timer ran at three in the morning
 //! (§FS-005-dispatch.12).
@@ -35,7 +35,13 @@ const CONFLICT: u8 = 3;
 /// The recipe a project names to have a conflict this sweep stopped on written
 /// up as work, and the plan that work lives in — named after the sweep, since
 /// no matter is its subject (§FS-005-dispatch.3).
-const RECIPE: &str = "rebase-sweep";
+///
+/// Which is also why the name is reserved: a recipe is otherwise offered on
+/// every matter its selector admits, and this one's selector could only ever
+/// say *none of them* (§FS-004-quick-actions.6.1). The rule lives with the
+/// recipes, in [`crate::work::recipe::Recipe::reserved`]; the name lives here,
+/// with the only thing that looks it up.
+pub(crate) const RECIPE: &str = "rebase-sweep";
 
 /// What became of one checkout.
 enum Outcome {
@@ -43,16 +49,20 @@ enum Outcome {
     Replayed(git::Rebase),
     /// Measured level and moved nowhere — reported, never silently skipped.
     Level(git::Rebase),
-    /// Stopped in a conflict, and put back on the commit it started from.
+    /// Stopped in a conflict — and put back on the commit it started from,
+    /// unless the tree was already stopped in a rebase when the sweep found
+    /// it, which nothing here touches (§FS-005-dispatch.12).
     Conflicted(git::Rebase),
     /// Something a person has to clear: uncommitted work, no repository, or
     /// git refused.
     Refused(git::Rebase),
-    /// One of the four questions answered, and this is its reason.
+    /// One of the three questions answered, and this is its reason.
     PassedOver(String),
     /// The gate held, so nothing ran here. Not measured either: measuring the
     /// distance means fetching into the repository, and a run that reports
-    /// writes nothing at all (§FS-011-command-line.10).
+    /// writes nothing at all — which is also why the reading behind the
+    /// questions is taken from the cache rather than freshened
+    /// (§FS-011-command-line.10).
     Would,
 }
 
@@ -109,6 +119,12 @@ struct Swept {
     /// The ticket the conflict was written up as, where one was
     /// (§FS-004-quick-actions.6.1).
     ticket: Option<String>,
+    /// What stopped the write-up, where something did. On the row rather than
+    /// on standard error, so the reading carries it too: a ticket that could
+    /// not be opened does not swallow the report, and a program that reads
+    /// only the reading may not be the one caller that never learns
+    /// (§REQ-002-parity.3, §REQ-001-boundary.1).
+    note: Option<String>,
 }
 
 /// Whether a project's checkouts were reached at all, and why not where they
@@ -184,7 +200,7 @@ pub fn sweep(args: &RebaseArgs, projects: &Projects, act: Act) -> Result<ExitCod
         // One reading per project, freshened once where the cache has aged —
         // the way a status reading is, and never once per branch, which is
         // what the ticket's author ruled out (§FS-004-quick-actions.6.1).
-        let matters = match reading(&config, project, config.defaults.ttl_seconds) {
+        let matters = match reading(&config, project, config.defaults.ttl_seconds, gate.holds()) {
             Reading::Read(items) => items,
             Reading::Unread(why) => {
                 reached.push(Reached {
@@ -234,6 +250,7 @@ pub fn sweep(args: &RebaseArgs, projects: &Projects, act: Act) -> Result<ExitCod
                 checkout,
                 outcome,
                 ticket: None,
+                note: None,
             };
             // The conflict is in the report either way; the ticket is the
             // extra, and a ticket that could not be opened does not swallow
@@ -241,7 +258,7 @@ pub fn sweep(args: &RebaseArgs, projects: &Projects, act: Act) -> Result<ExitCod
             if let Outcome::Conflicted(rebase) = &row.outcome {
                 match write_up(&mut dispatcher, &config, &placement, &row, rebase) {
                     Ok(ticket) => row.ticket = ticket,
-                    Err(err) => eprintln!("note: {}: {err}", row.branch),
+                    Err(err) => row.note = Some(err.to_string()),
                 }
             }
             rows.push(row);
@@ -374,6 +391,12 @@ fn under_review(matters: &[Item], branch: &str) -> Option<String> {
 /// Named after the checkout rather than only counted, so the sweep an hour
 /// later asks whether its own earlier ticket is still open by looking an id up
 /// rather than by matching prose (§FS-004-quick-actions.6.1).
+///
+/// A readable name is not enough on its own: `clash/here` and `clash-here` are
+/// two checkouts and read down to one slug, and the second of them would be
+/// passed over forever on the first's ticket, saying so in words about a tree
+/// somewhere else. So the branch's own [`fingerprint`] rides along — the name
+/// is for the reader and the fingerprint is what makes it the branch's.
 fn ticket_stem(branch: &str) -> String {
     let mut slug = String::with_capacity(branch.len());
     for ch in branch.chars() {
@@ -383,7 +406,34 @@ fn ticket_stem(branch: &str) -> String {
             slug.push('-');
         }
     }
-    format!("{RECIPE}-{}", slug.trim_matches('-'))
+    format!(
+        "{RECIPE}-{}-{}",
+        slug.trim_matches('-'),
+        fingerprint(branch)
+    )
+}
+
+/// A branch name as eight hex digits (FNV-1a, 32 bits).
+///
+/// Written out rather than taken from the standard library's hasher, whose
+/// output is explicitly not stable between releases: this one goes into an id
+/// in a file on disk, and an id that changed when the compiler did would make
+/// every sweep after a rebuild miss its own earlier ticket and write a second.
+fn fingerprint(branch: &str) -> String {
+    let mut hash: u32 = 0x811c_9dc5;
+    for byte in branch.as_bytes() {
+        hash ^= u32::from(*byte);
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    format!("{hash:08x}")
+}
+
+/// Whether this id is one of the tickets counted off that stem, rather than
+/// one whose stem merely begins the same way (§FS-004-quick-actions.6.1).
+fn counted_from(id: &str, stem: &str) -> bool {
+    id.strip_prefix(stem)
+        .and_then(|rest| rest.strip_prefix('-'))
+        .is_some_and(|count| !count.is_empty() && count.chars().all(|ch| ch.is_ascii_digit()))
 }
 
 /// The three tiers a work root resolves through — the site's, the project's
@@ -443,10 +493,10 @@ fn open_conflict_ticket(
     // conflict, so every ticket there counts as standing
     // (§FS-005-dispatch.15).
     let machine = work::runtime::plan::WorkRoot::open(&root).ok().flatten();
-    let stem = format!("{}-", ticket_stem(branch));
+    let stem = ticket_stem(branch);
     plan.tickets()
         .into_iter()
-        .filter(|ticket| ticket.id.starts_with(&stem))
+        .filter(|ticket| counted_from(&ticket.id, &stem))
         .find(|ticket| {
             !ticket.cancelled()
                 && !machine.as_ref().is_some_and(|machine| {
@@ -459,6 +509,60 @@ fn open_conflict_ticket(
         .map(|ticket| ticket.id)
 }
 
+/// The sentence a ticket closes with: what became of the working tree
+/// (§FS-004-quick-actions.6.1).
+///
+/// Without it a reader sent to find a conflicted tree finds a clean one and
+/// doubts the ticket — and the wrong one of these is worse than none at all,
+/// because a reader sent to a clean tree that is not clean believes what they
+/// were told and works in a rebase somebody else began. Which sentence it is
+/// follows the replay's own answer and never the disposition asked for: a
+/// repository found *already* stopped is touched under neither
+/// (§FS-005-dispatch.12), so its conflict is still standing.
+fn became_of(row: &Swept, rebase: &git::Rebase) -> String {
+    let standing = rebase.standing();
+    if standing.is_empty() {
+        return format!(
+            "**The tree was restored.** The conflict is not standing in `{}` — the sweep put \
+             the repository back on the commit it was on, because nobody was waiting on that \
+             replay (§FS-005-dispatch.12). To see it again, replay it: \
+             `ephor rebase --project {} --checkout {}`.",
+            row.checkout.display(),
+            row.project,
+            row.checkout.display()
+        );
+    }
+    let left_as_found = "The sweep did not begin that rebase and did not touch it: aborting one \
+                         it found already stopped would destroy a resolution somebody had begun \
+                         (§FS-005-dispatch.12). Resolve the paths above, `git add` each one, \
+                         then `git rebase --continue`.";
+    // A forest is several repositories, so this is only the whole tree's story
+    // where every conflict in it is (§AR-004-forest.1).
+    if standing.len() == rebase.conflicted().len() {
+        return format!(
+            "**The tree was left exactly as it was found.** `{}` was already stopped in a \
+             rebase when the sweep arrived, and the conflict is still standing there. \
+             {left_as_found}",
+            row.checkout.display()
+        );
+    }
+    format!(
+        "**Not every repository here was put back.** The sweep restored the ones it stopped \
+         itself, but {} in `{}` {} already stopped in a rebase when it arrived, and the \
+         conflict is still standing there. {left_as_found}",
+        standing
+            .iter()
+            .map(|repo| format!("`{}`", repo.repo))
+            .collect::<Vec<_>>()
+            .join(", "),
+        row.checkout.display(),
+        match standing.len() {
+            1 => "was",
+            _ => "were",
+        }
+    )
+}
+
 /// The conflict as a ticket, where the project's work configuration names a
 /// recipe for it (§FS-004-quick-actions.6.1).
 ///
@@ -468,8 +572,7 @@ fn open_conflict_ticket(
 /// §FS-014-work-root-scopes.2). The brief carries what the replay reached —
 /// the checkout, the branch, the ref, the repositories and their unmerged
 /// paths, both sides by ref — plus the one sentence that is the whole
-/// difference from §FS-005-dispatch.12's handover: the tree was restored, and
-/// the conflict is not standing in it.
+/// difference from §FS-005-dispatch.12's handover: what became of the tree.
 fn write_up(
     dispatcher: &mut work::Dispatcher,
     config: &StatusConfig,
@@ -516,15 +619,10 @@ fn write_up(
         .map(|plan| plan.next_ticket_id(&stem))
         .unwrap_or_else(|| format!("{stem}-1"));
     let body = format!(
-        "{}\n\n{}\n**The tree was restored.** The conflict is not standing in \
-         `{}` — the sweep put the repository back on the commit it was on, because nobody \
-         was waiting on that replay (§FS-005-dispatch.12). To see it again, replay it: \
-         `ephor rebase --project {} --checkout {}`.\n",
+        "{}\n\n{}\n{}\n",
         recipe.brief,
-        rebase.report(),
-        row.checkout.display(),
-        row.project,
-        row.checkout.display()
+        rebase.in_a_body(),
+        became_of(row, rebase)
     );
     let ticket = work::runtime::plan::Ticket {
         id: id.clone(),
@@ -564,29 +662,56 @@ fn write_up(
 /// What the watch already knows about this project, freshened once
 /// (§FS-004-quick-actions.6.1).
 ///
-/// Where no current reading can be had — no cached feed, or a slot flagged
-/// stale or failed — none of the project's checkouts is replayed at all.
-/// *Could not tell* is not *no*, and the branch this question protects is
-/// exactly the one nobody is present to protect by hand. One project that
-/// cannot be read stops that project and no other, because the drift this
-/// exists to correct goes on everywhere else.
-fn reading(config: &StatusConfig, project: &str, ttl: u64) -> Reading {
-    let feed = match crate::feed::commands::freshened(config, project, ttl) {
-        Ok(feed) => feed,
-        Err(err) => {
-            return Reading::Unread(format!(
-                "no reading of what is under review here could be had — {err}"
-            ))
-        }
+/// Where no current reading can be had — no cached feed, or a stale or failed
+/// slot of a source that could have carried a pull request — none of the
+/// project's checkouts is replayed at all. *Could not tell* is not *no*, and
+/// the branch this question protects is exactly the one nobody is present to
+/// protect by hand. One project that cannot be read stops that project and no
+/// other, because the drift this exists to correct goes on everywhere else.
+///
+/// A run held at the gate reads the cache and freshens nothing: freshening
+/// calls the forge and rewrites what the last refresh left, and a run that is
+/// only reporting writes nothing at all (§FS-011-command-line.10).
+fn reading(config: &StatusConfig, project: &str, ttl: u64, held: bool) -> Reading {
+    let feed = match held {
+        true => match crate::feed::cache::load_feed(project) {
+            Ok(Some(feed)) => feed,
+            Ok(None) => {
+                return Reading::Unread(
+                    "no refresh has ever produced a reading of what is under review here"
+                        .to_string(),
+                )
+            }
+            Err(err) => {
+                return Reading::Unread(format!(
+                    "no reading of what is under review here could be had — {err}"
+                ))
+            }
+        },
+        false => match crate::feed::commands::freshened(config, project, ttl) {
+            Ok(feed) => feed,
+            Err(err) => {
+                return Reading::Unread(format!(
+                    "no reading of what is under review here could be had — {err}"
+                ))
+            }
+        },
     };
     if feed.fetched_at.is_none() {
         return Reading::Unread(
             "no refresh has ever produced a reading of what is under review here".to_string(),
         );
     }
+    // Only the slots that could have answered the question. A source that
+    // reports messages, a status line, or the project's own tasks never
+    // carries a pull request, so whatever became of it, it was never going to
+    // tell this sweep whether a branch is under review — and one expired
+    // credential on such a source would otherwise stop every rebase in the
+    // project, hourly, forever (§FS-004-quick-actions.6.1).
     let lost: Vec<&str> = feed
         .providers
         .iter()
+        .filter(|(name, _)| crate::feed::providers::may_carry_pull_requests(name))
         .filter(|(_, slot)| slot.stale || !slot.ok)
         .map(|(name, _)| name.as_str())
         .collect();
@@ -601,8 +726,15 @@ fn reading(config: &StatusConfig, project: &str, ttl: u64) -> Reading {
 }
 
 /// Forty checkouts become one exit code, and conflict wins — the precedence
-/// one rebase already has (§FS-004-quick-actions.6.1). *Replayed*, *level* and
-/// *passed over* are all good ends.
+/// one rebase already has (§FS-004-quick-actions.6.1). *Replayed*, *level*,
+/// *passed over* and *refused* are all good ends.
+///
+/// A refusal is a good end here and only here. Uncommitted work is reported
+/// and left alone (§FS-004-quick-actions.6), and a tree somebody is working in
+/// has uncommitted work most of the time — so an hourly unit that went red for
+/// it would read failed on every machine anybody uses, and an exit code that is
+/// always 1 says nothing at all. What is left for non-zero is the thing that
+/// stopped the sweep from doing its job.
 fn exit_code(rows: &[Swept], reached: &[Reached]) -> ExitCode {
     if rows
         .iter()
@@ -610,13 +742,9 @@ fn exit_code(rows: &[Swept], reached: &[Reached]) -> ExitCode {
     {
         return ExitCode::from(CONFLICT);
     }
-    let refused = rows
-        .iter()
-        .any(|row| matches!(row.outcome, Outcome::Refused(_)));
     // A project that could not be read is the timer's only way to say it is
     // not doing its job, which is why it is not a quiet pass-over.
-    let unreached = reached.iter().any(|project| project.refusal.is_some());
-    if refused || unreached {
+    if reached.iter().any(|project| project.refusal.is_some()) {
         return ExitCode::from(1);
     }
     ExitCode::SUCCESS
@@ -706,6 +834,12 @@ fn report(said: &str, rows: &[Swept], reached: &[Reached], gate: &crate::scope::
             if let Some(ticket) = &row.ticket {
                 out.push_str(&format!("Written up as {ticket}\n\n"));
             }
+            // The ticket is the extra and the conflict above is the report, so
+            // a write-up that could not be made is said here rather than
+            // swallowing what it was about (§REQ-001-boundary.1).
+            if let Some(note) = &row.note {
+                out.push_str(&format!("No ticket was opened for this one: {note}\n\n"));
+            }
         }
     }
     out.push_str(&format!("{}\n", summary(rows, reached)));
@@ -720,8 +854,17 @@ fn says(row: &Swept) -> String {
     let what = match &row.outcome {
         Outcome::Replayed(rebase) => format!("replayed — {}", rebase.summary()),
         Outcome::Level(rebase) => format!("level — {}", rebase.summary()),
+        // Two different worlds, and a reader is sent to a different place by
+        // each: a tree the sweep stopped in and put back, or one it found
+        // already stopped in somebody else's rebase and never touched
+        // (§FS-004-quick-actions.6.1, §FS-005-dispatch.12).
         Outcome::Conflicted(rebase) => {
-            format!("conflicted and put back — {}", rebase.summary())
+            let what = match (rebase.standing().len(), rebase.conflicted().len()) {
+                (0, _) => "conflicted and put back",
+                (standing, all) if standing == all => "conflicted and left as found",
+                _ => "conflicted, and not every repository was put back",
+            };
+            format!("{what} — {}", rebase.summary())
         }
         Outcome::Refused(rebase) => format!("not replayed — {}", rebase.summary()),
         Outcome::PassedOver(why) => format!("passed over: {why}"),
@@ -776,6 +919,12 @@ fn view(
             if let Some(ticket) = &row.ticket {
                 object.insert("ticket".to_string(), json!(ticket));
             }
+            // What stopped the write-up, where one was stopped: the same fact
+            // the prose carries, so a program is never the one reader that
+            // cannot tell (§REQ-002-parity.3).
+            if let Some(note) = &row.note {
+                object.insert("note".to_string(), json!(note));
+            }
             serde_json::Value::Object(object.clone())
         }).collect::<Vec<_>>(),
     });
@@ -790,4 +939,42 @@ fn view(
         object.insert("says".to_string(), json!(held));
     }
     view
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Two branches that differ only in punctuation are two checkouts, and
+    /// they may not share a ticket name: the second would be passed over
+    /// forever on the first's ticket, and the reason it printed would be about
+    /// a tree somewhere else (§FS-004-quick-actions.6.1).
+    #[test]
+    fn a_ticket_is_named_after_one_branch_and_no_other() {
+        assert_ne!(ticket_stem("clash/here"), ticket_stem("clash-here"));
+        assert_ne!(ticket_stem("fix/issue-1"), ticket_stem("fix/issue/1"));
+        assert_ne!(ticket_stem("Fix/one"), ticket_stem("fix/one"));
+        // And the readable half is still the branch, because a reader of the
+        // plan has to be able to tell which checkout a ticket is about.
+        assert!(ticket_stem("clash/here").starts_with("rebase-sweep-clash-here-"));
+        // The same branch names the same ticket on every sweep, whatever this
+        // was built with — an id that moved would make every later sweep miss
+        // its own earlier ticket and write a second.
+        assert_eq!(
+            ticket_stem("clash/here"),
+            "rebase-sweep-clash-here-000621c9"
+        );
+    }
+
+    /// And the lookup is the counted id itself, not a prefix of one: a stem
+    /// that happens to begin another stem is a different checkout.
+    #[test]
+    fn a_ticket_is_found_by_its_own_stem() {
+        let stem = ticket_stem("clash/here");
+        assert!(counted_from(&format!("{stem}-1"), &stem));
+        assert!(counted_from(&format!("{stem}-12"), &stem));
+        assert!(!counted_from(&format!("{stem}-extra-1"), &stem));
+        assert!(!counted_from(&stem.clone(), &stem));
+        assert!(!counted_from(&format!("{stem}-"), &stem));
+    }
 }

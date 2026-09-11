@@ -364,6 +364,15 @@ impl Session {
         recipes
             .iter()
             .filter_map(|recipe| {
+                // Spoken for by something that is not the feed, and said so
+                // where a reader looks for why an entry is missing rather than
+                // nowhere at all (§FS-005-dispatch.27).
+                if let Some(reason) = recipe.reserved() {
+                    return Some(super::views::Exclusion {
+                        recipe: recipe.id.clone(),
+                        reason,
+                    });
+                }
                 let refused = recipe.when.explain(item, &facts);
                 if refused.iter().any(|refusal| refusal.field == "kinds") {
                     return None;
