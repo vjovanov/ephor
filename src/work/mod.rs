@@ -4820,6 +4820,45 @@ pub fn ensure_store(
     workspace: &std::path::Path,
     root: &std::path::Path,
 ) -> Result<Store> {
+    let dir = work_root_in(
+        global,
+        organization,
+        project,
+        project_id,
+        placed_in,
+        workspace,
+        root,
+    )?;
+    let states = states_yaml(global, project)?;
+    let made = !dir.is_dir();
+    // The directory first: the runner is asked to make a place that is there,
+    // and what ephor installs afterwards reads what the runner left rather than
+    // racing it.
+    plan::create_dir(&dir)?;
+    let note = match runtime::init(global, &dir) {
+        runtime::Initialized::Project => None,
+        runtime::Initialized::Refused(why) => Some(why),
+    };
+    WorkRoot::ensure(&dir, &states)?;
+    Ok(Store { dir, made, note })
+}
+
+/// Where work resolves to, from the template, with nothing created
+/// (§FS-005-dispatch.6.1).
+///
+/// The resolution half of [`ensure_store`], which is this plus making the
+/// directory and installing the machine. A caller that only reads what is
+/// already there asks this instead, so a sweep held at the gate creates
+/// nothing on its way to reporting (§FS-011-command-line.10).
+pub fn work_root_in(
+    global: &WorkConfig,
+    organization: Option<&OrganizationWorkConfig>,
+    project: Option<&ProjectWorkConfig>,
+    project_id: &str,
+    placed_in: Option<&crate::branches::Organization>,
+    workspace: &std::path::Path,
+    root: &std::path::Path,
+) -> Result<PathBuf> {
     let template = root_template(global, organization, project);
     // The same refusal the dispatch makes, in the same words: a work root
     // reaching above the project has no answer here either, and a checkout
@@ -4839,19 +4878,9 @@ pub fn ensure_store(
             values.insert("org_root", root.to_string_lossy().into_owned());
         }
     }
-    let dir = crate::paths::resolve_path(&dossier::render(&template, &values));
-    let states = states_yaml(global, project)?;
-    let made = !dir.is_dir();
-    // The directory first: the runner is asked to make a place that is there,
-    // and what ephor installs afterwards reads what the runner left rather than
-    // racing it.
-    plan::create_dir(&dir)?;
-    let note = match runtime::init(global, &dir) {
-        runtime::Initialized::Project => None,
-        runtime::Initialized::Refused(why) => Some(why),
-    };
-    WorkRoot::ensure(&dir, &states)?;
-    Ok(Store { dir, made, note })
+    Ok(crate::paths::resolve_path(&dossier::render(
+        &template, &values,
+    )))
 }
 
 /// The state a hand-written ask starts in when the reader names none: the

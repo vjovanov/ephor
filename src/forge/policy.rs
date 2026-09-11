@@ -225,6 +225,12 @@ pub fn pull_request_item(forge: &str, project: &str, pr: &PullRequest) -> Item {
         raw.insert("branch".to_string(), json!(branch));
     }
     raw.insert("repo".to_string(), json!(pr.repo));
+    // Carried only where the forge said something: absent is "nobody asked or
+    // nobody knows", which is a different answer from "not a draft"
+    // (§FS-004-quick-actions.6.1).
+    if let Some(draft) = pr.draft {
+        raw.insert("draft".to_string(), json!(draft));
+    }
     let threads = threads_json(&pr.threads);
     if threads.as_array().is_some_and(|list| !list.is_empty()) {
         raw.insert("threads".to_string(), threads);
@@ -470,6 +476,7 @@ mod tests {
             title: "t".to_string(),
             url: None,
             branch: None,
+            draft: None,
             updated_at: Utc::now(),
             role,
             state: Some(state.to_string()),

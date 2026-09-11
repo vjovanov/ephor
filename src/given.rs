@@ -53,6 +53,19 @@ impl Said {
     }
 }
 
+/// The input a value arrived on, where anything arrived at all — the flag
+/// where a reader typed one, the environment name where a program state set
+/// it (§FS-011-command-line.9).
+///
+/// What a refusal of a value the command cannot carry *at this width* names,
+/// so it quotes the spelling the caller actually used rather than the one they
+/// might have. Nothing is held to being a value here: a refusal is coming
+/// either way, and refusing a placeholder for the wrong reason would send the
+/// reader to fix the wrong thing.
+pub fn input(flag: &Option<String>, name: &str) -> Option<String> {
+    said(flag, name).map(|said| said.input)
+}
+
 /// A value this command can carry as it stands: anything but a placeholder
 /// whose runtime never filled it.
 ///

@@ -34,6 +34,7 @@ pub mod rebase;
 pub mod registry;
 pub mod scope;
 pub mod seams;
+pub mod sweep;
 pub mod table;
 pub mod ticket_ids;
 pub mod update;

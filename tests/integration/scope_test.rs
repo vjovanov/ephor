@@ -329,7 +329,10 @@ fn a_verb_that_names_one_target_refuses_the_selector() {
     two_orgs(tmp.path());
 
     for (named, argv) in [
-        ("rebase", vec!["rebase"]),
+        // `rebase` is no longer here: it is the one verb in the honouring
+        // enumeration on a condition (§FS-011-command-line.9), so a selector
+        // makes it sweep rather than refuse. `checkout` carries the class it
+        // used to stand for.
         ("checkout", vec!["checkout"]),
         ("restart", vec!["restart"]),
         ("failures", vec!["failures"]),
@@ -371,7 +374,7 @@ fn a_verb_that_names_one_target_refuses_the_selector() {
     // Every selector it was given, named, and the outcome on standard output.
     let out = ephor(tmp.path())
         .args([
-            "rebase",
+            "checkout",
             "--org",
             "foundation",
             "--tag",

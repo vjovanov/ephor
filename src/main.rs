@@ -156,7 +156,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
     // `--act` is taken only where the gate above one project can fire
     // (§FS-011-command-line.10).
     let act = scope::Act::of(&cli);
-    act.held_to(&verb, scope::sweeps(&cli.command))?;
+    act.held_to(&verb, scope::sweeps(&cli.command, &scope))?;
     // Resolved only where a verb reads a set of projects: resolving asks the
     // registry, and the verbs that refuse have nothing to ask it about.
     let projects = match honours {
@@ -171,7 +171,10 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Command::MarkRead(args) => return feed::commands::mark_read(args, &projects),
         Command::Failures(args) => return feed::commands::failures(args),
         Command::Restart(args) => return feed::commands::restart(args),
-        Command::Rebase(args) => return rebase::rebase(args),
+        // One checkout where no selector was given, and a sweep of every
+        // branch checkout in the scope where one was — the same verb, and the
+        // selector is what enters the second (§FS-004-quick-actions.6.1).
+        Command::Rebase(args) => return rebase::rebase(args, &projects, act),
         Command::Checkout(args) => return checkout::checkout(args),
         Command::Work(args) => return work::commands::work(args, &projects, act),
         // The abilities the screen used to hold alone (§FS-011-command-line).

@@ -104,12 +104,14 @@ id author{login} body createdAt reactions(first:50){nodes{content user{login}}}}
 /// pull request from an open one, and `repository` is what makes a forge-wide
 /// search usable at all.
 ///
-/// `headRefName` and `reviewDecision` are here because on this transport they
-/// are free: the graph hands them over with the row, where asking per pull
-/// request was a second request each, spent down the reader's longest list
-/// (§FS-001-forge-interface.8.3).
+/// `headRefName`, `reviewDecision` and `isDraft` are here because on this
+/// transport they are free: the graph hands them over with the row, where
+/// asking per pull request was a second request each, spent down the reader's
+/// longest list (§FS-001-forge-interface.8.3). `isDraft` is what tells a branch
+/// under review from one nobody has asked about yet, which is the difference
+/// an unattended sweep turns on (§FS-004-quick-actions.6.1).
 const SEARCH_SELECTION: &str = "... on PullRequest{\
-number title url updatedAt state headRefName reviewDecision \
+number title url updatedAt state headRefName reviewDecision isDraft \
 repository{nameWithOwner}}";
 
 /// The searches that put a pull request in front of the user, and the reason
@@ -441,6 +443,14 @@ fn head_branch(found: &Value) -> Option<String> {
         .map(String::from)
 }
 
+/// Whether the search says this pull request is still a draft. Absent where
+/// the row carried no such field — a host that does not report it — which is a
+/// different answer from "not a draft" and is kept apart from it
+/// (§FS-004-quick-actions.6.1).
+fn draft(found: &Value) -> Option<bool> {
+    found.get("isDraft").and_then(Value::as_bool)
+}
+
 /// What the review decided, as the search reported it. It is the author's
 /// question — whether they owe work — and absent where the forge has reached
 /// no verdict at all.
@@ -617,6 +627,7 @@ impl Provider for GithubPrs {
                     .to_string(),
                 url: pull.get("url").and_then(Value::as_str).map(String::from),
                 branch,
+                draft: draft(&pull),
                 updated_at: parse_github_time(pull.get("updatedAt").unwrap_or(&Value::Null)),
                 role: if author { Role::Author } else { Role::Reviewer },
                 state,

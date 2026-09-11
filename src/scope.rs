@@ -135,7 +135,15 @@ pub fn honoured(command: &Command) -> (String, Honours) {
         Command::MarkRead(_) => said("mark-read", Honours::Watched),
         Command::Failures(_) => said("failures", Honours::Nothing),
         Command::Restart(_) => said("restart", Honours::Nothing),
-        Command::Rebase(_) => said("rebase", Honours::Nothing),
+        // The one verb in the enumeration on a condition: given a selector it
+        // sweeps the projects that selector names, and given none it is the
+        // one-checkout verb it has always been (§FS-011-command-line.9). Both
+        // halves are this rule rather than an exception to it — a selector
+        // that is there is honoured, and a selector that is not there is
+        // nothing given — which is why the classification is unconditional
+        // even though the behaviour is not. What it sweeps *in* those projects
+        // is [`sweeps`], which does read the condition.
+        Command::Rebase(_) => said("rebase", Honours::Watched),
         Command::Checkout(_) => said("checkout", Honours::Nothing),
         Command::Work(args) => work_honoured(args),
         Command::Job(_) => said("job", Honours::Nothing),
@@ -198,6 +206,14 @@ pub enum Sweeps {
     /// above one project it reports what it would do and writes only under
     /// `--act`.
     Gated,
+    /// A sweep under a selector, and this invocation was given none
+    /// (§FS-004-quick-actions.6.1). What it writes here is the one checkout it
+    /// was given, which is the same act however wide the site is — so the gate
+    /// cannot fire and `--act` is refused, exactly as under [`Sweeps::Nothing`].
+    /// It is its own variant because the refusal may not say the verb sweeps
+    /// nothing: it sweeps, under a selector, and the reader is owed which form
+    /// takes the flag.
+    NothingWithoutASelector,
     /// The same sweep, and deliberately *not* held to the gate — the whole
     /// content of this variant is that the exemption is written down.
     /// `update` and `ensure-agents` rewrite files in every managed workspace
@@ -214,8 +230,20 @@ pub enum Sweeps {
 /// different answers for the same verb — `work list` and `work dispatch` read
 /// the same projects and only one of them writes in them — and a reader
 /// checking one rule should not have to read the other's arms to find it.
-pub fn sweeps(command: &Command) -> Sweeps {
+///
+/// `scope` is read by exactly one arm, and has to be: `rebase` writes across
+/// a set of projects when a selector named one and writes in the one checkout
+/// it was given when none did, and those are two sides of the gate
+/// (§FS-011-command-line.10).
+pub fn sweeps(command: &Command, scope: &Scope) -> Sweeps {
     match command {
+        // A verb whose pre-rule unit was narrower than one project is above
+        // the gate the moment it sweeps, at any width
+        // (§FS-011-command-line.10): `rebase` given a selector replays every
+        // branch checkout of every project that selector names, and given
+        // none it is about the one checkout it was handed.
+        Command::Rebase(_) if scope.selects_projects() => Sweeps::Gated,
+        Command::Rebase(_) => Sweeps::NothingWithoutASelector,
         // The managed-workspace sweeps. `validate` only reads the paths it
         // walks; the other two rewrite a file in every workspace, and are the
         // deferral this rule records rather than hides.
@@ -240,7 +268,6 @@ pub fn sweeps(command: &Command) -> Sweeps {
         | Command::MarkRead(_)
         | Command::Failures(_)
         | Command::Restart(_)
-        | Command::Rebase(_)
         | Command::Checkout(_)
         | Command::Job(_)
         | Command::Actions(_)
@@ -325,12 +352,43 @@ impl Act {
                 " --act lets a sweep act at a scope wider than one project, and {verb} is \
                  not held to that gate: it acts at every width, as it always has."
             )),
+            // Not "sweeps nothing": this verb sweeps, and what the reader is
+            // missing is the selector that makes it (§FS-011-command-line.10).
+            Sweeps::NothingWithoutASelector => says.push_str(&format!(
+                " --act lets a sweep act at a scope wider than one project, and this {verb} \
+                 sweeps nothing: with no selector it is about the one checkout it was given, \
+                 where the gate cannot fire. Pass --workspace, --tag or --org to sweep."
+            )),
             Sweeps::Gated => unreachable!("returned above"),
         }
-        says.push_str(" `work dispatch`, `work sync` and `work run` take it.");
+        says.push_str(
+            " `work dispatch`, `work sync`, `work run`, and `rebase` where a selector makes \
+             it sweep, take it.",
+        );
         // Exits 2 like a refused selector: both halves of the scope rule are
         // one configuration refusal for the caller (§FS-011-command-line.9).
         Err(registry_error(says))
+    }
+
+    /// The gate for a verb whose pre-rule unit was narrower than one project
+    /// (§FS-011-command-line.10): above the gate the moment it sweeps at all,
+    /// at any width, and the project count is not asked.
+    ///
+    /// [`Act::over`] counts in projects because one project resolved is what
+    /// those command lines did before the rule, byte for byte. That reason
+    /// does not carry here: `ephor rebase --workspace <one project>` resolves
+    /// to one project and would replay every branch checkout in it, which is
+    /// not the act the count was protecting (§FS-004-quick-actions.6.1).
+    pub fn over_a_sweep(&self, verb: &str) -> Gate {
+        if self.asked {
+            return Gate::acting();
+        }
+        Gate {
+            held: Some(format!(
+                "Nothing was written: {verb} sweeps every branch checkout the scope reaches, \
+                 and a sweep reports what it would do. Pass --act to do it."
+            )),
+        }
     }
 
     /// The gate for a run of `verb` that resolved to `projects` projects.
@@ -413,8 +471,9 @@ impl Scope {
         given
     }
 
-    /// Whether anything was given that names a set of projects.
-    fn selects_projects(&self) -> bool {
+    /// Whether anything was given that names a set of projects — which is
+    /// what decides whether `rebase` sweeps (§FS-004-quick-actions.6.1).
+    pub fn selects_projects(&self) -> bool {
         !self.workspaces.is_empty() || !self.tags.is_empty() || self.organization.is_some()
     }
 
@@ -595,6 +654,12 @@ impl Projects {
         self.named.is_some()
     }
 
+    /// What was typed, so a report or a refusal quotes the caller rather than
+    /// paraphrasing them. Empty where nothing was given.
+    pub fn said(&self) -> &str {
+        &self.said
+    }
+
     /// Whether this project is in scope.
     pub fn holds(&self, project: &str) -> bool {
         match &self.named {
@@ -704,18 +769,24 @@ mod tests {
     /// codes to learn one thing.
     #[test]
     fn a_verb_that_reads_no_projects_refuses_the_selector() {
-        let err = scope(&["--org", "graal", "rebase"])
-            .held_to("rebase", Honours::Nothing)
+        // `checkout` rather than `rebase`: `rebase` is now the one verb in the
+        // honouring enumeration on a condition (§FS-011-command-line.9), so
+        // the example of the class had to move to a verb still in it.
+        let err = scope(&["--org", "graal", "checkout"])
+            .held_to("checkout", Honours::Nothing)
             .unwrap_err();
         assert!(
             matches!(err, crate::error::EphorError::Registry(_)),
             "a refused selector must exit 2: {err:?}"
         );
         let refused = err.to_string();
-        assert!(refused.contains("rebase does not take --org"), "{refused}");
+        assert!(
+            refused.contains("checkout does not take --org"),
+            "{refused}"
+        );
         assert!(refused.contains("takes no scope selector"), "{refused}");
-        assert!(scope(&["rebase"])
-            .held_to("rebase", Honours::Nothing)
+        assert!(scope(&["checkout"])
+            .held_to("checkout", Honours::Nothing)
             .is_ok());
     }
 
@@ -853,7 +924,14 @@ mod tests {
     fn every_verb_is_on_one_side_of_the_rule() {
         let classified = |args: &[&str]| honoured(&cli(args).command);
         assert_eq!(classified(&["status"]), ("status".into(), Honours::Watched));
-        assert_eq!(classified(&["rebase"]), ("rebase".into(), Honours::Nothing));
+        // The verb in the enumeration on a condition: the classification is
+        // unconditional, because a selector that is not there is nothing given
+        // (§FS-011-command-line.9). What differs by the condition is [`sweeps`].
+        assert_eq!(classified(&["rebase"]), ("rebase".into(), Honours::Watched));
+        assert_eq!(
+            classified(&["checkout"]),
+            ("checkout".into(), Honours::Nothing)
+        );
         assert_eq!(
             classified(&["update"]),
             ("update".into(), Honours::Registry)
@@ -899,11 +977,19 @@ mod tests {
     /// joining it later is one word rather than a rediscovery.
     #[test]
     fn every_verb_says_what_it_sweeps() {
-        let swept = |args: &[&str]| sweeps(&cli(args).command);
+        let swept = |args: &[&str]| {
+            let cli = cli(args);
+            sweeps(&cli.command, &Scope::of(&cli))
+        };
         for gated in [
             vec!["work", "dispatch"],
             vec!["work", "sync"],
             vec!["work", "run"],
+            // The verb whose pre-rule unit was one checkout: above the gate
+            // the moment a selector makes it sweep (§FS-011-command-line.10).
+            vec!["--org", "foundation", "rebase"],
+            vec!["--workspace", "ephor", "rebase"],
+            vec!["--tag", "rust", "rebase"],
         ] {
             assert_eq!(swept(&gated), Sweeps::Gated, "{gated:?}");
         }
@@ -915,13 +1001,16 @@ mod tests {
             swept(&["ensure-agents", "--type", "monorepo"]),
             Sweeps::Nothing
         );
+        // Sweeping under a selector and about one checkout without one are
+        // two sides of the gate, and the refusal may not deny the first
+        // (§FS-011-command-line.10).
+        assert_eq!(swept(&["rebase"]), Sweeps::NothingWithoutASelector);
         for reading in [
             vec!["status"],
             vec!["feed"],
             vec!["refresh"],
             vec!["list"],
             vec!["validate"],
-            vec!["rebase"],
             vec!["checkout"],
             vec!["mark-read"],
             vec!["tui"],
@@ -944,14 +1033,38 @@ mod tests {
         assert!(act.held_to("work dispatch", Sweeps::Gated).is_ok());
         assert!(act.held_to("work sync", Sweeps::Gated).is_ok());
 
-        let err = act.held_to("rebase", Sweeps::Nothing).unwrap_err();
+        assert!(act.held_to("rebase", Sweeps::Gated).is_ok());
+
+        let err = act.held_to("checkout", Sweeps::Nothing).unwrap_err();
         assert!(
             matches!(err, crate::error::EphorError::Registry(_)),
             "a refused --act must exit 2: {err:?}"
         );
         let refused = err.to_string();
-        assert!(refused.contains("rebase does not take --act"), "{refused}");
+        assert!(
+            refused.contains("checkout does not take --act"),
+            "{refused}"
+        );
         assert!(refused.contains("sweeps no set of projects"), "{refused}");
+
+        // A `rebase` that sweeps nothing refuses the flag too — and says
+        // which form takes it rather than denying the verb sweeps at all.
+        let unscoped = act
+            .held_to("rebase", Sweeps::NothingWithoutASelector)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            unscoped.contains("rebase does not take --act"),
+            "{unscoped}"
+        );
+        assert!(
+            unscoped.contains("--workspace, --tag or --org"),
+            "{unscoped}"
+        );
+        assert!(
+            !unscoped.contains("sweeps no set of projects"),
+            "the refusal must not deny that a selector makes it sweep: {unscoped}"
+        );
 
         let deferred = act
             .held_to("update", Sweeps::Ungated)
@@ -973,7 +1086,12 @@ mod tests {
         // Nothing said, nothing to hold: every verb is free of the flag it
         // was not given.
         let silent = Act::default();
-        for sweeps in [Sweeps::Nothing, Sweeps::Gated, Sweeps::Ungated] {
+        for sweeps in [
+            Sweeps::Nothing,
+            Sweeps::Gated,
+            Sweeps::Ungated,
+            Sweeps::NothingWithoutASelector,
+        ] {
             assert!(silent.held_to("rebase", sweeps).is_ok());
         }
     }
@@ -1002,6 +1120,19 @@ mod tests {
         // And with the word said, today's behaviour at any width.
         assert!(!Act::asked().over("work dispatch", 4).holds());
         assert!(Gate::acting().says().is_none());
+
+        // A verb whose pre-rule unit was one checkout is not counted in
+        // projects at all: one project resolved still replays every branch
+        // checkout in it (§FS-011-command-line.10).
+        let sweep = silent.over_a_sweep("rebase");
+        assert!(sweep.holds());
+        let says = sweep.says().expect("a held gate says something");
+        assert!(
+            says.contains("rebase sweeps every branch checkout"),
+            "{says}"
+        );
+        assert!(says.contains("--act"), "{says}");
+        assert!(!Act::asked().over_a_sweep("rebase").holds());
     }
 
     /// Each verb's `--all` is that verb's own, and says what that verb means

@@ -318,6 +318,15 @@ The report is each verb's own dry run — `work run`, which has none, prints the
 work roots and the tickets it would run — and under `--json` it is that
 reading with `gated` and `says` added to it.
 
+`rebase` is the fourth, and it is counted differently:
+**a verb whose pre-rule unit was narrower than one project is above the gate
+the moment it sweeps, at any width.** One project resolved is not what
+`ephor rebase --workspace <project>` did before the rule — one *checkout* was —
+so the project count is not asked there
+([§8.11.1](#8111-sweeping-every-idle-checkout-onto-main)). A `rebase` that
+sweeps nothing is the one-checkout verb it was, outside this rule, and refuses
+the flag by name like anything else the gate cannot fire on.
+
 The width is what the scope *resolved* to, counted after `--project` and
 `--item`. One project reached is what this command line always did, byte for
 byte, and so is one matter: `--item` names a matter and not a sweep. A bare
@@ -2803,6 +2812,94 @@ to start there; with the shipped two-state machine they start in `fix`, where
 the brief tells the agent to run `ephor rebase` itself and resolve what it
 stops on.
 
+#### 8.11.1 Sweeping every idle checkout onto main
+
+Everything above is one checkout. Given a scope selector, the same replay is
+swept over **every branch checkout** of every project the selector names
+([§FS-004-quick-actions.6.1](functional-spec/FS-004-quick-actions.md#61-the-same-replay-over-every-checkout-nobody-is-holding)):
+
+```bash
+ephor rebase --org foundation            # what it would do, and nothing else
+ephor rebase --org foundation --act      # do it
+ephor rebase --workspace widget --act    # one project's branches
+```
+
+A selector is what enters it and nothing else. A bare `ephor rebase` inside a
+checkout is what it always was, byte for byte; the three wide forms exited 2
+before this and sweep now, which is the one thing about this verb that changed
+for a caller. `--project` keeps the meaning it has — *which project the one
+checkout belongs to* — and is **refused beside a selector**, exit 2, as are
+`--checkout`, `--item`, `--dispatch`, `--hand`, `--onto` and `--upstream`: each
+of them names one checkout or one matter, and a sweep has neither. Every one of
+those command lines exits 2 today as well, so nothing that works now gains a
+refusal. `--report` needs no such refusal and writes the sweep's own report.
+
+**It writes only under `--act`, at any width.** The gate elsewhere counts
+projects, because one project resolved is what those command lines did before
+the rule ([§3.2](#a-sweep-that-writes-reports-first---act)). That reason does
+not carry here: `rebase`'s byte-for-byte was one *checkout*, so
+`ephor rebase --workspace <one project>` would replay every branch checkout in
+it, which is not the act the count was protecting. A `rebase` that sweeps
+nothing is outside the rule entirely, and refuses the flag by name.
+
+**What it enumerates**, and the four questions asked before any git runs. The
+project's main-branch checkout is not swept — that directory is `ephor update`'s,
+and where both could claim it `update` wins, because branch drift is the whole
+subject here. Of the rest, a checkout is **passed over** — said, with its
+reason, never silently skipped — when:
+
+1. **a live run holds the tree.** The one that matters: an agent mid-edit in a
+   working tree rebased under it loses work nothing recovers. The same reading
+   the `work run --due` sweep makes, over the tree rather than over the kind of
+   caller, and never forced — `--force` is the reader's word about a run they
+   asked for by name, and it reaches no sweep
+   ([§FS-005-dispatch.24](functional-spec/FS-005-dispatch.md#24-work-nobody-has-to-start-starts-itself));
+2. **the branch has an open pull request that is not a draft.** A branch under
+   review is somebody's to move. A draft does not protect it, because a draft
+   is not yet anybody's to review;
+3. **a conflict ticket from an earlier sweep is still open about it.**
+   Otherwise an hourly timer retries one conflict forever.
+
+**The review answer comes from what the watch already knows** — a cached
+matter, not finished, whose head branch is this branch — freshened once per
+project where the cache has aged past the TTL, the way a `status` reading is,
+and never once per branch. Where after that there is still no current reading —
+no cached feed, or a slot stale or failed — **none of that project's checkouts
+is replayed**: it is reported as not reached and the sweep exits non-zero.
+*Could not tell* is not *no*, and the branch that question protects is exactly
+the one nobody is present to protect by hand. For the same reason an open pull
+request whose draft state the forge never reported protects the branch. One
+project that cannot be read stops that project and no other.
+
+**A conflict puts the tree back and is always reported.** The sweep asks the
+replay for the restoring disposition ([§8.11](#811-rebasing-a-branch-that-has-fallen-behind)),
+so a checkout it stopped on is left on the commit it was on with a clean
+working tree, and the conflict is in the sweep's own report, in prose and under
+`--json` alike. Where the project's work configuration names a `rebase-sweep`
+recipe, the conflict is **also** a ticket, in that project's own work root and
+in one plan named after the sweep, with one ticket per conflicted checkout
+appended by every later sweep. The ticket says the tree was restored — without
+which a reader sent to find a conflicted working tree finds a clean one and
+doubts the ticket. A ticket that could not be opened does not swallow the
+report.
+
+**Forty checkouts become one exit code**, and conflict wins, which is the
+precedence one rebase already has.
+
+| Exit | Means |
+|---|---|
+| `0` | every checkout is replayed, level, or passed over — all good ends |
+| `1` | a checkout was refused, or a project's review reading could not be had |
+| `3` | a checkout conflicted; its tree was put back and the report says so |
+
+The counts are in the report either way, and under `--json` the reading carries
+one row per checkout with `outcome` — `replayed`, `level`, `passed-over`,
+`conflicted`, `refused`, or `would-replay` for a run held at the gate — each
+nesting that checkout's own `rebase --json` where a replay ran.
+
+**And it runs with nobody watching**: `systemd/ephor-rebase-sweep.{service,timer}`,
+hourly ([§10.1](#101-timers)).
+
 ### 8.12 An answer comes back as a proposal
 
 Often the next move on a matter is not a change but a reply. The shipped
@@ -3778,16 +3875,30 @@ Written down rather than left as an absence
 
 ```bash
 mkdir -p ~/.config/systemd/user
-ln -sf ~/f/ephor/systemd/ephor-refresh.{service,timer}   ~/.config/systemd/user/
-ln -sf ~/f/ephor/systemd/ephor-work-sync.{service,timer} ~/.config/systemd/user/
+ln -sf ~/f/ephor/systemd/ephor-refresh.{service,timer}      ~/.config/systemd/user/
+ln -sf ~/f/ephor/systemd/ephor-work-sync.{service,timer}    ~/.config/systemd/user/
+ln -sf ~/f/ephor/systemd/ephor-rebase-sweep.{service,timer} ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now ephor-refresh.timer
 systemctl --user enable --now ephor-work-sync.timer
+systemctl --user enable --now ephor-rebase-sweep.timer
 ```
 
 `ephor-refresh` fetches every ten minutes. `ephor-work-sync` refreshes and then
 reopens everything whose item has moved, half-hourly — it writes tickets and
 runs nothing, because spawning agents stays something you ask for.
+
+`ephor-rebase-sweep` replays every idle branch checkout onto its project's main
+branch, hourly ([§8.11.1](#8111-sweeping-every-idle-checkout-onto-main)), so a
+checkout nobody has opened for a day is usually current when somebody does. Each
+pair stands on its own: enable this one and neither of the others, if that is
+what you want. Edit the selector in the service file — it ships with `--org
+foundation` — and note that it is the third unit here to pass `--act`, for the
+same reason the second does: it is a sweep with nobody watching, and your
+consent is at adopting the unit rather than at each run. It is ordered after
+`ephor-refresh` so the pull-request reading it asks for is usually current;
+that is ordering and not a guarantee, and a project whose reading it cannot
+have has none of its checkouts replayed.
 
 ### 10.2 A shell prompt
 
@@ -3969,7 +4080,8 @@ stalled on *"required outputs are missing"* no matter how well it reasons.
 ephor list | validate | ensure-agents | update            # the registry
 ephor refresh | status | feed | mark-read | failures      # the feed
 ephor restart --scope failed|all                          # run a gate again
-ephor rebase | checkout | branches                        # the checkout
+ephor rebase [--org O | --workspace W | --tag T] [--act]  # one checkout, or a sweep
+ephor checkout | branches                                 # the checkout
 ephor check | validate --manifest | schema                # the project interface
 ephor actions [list] | actions run <id> | actions open <id>  # what may be done here
 ephor thread <id> | react | tick | reply                  # a conversation
