@@ -1536,6 +1536,16 @@ fn run_work(
     gate: &crate::scope::Gate,
 ) -> Result<ExitCode> {
     let mut dispatcher = Dispatcher::load(config)?;
+    // An id the record has no work about at all is an input that names
+    // nothing, and it is refused by name before anything else is asked —
+    // whether a runtime is bound here is not what is wrong with it
+    // (§FS-005-dispatch.30, §FS-011-command-line.9). The `--due` sweep
+    // ignores `--item` and walks every project, so it is never this.
+    if let Some(item) = args.item.as_deref().filter(|_| !args.due) {
+        if !dispatcher.ledger.entries.contains_key(item) {
+            return Err(EphorError::Registry(crate::work::no_work_recorded(item)));
+        }
+    }
     // The runtime is a rung like every other capacity ephor leans on, and the
     // refusal is the table's sentence rather than this command's own
     // (§AR-005-capabilities.2). A held run starts nothing, so it does not lean
@@ -1547,23 +1557,14 @@ fn run_work(
             return Err(EphorError::Command(refusal));
         }
     }
-    let entries: Vec<Entry> = dispatcher
-        .ledger
-        .entries
-        .iter()
-        .filter(|(id, entry)| {
-            (projects.is_empty() || projects.contains(&entry.project))
-                && args.item.as_ref().is_none_or(|item| item == *id)
-        })
-        .map(|(_, entry)| entry.clone())
-        .collect();
     // Grouped by root, because the tickets in one root are about one checkout
     // and two agents in one working tree edit the same files — but named plan
     // by plan, so a runtime project the reader keeps there for their own work
     // is not swept up by ephor's. A hand the plan language could not spell
-    // rides the run as agent flags (§FS-005-dispatch.14), so plans wanting
-    // different flags run separately: flags are per-run, and one flag over
-    // two hands would re-aim one of them.
+    // rides the run as agent flags (§FS-005-dispatch.14), and where the
+    // matters in one root want different ones the run carries none: two runs
+    // over one working tree would refuse each other, so one root is one run
+    // (§FS-005-dispatch.30).
     // (work root, checkout to run from, the hand riding the run, the plans)
     type Group = (
         std::path::PathBuf,
@@ -1586,25 +1587,23 @@ fn run_work(
         }
         return swept(config, &mut dispatcher, args, projects);
     }
+    // What the key reaches, read the way the sweep reads it and narrowed to
+    // the matter where one was named: the roots on disk, the tasks where the
+    // runtime wrote them, judged by the machine in force for the plan they are
+    // in — the matter's own plan and every one a workflow laid beside it
+    // (§FS-005-dispatch.30). The ledger's memory of the tickets ephor opened
+    // is what this used to read, and a matter whose work was entirely laid had
+    // none of them.
+    let due = dispatcher.runnable_of(args.item.as_deref(), projects, Utc::now())?;
     let mut roots: Vec<Group> = Vec::new();
-    for entry in &entries {
-        let status = dispatcher.status_of(entry, None);
-        if status.missing || status.open_tickets() == 0 {
-            continue;
-        }
-        let hand = dispatcher.run_hand(entry, &status);
-        match roots
-            .iter_mut()
-            .find(|(root, _, flags, _)| root == &entry.root && flags == &hand)
-        {
-            Some((_, _, _, plans)) => plans.push(entry.plan_id.clone()),
-            None => roots.push((
-                entry.root.clone(),
-                entry.checkout(),
-                hand,
-                vec![entry.plan_id.clone()],
-            )),
-        }
+    for root in &due {
+        let hand = dispatcher.run_hand_over(root);
+        roots.push((
+            root.root.clone(),
+            root.checkout.clone(),
+            hand,
+            root.plans.clone(),
+        ));
     }
     // What the reader should know about who gets this run — a hand that went
     // unbound, a name nothing resolves — said once, before the terminal is
@@ -1667,15 +1666,22 @@ fn run_work(
         return Ok(ExitCode::SUCCESS);
     }
 
+    // The record knows the matter — the refusal above settled that — and
+    // nothing in its work is a run's to advance. Not a refusal: the command
+    // was understood and answered, so it exits 0, names the matter, and
+    // carries the same sentence into the reading as `says`, which is where a
+    // machine reader's half of the reason sits
+    // (§FS-005-dispatch.30, §REQ-002-parity.3).
     if roots.is_empty() {
+        let says = crate::work::nothing_to_run(args.item.as_deref());
         if args.json {
             println!(
                 "{}",
-                serde_json::json!({ "runs": [], "failed": 0, "refused": 0 })
+                serde_json::json!({ "runs": [], "failed": 0, "refused": 0, "says": says })
             );
             return Ok(ExitCode::SUCCESS);
         }
-        println!("Nothing to run: no dispatched ticket is still open.");
+        println!("{says}");
         return Ok(ExitCode::SUCCESS);
     }
     // A run a reader explicitly starts keeps being the reader's move, so a
@@ -1684,11 +1690,7 @@ fn run_work(
     // (§FS-015-spend-ceiling.6). Said where a run is actually about to
     // start, so a ceiling is never announced over a command that would have
     // run nothing anyway.
-    let over: Vec<String> = entries
-        .iter()
-        .filter(|entry| roots.iter().any(|(root, ..)| &entry.root == root))
-        .map(|entry| entry.project.clone())
-        .collect();
+    let over: Vec<String> = due.iter().map(|root| root.project.clone()).collect();
     if let Some(full) = dispatcher.budgets(Utc::now()).over(&over) {
         eprintln!("note: {}", full.says);
     }
