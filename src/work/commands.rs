@@ -1546,6 +1546,10 @@ fn run_work(
             return Err(EphorError::Registry(crate::work::no_work_recorded(item)));
         }
     }
+    // Every value the reader gave is honoured or refused before the verb does
+    // anything at all, so a refused exclusion happens instead of the work
+    // rather than halfway through it (§FS-011-command-line.9).
+    let excluded = excluded(&dispatcher, args)?;
     // The runtime is a rung like every other capacity ephor leans on, and the
     // refusal is the table's sentence rather than this command's own
     // (§AR-005-capabilities.2). A held run starts nothing, so it does not lean
@@ -1591,9 +1595,9 @@ fn run_work(
         // here: the roots the sweep says are due, and the tickets that made
         // each one due (§FS-011-command-line.10).
         if gate.holds() {
-            return would_sweep(&mut dispatcher, args, projects, gate);
+            return would_sweep(&mut dispatcher, args, projects, &excluded, gate);
         }
-        return swept(config, &mut dispatcher, args, projects);
+        return swept(config, &mut dispatcher, args, projects, &excluded);
     }
     // What the key reaches, read the way the sweep reads it and narrowed to
     // the matter where one was named: the roots on disk, the tasks where the
@@ -1967,7 +1971,17 @@ fn started(
     json: bool,
     budget: crate::work::spend::Budget,
 ) -> Result<()> {
-    let launched = dispatcher.start_due(Utc::now(), projects, runner_args, None, budget)?;
+    // Nothing is excluded here: `--except` is one sweep's own instruction
+    // from the reader who typed it, and nobody typed this one
+    // (§FS-005-dispatch.24).
+    let launched = dispatcher.start_due(
+        Utc::now(),
+        projects,
+        runner_args,
+        None,
+        &crate::work::Excluded::default(),
+        budget,
+    )?;
     // A budget that is full where a person asked for the sweep is said and
     // stops nothing, on the error stream where a warning belongs — before the
     // runs, because a sweep that started nothing is still a sweep whose
@@ -2003,6 +2017,7 @@ fn swept(
     dispatcher: &mut Dispatcher,
     args: &crate::cli::WorkRunArgs,
     projects: &[String],
+    excluded: &crate::work::Excluded,
 ) -> Result<ExitCode> {
     let style = Style::detect();
     let swept = dispatcher.start_due(
@@ -2010,6 +2025,7 @@ fn swept(
         projects,
         &args.runner_args,
         args.max_concurrent,
+        excluded,
         crate::work::spend::Budget::Binds,
     )?;
     let launched = &swept.runs;
@@ -2100,10 +2116,15 @@ fn would_sweep(
     dispatcher: &mut Dispatcher,
     args: &crate::cli::WorkRunArgs,
     projects: &[String],
+    excluded: &crate::work::Excluded,
     gate: &crate::scope::Gate,
 ) -> Result<ExitCode> {
     let style = Style::detect();
-    let due = dispatcher.due_now(Utc::now(), projects)?;
+    // What the sweep would say, exclusions and rests included: a root it
+    // would pass over is reported as passed over rather than as `would-run`,
+    // because a report that promised a run the act would not make is a report
+    // of a second opinion (§FS-011-command-line.10).
+    let due = excluded.mark(dispatcher.due_now(Utc::now(), projects)?);
     if args.json {
         let rows: Vec<serde_json::Value> = due
             .iter()
@@ -2113,7 +2134,11 @@ fn would_sweep(
                     "project": root.project,
                     "item": root.item,
                     "tickets": root.tickets,
-                    "outcome": "would-run",
+                    "outcome": match root.passed_over() {
+                        Some(_) => "passed-over",
+                        None => "would-run",
+                    },
+                    "reason": root.passed_over(),
                 }))
             })
             .collect();
@@ -2135,7 +2160,10 @@ fn would_sweep(
         println!("Nothing is due: no work root is waiting for a run.");
     } else {
         for root in &due {
-            println!("would run {}", root.root.display());
+            match root.passed_over() {
+                Some(why) => println!("↷ {} passed over: {why}", root.root.display()),
+                None => println!("would run {}", root.root.display()),
+            }
             // What made the root due, the same reason the act prints
             // (§FS-005-dispatch.24).
             println!("  {}", style.dim(&root.tickets.join(", ")));
@@ -2148,6 +2176,39 @@ fn would_sweep(
         println!("note: {}", style.dim(note));
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// The work roots `--except` names, each with the value it was named by
+/// (§FS-005-dispatch.24).
+///
+/// A value is a work root where a directory is on disk at it, and otherwise
+/// the matter the ledger knows by that id — so a driver that knows which item
+/// is stuck need not know where its work root is. One that is neither is
+/// refused quoting what it held: an exclusion that silently bound nothing
+/// would tell a driver its own back-off is working when it is not
+/// (§FS-011-command-line.9).
+fn excluded(
+    dispatcher: &Dispatcher,
+    args: &crate::cli::WorkRunArgs,
+) -> Result<crate::work::Excluded> {
+    let mut named: Vec<(std::path::PathBuf, String)> = Vec::new();
+    for value in &args.except {
+        let path = crate::paths::resolve_path(value);
+        if path.is_dir() {
+            named.push((path, value.clone()));
+            continue;
+        }
+        match dispatcher.ledger.entries.get(value) {
+            Some(entry) => named.push((entry.root.clone(), value.clone())),
+            None => {
+                return Err(registry_error(format!(
+                    "--except '{value}' is neither a work root on this machine nor a matter \
+                     this ledger knows — `ephor work list` says what it knows."
+                )))
+            }
+        }
+    }
+    Ok(crate::work::Excluded::of(named))
 }
 
 /// A sweep is a success unless a launch actually failed: a root passed over

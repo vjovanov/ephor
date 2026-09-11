@@ -496,6 +496,15 @@ pub struct WorkRunArgs {
     #[arg(long, value_name = "N", requires = "due")]
     pub max_concurrent: Option<usize>,
 
+    /// Leave a work root out of this due sweep: a work root on disk, or the
+    /// id of a matter whose work lives in one. May be passed multiple times.
+    /// No judgement of ephor's own is in it — it is for the driver carrying
+    /// its own back-off — and it excludes without narrowing the width the
+    /// `--act` gate is counted over (§FS-005-dispatch.24,
+    /// §FS-011-command-line.10).
+    #[arg(long, value_name = "ROOT|ITEM", requires = "due")]
+    pub except: Vec<String>,
+
     /// Keep the terminal and watch the run, as this command always did
     /// (§FS-011-command-line.8). Without it the run starts detached and this
     /// prints the id it was given — which is also what a runner that cannot

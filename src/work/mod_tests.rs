@@ -67,6 +67,7 @@ fn the_roots_are_the_configured_places_and_the_ledger_keeps_its_matter() {
         pools: Default::default(),
         entries: BTreeMap::new(),
         starts: BTreeMap::new(),
+        advances: BTreeMap::new(),
     };
     ledger.entries.insert(
         "forge:widget/7".to_string(),
@@ -472,6 +473,7 @@ fn a_shared_root_is_listed_once_and_an_item_template_is_skipped() {
         pools: Default::default(),
         entries: BTreeMap::new(),
         starts: BTreeMap::new(),
+        advances: BTreeMap::new(),
     };
     let groups = enumerate_roots(
         &WorkConfig::default(),
@@ -523,6 +525,7 @@ fn an_aliased_workspace_is_one_root_not_two() {
         pools: Default::default(),
         entries: BTreeMap::new(),
         starts: BTreeMap::new(),
+        advances: BTreeMap::new(),
     };
     let groups = enumerate_roots(
         &WorkConfig::default(),
@@ -609,6 +612,7 @@ fn a_plan_under_an_organization_root_is_enumerated_and_one_with_no_answer_is_ski
         pools: Default::default(),
         entries: BTreeMap::new(),
         starts: BTreeMap::new(),
+        advances: BTreeMap::new(),
     };
     let groups = enumerate_roots(
         &WorkConfig::default(),
@@ -857,6 +861,7 @@ fn empty_ledger() -> Ledger {
         pools: Default::default(),
         entries: BTreeMap::new(),
         starts: BTreeMap::new(),
+        advances: BTreeMap::new(),
     }
 }
 
@@ -872,6 +877,9 @@ fn candidate(id: &str, project: &str) -> Due {
         items: vec![id.to_string()],
         held_by: None,
         refusal: None,
+        excluded: None,
+        rested: None,
+        verdict: None,
     }
 }
 
@@ -1765,6 +1773,277 @@ fn a_root_whose_start_failed_rests_before_it_is_tried_again() {
         sweep(&ledger, now + chrono::Duration::minutes(6)).is_empty(),
         "the interval grows with each consecutive failure"
     );
+}
+
+/// A finished run's own record of itself, left on the root the way a run
+/// leaves one: one slot released in `outcome`, and one pass saying whether it
+/// moved anything (§FS-005-dispatch.15.2).
+fn last_run(root: &Path, id: &str, outcome: &str, progressed: bool) {
+    let stream = root.join(runtime::events::STREAM);
+    fs::create_dir_all(stream.parent().unwrap()).unwrap();
+    fs::write(
+        &stream,
+        format!(
+            concat!(
+                r#"{{"seq":1,"ts":"2026-09-11T09:00:00Z","event":"run_started","schema":1,"#,
+                r#""run_id":"{id}","workspace":"/w","parallel":1,"total_tasks":1}}"#,
+                "\n",
+                r#"{{"seq":2,"ts":"2026-09-11T09:05:00Z","event":"slot_released","slot":0,"#,
+                r#""task":"widget-42.fix-gate-1","from":"fix","to":"fix","#,
+                r#""log_path":"runtime/logs/a.log","outcome":"{outcome}","exit_code":1}}"#,
+                "\n",
+                r#"{{"seq":3,"ts":"2026-09-11T09:05:01Z","event":"pass_ended","pass":1,"#,
+                r#""progressed":{progressed}}}"#,
+                "\n",
+                r#"{{"seq":4,"ts":"2026-09-11T09:05:02Z","event":"run_finished","#,
+                r#""summary":{{"agents":1,"terminal":0}}}}"#,
+                "\n",
+            ),
+            id = id,
+            outcome = outcome,
+            progressed = progressed,
+        ),
+    )
+    .unwrap();
+}
+
+/// What the ledger remembers about the runs on one root.
+fn remembering(root: &Path, run: &str, misses: u32, at: DateTime<Utc>) -> Ledger {
+    let mut ledger = empty_ledger();
+    ledger.advances.insert(
+        root.to_string_lossy().into_owned(),
+        Judged {
+            run: run.to_string(),
+            misses,
+            at,
+        },
+    );
+    ledger
+}
+
+/// The reproduction, from the inside. A root whose last run advanced nothing
+/// is **marked** rather than dropped — a row that is not there is a sweep
+/// that quietly did less — and it carries the verdict an acting sweep keeps
+/// (§FS-005-dispatch.24).
+#[test]
+fn a_root_whose_last_run_advanced_nothing_is_marked_rather_than_dropped() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("panta");
+    let group = due_root(&root, &ticket_at("fix-gate-1", "collect"));
+    last_run(&root, "acme-run-1", "failed", false);
+    let now = Utc::now();
+
+    let due = due_among(
+        &work_config(),
+        std::slice::from_ref(&group),
+        &asking(&["fix-gate"]),
+        &laying(&[]),
+        &empty_ledger(),
+        now,
+        Reach::Sweep,
+    );
+    assert_eq!(due.len(), 1, "a rested root is still a row");
+    let why = due[0].passed_over().expect("it is passed over").to_string();
+    assert!(why.contains("advanced nothing"), "{why}");
+    assert!(
+        why.contains("acme-run-1"),
+        "it names the run it judged: {why}"
+    );
+    match &due[0].verdict {
+        Some(Verdict::Nothing(judged)) => {
+            assert_eq!(judged.run, "acme-run-1");
+            assert_eq!(judged.misses, 1);
+        }
+        other => panic!("the sweep took no verdict to keep: {other:?}"),
+    }
+}
+
+/// A run that moved something drops whatever was remembered, whole: the root
+/// is admitted again at once rather than at the end of an interval it no
+/// longer deserves (§FS-005-dispatch.24).
+#[test]
+fn a_run_that_advanced_drops_whatever_was_remembered() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("panta");
+    let group = due_root(&root, &ticket_at("fix-gate-1", "collect"));
+    let now = Utc::now();
+    let sweep = |ledger: &Ledger| {
+        due_among(
+            &work_config(),
+            std::slice::from_ref(&group),
+            &asking(&["fix-gate"]),
+            &laying(&[]),
+            ledger,
+            now,
+            Reach::Sweep,
+        )
+    };
+
+    // A completing slot is movement even where no pass claimed any.
+    last_run(&root, "acme-run-2", "completed", false);
+    let due = sweep(&remembering(&root, "acme-run-1", 2, now));
+    assert_eq!(due.len(), 1);
+    assert_eq!(due[0].passed_over(), None, "it moved, so it is not rested");
+    assert!(matches!(due[0].verdict, Some(Verdict::Advanced)));
+
+    // And so is a pass that progressed, with every slot failed.
+    last_run(&root, "acme-run-2", "failed", true);
+    let due = sweep(&remembering(&root, "acme-run-1", 2, now));
+    assert_eq!(due[0].passed_over(), None);
+    assert!(matches!(due[0].verdict, Some(Verdict::Advanced)));
+}
+
+/// One run is never counted twice, however often the sweep runs over it: the
+/// verdict stands as it was taken, the rest is still dated from then, and
+/// when the interval is out the root is admitted again with the count exactly
+/// where it was (§FS-005-dispatch.24).
+#[test]
+fn the_same_run_is_judged_once_and_its_rest_lapses() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("panta");
+    let group = due_root(&root, &ticket_at("fix-gate-1", "collect"));
+    last_run(&root, "acme-run-1", "failed", false);
+    let at = Utc::now();
+    let sweep = |now| {
+        due_among(
+            &work_config(),
+            std::slice::from_ref(&group),
+            &asking(&["fix-gate"]),
+            &laying(&[]),
+            &remembering(&root, "acme-run-1", 1, at),
+            now,
+            Reach::Sweep,
+        )
+    };
+
+    let resting = sweep(at + chrono::Duration::minutes(1));
+    assert!(
+        resting[0].passed_over().is_some(),
+        "it has just been judged"
+    );
+
+    let lapsed = sweep(at + chrono::Duration::minutes(6));
+    assert_eq!(lapsed[0].passed_over(), None, "the rest is out");
+    match &lapsed[0].verdict {
+        Some(Verdict::Nothing(judged)) => {
+            assert_eq!(judged.misses, 1, "the same run counted a second miss");
+            assert_eq!(judged.at, at, "and the rest was re-dated from this sweep");
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+/// Where the rest ends. Past three consecutive runs that advanced nothing the
+/// root stops being rested and stops being admitted at all, and no interval
+/// lifts that — another run is not the fix, and the root is somebody's
+/// (§FS-005-dispatch.24, §FS-005-dispatch.11).
+#[test]
+fn a_third_run_that_advanced_nothing_holds_the_root_rather_than_resting_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("panta");
+    let group = due_root(&root, &ticket_at("fix-gate-1", "collect"));
+    last_run(&root, "acme-run-3", "failed", false);
+    let at = Utc::now();
+    let sweep = |now| {
+        due_among(
+            &work_config(),
+            std::slice::from_ref(&group),
+            &asking(&["fix-gate"]),
+            &laying(&[]),
+            &remembering(&root, "acme-run-2", 2, at),
+            now,
+            Reach::Sweep,
+        )
+    };
+
+    let due = sweep(at);
+    let why = due[0].passed_over().expect("held").to_string();
+    assert!(why.contains("advanced nothing"), "{why}");
+    assert!(why.contains("start one by hand"), "{why}");
+    assert!(matches!(
+        &due[0].verdict,
+        Some(Verdict::Nothing(judged)) if judged.misses == 3
+    ));
+    // A week later it is still the reader's, because this is not an interval.
+    assert!(sweep(at + chrono::Duration::days(7))[0]
+        .passed_over()
+        .is_some());
+}
+
+/// An outcome spelling this reader does not know rests no root and counts no
+/// miss: the sweep behaves exactly as it did before the rule existed. The day
+/// the runtime learns a new outcome word must not be the day healthy roots
+/// start resting (§FS-005-dispatch.24, §AR-007-runtime.3).
+#[test]
+fn a_reading_it_cannot_make_leaves_the_sweep_as_it_was() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("panta");
+    let group = due_root(&root, &ticket_at("fix-gate-1", "collect"));
+    let now = Utc::now();
+    let sweep = |ledger: &Ledger| {
+        due_among(
+            &work_config(),
+            std::slice::from_ref(&group),
+            &asking(&["fix-gate"]),
+            &laying(&[]),
+            ledger,
+            now,
+            Reach::Sweep,
+        )
+    };
+
+    // A sixth outcome word.
+    last_run(&root, "acme-run-1", "deferred", false);
+    let due = sweep(&remembering(&root, "acme-run-1", 2, now));
+    assert_eq!(due[0].passed_over(), None);
+    assert!(due[0].verdict.is_none(), "no verdict is taken at all");
+
+    // And a root with no stream at all: the ordinary case, and never an error.
+    fs::remove_file(root.join(runtime::events::STREAM)).unwrap();
+    let bare = sweep(&empty_ledger());
+    assert_eq!(bare.len(), 1);
+    assert_eq!(bare[0].passed_over(), None);
+    assert!(bare[0].verdict.is_none());
+}
+
+/// The reader's own skip, with no judgement in it — and its place in the
+/// order. A root two reasons would pass over is passed over once, by the
+/// first: naming the instruction back is what tells the driver the flag took
+/// effect (§FS-005-dispatch.24).
+#[test]
+fn the_readers_exclusion_marks_the_root_and_is_the_reason_that_is_said() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("panta");
+    let group = due_root(&root, &ticket_at("fix-gate-1", "collect"));
+    last_run(&root, "acme-run-1", "failed", false);
+    let due = due_among(
+        &work_config(),
+        std::slice::from_ref(&group),
+        &asking(&["fix-gate"]),
+        &laying(&[]),
+        &empty_ledger(),
+        Utc::now(),
+        Reach::Sweep,
+    );
+    assert!(due[0].rested.is_some(), "and it is resting as well");
+
+    let excluded =
+        Excluded::of(vec![(root.clone(), root.to_string_lossy().into_owned())]).mark(due.clone());
+    assert_eq!(excluded.len(), 1, "an excluded root is still a row");
+    let why = excluded[0].passed_over().expect("excluded").to_string();
+    assert!(why.contains("--except"), "{why}");
+    assert!(why.contains(&root.to_string_lossy().into_owned()), "{why}");
+
+    // A root nothing named keeps whatever reason it had of its own.
+    let untouched = Excluded::of(vec![(
+        tmp.path().join("elsewhere"),
+        "elsewhere".to_string(),
+    )])
+    .mark(due);
+    assert!(untouched[0].excluded.is_none());
+    assert!(untouched[0]
+        .passed_over()
+        .is_some_and(|why| why.contains("advanced nothing")));
 }
 
 /// A ticket a hand appended is due exactly as a dispatched one: the

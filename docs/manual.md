@@ -2506,7 +2506,8 @@ ephor work dispatch [--project P] [--item ID] [--recipe R] [--kind K]
 ephor work ask --item ID [WORDS…] [--state S] [--dry-run]
 ephor work sync [--project P] [--dry-run] [--act]
 ephor work cancel --item ID TICKET… [--why WORDS] [--dry-run]
-ephor work run [--project P] [--item ID] [--due [--max-concurrent N]] [--watch] [--force] [--act] [-- RHEI_ARGS…]
+ephor work run [--project P] [--item ID] [--due [--max-concurrent N] [--except ROOT|ITEM]…]
+               [--watch] [--force] [--act] [-- RHEI_ARGS…]
 ephor work workflows [--project P] [WORKFLOW] [--json]
 ephor work lay ENTRY --item ID [--values FILE]… [--set INPUT=VALUE]… [--hand H] [--dry-run]
 ephor work forget [--item ID | --done | --missing]
@@ -2585,7 +2586,28 @@ ephor work states
   like and starts one run however many times you invoke it. A root whose start
   failed rests before
   it is tried again, longer each consecutive time, so a runner that refuses
-  cannot become a spawn loop. Where the runner has no detached shape the sweep
+  cannot become a spawn loop. A root whose last run **started and advanced
+  nothing** rests the same way and for the same reason, because the start
+  worked and so nothing was remembered of it: the sweep reads what that run
+  said of itself — did any pass it recorded report progress, did any slot it
+  released end in a completing outcome — and either is enough to count as
+  movement, while an outcome word this reader does not recognize leaves the
+  reading inconclusive and rests nothing. The interval is the same five
+  minutes doubling to two hours, and it ends: past three consecutive runs that
+  advanced nothing the root is not started at all until one advances there or
+  you start one by hand, and every sweep says so in the row where it used to
+  say `started`. A run that moves something drops the memory at once. None of
+  this ever refuses a run you asked for by name — `ephor work run --item <id>`
+  on a root the sweep has given up on still runs it, and `--force` neither
+  lifts this nor needs to. `--except <root|item>` is the same skip with no
+  judgement in it: give it a work root on disk, or the id of a matter whose
+  work lives in one, as often as you like, and each named root is left out of
+  this one sweep and named back in the row and in `--json`. A value that is
+  neither is refused quoting it, and so is `--except` without `--due`. What it
+  will not do is narrow the width the `--act` gate is counted over
+  ([§FS-011-command-line.10](functional-spec/FS-011-command-line.md#10-a-mutating-verb-above-one-project-reports-and-acts-under---act)): a
+  sweep reaching four projects that excludes every root but one is still a
+  sweep over four. Where the runner has no detached shape the sweep
   starts nothing and says so: a run nobody asked for must not take a terminal.
   Nothing is due unless a recipe or a laying entry asked for it — silence
   still means you press the key. Three nested ceilings bound the roots in

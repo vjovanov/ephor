@@ -42,6 +42,28 @@ ships, the previous "latest" section moves verbatim to
 
 ### Changed
 
+- **A due sweep stops restarting a root whose runs advance nothing**
+  ([§FS-005-dispatch.24](functional-spec/FS-005-dispatch.md#24-work-nobody-has-to-start-starts-itself),
+  [§FS-005-dispatch.15.2](functional-spec/FS-005-dispatch.md#152-what-a-run-is-doing-is-read-from-the-runs-own-stream),
+  [§AR-007-runtime.1](architecture/AR-007-runtime.md#1-what-the-module-owns),
+  [§AR-007-runtime.3](architecture/AR-007-runtime.md#3-degrade)).
+  The sweep now reads what the last run on each root actually did, out of that
+  run's own event stream: a run advanced something if it recorded a pass that
+  progressed, or released a slot in a completing outcome, either being enough
+  on its own. A root whose last run advanced nothing is **passed over** with
+  the reason in the row where it used to say `started` — five minutes, then
+  ten, doubling to a two-hour cap, the same interval a failed start rests for
+  — and past three consecutive such runs it stops being started at all until
+  one advances there or somebody starts one by hand. A run that moves
+  something drops the memory whole. This changes the default for every
+  existing `--due` caller, which is the point: the previous behaviour restarted
+  a stalled root on every sweep, held a slot, and printed `started` each time.
+  An outcome word this reader does not recognize, a runner writing no stream,
+  or one declaring a layout it cannot read leaves the whole rule inert rather
+  than resting a healthy root. The rest binds the sweep only: `work run
+  --item` on such a root still runs it, and `--force` neither lifts this nor
+  needs to. (PR #88)
+
 - `grund` joined the `agent-grounds` organization after the sweep above, so the
   README's pointer at the grund tree and the issue-dependency test fixture in
   the GitHub issues provider now name it too. (PR #85)
@@ -57,6 +79,20 @@ ships, the previous "latest" section moves verbatim to
   record where the work happened at the time. (PR #84)
 
 ### Added
+
+- **A due sweep leaves a root out at your asking**
+  ([§FS-005-dispatch.24](functional-spec/FS-005-dispatch.md#24-work-nobody-has-to-start-starts-itself),
+  [§FS-011-command-line.10](functional-spec/FS-011-command-line.md#10-a-mutating-verb-above-one-project-reports-and-acts-under---act)).
+  `ephor work run --due --except <root|item>` excludes a work root from one
+  sweep with no judgement of ephor's own, for a driver carrying its own
+  back-off. It is repeatable, takes a work root on disk or the id of a matter
+  whose work lives in one, and names every exclusion that applied in the row
+  and under `--json`; one that matched nothing due is silent. A value that
+  resolves to neither is refused quoting it, and so is `--except` without
+  `--due`. It excludes without narrowing the width the `--act` gate is counted
+  over, which is now stated: a sweep reaching four projects that excludes every
+  root but one is still a sweep over four, and so is `work run --due --item`.
+  (PR #88)
 
 - **GitHub issue dependencies now govern work hand-off**
   ([§FS-001-forge-interface.1](functional-spec/FS-001-forge-interface.md#1-capabilities),
