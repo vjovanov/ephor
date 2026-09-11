@@ -110,6 +110,10 @@ name = "e2e_021_what_a_branch_is_grown_from"
 path = "tests/e2e/cases/E2E-021-what-a-branch-is-grown-from.rs"
 
 [[test]]
+name = "e2e_022_a_run_that_advanced_nothing"
+path = "tests/e2e/cases/E2E-022-a-run-that-advanced-nothing.rs"
+
+[[test]]
 name = "agents_test"
 path = "tests/integration/agents_test.rs"
 

@@ -302,6 +302,25 @@ whether or not a selector said so — which is why the shipped work-sync unit,
 whose whole purpose is to sweep with nobody watching, passes `--act` on the
 verbs it runs.
 
+`--item` narrows the width only where the verb it was given to honours it, and
+`work run --due` is the one place that does not: the sweep walks every project
+the scope reaches whatever matter was named, so counting it as one matter there
+would let a site-wide sweep write the ledger unheld. The exception is the
+sweep's, not the flag's — `work run --item` without `--due` is one matter and is
+counted as one, exactly as `work dispatch --item` is.
+
+**An exclusion is not a narrowing, and never counts as one.** `work run --due
+--except <root|item>` leaves named work roots out of the sweep
+([§FS-005-dispatch.24](FS-005-dispatch.md#24-work-nobody-has-to-start-starts-itself)), and the width is resolved and counted **before** any
+exclusion is applied: a sweep reaching four projects that excludes every root
+but one is still a sweep over four, and still reports rather than acting without
+`--act`. Otherwise the flag that says *skip this one* would also be the flag
+that walks past this gate, which is the wider act disguising itself as the
+narrower one that this rule exists to prevent. The gated report says what the
+sweep would have said, exclusions and rests included — a root that would be
+passed over is reported as passed over rather than as `would-run` — and it still
+writes nothing, the ledger included.
+
 `--act` is global, declared beside the selectors and for their reason: a flag
 each verb had to remember is a flag the next mutating verb forgets, and in the
 selector forgetting is impossible. It is accepted exactly where the gate can

@@ -36,6 +36,10 @@ ships, the previous "latest" section moves verbatim to
   specification became §10 beside the scope-selector rule rather than replacing
   it. `due_over` now propagates the error `due_in` began returning.
 
+- Rebased onto main after `agent-grounds/ephor#66` merged. The end-to-end case
+  for the rest was renumbered from `E2E-021` to `E2E-022`, because main
+  registered its own 021 in the same slot while this was open.
+
 ### Changed
 
 - `grund` joined the `agent-grounds` organization after the sweep above, so the
