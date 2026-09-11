@@ -295,7 +295,10 @@ fn hand_over(
     // opening move is cleared rather than run a second time over a working
     // tree that is mid-rebase (§FS-005-dispatch.12).
     let recipe = crate::work::recipe::Recipe {
-        brief: format!("{}\n\n{}", recipe.brief, outcome.report()),
+        // The report as a paragraph of the plan rather than as a document of
+        // its own: a heading in a body is a node the runtime cannot parse, and
+        // a brief nothing can load is a ticket nobody works (§FS-005-dispatch.3).
+        brief: format!("{}\n\n{}", recipe.brief, outcome.in_a_body()),
         opens_with: None,
         ..recipe
     };
