@@ -835,7 +835,23 @@ impl Recipe {
     /// (§FS-005-dispatch.6): asking an agent to fix a merged pull request is
     /// asking it to invent something to do.
     pub fn matches(&self, item: &Item, facts: &Facts) -> bool {
-        !item.is_finished() && self.when.matches(item, facts)
+        self.reserved().is_none() && !item.is_finished() && self.when.matches(item, facts)
+    }
+
+    /// Why this recipe belongs to something other than the feed, where it
+    /// does. One recipe is spoken for: the rebase sweep's
+    /// (§FS-004-quick-actions.6.1). Its subject is a *checkout*, and the feed
+    /// has no row for a tree, so a selector cannot express "no item" — an
+    /// empty one matches everything, which is how it came to be offered on
+    /// matters it says nothing about.
+    pub fn reserved(&self) -> Option<String> {
+        (self.id == crate::sweep::RECIPE).then(|| {
+            format!(
+                "'{}' is the rebase sweep's own recipe: its subject is a checkout rather than \
+                 a matter, so it is never offered on one",
+                self.id
+            )
+        })
     }
 }
 

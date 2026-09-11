@@ -101,6 +101,25 @@ fn built_in(name: &str) -> bool {
     )
 }
 
+/// Whether a source of this name could carry a pull request at all
+/// (§FS-004-quick-actions.6.1).
+///
+/// Asked of the name, because a feed's slots are keyed by name and a slot that
+/// failed has no provider left to ask. Keyed off the same list
+/// `build_provider` matches, so a provider added there is answered for here:
+/// of ephor's own, three emit one. Every other built-in reports something
+/// else, and so does a project's own task store — whatever became of one of
+/// those, it was never going to say whether a branch is under review. Anything
+/// else is a forge, which declares pull requests among its capabilities: not
+/// knowing is the blocking answer, exactly as it is for the branch itself.
+pub fn may_carry_pull_requests(name: &str) -> bool {
+    match name {
+        "github-prs" | "github-ci" | "github-threads" => true,
+        _ if built_in(name) => false,
+        _ => crate::seams::tasks::Kind::parse(name).is_none(),
+    }
+}
+
 /// The forge behind a source and the request to call it with, for the writes
 /// that go back to it — a reaction, a ticked task. Fails where the source is
 /// one of ephor's own providers: those reach their host directly, and a caller

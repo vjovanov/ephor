@@ -49,9 +49,14 @@ const CLASH: &str = "clash/here";
 /// still a draft on `still/draft`. The draft flag rides free with the row the
 /// search already returns (§FS-001-forge-interface.8.3) and is the only thing
 /// that tells the two branches apart.
+///
+/// It also writes down every call anybody makes to it, because one of the
+/// claims below is about calls not made: a sweep held at the gate fetches
+/// nothing.
 const ACME_FORGE: &str = r#"#!/usr/bin/env bash
 set -euo pipefail
 cat > /dev/null
+printf '%s\n' "${1:-}" >> "$HOME/forge-calls.log"
 case "${1:?subcommand}" in
   capabilities)
     printf '{"pull_requests":true}'
@@ -77,6 +82,35 @@ case "${1:?subcommand}" in
     ;;
 esac
 "#;
+
+/// The site configuration this scenario runs on: the project's own forge, and
+/// whatever the case adds. Written whole every time — `configure` writes a
+/// file rather than merging into one, so the forge comes along with every
+/// change to it.
+fn configured(world: &World, work: serde_json::Value, ttl: u64) {
+    world.configure(json!({
+        "defaults": { "ttl_seconds": ttl },
+        "projects": { PROJECT: {
+            "providers": [ { "provider": "acmeforge", "user": "you", "repos": ["widget"] } ],
+            "work": work
+        } }
+    }));
+}
+
+/// The recipe the manual tells a reader to configure so that a conflict the
+/// sweep stopped on becomes work rather than only a paragraph
+/// (§FS-004-quick-actions.6.1). `state` is which state of the shipped machine
+/// its tickets start in — a case passes one the machine does not declare to
+/// see what a write-up that cannot be made says.
+fn a_sweep_recipe(state: &str) -> serde_json::Value {
+    json!({ "recipes": [ {
+        "id": "rebase-sweep",
+        "description": "resolve the sweep conflict",
+        "state": state,
+        "needs_checkout": false,
+        "brief": "A rebase onto main stopped in this checkout."
+    } ] })
+}
 
 fn git(dir: &Path, args: &[&str]) {
     let status = Command::new("git")
@@ -166,11 +200,7 @@ fn a_machine_left_alone() -> World {
     // afterwards — and `--org` selects on the project row's own
     // `organization` field.
     world.organize("foundation", "Foundation");
-    world.configure(json!({
-        "projects": { PROJECT: {
-            "providers": [ { "provider": "acmeforge", "user": "you", "repos": ["widget"] } ]
-        } }
-    }));
+    configured(&world, json!({}), 600);
 
     // Four checkouts cut from the base as it stands, then the base moves on
     // without them — which is the whole condition this sweep exists for.
@@ -522,4 +552,413 @@ fn a_rebase_that_sweeps_nothing_is_the_verb_it_always_was() {
         .assert()
         .code(2)
         .stderr(predicate::str::contains("--act"));
+}
+
+/// One checkout's row in the sweep's reading, by branch.
+fn row(reading: &serde_json::Value, branch: &str) -> serde_json::Value {
+    reading["checkouts"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the sweep's reading names no checkouts: {reading:#}"))
+        .iter()
+        .find(|row| row["branch"] == json!(branch))
+        .unwrap_or_else(|| panic!("no row for {branch}: {reading:#}"))
+        .clone()
+}
+
+/// One ticket's own text out of the plan it shares with the others: from its
+/// heading to the next one. A plan holds one ticket per conflicted checkout,
+/// so a claim about what a ticket says has to be made about that ticket.
+fn ticket_body(plan: &str, id: &str) -> String {
+    plan.split("### Task ")
+        .find(|section| section.starts_with(&format!("{id}:")))
+        .unwrap_or_else(|| panic!("no ticket {id} in the plan:\n{plan}"))
+        .to_string()
+}
+
+/// Every heading in a plan the plan language did not put there. A heading
+/// inside a ticket's body is a *node* to the runtime — it reads one as a task
+/// and refuses the whole file — so an embedded report that kept its own
+/// headings is a plan nobody can ever run (§FS-005-dispatch.3). Fenced lines
+/// are not headings, which is the one exemption the runtime's parser makes
+/// too.
+fn stray_headings(plan: &str) -> Vec<String> {
+    let mut fenced = false;
+    let mut stray = Vec::new();
+    for line in plan.lines() {
+        if line.trim_start().starts_with("```") {
+            fenced = !fenced;
+            continue;
+        }
+        if fenced || !line.starts_with('#') {
+            continue;
+        }
+        let written_by_the_plan = line.starts_with("# Rhei: ")
+            || line.trim_end() == "## Tasks"
+            || line.trim_start_matches('#').starts_with(" Task ");
+        if !written_by_the_plan {
+            stray.push(line.to_string());
+        }
+    }
+    stray
+}
+
+/// A conflict in an idle checkout is work, and work is a ticket
+/// (§FS-004-quick-actions.6.1, §FS-005-dispatch.3) — a ticket the runtime can
+/// actually load, in a plan named after the sweep, that the next sweep an hour
+/// later finds and passes the checkout over on rather than stopping on the
+/// same conflict forever.
+#[test]
+fn a_conflict_becomes_a_ticket_the_next_sweep_passes_the_checkout_over_on() {
+    let world = a_machine_left_alone();
+    configured(&world, a_sweep_recipe("fix"), 600);
+
+    let acted = world
+        .ephor_raw()
+        .args(["rebase", "--org", "foundation", "--act", "--json"])
+        .output()
+        .expect("ran");
+    assert_eq!(
+        acted.status.code(),
+        Some(3),
+        "one checkout conflicted: {}",
+        String::from_utf8_lossy(&acted.stderr)
+    );
+    let reading = shaped("rebase", &acted);
+    let stopped = row(&reading, CLASH);
+    assert_eq!(stopped["outcome"], json!("conflicted"), "{reading:#}");
+    let written = stopped["ticket"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the conflict was not written up: {reading:#}"))
+        .to_string();
+    let (path, id) = written
+        .rsplit_once('#')
+        .unwrap_or_else(|| panic!("a ticket names its plan and its id: {written}"));
+    let plan = fs::read_to_string(path).expect("the plan the sweep wrote");
+    assert!(
+        plan.contains(&format!("### Task {id}:")),
+        "the ticket the row names is not in the plan:\n{plan}"
+    );
+    assert!(
+        plan.contains(CLASH),
+        "the ticket does not say which checkout it is about:\n{plan}"
+    );
+    assert_eq!(
+        stray_headings(&plan),
+        Vec::<String>::new(),
+        "the plan the sweep wrote cannot be loaded by the runtime:\n{plan}"
+    );
+
+    // An hour later. The conflict is still there and still unresolved, so the
+    // checkout is passed over on its own ticket, by id — and nothing is
+    // written twice.
+    let again = world
+        .ephor_raw()
+        .args(["rebase", "--org", "foundation", "--act", "--json"])
+        .output()
+        .expect("ran");
+    let reading = shaped("rebase", &again);
+    let passed = row(&reading, CLASH);
+    assert_eq!(passed["outcome"], json!("passed-over"), "{reading:#}");
+    let says = passed["says"].as_str().unwrap_or_default();
+    assert!(
+        says.contains(id),
+        "the pass-over does not name the ticket it is about: {says}"
+    );
+    assert_eq!(
+        fs::read_to_string(path)
+            .expect("the plan")
+            .matches("### Task ")
+            .count(),
+        1,
+        "the second sweep wrote the same conflict up twice"
+    );
+
+    // And the recipe is the sweep's alone: no matter is its subject, so it is
+    // not an entry in any item's menu (§FS-004-quick-actions.6.1).
+    world
+        .ephor()
+        .args(["actions", "--item", "acmeforge:widget/101"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("rebase-sweep").not());
+}
+
+/// A checkout the sweep finds *already* stopped in a rebase is touched under
+/// neither disposition (§FS-005-dispatch.12) — so the conflict is still
+/// standing in it, and both the row and the ticket say that rather than
+/// claiming a restoration nobody performed. A ticket that sends a reader to a
+/// clean tree is bad; one that tells them a conflicted tree was restored is
+/// worse, because they believe it.
+#[test]
+fn a_tree_already_stopped_in_a_rebase_is_reported_as_found() {
+    let world = a_machine_left_alone();
+    configured(&world, a_sweep_recipe("fix"), 600);
+    let stopped_here = workspace(&world, BEHIND);
+    commit(
+        &stopped_here,
+        "README.md",
+        "my own edit, over the same lines",
+    );
+    let halted = Command::new("git")
+        .arg("-C")
+        .arg(&stopped_here)
+        .args(["rebase", "origin/main"])
+        .env("GIT_AUTHOR_NAME", "t")
+        .env("GIT_AUTHOR_EMAIL", "t@example.com")
+        .env("GIT_COMMITTER_NAME", "t")
+        .env("GIT_COMMITTER_EMAIL", "t@example.com")
+        .output()
+        .expect("git runs");
+    assert!(
+        !halted.status.success(),
+        "the rebase this case needs stopped nowhere"
+    );
+
+    let acted = world
+        .ephor_raw()
+        .args(["rebase", "--org", "foundation", "--act", "--json"])
+        .output()
+        .expect("ran");
+    let reading = shaped("rebase", &acted);
+    let found = row(&reading, BEHIND);
+    assert_eq!(found["outcome"], json!("conflicted"), "{reading:#}");
+    let says = found["says"].as_str().unwrap_or_default().to_string();
+    assert!(
+        !says.contains("put back"),
+        "a tree the sweep never touched is reported as put back: {says}"
+    );
+    assert!(
+        says.contains("as found"),
+        "the row does not say the tree was left as it was found: {says}"
+    );
+    assert_eq!(
+        reading["restored"],
+        json!(false),
+        "a conflict still standing in a tree is read as restored: {reading:#}"
+    );
+
+    let written = found["ticket"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the conflict was not written up: {reading:#}"));
+    let (path, id) = written.rsplit_once('#').expect("a plan and an id");
+    let plan = fs::read_to_string(path).expect("the plan the sweep wrote");
+    // This checkout's own ticket, and not the one beside it: the checkout that
+    // conflicted under the sweep was restored, and says so truthfully.
+    let ticket = ticket_body(&plan, id);
+    assert!(
+        !ticket.contains("The tree was restored"),
+        "the ticket claims a restoration the sweep never performed:\n{ticket}"
+    );
+    assert!(
+        ticket.contains("git rebase --continue"),
+        "the ticket does not send the reader to finish the rebase:\n{ticket}"
+    );
+
+    // And the fact behind all of it: the conflict is where it was.
+    let porcelain = Command::new("git")
+        .arg("-C")
+        .arg(&stopped_here)
+        .args(["status", "--porcelain", "--untracked-files=no"])
+        .output()
+        .expect("git runs");
+    assert!(
+        String::from_utf8_lossy(&porcelain.stdout).contains("UU README.md"),
+        "the sweep touched a rebase somebody else had begun: {}",
+        String::from_utf8_lossy(&porcelain.stdout)
+    );
+}
+
+/// Uncommitted work is reported and left alone (§FS-004-quick-actions.6), and
+/// for a run nobody is watching that is a **good end**: a tree somebody is
+/// working in has uncommitted work most of the time, so an hourly unit that
+/// went red for it would read failed on every machine anybody uses and its
+/// exit code would stop meaning anything (§FS-004-quick-actions.6.1).
+#[test]
+fn a_checkout_with_uncommitted_work_is_a_row_and_a_good_end() {
+    let world = a_machine_left_alone();
+    // Nothing conflicts in this scenario: the checkout that would have stopped
+    // is put level first, so the exit code is about the refusal and nothing
+    // else.
+    git(
+        &workspace(&world, CLASH),
+        &["reset", "--hard", "origin/main"],
+    );
+    let mine = workspace(&world, BEHIND);
+    fs::write(mine.join("notes.txt"), "half a thought\n").expect("write");
+    git(&mine, &["add", "notes.txt"]);
+
+    let acted = world
+        .ephor_raw()
+        .args(["rebase", "--org", "foundation", "--act", "--json"])
+        .output()
+        .expect("ran");
+    let reading = shaped("rebase", &acted);
+    assert_eq!(
+        acted.status.code(),
+        Some(0),
+        "a checkout somebody is working in failed the sweep: {reading:#}"
+    );
+    let left = row(&reading, BEHIND);
+    assert_eq!(left["outcome"], json!("refused"), "{reading:#}");
+    assert!(
+        left["says"].as_str().unwrap_or_default().contains("alone"),
+        "the refusal is a row without its reason: {reading:#}"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(
+            &Command::new("git")
+                .arg("-C")
+                .arg(&mine)
+                .args(["status", "--porcelain", "--untracked-files=no"])
+                .output()
+                .expect("git runs")
+                .stdout
+        )
+        .trim(),
+        "A  notes.txt",
+        "the sweep did something to a tree with uncommitted work in it"
+    );
+}
+
+/// *Could not tell* is not *no* — but only a source that could have told.
+/// A status line, a message, a project's own tasks: none of them could ever
+/// have answered whether a branch is under review, so none of them stops a
+/// rebase however it failed (§FS-004-quick-actions.6.1). Otherwise one expired
+/// credential on a source that says nothing about pull requests stops every
+/// rebase in that project, hourly, forever.
+#[test]
+fn a_failed_source_that_could_carry_no_pull_request_stops_nothing() {
+    let world = a_machine_left_alone();
+    world.configure(json!({
+        "defaults": { "ttl_seconds": 600 },
+        "projects": { PROJECT: {
+            "providers": [
+                { "provider": "acmeforge", "user": "you", "repos": ["widget"] },
+                { "provider": "custom-status", "command": "exit 7" }
+            ]
+        } }
+    }));
+    let refreshed = world
+        .ephor_raw()
+        .args(["refresh", PROJECT])
+        .output()
+        .expect("ran");
+    assert!(
+        String::from_utf8_lossy(&refreshed.stderr).contains("custom-status"),
+        "the source this case is about did not fail: {}",
+        String::from_utf8_lossy(&refreshed.stderr)
+    );
+    let before: std::collections::HashMap<String, String> = heads(&world).into_iter().collect();
+
+    let acted = world
+        .ephor_raw()
+        .args(["rebase", "--org", "foundation", "--act", "--json"])
+        .output()
+        .expect("ran");
+    let reading = shaped("rebase", &acted);
+    assert_eq!(
+        reading["projects"][0]["reached"],
+        json!(true),
+        "a status source that failed stopped the project's rebases: {reading:#}"
+    );
+    let after: std::collections::HashMap<String, String> = heads(&world).into_iter().collect();
+    assert_ne!(
+        after[BEHIND], before[BEHIND],
+        "the checkout nobody is holding was not replayed: {reading:#}"
+    );
+    // The question the rule protects is still asked of the source that can
+    // answer it: the branch under review is passed over as it always was.
+    assert_eq!(row(&reading, REVIEW)["outcome"], json!("passed-over"));
+}
+
+/// A ticket that could not be opened does not swallow the report — and does
+/// not swallow itself either: what stopped the write-up is on that checkout's
+/// own row and in the reading, the way the one-checkout hand-over already
+/// carries it, so a program learns the ticket is not there
+/// (§REQ-002-parity.3, §FS-004-quick-actions.6.1).
+#[test]
+fn a_write_up_that_could_not_be_opened_is_carried_on_the_row() {
+    let world = a_machine_left_alone();
+    configured(&world, a_sweep_recipe("no-such-state"), 600);
+
+    let acted = world
+        .ephor_raw()
+        .args(["rebase", "--org", "foundation", "--act", "--json"])
+        .output()
+        .expect("ran");
+    assert_eq!(
+        acted.status.code(),
+        Some(3),
+        "the conflict is still the exit, whatever became of its ticket"
+    );
+    let reading = shaped("rebase", &acted);
+    let stopped = row(&reading, CLASH);
+    assert_eq!(stopped["outcome"], json!("conflicted"), "{reading:#}");
+    assert_eq!(stopped["ticket"], json!(null), "{reading:#}");
+    let note = stopped["note"]
+        .as_str()
+        .unwrap_or_else(|| panic!("nothing on the row says the write-up failed: {reading:#}"));
+    assert!(
+        note.contains("no-such-state"),
+        "the note does not say what stopped it: {note}"
+    );
+    assert!(
+        reading["report"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("no-such-state"),
+        "the prose report is silent about the ticket that was not opened: {reading:#}"
+    );
+    // The conflict itself is reported whatever happened to the ticket.
+    assert!(
+        reading["report"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("conflict"),
+        "{reading:#}"
+    );
+}
+
+/// A run held at the gate writes nothing at all — including into the feed
+/// cache. Fetching is a write: it calls the forge and rewrites what the last
+/// refresh left, so a reporting sweep over forty projects that freshened each
+/// one would make eighty calls to say what it would do
+/// (§FS-011-command-line.10, §FS-004-quick-actions.6.1).
+#[test]
+fn a_sweep_held_at_the_gate_fetches_nothing() {
+    let world = a_machine_left_alone();
+    // The cache is stale the moment it is written, so nothing but the gate can
+    // be what holds the fetch back.
+    configured(&world, json!({}), 0);
+    let calls = world.path().join("forge-calls.log");
+    let before = fs::read_to_string(&calls).unwrap_or_default();
+    let cached = world.feed()["fetched_at"].clone();
+
+    world
+        .ephor()
+        .args(["rebase", "--org", "foundation"])
+        .assert()
+        .success();
+    assert_eq!(
+        fs::read_to_string(&calls).unwrap_or_default(),
+        before,
+        "a sweep that was only reporting called the forge"
+    );
+    assert_eq!(
+        world.feed()["fetched_at"],
+        cached,
+        "a sweep that was only reporting rewrote the feed cache"
+    );
+
+    // And the acting one does freshen, which is what the reading is for.
+    world
+        .ephor_raw()
+        .args(["rebase", "--org", "foundation", "--act"])
+        .output()
+        .expect("ran");
+    assert_ne!(
+        fs::read_to_string(&calls).unwrap_or_default(),
+        before,
+        "the acting sweep asked the forge nothing"
+    );
 }
