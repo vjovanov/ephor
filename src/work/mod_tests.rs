@@ -871,6 +871,7 @@ fn candidate(id: &str, project: &str) -> Due {
         item: Some(id.to_string()),
         items: vec![id.to_string()],
         held_by: None,
+        refusal: None,
     }
 }
 
@@ -2520,6 +2521,166 @@ fn a_plan_the_record_does_not_know_is_never_the_keys() {
         read(&anonymous, &empty_ledger(), Reach::Key(None)).is_empty(),
         "the key reaches the matters the record knows, and this is none of them"
     );
+}
+
+/// Finality and gating are the machine's words, and a root with none to say
+/// them can be judged by nobody. The sweep drops such a root in silence
+/// because nobody is watching it; the key must be given the row, because
+/// otherwise a reader who named the matter is told its work holds nothing
+/// when the truth is that the root was never looked into — this ticket's own
+/// fault one layer down (§FS-005-dispatch.30, §FS-005-dispatch.15).
+#[test]
+fn a_root_whose_machine_will_not_read_is_the_keys_to_refuse() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("panta");
+    let group = laid_root(&root, "fix-issue", &[&ticket_at("ticket", "open")]);
+    let ledger = laid_ledger(&root, "fix-issue");
+    // There, and it will not parse: the other half of the same absence is no
+    // `states.yaml` at all, and neither leaves anything to judge by.
+    fs::write(root.join("states.yaml"), "this: [is not\n  valid: yaml\n").unwrap();
+    let read = |reach| {
+        due_among(
+            &work_config(),
+            std::slice::from_ref(&group),
+            &asking(&[]),
+            &laying(&["fix-issue"]),
+            &ledger,
+            Utc::now(),
+            reach,
+        )
+    };
+
+    assert!(
+        read(Reach::Sweep).is_empty(),
+        "the sweep drops it in silence, as it always has"
+    );
+
+    let due = read(Reach::Key(Some("forge:widget/42")));
+    assert_eq!(due.len(), 1, "the key gets the row, to refuse on it");
+    let says = due[0].refusal.as_deref().unwrap_or_default();
+    assert!(
+        says.contains(&root.display().to_string()),
+        "and the refusal names the root: {says}"
+    );
+    assert!(
+        due[0].plans.is_empty() && due[0].tickets.is_empty(),
+        "there is nothing here to point a run at: {due:?}"
+    );
+
+    // A machine that reads is the same root started, so the refusal is about
+    // the machine and not about the fixture.
+    fs::write(
+        root.join("states.yaml"),
+        "name: m\nstates:\n  collect:\n    agent: x\n  done:\n    final: true\n",
+    )
+    .unwrap();
+    let due = read(Reach::Key(Some("forge:widget/42")));
+    assert_eq!(due.len(), 1);
+    assert_eq!(due[0].refusal, None, "{due:?}");
+    assert_eq!(due[0].plans, vec!["forge-widget-42-fix-issue".to_string()]);
+}
+
+/// Work about a branch belongs in that branch's working tree, and a tree
+/// standing on another one holds different code. Dispatch refuses there
+/// naming the branch the root is actually on (§FS-005-dispatch.3), and so
+/// does the key: the sweep can pass it over in silence because nobody is
+/// watching, and a reader who asked for this matter by name is
+/// (§FS-005-dispatch.30).
+#[test]
+fn a_checkout_standing_on_another_branch_is_refused_to_the_key_by_name() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("checkout/panta");
+    let checkout = tmp.path().join("checkout");
+    let group = due_root(&root, &ticket_at("fix-gate-1", "collect"));
+    let mut ledger = laid_ledger(&root, "fix-issue");
+    let entry = ledger.entries.get_mut("forge:widget/42").unwrap();
+    entry.checkout = checkout.clone();
+    entry.branch = Some("fix/issue-42".to_string());
+    // A working tree standing on `main`, which is not where the record says
+    // this work belongs.
+    fs::create_dir_all(checkout.join(".git")).unwrap();
+    fs::write(checkout.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+    let read = |reach| {
+        due_among(
+            &work_config(),
+            std::slice::from_ref(&group),
+            &asking(&["fix-gate"]),
+            &laying(&[]),
+            &ledger,
+            Utc::now(),
+            reach,
+        )
+    };
+
+    assert!(
+        read(Reach::Sweep).is_empty(),
+        "the sweep passes it over in silence, as it always has"
+    );
+
+    let due = read(Reach::Key(Some("forge:widget/42")));
+    assert_eq!(due.len(), 1, "the key gets the row, to refuse on it");
+    let says = due[0].refusal.as_deref().unwrap_or_default();
+    assert!(
+        says.contains("main") && says.contains("fix/issue-42"),
+        "the refusal names the branch the checkout is on and the one wanted: {says}"
+    );
+
+    // Standing on the branch the record names, the same root starts.
+    fs::write(checkout.join(".git/HEAD"), "ref: refs/heads/fix/issue-42\n").unwrap();
+    let due = read(Reach::Key(Some("forge:widget/42")));
+    assert_eq!(due.len(), 1);
+    assert_eq!(due[0].refusal, None, "{due:?}");
+    assert_eq!(due[0].plans, vec!["widget-42".to_string()]);
+}
+
+/// The screen's run key and `ephor work run` are one ability
+/// (§REQ-002-parity.1), so what a reading comes to is decided once: the plans
+/// the record named, the refusal of a root nothing may start in, or the
+/// matter's own no-work sentence. The key read the matter's own plan id
+/// alone, which on a matter whose work was entirely laid pointed the runtime
+/// at a plan that is not on disk (§FS-005-dispatch.30).
+#[test]
+fn the_screens_run_key_hands_over_the_plans_the_record_named() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("panta");
+    let group = laid_root(&root, "fix-issue", &[&ticket_at("ticket", "open")]);
+    let ledger = laid_ledger(&root, "fix-issue");
+    let due = due_among(
+        &work_config(),
+        std::slice::from_ref(&group),
+        &asking(&[]),
+        &laying(&[]),
+        &ledger,
+        Utc::now(),
+        Reach::Key(Some("forge:widget/42")),
+    );
+
+    assert_eq!(
+        plans_to_run(&due, "forge:widget/42"),
+        Ok(vec!["forge-widget-42-fix-issue".to_string()]),
+        "the laid plan, which is the only one on disk"
+    );
+
+    // A reading with nothing in it is the matter's own sentence and not a
+    // start, and it names the matter.
+    let says = plans_to_run(&[], "forge:widget/42").expect_err("no plans, no run");
+    assert_eq!(says, nothing_to_run(Some("forge:widget/42")));
+
+    // And a root nothing may be started in is the refusal rather than that
+    // sentence, which is the whole of the difference.
+    fs::write(root.join("states.yaml"), "this: [is not\n  valid: yaml\n").unwrap();
+    let unread = due_among(
+        &work_config(),
+        std::slice::from_ref(&group),
+        &asking(&[]),
+        &laying(&[]),
+        &ledger,
+        Utc::now(),
+        Reach::Key(Some("forge:widget/42")),
+    );
+    let says = plans_to_run(&unread, "forge:widget/42").expect_err("nothing may start there");
+    assert_eq!(says, unread[0].refusal.clone().unwrap());
+    assert_ne!(says, nothing_to_run(Some("forge:widget/42")));
 }
 /// Open and being worked on right now are different facts, and the row
 /// says which (§FS-005-dispatch.23): a ticket a live run holds is marked

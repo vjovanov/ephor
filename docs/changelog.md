@@ -179,8 +179,13 @@ ships, the previous "latest" section moves verbatim to
   holding nothing a run would advance names itself, exits 0, and carries that
   sentence in the reading's `says`. A plain `ephor work run` and the work
   screen's `R` key take the same reading, so neither can disagree with
-  `--item` about what a matter's work is. The `--due` sweep is untouched: a
-  plan whose entry never asked is still no sweep's to start. (PR #87)
+  `--item` about what a matter's work is. A work root the reading will start
+  nothing in — one whose state machine will not read, and one whose checkout is
+  standing on a branch the record does not expect — is refused by name and
+  counted in `refused` rather than answered as a matter holding nothing;
+  `--force` lifts neither. The `--due` sweep is untouched: a plan whose entry
+  never asked is still no sweep's to start, and it goes on dropping both of
+  those roots in silence, because nobody is watching it. (PR #87)
 - **GitHub issue searches no longer silently hide matching work beyond their
   per-question limit**
   ([§FS-001-forge-interface.1](functional-spec/FS-001-forge-interface.md#1-capabilities),

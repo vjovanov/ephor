@@ -960,7 +960,7 @@
       }
     },
     "work-run": {
-      "description": "`ephor work run --json` (FS-005-dispatch.12) — the runtime let at every work root that still has an open ticket. The runtime's own output goes to the error stream under this flag, so what is here is the account and not the run (FS-011-command-line.7).",
+      "description": "`ephor work run --json` (FS-005-dispatch.12) — the runtime let at every work root holding a task a run would advance, whichever plan holds it: the matter's own and every one a workflow laid beside it (FS-005-dispatch.30). The runtime's own output goes to the error stream under this flag, so what is here is the account and not the run (FS-011-command-line.7).",
       "type": "object",
       "required": ["runs", "failed"],
       "properties": {
@@ -990,7 +990,7 @@
               "hand": { "type": "string", "description": "Who the run was given to, where the tickets agreed on one (FS-005-dispatch.14)." },
               "outcome": {
                 "enum": ["started", "done", "parked", "failed", "passed-over", "refused", "would-run"],
-                "description": "`started` is a run that went beneath the screen, watched afterwards by attaching (FS-005-dispatch.20); `passed-over` is an otherwise eligible autorun root omitted because a concurrency ceiling is full, or because a live run holds the checkout its work would run in \u2014 one another work root over the same working tree already held when the sweep began, or one a launch earlier in the same sweep took \u2014 and is not a failure; `refused` is a plan named by hand whose checkout a live run holds, which starts nothing and is lifted by `--force` (FS-005-dispatch.24); the other three are a run watched here, with `parked` the runtime declining for now, which is not a failed run (FS-006-project-interface.3); `would-run` is the gated report a sweep at wide scope prints instead of acting, which writes nothing (FS-011-command-line.10)."
+                "description": "`started` is a run that went beneath the screen, watched afterwards by attaching (FS-005-dispatch.20); `passed-over` is an otherwise eligible autorun root omitted because a concurrency ceiling is full, or because a live run holds the checkout its work would run in \u2014 one another work root over the same working tree already held when the sweep began, or one a launch earlier in the same sweep took \u2014 and is not a failure; `refused` is a root a run asked for by name started nothing in and was told so about by name — a live run holding its checkout, which `--force` lifts (FS-005-dispatch.24), or a root nothing may be started in at all, whose state machine will not read or whose checkout stands on a branch the record does not expect, which `--force` does not lift (FS-005-dispatch.30); the other three are a run watched here, with `parked` the runtime declining for now, which is not a failed run (FS-006-project-interface.3); `would-run` is the gated report a sweep at wide scope prints instead of acting, which writes nothing (FS-011-command-line.10)."
               },
               "id": { "type": "string", "description": "What the run is called, where it named itself \u2014 the id the board prints and the runner's own attach command takes (FS-005-dispatch.20)." },
               "reason": { "type": "string", "description": "Why a `passed-over` autorun root got no run: the aggregate, organization, or project ceiling that was full, named as it is written in the configuration and by the key it refused on \u2014 `max_concurrent` over roots in flight, `max_active` over the ones being worked \u2014 or the run that holds that root's checkout, named as the refusal names it — one another work root over the same working tree already held when the sweep began, or one a launch earlier in the same sweep left live there (FS-005-dispatch.24)." },
@@ -1001,7 +1001,7 @@
           }
         },
         "failed": { "type": "integer" },
-        "refused": { "type": "integer", "description": "How many plans named by hand got no run because a live run holds their checkout (FS-005-dispatch.24). A non-zero count exits non-zero: nothing went wrong, but the reader asked for a run and got none. Printed by the hand-started form, which is the only one that refuses." },
+        "refused": { "type": "integer", "description": "How many roots a run asked for by name got no run in and was told about by name: a live run holding the checkout (FS-005-dispatch.24), or a root nothing may be started in at all (FS-005-dispatch.30). A non-zero count exits non-zero: nothing went wrong, but the reader asked for a run and got none. Printed by the hand-started form, which is the only one that refuses." },
         "notes": {
           "type": "array",
           "items": { "$ref": "#/$defs/note" }

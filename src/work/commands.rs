@@ -1565,13 +1565,21 @@ fn run_work(
     // matters in one root want different ones the run carries none: two runs
     // over one working tree would refuse each other, so one root is one run
     // (§FS-005-dispatch.30).
-    // (work root, checkout to run from, the hand riding the run, the plans)
-    type Group = (
-        std::path::PathBuf,
-        std::path::PathBuf,
-        Option<runtime::roster::HandFlags>,
-        Vec<String>,
-    );
+    struct Group {
+        root: std::path::PathBuf,
+        /// The checkout to run from.
+        checkout: std::path::PathBuf,
+        /// The hand riding the run.
+        hand: Option<runtime::roster::HandFlags>,
+        plans: Vec<String>,
+        /// Why nothing may be started here at all, where the reading returned
+        /// the root only so the reader who named the matter is told no: a
+        /// machine that will not read, a checkout standing on another branch.
+        /// Refused by name and counted as a refusal, never answered with the
+        /// sentence that says the matter holds nothing
+        /// (§FS-005-dispatch.30).
+        refusal: Option<String>,
+    }
     // The sweep behind autorun (§FS-005-dispatch.24): which roots are due is
     // read from the world — the plans on disk, the machine's own words about
     // their states, and the runtime's lock — rather than from the ledger's
@@ -1597,13 +1605,19 @@ fn run_work(
     let due = dispatcher.runnable_of(args.item.as_deref(), projects, Utc::now())?;
     let mut roots: Vec<Group> = Vec::new();
     for root in &due {
-        let hand = dispatcher.run_hand_over(root);
-        roots.push((
-            root.root.clone(),
-            root.checkout.clone(),
+        // A root nothing may start in has no run for a hand to ride, and
+        // asking for one would note about a run that is not going to happen.
+        let hand = match root.refusal {
+            Some(_) => None,
+            None => dispatcher.run_hand_over(root),
+        };
+        roots.push(Group {
+            root: root.root.clone(),
+            checkout: root.checkout.clone(),
             hand,
-            root.plans.clone(),
-        ));
+            plans: root.plans.clone(),
+            refusal: root.refusal.clone(),
+        });
     }
     // What the reader should know about who gets this run — a hand that went
     // unbound, a name nothing resolves — said once, before the terminal is
@@ -1622,15 +1636,25 @@ fn run_work(
     if gate.holds() {
         let would: Vec<serde_json::Value> = roots
             .iter()
-            .map(|(root, checkout, hand, plans)| {
+            .map(|group| {
                 let mut row = serde_json::json!({
-                    "root": root,
-                    "checkout": checkout,
-                    "plans": plans,
-                    "outcome": "would-run",
+                    "root": group.root,
+                    "checkout": group.checkout,
+                    "plans": group.plans,
+                    // A root the reading will start nothing in would be
+                    // refused rather than run, and a report that said it
+                    // would run would be a report of something that cannot
+                    // happen (§FS-011-command-line.10).
+                    "outcome": match group.refusal {
+                        Some(_) => "refused",
+                        None => "would-run",
+                    },
                 });
-                if let (Some(row), Some(hand)) = (row.as_object_mut(), hand.as_ref()) {
+                if let (Some(row), Some(hand)) = (row.as_object_mut(), group.hand.as_ref()) {
                     row.insert("hand".to_string(), serde_json::json!(hand.describe()));
+                }
+                if let (Some(row), Some(says)) = (row.as_object_mut(), group.refusal.as_ref()) {
+                    row.insert("says".to_string(), serde_json::json!(says));
                 }
                 row
             })
@@ -1646,20 +1670,30 @@ fn run_work(
             );
             return Ok(ExitCode::SUCCESS);
         }
-        for (root, _, hand, plans) in &roots {
+        for group in &roots {
+            // Said about the root rather than counted into the roots that
+            // would be run: a report that a run would happen where it would be
+            // refused is a report of something that cannot happen.
+            if let Some(says) = &group.refusal {
+                eprintln!("error: {says}");
+                continue;
+            }
             println!(
                 "would run {} {} ({} plan(s){})",
                 runtime::label(&config.work),
-                root.display(),
-                plans.len(),
-                match hand {
+                group.root.display(),
+                group.plans.len(),
+                match &group.hand {
                     Some(hand) => format!(", {}", hand.describe()),
                     None => String::new(),
                 }
             );
-            println!("  {}", Style::detect().dim(&plans.join(", ")));
+            println!("  {}", Style::detect().dim(&group.plans.join(", ")));
         }
-        println!("\n{} root(s) would be run", roots.len());
+        println!(
+            "\n{} root(s) would be run",
+            roots.iter().filter(|group| group.refusal.is_none()).count()
+        );
         if let Some(says) = gate.says() {
             println!("{says}");
         }
@@ -1731,7 +1765,14 @@ fn run_work(
             false => println!("note: {}", Style::detect().dim(&note)),
         }
     }
-    for (root, checkout, hand, plans) in &roots {
+    for group in &roots {
+        let Group {
+            root,
+            checkout,
+            hand,
+            plans,
+            refusal,
+        } = group;
         let landed = |outcome: &str, says: Option<String>, id: Option<&str>| {
             let mut row = serde_json::json!({
                 "root": root,
@@ -1754,6 +1795,18 @@ fn run_work(
             }
             row
         };
+        // A root the reading returned only to be refused: its machine will not
+        // read, or its checkout is standing on a branch the record does not
+        // expect. Refused by name and counted as a refusal, before the run in
+        // the way is even looked for — `--force` lifts that one and lifts
+        // neither of these, which are facts about the root rather than a run
+        // another key press could outlast (§FS-005-dispatch.30).
+        if let Some(says) = refusal {
+            refused += 1;
+            runs.push(landed("refused", Some(says.clone()), None));
+            eprintln!("error: {says}");
+            continue;
+        }
         // One live run per checkout, whichever root that run was started from:
         // two runs in one working tree are two agents editing the same files.
         // Refused by name, so the reader is sent to the run in the way, and

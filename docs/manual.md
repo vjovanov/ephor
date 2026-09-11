@@ -2563,6 +2563,13 @@ ephor work states
   a live run holds — its own root's, another root's over the same tree, or one
   this invocation just started — is **refused by name**: `a run is live in this
   checkout: <id>`. `--force` lifts that refusal alone, and nothing with `--due`.
+  A work root **nothing may be started in at all** is refused by name too, and
+  `--force` does not lift it: one whose `states.yaml` will not read, so nothing
+  in it can be judged runnable, and one whose checkout is standing on a branch
+  other than the one the record says the work belongs on, which is named. Both
+  count in `refused` and exit non-zero, because a reader who asked for a matter
+  by name must never be told its work holds nothing when the truth is that the
+  root was never looked into.
   `--due` is the other question entirely: not "run this item's work" but
   "start whatever should be running and is not"
   ([§FS-005-dispatch.24](functional-spec/FS-005-dispatch.md#24-work-nobody-has-to-start-starts-itself)).
