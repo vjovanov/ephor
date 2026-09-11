@@ -123,7 +123,11 @@ pub fn rebase(args: &RebaseArgs) -> Result<ExitCode> {
     // the conflict needs (§FS-011-command-line.9).
     let report = given::value(&args.report, "REPORT")?;
 
-    let outcome = git::rebase(&forest, &onto);
+    // Somebody is waiting on this one: the reader who pressed the key, the
+    // state that ran the program, the ticket `--dispatch` is about to write.
+    // So a conflict stays standing in the working tree, which is the state
+    // resolving it needs (§FS-005-dispatch.12).
+    let outcome = git::rebase(&forest, &onto, git::Stopped::Leave);
     let conflicted = outcome.conflicted().len();
     // Everything the algorithm could do, it did; the rest is a question about
     // the code (§FS-005-dispatch.12). Handed over *before* anything is

@@ -42,6 +42,30 @@ impl Onto {
     }
 }
 
+/// What becomes of a repository the replay stopped in a conflict
+/// (§FS-005-dispatch.12).
+///
+/// An argument to the one replay, chosen by the caller at the point of the
+/// call, and never a second implementation beside it: two dispositions in two
+/// implementations would disagree about what a clean rebase is exactly as two
+/// rebases would. Which value a caller passes follows from whether anybody is
+/// waiting on the answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stopped {
+    /// Left where git stopped, the conflict standing in the working tree,
+    /// because that is the state resolving it needs. What a replay whose
+    /// stopping point is handed to a successor asks for — the reader's key, a
+    /// program state, `--dispatch`, the interface — and what every caller but
+    /// the sweep asks for.
+    Leave,
+    /// The rebase aborted and the repository put back on the commit it was
+    /// on, the conflict reported instead of left standing. What a replay
+    /// nobody is waiting on asks for (§FS-004-quick-actions.6.1): a working
+    /// tree somebody finds broken at nine in the morning with nothing saying
+    /// why is not a situation handed over.
+    Restore,
+}
+
 /// What became of one repository.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Replay {
@@ -49,9 +73,14 @@ pub enum Replay {
     Current,
     /// Replayed onto the base; it had trailed by this many commits.
     Rebased(u64),
-    /// Stopped in a conflict. The repository is left mid-rebase, which is the
-    /// state resolving it needs (§FS-005-dispatch.12); these paths are unmerged.
-    Conflicted(Vec<String>),
+    /// Stopped in a conflict, on these unmerged paths. `restored` is what
+    /// [`Stopped`] the caller asked for came to here: `false` where the
+    /// repository is left mid-rebase, and `true` where the rebase was aborted
+    /// and the tree put back on the commit it started from
+    /// (§FS-005-dispatch.12). A repository found *already* stopped in a
+    /// rebase is never aborted under either value, so it is reported here
+    /// with `restored` false.
+    Conflicted { paths: Vec<String>, restored: bool },
     /// Uncommitted work, so nothing was touched (§FS-004-quick-actions.6).
     Dirty(Vec<String>),
     /// Nothing published: this branch has no copy on the remote, so there is
@@ -69,7 +98,7 @@ impl Replay {
         match self {
             Replay::Current => "current",
             Replay::Rebased(_) => "rebased",
-            Replay::Conflicted(_) => "conflicted",
+            Replay::Conflicted { .. } => "conflicted",
             Replay::Dirty(_) => "dirty",
             Replay::Unpublished => "unpublished",
             Replay::Refused(_) => "refused",
@@ -116,8 +145,26 @@ impl Rebase {
     pub fn conflicted(&self) -> Vec<&RepoReplay> {
         self.repos
             .iter()
-            .filter(|repo| matches!(repo.replay, Replay::Conflicted(_)))
+            .filter(|repo| matches!(repo.replay, Replay::Conflicted { .. }))
             .collect()
+    }
+
+    /// Whether a conflict this stopped on was put back where it was
+    /// (§FS-005-dispatch.12). `None` where nothing conflicted: "no conflict"
+    /// and "a conflict that is still standing" are different answers, and a
+    /// reader is sent to a different place by each.
+    pub fn restored(&self) -> Option<bool> {
+        let conflicted = self.conflicted();
+        if conflicted.is_empty() {
+            return None;
+        }
+        // Every one of them, because one tree left mid-rebase is a tree
+        // somebody has to go to, however many others were put back.
+        Some(
+            conflicted
+                .iter()
+                .all(|repo| matches!(repo.replay, Replay::Conflicted { restored: true, .. })),
+        )
     }
 
     /// Repositories with no published copy to replay onto. Not stuck and not
@@ -161,7 +208,9 @@ impl Rebase {
                         "remote": repo.remote,
                         "replay": repo.replay.name(),
                         "paths": match &repo.replay {
-                            Replay::Conflicted(paths) | Replay::Dirty(paths) => paths.clone(),
+                            Replay::Conflicted { paths, .. } | Replay::Dirty(paths) => {
+                                paths.clone()
+                            }
                             _ => Vec::new(),
                         },
                     });
@@ -184,6 +233,12 @@ impl Rebase {
                     }
                     if let Replay::Refused(why) = &repo.replay {
                         row.insert("says".to_string(), serde_json::json!(why));
+                    }
+                    // Which world the unmerged paths above are a fact about
+                    // (§FS-005-dispatch.12): present only on the outcome it
+                    // means anything on.
+                    if let Replay::Conflicted { restored, .. } = &repo.replay {
+                        row.insert("restored".to_string(), serde_json::json!(restored));
                     }
                     serde_json::Value::Object(row.clone())
                 })
@@ -270,19 +325,40 @@ impl Rebase {
                         repo.remote
                     ));
                 }
-                Replay::Conflicted(files) => {
-                    out.push_str(
-                        "**The rebase stopped in a conflict.** The repository is left \
-                         mid-rebase, with these paths unmerged:\n\n",
-                    );
-                    for file in files {
+                // The two dispositions say different things because they
+                // leave different worlds behind, and a reader sent to find a
+                // conflicted working tree that is not there would doubt the
+                // report (§FS-005-dispatch.12).
+                Replay::Conflicted { paths, restored } => {
+                    out.push_str(match restored {
+                        false => {
+                            "**The rebase stopped in a conflict.** The repository is left \
+                                  mid-rebase, with these paths unmerged:\n\n"
+                        }
+                        true => {
+                            "**The rebase stopped in a conflict and was put back.** The \
+                                 repository is on the commit it started from and its working \
+                                 tree is clean; nobody was waiting on this replay, so the \
+                                 conflict is this report rather than a tree somebody finds \
+                                 broken. These paths are what it stopped on:\n\n"
+                        }
+                    });
+                    for file in paths {
                         out.push_str(&format!("- `{file}`\n"));
                     }
-                    out.push_str(&format!(
-                        "\nResolve them in `{}`, `git add` each one, then \
-                         `git rebase --continue`.\n\n",
-                        self.checkout.join(&repo.repo).display()
-                    ));
+                    out.push_str(&match restored {
+                        false => format!(
+                            "\nResolve them in `{}`, `git add` each one, then \
+                             `git rebase --continue`.\n\n",
+                            self.checkout.join(&repo.repo).display()
+                        ),
+                        true => format!(
+                            "\nTo resolve it, replay it again in `{}` — \
+                             `ephor rebase --checkout .` — and the conflict comes back \
+                             where resolving it needs it.\n\n",
+                            self.checkout.join(&repo.repo).display()
+                        ),
+                    });
                 }
                 Replay::Dirty(paths) => {
                     out.push_str(
@@ -736,7 +812,13 @@ pub fn probe(checkout: &Path) -> Vec<PathBuf> {
 /// different ref in each of them, each branch's own published copy
 /// (§FS-004-quick-actions.8); under [`Onto::Base`] it is one branch name for
 /// all of them.
-pub fn rebase(forest: &Forest, onto: &Onto) -> Rebase {
+///
+/// `stopped` is what becomes of a repository this stops in a conflict, and it
+/// is the caller's to say (§FS-005-dispatch.12): the only thing that differs
+/// between a replay somebody is waiting on and one nobody is. It is an
+/// argument here rather than a second function beside this one for the reason
+/// this function is the only replay at all.
+pub fn rebase(forest: &Forest, onto: &Onto, stopped: Stopped) -> Rebase {
     let outcomes = forest
         .repos
         .iter()
@@ -751,7 +833,8 @@ pub fn rebase(forest: &Forest, onto: &Onto) -> Rebase {
                 Onto::Base(_) => None,
                 Onto::Upstream => forest.base(repo),
             };
-            let (reference, replay) = replay_one(&repo.path, &repo.remote, base.as_deref(), onto);
+            let (reference, replay) =
+                replay_one(&repo.path, &repo.remote, base.as_deref(), onto, stopped);
             RepoReplay {
                 repo: repo.name.clone(),
                 remote: repo.remote.clone(),
@@ -774,19 +857,31 @@ pub fn rebase(forest: &Forest, onto: &Onto) -> Rebase {
 
 /// One repository: the ref it was replayed onto, and what came of it. Every
 /// guard is the same whichever ref that is — a rebase already stopped, an
-/// uncommitted working tree, and the conflict left where it stands
+/// uncommitted working tree, and the conflict disposed of as `stopped` says
 /// (§FS-004-quick-actions.6).
 fn replay_one(
     repo: &Path,
     remote: &str,
     base: Option<&str>,
     onto: &Onto,
+    stopped: Stopped,
 ) -> (Option<String>, Replay) {
     // A repository already stopped in a rebase is a conflict to finish, not a
     // rebase to start: starting a second one over it would lose the first.
+    //
+    // And it is never aborted, under either disposition: the rebase standing
+    // here is not this replay's, and aborting it would destroy a resolution
+    // somebody had begun — which is the one thing worse than the drift any of
+    // this corrects (§FS-005-dispatch.12).
     if let Some(files) = unmerged(repo) {
         if !files.is_empty() {
-            return (None, Replay::Conflicted(files));
+            return (
+                None,
+                Replay::Conflicted {
+                    paths: files,
+                    restored: false,
+                },
+            );
         }
     }
     match git(repo, &["status", "--porcelain", "--untracked-files=no"]) {
@@ -846,7 +941,15 @@ fn replay_one(
     let replay = match run(repo, &["rebase", &reference]) {
         Ok(_) => Replay::Rebased(behind),
         Err(message) => match unmerged(repo) {
-            Some(files) if !files.is_empty() => Replay::Conflicted(files),
+            Some(files) if !files.is_empty() => Replay::Conflicted {
+                paths: files,
+                // Where nobody is coming, the tree goes back on the commit it
+                // was on and the conflict is the report. An abort git will not
+                // make is reported as not restored rather than claimed: the
+                // paths are the fact, and which world is behind them is what
+                // decides where a reader is sent (§FS-005-dispatch.12).
+                restored: stopped == Stopped::Restore && run(repo, &["rebase", "--abort"]).is_ok(),
+            },
             // A rebase that failed without leaving a conflict left nothing to
             // resolve; whatever git said is the whole answer.
             _ => Replay::Refused(message),
@@ -1334,7 +1437,11 @@ mod tests {
         let checkout = checkout_with_origin(temp.path(), "app");
         advance_master(temp.path(), "app", "theirs.txt", "theirs\n");
 
-        let replayed = super::rebase(&Forest::resolve(&checkout, None, &[]), &onto("master"));
+        let replayed = super::rebase(
+            &Forest::resolve(&checkout, None, &[]),
+            &onto("master"),
+            Stopped::Leave,
+        );
         assert_eq!(replayed.repos.len(), 1);
         assert_eq!(replayed.repos[0].replay, Replay::Rebased(1));
         assert_eq!(replayed.repos[0].branch.as_deref(), Some("feature"));
@@ -1344,7 +1451,11 @@ mod tests {
 
         // Immediately again: there is nothing left to replay, and that is an
         // answer rather than a no-op (§FS-004-quick-actions.6).
-        let again = super::rebase(&Forest::resolve(&checkout, None, &[]), &onto("master"));
+        let again = super::rebase(
+            &Forest::resolve(&checkout, None, &[]),
+            &onto("master"),
+            Stopped::Leave,
+        );
         assert_eq!(again.repos[0].replay, Replay::Current);
         assert_eq!(again.summary(), "already on master");
     }
@@ -1357,10 +1468,17 @@ mod tests {
         commit(&checkout, "shared.txt", "ours\n", "ours");
         advance_master(temp.path(), "app", "shared.txt", "theirs\n");
 
-        let stopped = super::rebase(&Forest::resolve(&checkout, None, &[]), &onto("master"));
+        let stopped = super::rebase(
+            &Forest::resolve(&checkout, None, &[]),
+            &onto("master"),
+            Stopped::Leave,
+        );
         assert_eq!(
             stopped.repos[0].replay,
-            Replay::Conflicted(vec!["shared.txt".to_string()])
+            Replay::Conflicted {
+                paths: vec!["shared.txt".to_string()],
+                restored: false,
+            }
         );
         assert_eq!(stopped.conflicted().len(), 1);
         assert!(stopped.report().contains("mid-rebase"));
@@ -1372,8 +1490,114 @@ mod tests {
 
         // Asked again, it reports the conflict it is standing in rather than
         // starting a second rebase over the first.
-        let again = super::rebase(&Forest::resolve(&checkout, None, &[]), &onto("master"));
-        assert!(matches!(again.repos[0].replay, Replay::Conflicted(_)));
+        let again = super::rebase(
+            &Forest::resolve(&checkout, None, &[]),
+            &onto("master"),
+            Stopped::Leave,
+        );
+        assert!(matches!(again.repos[0].replay, Replay::Conflicted { .. }));
+    }
+
+    /// The other disposition, over the same conflict: where nobody is waiting
+    /// on the replay, the tree goes back on the commit it started from and
+    /// the conflict is the report instead (§FS-005-dispatch.12).
+    ///
+    /// Run against the same fixture as the case above on purpose. The two are
+    /// one implementation taking an argument, so the way to show that the
+    /// argument is the only difference is to hand both values the same
+    /// conflict and compare what each leaves behind.
+    #[test]
+    fn a_conflict_nobody_is_waiting_on_is_put_back_and_reported() {
+        let temp = tempfile::tempdir().unwrap();
+        let checkout = checkout_with_origin(temp.path(), "app");
+        commit(&checkout, "shared.txt", "ours\n", "ours");
+        let was = head_of(&checkout);
+        advance_master(temp.path(), "app", "shared.txt", "theirs\n");
+
+        let stopped = super::rebase(
+            &Forest::resolve(&checkout, None, &[]),
+            &onto("master"),
+            Stopped::Restore,
+        );
+        // The same outcome word and the same paths: everything that reads
+        // *conflicted* today still reads it, and one more fact says which
+        // world those paths are a fact about.
+        assert_eq!(
+            stopped.repos[0].replay,
+            Replay::Conflicted {
+                paths: vec!["shared.txt".to_string()],
+                restored: true,
+            }
+        );
+        assert_eq!(stopped.conflicted().len(), 1);
+        assert_eq!(stopped.restored(), Some(true));
+        // No half-rebased tree, nothing unmerged, and back on the commit it
+        // was on: a timer at three in the morning leaves the checkout as it
+        // found it.
+        assert!(!checkout.join(".git/rebase-merge").exists());
+        assert!(!checkout.join(".git/rebase-apply").exists());
+        assert_eq!(unmerged(&checkout), Some(Vec::new()));
+        assert_eq!(head_of(&checkout), was);
+        // And the report says so, because a reader sent to find a conflicted
+        // working tree would otherwise find a clean one and doubt the report.
+        assert!(stopped.report().contains("was put back"));
+        assert!(!stopped.report().contains("git rebase --continue"));
+
+        // A replay nothing stopped has no such fact to carry.
+        run_in(&checkout, &["checkout", "-q", "-B", "spare", "master"]);
+        let clean = super::rebase(
+            &Forest::resolve(&checkout, None, &[]),
+            &onto("master"),
+            Stopped::Restore,
+        );
+        assert_eq!(clean.restored(), None);
+    }
+
+    /// A repository found *already* stopped in a rebase is reported and
+    /// touched under neither disposition (§FS-005-dispatch.12): the rebase
+    /// standing there is not this replay's, and aborting it would destroy a
+    /// resolution somebody had begun.
+    #[test]
+    fn a_rebase_already_stopped_is_never_aborted_by_the_restoring_disposition() {
+        let temp = tempfile::tempdir().unwrap();
+        let checkout = checkout_with_origin(temp.path(), "app");
+        commit(&checkout, "shared.txt", "ours\n", "ours");
+        advance_master(temp.path(), "app", "shared.txt", "theirs\n");
+        // Stopped by hand, the way a person resolving a conflict leaves it.
+        run_in(&checkout, &["fetch", "origin", "-q"]);
+        let _ = run(&checkout, &["rebase", "origin/master"]);
+        assert!(unmerged(&checkout).is_some_and(|files| !files.is_empty()));
+        let mid_rebase = checkout.join(".git/rebase-merge").exists()
+            || checkout.join(".git/rebase-apply").exists();
+        assert!(mid_rebase, "the fixture is not standing in a rebase");
+
+        let found = super::rebase(
+            &Forest::resolve(&checkout, None, &[]),
+            &onto("master"),
+            Stopped::Restore,
+        );
+        assert_eq!(
+            found.repos[0].replay,
+            Replay::Conflicted {
+                paths: vec!["shared.txt".to_string()],
+                restored: false,
+            }
+        );
+        // Still exactly where it was found.
+        assert!(
+            checkout.join(".git/rebase-merge").exists()
+                || checkout.join(".git/rebase-apply").exists()
+        );
+        assert!(found.report().contains("mid-rebase"));
+    }
+
+    /// What `HEAD` is on, for a case whose whole claim is that it did not
+    /// move.
+    fn head_of(dir: &Path) -> String {
+        git(dir, &["rev-parse", "HEAD"])
+            .expect("a repository with a HEAD")
+            .trim()
+            .to_string()
     }
 
     #[test]
@@ -1383,7 +1607,11 @@ mod tests {
         advance_master(temp.path(), "app", "theirs.txt", "theirs\n");
         std::fs::write(checkout.join("mine.txt"), "half-written\n").unwrap();
 
-        let refused = super::rebase(&Forest::resolve(&checkout, None, &[]), &onto("master"));
+        let refused = super::rebase(
+            &Forest::resolve(&checkout, None, &[]),
+            &onto("master"),
+            Stopped::Leave,
+        );
         match &refused.repos[0].replay {
             Replay::Dirty(paths) => assert!(paths[0].contains("mine.txt")),
             other => panic!("expected Dirty, got {other:?}"),
@@ -1409,7 +1637,11 @@ mod tests {
         // A directory that is not a repository is not one of the answers.
         std::fs::create_dir_all(workspace.join("notes")).unwrap();
 
-        let both = super::rebase(&Forest::resolve(&workspace, None, &[]), &onto("master"));
+        let both = super::rebase(
+            &Forest::resolve(&workspace, None, &[]),
+            &onto("master"),
+            Stopped::Leave,
+        );
         let names: Vec<&str> = both.repos.iter().map(|r| r.repo.as_str()).collect();
         assert_eq!(names, ["ce", "ee"]);
         assert!(both.repos.iter().all(|r| r.replay == Replay::Rebased(1)));
@@ -1419,6 +1651,7 @@ mod tests {
         let named = super::rebase(
             &Forest::resolve(&workspace, None, &[crate::forest::Declaration::at("ce")]),
             &onto("master"),
+            Stopped::Leave,
         );
         assert_eq!(named.repos.len(), 1);
     }
@@ -1441,6 +1674,7 @@ mod tests {
         let outcome = super::rebase(
             &Forest::resolve(&workspace, None, &declared),
             &onto("master"),
+            Stopped::Leave,
         );
         assert_eq!(outcome.repos.len(), 1);
         assert_eq!(outcome.absent, vec!["gone".to_string()]);
@@ -1454,7 +1688,11 @@ mod tests {
     fn a_base_branch_that_is_not_on_origin_is_refused_by_name() {
         let temp = tempfile::tempdir().unwrap();
         let checkout = checkout_with_origin(temp.path(), "app");
-        let refused = super::rebase(&Forest::resolve(&checkout, None, &[]), &onto("trunk"));
+        let refused = super::rebase(
+            &Forest::resolve(&checkout, None, &[]),
+            &onto("trunk"),
+            Stopped::Leave,
+        );
         match &refused.repos[0].replay {
             Replay::Refused(message) => assert!(message.contains("origin/trunk")),
             other => panic!("expected Refused, got {other:?}"),
@@ -1746,13 +1984,13 @@ mod tests {
 
         let forest = Forest::resolve(&checkout, None, &[]);
         assert_eq!(forest.repos[0].remote, "upstream");
-        let replayed = super::rebase(&forest, &onto("master"));
+        let replayed = super::rebase(&forest, &onto("master"), Stopped::Leave);
         assert_eq!(replayed.repos[0].replay, Replay::Rebased(1));
         assert!(replayed.report().contains("`upstream/master`"));
 
         // A base that is on no remote is refused by the name it was looked for
         // under, which is the repository's own.
-        let missing = super::rebase(&forest, &onto("trunk"));
+        let missing = super::rebase(&forest, &onto("trunk"), Stopped::Leave);
         match &missing.repos[0].replay {
             Replay::Refused(message) => assert!(message.contains("upstream/trunk")),
             other => panic!("expected Refused, got {other:?}"),
@@ -1794,7 +2032,7 @@ mod tests {
         advance_master(temp.path(), "app", "main-moved.txt", "main\n");
 
         let forest = Forest::resolve(&checkout, None, &[]);
-        let replayed = super::rebase(&forest, &Onto::Upstream);
+        let replayed = super::rebase(&forest, &Onto::Upstream, Stopped::Leave);
         assert_eq!(replayed.repos[0].replay, Replay::Rebased(1));
         assert_eq!(replayed.repos[0].onto.as_deref(), Some("origin/feature"));
         assert_eq!(replayed.summary(), "1 rebased onto its published copy");
@@ -1806,11 +2044,11 @@ mod tests {
         assert!(!checkout.join("main-moved.txt").exists());
 
         // Asked again there is nothing left to replay, which is an answer.
-        let again = super::rebase(&forest, &Onto::Upstream);
+        let again = super::rebase(&forest, &Onto::Upstream, Stopped::Leave);
         assert_eq!(again.repos[0].replay, Replay::Current);
         assert_eq!(again.summary(), "already on its published copy");
         // And the base rebase still has its own work to do.
-        let onto_base = super::rebase(&forest, &onto("master"));
+        let onto_base = super::rebase(&forest, &onto("master"), Stopped::Leave);
         assert_eq!(onto_base.repos[0].replay, Replay::Rebased(1));
         assert!(checkout.join("main-moved.txt").exists());
     }
@@ -1822,7 +2060,11 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let checkout = checkout_with_origin(temp.path(), "app");
 
-        let outcome = super::rebase(&Forest::resolve(&checkout, None, &[]), &Onto::Upstream);
+        let outcome = super::rebase(
+            &Forest::resolve(&checkout, None, &[]),
+            &Onto::Upstream,
+            Stopped::Leave,
+        );
         assert_eq!(outcome.repos[0].replay, Replay::Unpublished);
         assert_eq!(outcome.repos[0].onto, None);
         // Not stuck and not a conflict: the command succeeds and says why
@@ -1844,7 +2086,11 @@ mod tests {
         let workspace = ce.parent().unwrap().to_path_buf();
         advance_published_feature(temp.path(), "ce", "theirs.txt");
 
-        let outcome = super::rebase(&Forest::resolve(&workspace, None, &[]), &Onto::Upstream);
+        let outcome = super::rebase(
+            &Forest::resolve(&workspace, None, &[]),
+            &Onto::Upstream,
+            Stopped::Leave,
+        );
         let names: Vec<&str> = outcome
             .repos
             .iter()
@@ -1873,7 +2119,11 @@ mod tests {
         run_in(&checkout, &["checkout", "-q", "master"]);
         advance_master(temp.path(), "app", "theirs.txt", "theirs\n");
 
-        let outcome = super::rebase(&Forest::resolve(&checkout, None, &[]), &Onto::Upstream);
+        let outcome = super::rebase(
+            &Forest::resolve(&checkout, None, &[]),
+            &Onto::Upstream,
+            Stopped::Leave,
+        );
         assert_eq!(outcome.repos[0].onto.as_deref(), Some("origin/master"));
         assert_eq!(outcome.repos[0].replay, Replay::Rebased(1));
     }
@@ -1889,7 +2139,7 @@ mod tests {
         std::fs::write(checkout.join("mine.txt"), "half-written\n").unwrap();
 
         let forest = Forest::resolve(&checkout, None, &[]);
-        let refused = super::rebase(&forest, &Onto::Upstream);
+        let refused = super::rebase(&forest, &Onto::Upstream, Stopped::Leave);
         match &refused.repos[0].replay {
             Replay::Dirty(paths) => assert!(paths[0].contains("mine.txt")),
             other => panic!("expected Dirty, got {other:?}"),
@@ -1900,8 +2150,8 @@ mod tests {
         // left standing where it stopped.
         run_in(&checkout, &["checkout", "-q", "--", "mine.txt"]);
         commit(&checkout, "theirs.txt", "ours\n", "ours");
-        let stopped = super::rebase(&forest, &Onto::Upstream);
-        assert!(matches!(stopped.repos[0].replay, Replay::Conflicted(_)));
+        let stopped = super::rebase(&forest, &Onto::Upstream, Stopped::Leave);
+        assert!(matches!(stopped.repos[0].replay, Replay::Conflicted { .. }));
         assert!(stopped.report().contains("mid-rebase"));
     }
 
@@ -1984,7 +2234,10 @@ mod tests {
         let replays = [
             Replay::Current,
             Replay::Rebased(3),
-            Replay::Conflicted(vec!["f.txt".to_string()]),
+            Replay::Conflicted {
+                paths: vec!["f.txt".to_string()],
+                restored: false,
+            },
             Replay::Dirty(vec!["f.txt".to_string()]),
             Replay::Unpublished,
             Replay::Refused("no upstream".to_string()),
