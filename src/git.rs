@@ -167,6 +167,28 @@ impl Rebase {
         )
     }
 
+    /// The repositories whose conflict is **still standing** in the working
+    /// tree (§FS-005-dispatch.12): every one under [`Stopped::Leave`], and
+    /// under [`Stopped::Restore`] the ones this replay never began — a
+    /// repository found already stopped in a rebase, or one git would not
+    /// abort. What a report says about a tree has to follow this and not the
+    /// disposition the caller asked for, because the caller's word is what it
+    /// wanted and this is what happened.
+    pub fn standing(&self) -> Vec<&RepoReplay> {
+        self.repos
+            .iter()
+            .filter(|repo| {
+                matches!(
+                    repo.replay,
+                    Replay::Conflicted {
+                        restored: false,
+                        ..
+                    }
+                )
+            })
+            .collect()
+    }
+
     /// Repositories with no published copy to replay onto. Not stuck and not
     /// a failure: there is simply nothing there (§FS-004-quick-actions.8).
     pub fn unpublished(&self) -> Vec<&RepoReplay> {
@@ -376,6 +398,39 @@ impl Rebase {
             }
         }
         self.report_absent(&mut out);
+        out
+    }
+
+    /// The same report, as a paragraph of somebody else's document
+    /// (§FS-005-dispatch.3).
+    ///
+    /// A ticket's body is prose inside a plan, and a heading inside a plan is
+    /// a *node*: the runtime reads one as a task, fails to parse it, and
+    /// refuses the whole file — so the plan the writer meant to hand over is a
+    /// plan nothing can load. The headings become plain emphasis here rather
+    /// than at each caller, because the two callers that embed this — the
+    /// hand-over and the sweep — would otherwise each have to remember.
+    /// Fenced content is left exactly as it is: what git said is what git
+    /// said, and the plan language skips a fence for the same reason.
+    pub fn in_a_body(&self) -> String {
+        let mut out = String::new();
+        let mut fenced = false;
+        for line in self.report().lines() {
+            if line.trim_start().starts_with("```") {
+                fenced = !fenced;
+            }
+            let heading = match fenced {
+                true => None,
+                false => line
+                    .strip_prefix('#')
+                    .map(|rest| rest.trim_start_matches('#'))
+                    .and_then(|rest| rest.strip_prefix(' ')),
+            };
+            match heading {
+                Some(text) => out.push_str(&format!("**{}**\n", text.trim_end())),
+                None => out.push_str(&format!("{line}\n")),
+            }
+        }
         out
     }
 
