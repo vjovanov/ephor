@@ -1217,6 +1217,36 @@ impl Dispatcher {
         (hand, notes)
     }
 
+    /// The hand riding one run over one work root (§FS-005-dispatch.14).
+    ///
+    /// A run asked for by name is one run over everything the record says
+    /// that root's matters have open — the matter's own plan and every one a
+    /// workflow laid beside it (§FS-005-dispatch.30) — so the flags have to
+    /// answer for all of them. Resolved exactly as [`Dispatcher::run_hand`]
+    /// resolves one entry's tickets, and for the same reason: flags are
+    /// per-run, so where two matters want different ones the run carries
+    /// none and the reader is told rather than having one of them re-aimed.
+    pub fn run_hand_over(&mut self, due: &Due) -> Option<runtime::roster::HandFlags> {
+        let mut wants: Vec<Option<runtime::roster::HandFlags>> = Vec::new();
+        for item in &due.items {
+            let Some(entry) = self.ledger.entries.get(item).cloned() else {
+                continue;
+            };
+            let status = self.status_of(&entry, None);
+            wants.push(self.run_hand(&entry, &status));
+        }
+        let first = wants.iter().flatten().next()?.clone();
+        if wants.iter().all(|want| want.as_ref() == Some(&first)) {
+            return Some(first);
+        }
+        self.note_once(&format!(
+            "the open work in {} does not agree on one hand — the run carries no agent \
+             flags, and each ticket runs as it stands",
+            due.root.display()
+        ));
+        None
+    }
+
     fn placement(&mut self, project: &str) -> Option<&Placement> {
         self.placements
             .entry(project.to_string())
@@ -2509,7 +2539,29 @@ impl Dispatcher {
     /// is tried again.
     pub fn due(&mut self, now: DateTime<Utc>) -> Result<Vec<Due>> {
         let roots = self.work_roots();
-        self.due_in(&roots, now)
+        self.due_in(&roots, now, Reach::Sweep)
+    }
+
+    /// The plans a run asked for by name reaches: the matter's own and every
+    /// one a workflow laid beside it, for the one matter a reader named or —
+    /// with none — for every matter the record knows in the projects they
+    /// asked about (§FS-005-dispatch.30).
+    ///
+    /// The sweep's own reading, narrowed. It is deliberately not
+    /// [`Dispatcher::start_due`] narrowed: that function is the sweep's *act*,
+    /// and the ceilings, the spend refusal, the back-off and the site-wide
+    /// reservation live inside it. The key inherits none of them, and reusing
+    /// the reading rather than the act is what makes that true by
+    /// construction rather than by anyone remembering to exclude them
+    /// (§FS-005-dispatch.30, §FS-005-dispatch.24).
+    pub fn runnable_of(
+        &mut self,
+        item: Option<&str>,
+        projects: &[String],
+        now: DateTime<Utc>,
+    ) -> Result<Vec<Due>> {
+        let roots = self.work_roots();
+        self.due_over(&roots, now, projects, Reach::Key(item))
     }
 
     /// Due roots from one discovered-root snapshot. `start_due` also derives
@@ -2520,7 +2572,16 @@ impl Dispatcher {
         &mut self,
         roots: &[runtime::watch::RootPlans],
         now: DateTime<Utc>,
+        reach: Reach<'_>,
     ) -> Result<Vec<Due>> {
+        // What asked to run itself is the sweep's question alone: the key is
+        // blind to `autorun`, so resolving it for the key would cost a summons
+        // per project to answer nothing — and would make a start by name
+        // depend on the runtime answering `templates`
+        // (§FS-005-dispatch.30).
+        if let Reach::Key(_) = reach {
+            return self.reading(roots, &BTreeMap::new(), &BTreeMap::new(), now, reach);
+        }
         let projects: BTreeSet<String> = roots
             .iter()
             .flat_map(|group| group.plans.iter().map(|plan| plan.project.clone()))
@@ -2564,14 +2625,28 @@ impl Dispatcher {
                     .map(|asked| (project, asked))
             })
             .collect::<Result<_>>()?;
+        self.reading(roots, &autoruns, &workflow_autoruns, now, reach)
+    }
+
+    /// The reading itself, once the autorun sets are settled: shared so that
+    /// the sweep and the key rank what they found the same way
+    /// (§AR-009-surfaces.1).
+    fn reading(
+        &mut self,
+        roots: &[runtime::watch::RootPlans],
+        autoruns: &BTreeMap<String, BTreeSet<String>>,
+        workflow_autoruns: &BTreeMap<String, BTreeSet<String>>,
+        now: DateTime<Utc>,
+        reach: Reach<'_>,
+    ) -> Result<Vec<Due>> {
         let mut due = due_among(
             &self.global,
             roots,
-            &autoruns,
-            &workflow_autoruns,
+            autoruns,
+            workflow_autoruns,
             &self.ledger,
             now,
-            Reach::Sweep,
+            reach,
         );
         if let Some(path) = self.global.ranking.as_deref() {
             let reading = ranking::read(&crate::paths::resolve_path(path));
@@ -2610,11 +2685,15 @@ pub fn due_among(
     workflow_autoruns: &BTreeMap<String, BTreeSet<String>>,
     ledger: &Ledger,
     now: DateTime<Utc>,
-    // Which reader this reading is for (§FS-005-dispatch.30). Declared and not
-    // yet read: every guard below still answers as it answers the sweep, which
-    // is precisely what the cases committed beside it say is wrong.
-    _reach: Reach<'_>,
+    // Which reader this reading is for (§FS-005-dispatch.30). Three guards
+    // below read it, and they are the three that are there because the sweep
+    // has nobody present.
+    reach: Reach<'_>,
 ) -> Vec<Due> {
+    // A reader who typed a matter's name is present and is deciding, which is
+    // the whole of the difference between the two readers
+    // (§FS-005-dispatch.30).
+    let key = matches!(reach, Reach::Key(_));
     // What ephor dispatched, so a ticket it wrote is judged by the recipe it
     // was written from rather than by the shape of its id.
     let dispatched: BTreeMap<(PathBuf, String), String> = ledger
@@ -2665,17 +2744,25 @@ pub fn due_among(
         // (§FS-005-dispatch.24). A tree *another* root's run holds is a
         // different matter and is answered below, where the root has been
         // judged due and there is something to pass over.
+        //
+        // Not for the key: a reader who asked for a run by name is owed the
+        // refusal that names the run in the way, with `--force` to lift it,
+        // rather than being told the matter holds nothing. So the row comes
+        // back and the surface refuses on it (§FS-005-dispatch.30).
         let held_by = holding(&busy, &checkout_of(ledger, &group.root));
-        if held_by.is_some_and(|held_by| held_by == &group.root) {
+        if !key && held_by.is_some_and(|held_by| held_by == &group.root) {
             continue;
         }
         // A root that could not be started is passed over for a while,
         // longer each time — a runner that refuses must not turn every
-        // sweep into a spawn.
-        if ledger
-            .starts
-            .get(&root_key(&group.root))
-            .is_some_and(|start| start.resting(now))
+        // sweep into a spawn. A rule about a decision nobody is watching, so
+        // a reader who asks for the root now gets it now
+        // (§FS-005-dispatch.30).
+        if !key
+            && ledger
+                .starts
+                .get(&root_key(&group.root))
+                .is_some_and(|start| start.resting(now))
         {
             continue;
         }
@@ -2702,12 +2789,30 @@ pub fn due_among(
             if laid.is_none() && runtime::plan::own_store(&plan_ref.path).is_some() {
                 continue;
             }
+            // What the key reaches is what the record says is a matter's
+            // work, and nothing else: [`enumerate_roots`] writes the matter
+            // onto every plan of a ledger entry — the matter's own and each
+            // one a workflow laid — and onto none it merely found in a root.
+            // So a plan the record can name no matter for is nobody's to
+            // start by name, and where a reader named one it is that matter's
+            // plans alone (§FS-005-dispatch.30, §FS-005-dispatch.28).
+            if let Reach::Key(named) = reach {
+                let Some(about) = plan_ref.item.as_deref() else {
+                    continue;
+                };
+                if named.is_some_and(|named| named != about) {
+                    continue;
+                }
+            }
             let asked = match laid {
                 Some(_) => workflow_autoruns.get(&plan_ref.project),
                 None => autoruns.get(&plan_ref.project),
             }
             .unwrap_or(&nothing);
-            if asked.is_empty() {
+            // `autorun` is the condition under which work starts with nobody
+            // present, so its silence means the key and the key is blind to
+            // it (§FS-005-dispatch.30, §FS-005-dispatch.24).
+            if !key && asked.is_empty() {
                 continue;
             }
             // A plan that is a store of its own runs under the machine it
@@ -2749,14 +2854,20 @@ pub fn due_among(
                 // the id says it, because ids are `<recipe>-<n>` by
                 // construction. Either way it is a fact about the ticket
                 // (§FS-005-dispatch.24).
-                let asked_for = laid.or_else(|| {
-                    dispatched
-                        .get(&(group.root.clone(), ticket.id.clone()))
-                        .map(String::as_str)
-                        .or_else(|| recipe_of_ticket(&ticket.id))
-                });
-                if !asked_for.is_some_and(|what| asked.contains(what)) {
-                    continue;
+                //
+                // The key does not ask: it is blind to `autorun`, and the
+                // whole of which plans are its own was settled above by the
+                // matter the record names (§FS-005-dispatch.30).
+                if !key {
+                    let asked_for = laid.or_else(|| {
+                        dispatched
+                            .get(&(group.root.clone(), ticket.id.clone()))
+                            .map(String::as_str)
+                            .or_else(|| recipe_of_ticket(&ticket.id))
+                    });
+                    if !asked_for.is_some_and(|what| asked.contains(what)) {
+                        continue;
+                    }
                 }
                 if !plans.contains(&plan_ref.plan_id) {
                     plans.push(plan_ref.plan_id.clone());
@@ -2978,7 +3089,7 @@ impl Dispatcher {
         // in here — [`due_among`] wrote that on the root itself.
         let mut taken: BTreeMap<PathBuf, PathBuf> = BTreeMap::new();
         let runs = self
-            .due_over(&roots, now, projects)?
+            .due_over(&roots, now, projects, Reach::Sweep)?
             .into_iter()
             .map(|root| {
                 // A tree another root's run held before this sweep began, and
@@ -3080,9 +3191,10 @@ impl Dispatcher {
         roots: &[runtime::watch::RootPlans],
         now: DateTime<Utc>,
         projects: &[String],
+        reach: Reach<'_>,
     ) -> Result<Vec<Due>> {
         Ok(self
-            .due_in(roots, now)?
+            .due_in(roots, now, reach)?
             .into_iter()
             .filter(|root| {
                 projects.is_empty()
@@ -3099,7 +3211,7 @@ impl Dispatcher {
     /// written (§FS-011-command-line.10).
     pub fn due_now(&mut self, now: DateTime<Utc>, projects: &[String]) -> Result<Vec<Due>> {
         let roots = self.work_roots();
-        self.due_over(&roots, now, projects)
+        self.due_over(&roots, now, projects, Reach::Sweep)
     }
 
     /// Remember that starting a run on this root did not work, so the next
@@ -3776,6 +3888,40 @@ pub fn take_checkout(
     root: &std::path::Path,
 ) {
     taken.insert(canonical(checkout), root.to_path_buf());
+}
+
+/// The one sentence said where a run asked for by name names a matter the
+/// record has no work about at all (§FS-005-dispatch.30).
+///
+/// It quotes the id and names the two verbs that would give it work, because
+/// the fault this ends was that a real matter and a typo came back as the
+/// same bytes. An input that names nothing is refused by name and exits `2`,
+/// like every other refusal of something a reader typed
+/// (§FS-011-command-line.9).
+pub fn no_work_recorded(item: &str) -> String {
+    format!(
+        "No work is recorded about '{item}'. Hand some over with 'ephor work dispatch \
+         --item {item}', or lay a workflow with 'ephor work lay <entry> --item {item}'."
+    )
+}
+
+/// The one sentence said where the record knows the matter and nothing in its
+/// work is a run's to advance (§FS-005-dispatch.30).
+///
+/// Not a refusal: the command was understood and the answer is that the work
+/// is over, claimed, or waiting on a person. So it names the matter and says
+/// which of those it is, in the terms §FS-005-dispatch.24 already uses. Said
+/// in one place because the command line and the screen's run key are one
+/// ability and must answer alike (§REQ-002-parity.1).
+pub fn nothing_to_run(item: Option<&str>) -> String {
+    match item {
+        Some(item) => format!(
+            "Nothing to run for {item}: its work holds no task that is open, unclaimed \
+             and not parked."
+        ),
+        None => "Nothing to run: no work holds a task that is open, unclaimed and not parked."
+            .to_string(),
+    }
 }
 
 /// The one sentence said wherever a start is held back because a live run

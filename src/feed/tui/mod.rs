@@ -134,7 +134,6 @@ pub(crate) enum Action {
         root: PathBuf,
         /// Where to run it from — the checkout the work is about.
         checkout: PathBuf,
-        plan_id: String,
         label: String,
     },
     /// Open a plan in the reader's editor.
@@ -686,7 +685,6 @@ impl App {
                 item,
                 root,
                 checkout,
-                plan_id,
                 label,
             } => {
                 // The runtime is a rung: refused here in the same words the
@@ -718,11 +716,33 @@ impl App {
                     self.message = refusal;
                     return Ok(false);
                 }
+                // What this matter's work is, read exactly as `work run` reads
+                // it: the matter's own plan and every one a workflow laid
+                // beside it, named as the record names them
+                // (§FS-005-dispatch.30). This key read the matter's own plan
+                // id alone, which on a matter whose work was entirely laid
+                // pointed the runtime at a plan that is not on disk — a
+                // reader must not have to know which verb wrote the work in
+                // front of them (§REQ-002-parity.1).
+                let plans: Vec<String> = match &mut self.ctx.dispatcher {
+                    Some(dispatcher) => dispatcher
+                        .runnable_of(Some(&item), &[], chrono::Utc::now())
+                        .unwrap_or_default()
+                        .into_iter()
+                        .flat_map(|due| due.plans)
+                        .collect(),
+                    None => Vec::new(),
+                };
+                if plans.is_empty() {
+                    // The same sentence the command line gives this answer,
+                    // because they are one ability (§REQ-002-parity.1).
+                    self.message = crate::work::nothing_to_run(Some(&item));
+                    return Ok(false);
+                }
                 // Who gets this run, resolved the way `work run` resolves it —
                 // a hand the plan language could not spell rides here as the
-                // runtime's own agent flags (§FS-005-dispatch.14). This run
-                // names one plan and advances no other, so that plan's tickets
-                // settle its flags alone and there is nothing to group.
+                // runtime's own agent flags (§FS-005-dispatch.14). One matter,
+                // so its own entry settles the flags.
                 let (hand, notes) = match &mut self.ctx.dispatcher {
                     Some(dispatcher) => dispatcher.run_hand_for(&item),
                     None => (None, Vec::new()),
@@ -749,7 +769,7 @@ impl App {
                         &config.work,
                         &root,
                         &checkout,
-                        std::slice::from_ref(&plan_id),
+                        &plans,
                         hand.as_ref(),
                         &[],
                     ) {
@@ -804,7 +824,7 @@ impl App {
                         &crate::work::runtime::summons_with(
                             &config.work,
                             &root,
-                            std::slice::from_ref(&plan_id),
+                            &plans,
                             hand.as_ref(),
                             &[],
                         ),

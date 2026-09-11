@@ -285,7 +285,6 @@ impl WorkScreen {
                     item: self.item.id.clone(),
                     root: status.root.clone(),
                     checkout: status.checkout.clone(),
-                    plan_id: status.plan_id.clone(),
                     label: self.item.title.clone(),
                 },
                 (None, None, None) => Action::SetMessage("No work to run yet".to_string()),
@@ -1002,13 +1001,14 @@ mod tests {
             screen.handle_key(KeyCode::Char('s')),
             Action::SetMessage(_)
         ));
-        // The run names this item's own plan, and names the item too: the
-        // hand riding the run is resolved from that item's ledger entry
-        // (§FS-005-dispatch.14).
+        // The run names the matter and not a plan: which plans are that
+        // matter's work is the record's answer, read where the dispatcher is
+        // (§FS-005-dispatch.30), and the hand riding the run is resolved from
+        // that item's ledger entry too (§FS-005-dispatch.14).
         match screen.handle_key(KeyCode::Char('R')) {
-            Action::RunWork { item, plan_id, .. } => {
+            Action::RunWork { item, root, .. } => {
                 assert_eq!(item, "forge:demo/17");
-                assert_eq!(plan_id, "forge-demo-17");
+                assert_eq!(root, status(false).root);
             }
             _ => panic!("expected a run"),
         }

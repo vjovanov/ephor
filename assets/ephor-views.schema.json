@@ -965,7 +965,7 @@
       "required": ["runs", "failed"],
       "properties": {
         "gated": { "type": "boolean", "description": "Present when the verb reached wider than one project without `--act`: the reading is a report and nothing was written (FS-011-command-line.10)." },
-        "says": { "type": "string", "description": "Why the gated reading wrote nothing, naming the scope it reached and what `--act` would do (FS-011-command-line.10)." },
+        "says": { "type": "string", "description": "The reason the reading carries where it started nothing, so the machine form is never the poorer of the two (REQ-002-parity.3). Either why the gated reading wrote nothing, naming the scope it reached and what `--act` would do (FS-011-command-line.10), or — with no run in `runs` — that the matter this was asked about holds no task that is open, unclaimed and not parked, naming it (FS-005-dispatch.30). An id no work is recorded about at all is not this: that is a refusal, and it prints the refusal shape with `ok` false and exits 2." },
         "runs": {
           "type": "array",
           "items": {

@@ -474,7 +474,11 @@ pub struct WorkRunArgs {
     #[arg(long)]
     pub project: Vec<String>,
 
-    /// Run only the work of one item.
+    /// Run only the work of one item — the whole of it, whichever plan holds
+    /// it: the matter's own and every one a workflow laid beside it
+    /// (§FS-005-dispatch.30). An id no work is recorded about is refused by
+    /// name and exits 2; a matter holding nothing a run would advance says so
+    /// and exits 0.
     #[arg(long)]
     pub item: Option<String>,
 

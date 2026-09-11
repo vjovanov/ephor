@@ -2533,10 +2533,29 @@ ephor work states
   failing, and the sweep says which of the three happened, along with any id
   the file named that matched nothing
   ([§FS-005-dispatch.26](functional-spec/FS-005-dispatch.md#26-an-ordering-already-made-can-be-read-and-a-limit-bounds-what-runs)). Pass runtime arguments after `--`; dispatch gives the vector unchanged and in order to every autorun this invocation starts, does not remember it for later sweeps, and supplies none when omitted, as before.
-- **`run`** groups by work root and names the plans ephor opened, so a runtime
-  project you keep in the same checkout for your own work is not swept in. One
-  root at a time: tickets in one root are about one checkout, and two agents in
-  one working tree edit the same files. Pass runtime flags after `--`.
+- **`run`** groups by work root and names the plans ephor's record says are
+  that work's, so a runtime project you keep in the same checkout for your own
+  work is not swept in. One root at a time: tickets in one root are about one
+  checkout, and two agents in one working tree edit the same files. Pass
+  runtime flags after `--`.
+  `--item <id>` runs the whole of one matter's work — the plan ephor opened and
+  every plan a workflow laid beside it, whether or not that entry said
+  `autorun`, since a reader typing a name is the reader who was always meant to
+  start it (§8.15.1). Both kinds in one root come out as **one run** naming both
+  plans, because two would refuse each other. The key inherits none of the
+  ceilings, budget refusals or back-offs `--due` reads below: you are present
+  and deciding, so a full budget warns and refuses nothing. The one rule that
+  survives is one live run per checkout, refused by name and lifted by
+  `--force`. Three answers you can tell apart
+  ([§FS-005-dispatch.30](functional-spec/FS-005-dispatch.md#30-a-run-asked-for-by-name-reaches-the-whole-of-that-matters-work)):
+  an id **no work is recorded about** is refused by name on the error stream and
+  exits `2`, naming `work dispatch` and `work lay` as the verbs that would give
+  it work; a matter the record knows **holding nothing a run would advance**
+  names the matter, says its work holds no task that is open, unclaimed and not
+  parked, and exits `0`, with that sentence in the reading's `says`; a matter
+  **holding work** prints the run lines. With no `--item` the same reading runs
+  over every matter the record knows in the projects you gave, so a plain
+  `ephor work run` starts laid plans too.
   It **starts the run detached** and prints the id it was given
   ([§FS-005-dispatch.20](functional-spec/FS-005-dispatch.md#20-a-run-of-the-runtime-starts-beneath-the-screen-and-is-watched-by-attaching));
   `--watch` keeps your terminal and watches the run here, which is also what a
@@ -3125,7 +3144,12 @@ every other plan there, and a workflow and a ticket about one change queue
 behind the root's one run rather than editing the same tree at once.
 
 Laying one down writes files and nothing else. Running it is the move after,
-from the board or with `ephor work run`. A second laying of the same entry is
+from the board, with `R` on the item's work screen, or with
+`ephor work run --item <id>` — which starts it whether or not the entry said
+`autorun`, because silence about autorun means the reader starts it and this is
+the reader
+([§FS-005-dispatch.30](functional-spec/FS-005-dispatch.md#30-a-run-asked-for-by-name-reaches-the-whole-of-that-matters-work)).
+A second laying of the same entry is
 `<matter>-<entry>-2`: two runs of one workflow about one item are two records,
 not a correction of the first.
 
