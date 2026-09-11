@@ -289,6 +289,16 @@ pub struct PullRequest {
     /// Head branch, which links the item to a registry branch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
+    /// Whether the forge says this pull request is still a draft. `None` from
+    /// an implementation with no notion of drafts, and kept apart from
+    /// `Some(false)` on purpose: "not yet anybody's to review" is a claim
+    /// about the world, and one nobody has made is not the same as one made
+    /// and answered no (§FS-001-forge-interface.1). What reads it treats the
+    /// difference as the difference it is — an open pull request whose draft
+    /// state is unknown protects its branch from an unattended sweep, and one
+    /// known to be a draft does not (§FS-004-quick-actions.6.1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft: Option<bool>,
     pub updated_at: DateTime<Utc>,
     /// Which side of the review the user is on. An implementation that reports
     /// `reasons` need not set this — policy derives it — and one that reports

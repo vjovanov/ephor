@@ -6,6 +6,12 @@
 //! both arrive here, so there is one answer to what a clean rebase is
 //! (§FS-005-dispatch.12). What it cannot finish — a conflict — it hands over
 //! as work rather than deciding.
+//!
+//! Given a scope selector the same move is swept over every branch checkout
+//! the selector's projects have ([`crate::sweep`], §FS-004-quick-actions.6.1).
+//! The selector is the only thing that enters it: given none, this is the
+//! one-checkout verb it has always been, byte for byte
+//! (§FS-011-command-line.9).
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -18,12 +24,27 @@ use crate::feed::config::load_config;
 use crate::feed::model::Item;
 use crate::git;
 use crate::given;
+use crate::scope::{Act, Projects};
 use crate::work::Dispatcher;
 
 /// A conflict is not a failure: it is where the work starts.
 const CONFLICT: u8 = 3;
 
-pub fn rebase(args: &RebaseArgs) -> Result<ExitCode> {
+pub fn rebase(args: &RebaseArgs, projects: &Projects, act: Act) -> Result<ExitCode> {
+    // A selector is what enters the sweep, and nothing else
+    // (§FS-004-quick-actions.6.1). `Projects` is narrowed exactly where one
+    // was given, which is the same question [`crate::scope::sweeps`] asked to
+    // put this invocation on its side of the `--act` gate — asked of one
+    // value, so the two answers cannot disagree.
+    if projects.narrowed() {
+        return crate::sweep::sweep(args, projects, act);
+    }
+    one_checkout(args)
+}
+
+/// The verb it has always been: the checkout it was given, or the working
+/// directory (§FS-004-quick-actions.6).
+fn one_checkout(args: &RebaseArgs) -> Result<ExitCode> {
     // A state machine hands its program everything through `env:` (the manual's
     // §8.5), so the flags a reader types and the names a state sets are the
     // same inputs spelled two ways, and each is honoured or refused naming the
@@ -292,7 +313,10 @@ fn hand_over(
     })
 }
 
-fn write_report(path: &str, contents: &str) -> Result<()> {
+/// Also write what this run came to as markdown, for a state to hand on to
+/// the one that resolves it. Shared with the sweep, which has the same
+/// contract for the same flag: one file, holding this run's own report.
+pub fn write_report(path: &str, contents: &str) -> Result<()> {
     let path = PathBuf::from(crate::paths::resolve_path(path));
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|err| {

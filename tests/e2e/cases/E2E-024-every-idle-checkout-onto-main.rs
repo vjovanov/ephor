@@ -134,7 +134,6 @@ fn heads(world: &World) -> Vec<(String, String)> {
 /// of the forge already fetched, and nobody present.
 fn a_machine_left_alone() -> World {
     let world = World::new();
-    world.organize("foundation", "Foundation");
     world.stub("ephor-forge-acmeforge", ACME_FORGE);
 
     let origin = world.path().join("origin");
@@ -162,6 +161,11 @@ fn a_machine_left_alone() -> World {
         "branch_root_template": "{project_root}/{branch}",
         "branches": declared
     }));
+    // After the row, not before it: `register` writes a whole registry rather
+    // than merging into one, so an organization declared first is not there
+    // afterwards — and `--org` selects on the project row's own
+    // `organization` field.
+    world.organize("foundation", "Foundation");
     world.configure(json!({
         "projects": { PROJECT: {
             "providers": [ { "provider": "acmeforge", "user": "you", "repos": ["widget"] } ]

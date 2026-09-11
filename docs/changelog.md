@@ -42,6 +42,28 @@ ships, the previous "latest" section moves verbatim to
 
 ### Changed
 
+- **`ephor rebase` honours a scope selector, and joins the `--act` gate**
+  ([§FS-011-command-line.9](functional-spec/FS-011-command-line.md#9-a-scope-selector-is-honoured-or-refused),
+  [§FS-011-command-line.10](functional-spec/FS-011-command-line.md#10-a-mutating-verb-above-one-project-reports-and-acts-under---act),
+  [§FS-005-dispatch.12](functional-spec/FS-005-dispatch.md#12-work-an-algorithm-can-finish-does-not-start-with-a-model)).
+  `ephor rebase --org X`, `--workspace X` and `--tag X` exited 2 as refused
+  selectors and now sweep, so anyone reading that exit code as a permanent
+  refusal is answered differently; it is the one verb in the honouring
+  enumeration on a condition. A bare `ephor rebase` inside a checkout is byte
+  for byte what it was. `--project` keeps its meaning — which project the one
+  checkout belongs to — and is refused by name beside a selector, as are
+  `--checkout`, `--item`, `--dispatch`, `--hand`, `--onto` and `--upstream`;
+  every one of those command lines already exited 2 for the selector alone, so
+  nothing that works today gains a refusal. The gate is counted differently for
+  it than for `work dispatch` and its siblings: a verb whose pre-rule unit was
+  narrower than one project is above the gate the moment it sweeps, at any
+  width, because `rebase`'s byte-for-byte was one checkout rather than one
+  project. Underneath, the disposition of a conflict is now an argument to the
+  single replay rather than a fixed rule — *leave*, which every caller that
+  exists today passes and which changes nothing, or *restore*, which only the
+  sweep asks for — and a repository found already stopped in a rebase is
+  touched under neither. (PR #89)
+
 - **A due sweep stops restarting a root whose runs advance nothing**
   ([§FS-005-dispatch.24](functional-spec/FS-005-dispatch.md#24-work-nobody-has-to-start-starts-itself),
   [§FS-005-dispatch.15.2](functional-spec/FS-005-dispatch.md#152-what-a-run-is-doing-is-read-from-the-runs-own-stream),
@@ -80,6 +102,38 @@ ships, the previous "latest" section moves verbatim to
   record where the work happened at the time. (PR #84)
 
 ### Added
+
+- **Every idle checkout is replayed onto main on a timer, and a reused one says
+  how far behind it is**
+  ([§FS-004-quick-actions.6.1](functional-spec/FS-004-quick-actions.md#61-the-same-replay-over-every-checkout-nobody-is-holding),
+  [§FS-004-quick-actions.7.1](functional-spec/FS-004-quick-actions.md#71-a-workspace-that-is-there-is-still-owed-its-store),
+  [§FS-005-dispatch.3](functional-spec/FS-005-dispatch.md#3-one-rhei-per-item-one-ticket-per-dispatch),
+  [§FS-005-dispatch.24](functional-spec/FS-005-dispatch.md#24-work-nobody-has-to-start-starts-itself)).
+  A branch checkout that sits for a day drifts far enough from main that work
+  done in it is work against a layout that is gone, and nothing noticed until
+  `ship` — after the whole run had been paid for. Two things now do. `ephor
+  rebase` given `--workspace`, `--tag` or `--org` sweeps every branch checkout
+  of the projects that selector names through the same per-checkout replay,
+  under `--act`, and `systemd/ephor-rebase-sweep.{service,timer}` runs it
+  hourly with nobody watching. It passes over — and says it passed over, with
+  the reason — the project's main-branch checkout, which is `ephor update`'s, a
+  checkout a live run holds, a branch with an open pull request that is not a
+  draft, and a checkout an earlier sweep already wrote a conflict ticket about;
+  the review answer comes from what the watch already fetched, freshened once
+  per project rather than once per branch, and a project whose reading cannot
+  be had has **none** of its checkouts replayed and makes the sweep exit
+  non-zero, because *could not tell* is not *no*. A conflict puts the tree back
+  on the commit it was on, reports it, and — where the project's work
+  configuration names a `rebase-sweep` recipe — writes it up as a ticket in one
+  plan named after the sweep, saying the tree was restored. Forty checkouts
+  become one exit code, conflict winning: `3` where any conflicted, `1` where
+  any was refused or any project was not reached, `0` otherwise. And `ephor
+  checkout` on a directory that is already a whole workspace no longer says
+  only `already checked out`: it says `115 behind main (as of Sep 10)` too,
+  from the same fold the branch row for that directory renders, which is the
+  line that would have stopped the run behind all of this before it started.
+  The pull-request reading now carries the forge's draft flag, absent where the
+  forge has no notion of one. (PR #89)
 
 - **A due sweep leaves a root out at your asking**
   ([§FS-005-dispatch.24](functional-spec/FS-005-dispatch.md#24-work-nobody-has-to-start-starts-itself),

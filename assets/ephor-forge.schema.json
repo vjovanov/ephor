@@ -59,6 +59,7 @@
         "title": { "type": "string" },
         "url": { "type": "string" },
         "branch": { "type": "string", "description": "Head branch, for workspace resolution (AR-004-forest.3)." },
+        "draft": { "type": "boolean", "description": "Whether this pull request is still a draft. Omit it where the forge has no notion of drafts: absent is kept apart from `false`, because \"not yet anybody's to review\" is a claim about the world, and one nobody has made is not one made and answered no (FS-001-forge-interface.1). An unattended sweep reads it to decide whether a branch is somebody's to move (FS-004-quick-actions.6.1)." },
         "updated_at": { "type": "string", "format": "date-time" },
         "role": { "enum": ["author", "reviewer"], "description": "Which search found it." },
         "reasons": {

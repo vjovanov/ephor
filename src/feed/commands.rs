@@ -253,20 +253,44 @@ struct RefreshTally {
 fn ensure_fresh(config: &StatusConfig, project: &str, args: &StatusArgs) -> Result<ProjectFeed> {
     let ttl = args.max_age.unwrap_or(config.defaults.ttl_seconds);
     let cached = cache::load_feed(project)?;
-    let fresh_enough = cached
-        .as_ref()
-        .and_then(|feed| feed.fetched_at)
-        .map(|fetched| (Utc::now() - fetched).num_seconds() < ttl as i64)
-        .unwrap_or(false);
 
-    if args.cached || (fresh_enough && !args.refresh) {
+    if args.cached || (younger_than(cached.as_ref(), ttl) && !args.refresh) {
         return cached.ok_or_else(|| {
             EphorError::Command(format!(
                 "No cached feed for '{project}'; run `ephor refresh {project}`."
             ))
         });
     }
+    refetch(config, project, ttl)
+}
 
+/// The same freshening a status reading makes, for a caller with no flags to
+/// read: the cached feed where it is younger than `ttl`, and one refresh of
+/// this project where it is not (§FS-004-quick-actions.6.1).
+///
+/// Here rather than at the caller so that the rebase sweep's reading of what a
+/// branch is under review by ages on the same terms `ephor status` does — one
+/// call per project per sweep, and never one per branch.
+pub fn freshened(config: &StatusConfig, project: &str, ttl: u64) -> Result<ProjectFeed> {
+    let cached = cache::load_feed(project)?;
+    if younger_than(cached.as_ref(), ttl) {
+        return cached
+            .ok_or_else(|| EphorError::Command(format!("No cached feed for '{project}'.")));
+    }
+    refetch(config, project, ttl)
+}
+
+/// Whether this cache was fetched inside the window. A cache no refresh ever
+/// produced has no day on it and is not fresh — which is a different answer
+/// from "nothing to report".
+fn younger_than(cached: Option<&ProjectFeed>, ttl: u64) -> bool {
+    cached
+        .and_then(|feed| feed.fetched_at)
+        .map(|fetched| (Utc::now() - fetched).num_seconds() < ttl as i64)
+        .unwrap_or(false)
+}
+
+fn refetch(config: &StatusConfig, project: &str, ttl: u64) -> Result<ProjectFeed> {
     let registry_doc = load_registry_doc()?;
     let project_config = known_project(config, project)?;
     let outcome = refresh_project(&registry_doc, project, project_config, &config.defaults)?;

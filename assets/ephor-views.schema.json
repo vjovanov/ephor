@@ -219,6 +219,93 @@
         }
       }
     },
+    "rebase_one": {
+      "type": "object",
+      "description": "`ephor rebase --json` about one checkout (FS-004-quick-actions.6, FS-004-quick-actions.8) — every repository under it replayed onto its base or onto its own published copy, and where each one ended. Exits `0` where every repository is on the base, `3` where one stopped in a conflict, `1` where it could not run at all: a state machine reads those to decide who works next (FS-005-dispatch.12).",
+      "required": ["checkout", "onto", "summary", "rebased", "conflicted", "repos"],
+      "properties": {
+        "checkout": { "type": "string" },
+        "onto": { "type": "string", "description": "The branch replayed onto, or `upstream` where each repository resolved its own published copy (DA-003-upstream-is-the-published-copy)." },
+        "summary": { "type": "string" },
+        "rebased": { "type": "integer" },
+        "conflicted": { "type": "integer" },
+        "absent": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Repositories the forest declares that are not on disk."
+        },
+        "repos": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/rebase_repo" }
+        },
+        "report": { "type": "string", "description": "The same account in markdown — what `--report` writes, and what the brief of a handed-over conflict carries." },
+        "dispatched": {
+          "type": ["object", "null"],
+          "description": "The ticket a conflict was handed over as, under `--dispatch` (FS-005-dispatch.12). Null where nothing was handed over. A conflict is not a failure: it is where the work starts, so what it opened is part of this reading rather than a line of prose after it.",
+          "required": ["item", "says"],
+          "properties": {
+            "item": { "type": "string" },
+            "ticket": { "type": "string" },
+            "says": { "type": "string" },
+            "notes": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/note" }
+            }
+          }
+        }
+      }
+    },
+    "rebase_sweep": {
+      "type": "object",
+      "description": "`ephor rebase --json` given a scope selector (FS-004-quick-actions.6.1) — the same per-checkout replay swept over every branch checkout of every project the selector names, with the main branch's left to `ephor update`. Forty checkouts become one exit code and conflict wins, which is the precedence one rebase already has: `3` where any checkout conflicted, `1` otherwise where any was refused or any project could not be read, `0` otherwise — `replayed`, `level` and `passed-over` are all good ends.",
+      "required": ["scope", "summary", "replayed", "level", "passed_over", "conflicted", "refused", "projects", "checkouts"],
+      "properties": {
+        "scope": { "type": "string", "description": "The selectors as the caller typed them, so a report quotes them rather than paraphrasing." },
+        "summary": { "type": "string" },
+        "report": { "type": "string", "description": "The same account in markdown — what `--report` writes." },
+        "replayed": { "type": "integer" },
+        "level": { "type": "integer" },
+        "passed_over": { "type": "integer" },
+        "conflicted": { "type": "integer" },
+        "refused": { "type": "integer" },
+        "restored": { "type": "boolean", "description": "Whether every conflict this stopped on was put back on the commit it started from (FS-005-dispatch.12). Absent where nothing conflicted: a reader sent to a conflict has to be told the tree was restored, and `no conflict` is a different answer from `a conflict still standing`." },
+        "gated": { "type": "boolean", "description": "The run reported and wrote nothing, because sweeping writes into trees and `--act` is what says to (FS-011-command-line.10)." },
+        "says": { "type": "string", "description": "What a gated run says it did instead, naming the flag that acts. Present with `gated`." },
+        "projects": {
+          "type": "array",
+          "description": "One row per project the selector resolved to, and whether its checkouts were reached at all. A project whose review reading could not be had has none of its checkouts replayed and is reported here with the reason, because *could not tell* is not *no* (FS-004-quick-actions.6.1).",
+          "items": {
+            "type": "object",
+            "required": ["project", "reached"],
+            "properties": {
+              "project": { "type": "string" },
+              "reached": { "type": "boolean" },
+              "says": { "type": "string", "description": "Why none of it was reached, where none was." }
+            }
+          }
+        },
+        "checkouts": {
+          "type": "array",
+          "description": "One row per branch checkout the sweep saw, whichever end it came to.",
+          "items": {
+            "type": "object",
+            "required": ["project", "branch", "checkout", "outcome", "says"],
+            "properties": {
+              "project": { "type": "string" },
+              "branch": { "type": "string" },
+              "checkout": { "type": "string" },
+              "outcome": {
+                "enum": ["replayed", "level", "passed-over", "conflicted", "refused", "would-replay"],
+                "description": "`passed-over` is an outcome and never a silence: a sweep that says nothing about a checkout it decided not to touch cannot be told from one that never saw it. `would-replay` is what a run held at the gate says, and it is not measured — measuring the distance means fetching into the repository, and a run that reports writes nothing."
+              },
+              "says": { "type": "string", "description": "The one line the prose gave about this checkout, reason included where it was passed over." },
+              "rebase": { "$ref": "#/$defs/rebase_one", "description": "The per-checkout reading, nested exactly as one checkout's own `rebase --json` prints it. Absent where no replay ran — a checkout passed over, or a run held at the gate." },
+              "ticket": { "type": "string", "description": "The ticket a conflict was written up as, where the project's work configuration names a recipe for it (FS-005-dispatch.3)." }
+            }
+          }
+        }
+      }
+    },
     "checkout_repo": {
       "type": "object",
       "description": "What one repository of the forest came to under a checkout (FS-004-quick-actions.7).",
@@ -727,40 +814,11 @@
       }
     },
     "rebase": {
-      "description": "`ephor rebase --json` (FS-004-quick-actions.6, FS-004-quick-actions.8) — every repository under the checkout replayed onto its base or onto its own published copy, and where each one ended. Exits `0` where every repository is on the base, `3` where one stopped in a conflict, `1` where it could not run at all: a state machine reads those to decide who works next (FS-005-dispatch.12).",
-      "type": "object",
-      "required": ["checkout", "onto", "summary", "rebased", "conflicted", "repos"],
-      "properties": {
-        "checkout": { "type": "string" },
-        "onto": { "type": "string", "description": "The branch replayed onto, or `upstream` where each repository resolved its own published copy (DA-003-upstream-is-the-published-copy)." },
-        "summary": { "type": "string" },
-        "rebased": { "type": "integer" },
-        "conflicted": { "type": "integer" },
-        "absent": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Repositories the forest declares that are not on disk."
-        },
-        "repos": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/rebase_repo" }
-        },
-        "report": { "type": "string", "description": "The same account in markdown — what `--report` writes, and what the brief of a handed-over conflict carries." },
-        "dispatched": {
-          "type": ["object", "null"],
-          "description": "The ticket a conflict was handed over as, under `--dispatch` (FS-005-dispatch.12). Null where nothing was handed over. A conflict is not a failure: it is where the work starts, so what it opened is part of this reading rather than a line of prose after it.",
-          "required": ["item", "says"],
-          "properties": {
-            "item": { "type": "string" },
-            "ticket": { "type": "string" },
-            "says": { "type": "string" },
-            "notes": {
-              "type": "array",
-              "items": { "$ref": "#/$defs/note" }
-            }
-          }
-        }
-      }
+      "description": "`ephor rebase --json` — one of two readings, because the verb is one verb on two widths (FS-011-command-line.9). Given no scope selector it replays the one checkout it was given and prints `rebase_one`; given `--workspace`, `--tag` or `--org` it sweeps every branch checkout of every project the selector names and prints `rebase_sweep`, which nests one `rebase_one` per checkout it actually replayed (FS-004-quick-actions.6.1). The two are told apart by their required fields and never both match.",
+      "oneOf": [
+        { "$ref": "#/$defs/rebase_one" },
+        { "$ref": "#/$defs/rebase_sweep" }
+      ]
     },
     "validate": {
       "description": "`ephor validate --json` — what was held to a published schema and came through. Two things can be: the registry with the managed workspaces whose paths were checked, or one project's own manifest under `--manifest`, which involves no registry at all (FS-006-project-interface.11). The reading says which by which fields it carries.",
