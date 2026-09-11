@@ -1803,7 +1803,9 @@ can be watched, attached to, and stopped in the runner's own words. The
 sweep only removes the requirement that somebody be present, and the board
 stays what it is: it starts nothing itself, and what it shows is the run,
 whoever asked for it
-([§15](#15-every-operation-is-visible-in-one-place)).
+([§15](#15-every-operation-is-visible-in-one-place)). The key also reaches work
+this sweep never touches, and on none of the terms above
+([§30](#30-a-run-asked-for-by-name-reaches-the-whole-of-that-matters-work)).
 
 ## 25. Work about a matter with no branch can mint the branch it needs
 
@@ -2125,11 +2127,13 @@ the next matter. Both forms of the reading carry it in the same words
 work in a work root, so
 [§24](#24-work-nobody-has-to-start-starts-itself)'s sweep is what starts it:
 its root is **due** when that plan holds a task that is open, unclaimed and
-not parked on a question, and no run is live on the root. Two things are the
-plan's own rather than the root's, and both are read where the plan is. Its
-tasks are wherever the runtime wrote them — a plan rendered as a directory
-keeps them in files beside its index, and those are as much the plan's tasks
-as one written inside it. And they run under **the machine in force for that
+not parked on a question, and no run is live on the root. And a reader who
+names the matter starts it too, whatever its entry asked for
+([§30](#30-a-run-asked-for-by-name-reaches-the-whole-of-that-matters-work)).
+Two things are the plan's own rather than the root's, and both are read where
+the plan is. Its tasks are wherever the runtime wrote them — a plan rendered
+as a directory keeps them in files beside its index, and those are as much the
+plan's tasks as one written inside it. And they run under **the machine in force for that
 plan**, which is the machine beside it where it declares one, because a task's
 state means whatever the machine in force for its own store says it means
 ([§FS-006-project-interface.7](FS-006-project-interface.md#7-the-projects-own-tasks-are-read-where-they-live)).
@@ -2280,3 +2284,118 @@ grows: `status --json` prints the matters a source reported, somebody else's
 document rather than ephor's, with nowhere site-wide a pool belongs
 ([§FS-011-command-line.7](FS-011-command-line.md#7---json-is-the-same-answer-not-a-second-one)). Nothing already printed changes, which is what the
 interface's own versioning asks of any growth ([§FS-006-project-interface.11](FS-006-project-interface.md#11-the-interface-is-versioned)).
+
+## 30. A run asked for by name reaches the whole of that matter's work
+
+[§24](#24-work-nobody-has-to-start-starts-itself) took the key off the front of
+the sweep's work and left it in front of everything else, and
+[§28](#28-a-workflow-entry-can-ask-for-the-same-thing-a-recipe-can) says of an
+entry that never asked that it is *laid by the reader and started by the
+reader, as it was*. That start is owed to the reader and nothing performed it.
+A matter whose only work was a plan a workflow laid had a verb that would not
+reach it: `ephor work run --item <id>` read ephor's memory of the tickets it
+had opened, found none, and answered a matter with a plan full of open tasks in
+the same words, on the same stream, with the same exit code as an id nothing
+had ever heard of. So the reader could not hold one matter back while the rest
+of the site kept its ceilings — they had to leave ephor and run the runtime
+themselves, which is the one thing the ledger exists to make unnecessary
+([§4](#4-the-ledger-is-ephors-record-and-never-the-truth-about-the-work)).
+
+**The key reaches every plan the record says is that matter's.** A run asked
+for by name starts the matter's own plan and every plan a workflow laid beside
+it, and names them to the runtime as the record names them
+([§28](#28-a-workflow-entry-can-ask-for-the-same-thing-a-recipe-can)) — never
+the id of a plan nobody wrote. Which plans those are is read the way the sweep
+reads them: the roots on disk, the tasks where the runtime wrote them, judged
+by the machine in force for the plan they are in
+([§FS-006-project-interface.7](FS-006-project-interface.md#7-the-projects-own-tasks-are-read-where-they-live)).
+The key is a narrowing of that reading and not a second one, so the two surfaces
+cannot come apart on what a matter's work is
+([§15](#15-every-operation-is-visible-in-one-place)).
+
+**The key is blind to `autorun`.** `autorun` is the condition under which work
+starts with *nobody present*, and its silence means the key
+([§24](#24-work-nobody-has-to-start-starts-itself)): a reader typing the
+matter's name is the key. So a plan whose entry asked and a plan whose entry
+said nothing are started alike by name, which is what
+[§28](#28-a-workflow-entry-can-ask-for-the-same-thing-a-recipe-can)'s *started
+by the reader* has always required. Nothing here gives the sweep a plan it did
+not already have: a plan whose entry said nothing is still no sweep's to start,
+and a plan the record never laid — one a reader wrote by hand, one merely found
+in a root — is nobody's to start at all, on either surface.
+
+**The key inherits none of the sweep's limits.** The ceilings over roots in
+flight and over active work, the spend ceiling's refusal, the failed-start
+back-off and the site-wide autorun reservation all bound the sweep and only the
+sweep, because each of them is a decision made with nobody present
+([§24](#24-work-nobody-has-to-start-starts-itself),
+[§FS-015-spend-ceiling.6](FS-015-spend-ceiling.md#6-only-the-sweep-is-bound-and-the-persons-key-never-is)).
+A reader who names a matter is present and is deciding, so a full ceiling still
+warns and still refuses nothing, and a root the sweep is resting on is started
+at once. One rule survives, and it is the one that is not about attention:
+**one live run per checkout**, because two runs in one working tree are two
+agents editing the same files. That refusal is by name, counted as a refusal
+rather than reported as an absence of work, and lifted by `--force` — exactly
+as [§24](#24-work-nobody-has-to-start-starts-itself) already writes it.
+
+**Both kinds of work in one root are one run.** Where a matter has a dispatched
+ticket in its own plan *and* a plan a workflow laid beside it, the key starts a
+single run naming both plans. It cannot be two: one live run per checkout means
+the second would be refused by the first, and a single key producing a start
+and a refusal of its own making is an answer nobody can act on.
+
+**Three answers, and a reader can tell them apart.** The fault this point fixes
+was not only the missing run — it was that a real matter and a typo got the
+same bytes. So the key gives three distinguishable answers, in prose, in the
+machine form, and in the exit code
+([§REQ-002-parity.3](../requirements/REQ-002-parity.md#3-every-reading-answers-a-program)):
+
+- **No work is recorded about the id at all.** This is an input that names
+  nothing, which is refused by name and exits `2`, like every other refusal of
+  something a reader typed
+  ([§FS-011-command-line.9](FS-011-command-line.md#9-a-scope-selector-is-honoured-or-refused)).
+  The sentence quotes the id and names the two verbs that would give it work —
+  handing some over, or laying a workflow about it. Under `--json` it is the
+  refusal shape a refused command already prints, carrying that same sentence.
+- **A matter the record knows, holding nothing a run would advance.** This is
+  not a refusal: the command was understood and answered, and the answer is
+  that the work is over, claimed, or waiting on a person. It exits `0`, names
+  the matter, and says which of those it is in the terms
+  [§24](#24-work-nobody-has-to-start-starts-itself) already uses — open,
+  unclaimed, not parked. Under `--json` it is the run reading with no runs in
+  it, carrying that sentence in `says`.
+- **A matter the record knows, holding work.** The run lines, unchanged, and a
+  reading whose `plans` name what the record named.
+
+`says` is an addition to the run reading and to nothing else: where no run
+started, the reading carries whatever sentence the prose carried, so the
+machine form is never the poorer of the two
+([§REQ-002-parity.3](../requirements/REQ-002-parity.md#3-every-reading-answers-a-program)).
+Nothing already printed changes shape ([§REQ-002-parity.4](../requirements/REQ-002-parity.md#4-the-machine-form-is-a-contract-not-a-dump)). The prose that
+spoke of *a dispatched ticket* goes, because it was only ever half of what a
+matter's work is.
+
+**The key in the interface reaches the same work.** The screen's run key and
+`ephor work run` are one ability
+([§REQ-002-parity.1](../requirements/REQ-002-parity.md#1-an-ability-is-a-key-that-reveals-a-fact-or-changes-the-world)),
+so the key names the same plans this point gives the command and starts them the
+same way. It read the matter's own plan id and nothing else, which on a matter
+whose work was entirely laid pointed the runtime at a plan that is not on disk.
+A reader must not have to know which verb wrote the work in front of them.
+
+**And a plain `ephor work run` reaches it too.** With no matter named the
+command takes this same reading over every matter the record knows in the
+projects it was given, so it starts plans a workflow laid exactly as it starts
+the tickets ephor opened. `work run` and `work run --item X` disagreeing about
+what X's work is would be this same fault one level up. It is still one live run
+per checkout, and it is still a mutating verb, so above one project it reports
+and acts only under `--act`
+([§FS-011-command-line.10](FS-011-command-line.md#10-a-mutating-verb-above-one-project-reports-and-acts-under---act)).
+
+**A root whose machine will not read is judged by nobody here either.**
+Finality and gating are the machine's words, and with none to say them nothing
+in that root can be called runnable
+([§15](#15-every-operation-is-visible-in-one-place)). The key answers such a
+root as the sweep does — it starts nothing there — and says so about the root,
+rather than reporting the matter finished. ephor installs a machine in every
+root it makes, so this reaches only a root somebody assembled by hand.

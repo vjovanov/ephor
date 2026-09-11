@@ -2571,6 +2571,7 @@ impl Dispatcher {
             &workflow_autoruns,
             &self.ledger,
             now,
+            Reach::Sweep,
         );
         if let Some(path) = self.global.ranking.as_deref() {
             let reading = ranking::read(&crate::paths::resolve_path(path));
@@ -2578,6 +2579,24 @@ impl Dispatcher {
         }
         Ok(due)
     }
+}
+
+/// Who is asking for this reading (§FS-005-dispatch.30).
+///
+/// The sweep and the key ask one question — which plans hold a task a run
+/// would advance — and differ only in the guards that are there because the
+/// sweep has nobody present: what asked to autorun, the failed-start back-off,
+/// and the silent drop of a root its own run holds. Threading this rather than
+/// writing a second reading is what keeps the two surfaces from drifting into
+/// two answers about one matter's work.
+#[derive(Debug, Clone, Copy)]
+pub enum Reach<'a> {
+    /// The sweep behind autorun, with nobody present (§FS-005-dispatch.24).
+    Sweep,
+    /// The key. `Some(id)` is the one matter a reader named; `None` is every
+    /// matter the record knows in the projects they asked about
+    /// (§FS-005-dispatch.30).
+    Key(Option<&'a str>),
 }
 
 /// The sweep's own reading, with the roots and the recipes already gathered
@@ -2591,6 +2610,10 @@ pub fn due_among(
     workflow_autoruns: &BTreeMap<String, BTreeSet<String>>,
     ledger: &Ledger,
     now: DateTime<Utc>,
+    // Which reader this reading is for (§FS-005-dispatch.30). Declared and not
+    // yet read: every guard below still answers as it answers the sweep, which
+    // is precisely what the cases committed beside it say is wrong.
+    _reach: Reach<'_>,
 ) -> Vec<Due> {
     // What ephor dispatched, so a ticket it wrote is judged by the recipe it
     // was written from rather than by the shape of its id.

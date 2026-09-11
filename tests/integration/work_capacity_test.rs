@@ -938,3 +938,55 @@ fn an_inverted_project_ceiling_is_named_against_the_site_ceiling_too() {
     assert_eq!(reading["runs"][0]["outcome"], "started", "{reading}");
     assert_eq!(starts(&log), 1);
 }
+
+/// §FS-005-dispatch.30, §FS-005-dispatch.24: every ceiling here bounds the
+/// sweep and only the sweep, because each is a decision taken with nobody
+/// present. A reader who names a matter is present and is deciding, so a site
+/// paused at `max_concurrent: 0` starts nothing unattended and still starts
+/// the run the reader asked for. This is the guard on the reuse: the key takes
+/// the sweep's *reading* and never its act, so no ceiling can leak into it.
+#[test]
+fn a_paused_flight_ceiling_refuses_the_sweep_and_never_the_key() {
+    let tmp = tempdir();
+    let log = tmp.path().join("runner.log");
+    dispatched_but_unstarted(tmp.path(), &log);
+
+    let swept = ephor(tmp.path())
+        .args(["work", "run", "--due", "--json"])
+        .output()
+        .unwrap();
+    let reading: Value = serde_json::from_slice(&swept.stdout).unwrap();
+    assert!(
+        reading["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|run| run["outcome"] != "started"),
+        "a paused site starts nothing unattended: {reading}"
+    );
+    assert_eq!(starts(&log), 0);
+
+    // The same root, the same ceiling, and the reader's own key.
+    let keyed = ephor(tmp.path())
+        .args([
+            "work",
+            "run",
+            "--item",
+            "github-prs:acme/widget#42",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    let reading: Value = serde_json::from_slice(&keyed.stdout).unwrap();
+    assert!(
+        keyed.status.success(),
+        "{reading} — {}",
+        String::from_utf8_lossy(&keyed.stderr)
+    );
+    assert_eq!(reading["runs"][0]["outcome"], "started", "{reading}");
+    assert_eq!(
+        starts(&log),
+        1,
+        "the key inherits none of the sweep's ceilings"
+    );
+}
