@@ -212,7 +212,11 @@
           "items": { "type": "string" },
           "description": "The files a conflict or a dirty tree stopped on."
         },
-        "says": { "type": "string", "description": "Why it was refused, where it was." }
+        "says": { "type": "string", "description": "Why it was refused, where it was." },
+        "restored": {
+          "type": "boolean",
+          "description": "Which world the `paths` above are a fact about, on a `conflicted` repository and on no other (FS-005-dispatch.12). `false` is left mid-rebase, with the conflict standing where resolving it needs it — what a replay whose stopping point is handed to a successor leaves. `true` is put back on the commit it started from with a clean working tree, which is what a replay nobody is waiting on leaves (FS-004-quick-actions.6.1). A repository found already stopped in a rebase is never aborted and reports `false`."
+        }
       }
     },
     "checkout_repo": {

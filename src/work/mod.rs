@@ -1538,7 +1538,14 @@ impl Dispatcher {
         // The opening move a recipe declares is the rebase onto the project's
         // main branch; a replay onto the branch's own copy is the reader's
         // move and has its own entry (§FS-004-quick-actions.8).
-        let outcome = crate::git::rebase(&forest, &crate::git::Onto::Base(base));
+        // The ticket this dispatch is about to write is who comes for the
+        // conflict, so it is left where the replay stopped
+        // (§FS-005-dispatch.12).
+        let outcome = crate::git::rebase(
+            &forest,
+            &crate::git::Onto::Base(base),
+            crate::git::Stopped::Leave,
+        );
         // What the replay measured is now stale: the branch it was offered for
         // has moved under the cached answer.
         if let Some(branch) = checkout.branch.clone() {

@@ -2755,6 +2755,25 @@ it needs the same leased force push the rebase onto main does.
 | `3` | one stopped in a conflict, left mid-rebase with the files named | an agent |
 | `1` | uncommitted work, no repository, or git refused | a person |
 
+**What becomes of a stopped tree is the caller's, and only that much is.**
+There is one replay, and the disposition of a conflict is an argument to it
+([§FS-005-dispatch.12](functional-spec/FS-005-dispatch.md#12-work-an-algorithm-can-finish-does-not-start-with-a-model)) — never a second implementation, which would eventually disagree with
+the first about what a clean rebase is. A replay somebody is waiting on
+**leaves** the conflict standing in the working tree, because that is the
+state resolving it needs: the reader's key, a program state, `--dispatch`, the
+interface, and every `ephor rebase` on the command line. A replay nobody is
+waiting on **restores** it — aborts that repository's rebase, puts it back on
+the commit it was on, and reports the conflict instead — and the hourly sweep
+([§8.11.1](#8111-sweeping-every-idle-checkout-onto-main)) is the only caller
+that asks for it. Under `--json` the conflicted repository carries `restored`
+saying which, and the report says it in prose too, because a reader sent to
+find a conflicted working tree that is not there would doubt the report.
+
+Under **neither** value is a repository found *already* stopped in a rebase
+touched. It is reported and left exactly as it was: the rebase standing there
+is not this replay's, and aborting it would destroy a resolution somebody had
+begun, which is the one thing worse than the drift any of this corrects.
+
 Each argument can arrive as an environment variable instead — `CHECKOUT`,
 `PROJECT`, `ONTO`, `UPSTREAM` (set to any non-empty value), `ITEM`, `HAND`,
 `REPORT` — which is how a program state passes it `{meta.*}`. The refusal of
