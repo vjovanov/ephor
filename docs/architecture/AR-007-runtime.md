@@ -42,7 +42,17 @@ that run has taken up and let go, read from its own beginning and resumed by
 the sequence a reader has already seen, with the transition journal and the
 newest matching agent log as the floor beneath it where a runner writes no
 such stream ([§FS-005-dispatch.15.2](../functional-spec/FS-005-dispatch.md#152-what-a-run-is-doing-is-read-from-the-runs-own-stream)) — one task having many logs across
-states and visits; the dashboard address a live run publishes,
+states and visits; whether a run that is **over** advanced anything, read from
+that same stream — did any pass it recorded report progress, did any slot it
+released end in a completing outcome — which is what the autorun sweep asks
+before starting another run on the root
+([§FS-005-dispatch.24](../functional-spec/FS-005-dispatch.md#24-work-nobody-has-to-start-starts-itself)),
+and where the binding's outcome vocabulary is spelled, here and nowhere else, as
+the rest of its artifact grammar is ([§REQ-001-boundary.5](../requirements/REQ-001-boundary.md#5-no-product-literal-outside-its-adapter)) — what goes up from
+here is one folded answer, advanced or not advanced or cannot say, never a list
+that grows with the run's length, so a spelling this module does not know becomes
+*cannot say* above it rather than a word the sweep has to interpret; the
+dashboard address a live run publishes,
 per run rather than per ticket; and the advance and release commands in the
 runner's own words ([§FS-005-dispatch.10](../functional-spec/FS-005-dispatch.md#10-what-ephor-offers-is-not-a-limit-on-what-can-be-asked)). Cancelling: the transition of
 one ticket into the abandonment state, composed in the runner's own
@@ -138,7 +148,18 @@ board is then the refresh row alone ([§FS-005-dispatch.15](../functional-spec/F
 a run, and where nothing can run there are none. Enumerating a work root's
 plans is part of reading, not of running: a directory listing against the
 binding's own naming, with no runner asked — so every plan is still found
-and still readable with no runner installed. A runner that is bound and
+and still readable with no runner installed. A runner that writes no event stream, or one whose
+declared layout this reader does not understand, leaves the autorun no-advance
+rest **inert**: no verdict is taken, no root is rested, and every sweep starts
+exactly the runs it started before the rule existed
+([§FS-005-dispatch.24](../functional-spec/FS-005-dispatch.md#24-work-nobody-has-to-start-starts-itself)).
+Absence is the ordinary case and is never an error — the journal is still the
+floor for what a *live* run holds ([§FS-005-dispatch.15.2](../functional-spec/FS-005-dispatch.md#152-what-a-run-is-doing-is-read-from-the-runs-own-stream)), and there is no floor
+beneath *did it advance*, because no inference over a journal that outlives every
+run can answer it about one run. So the degrade is silence about the question
+rather than a guess at it, and it is stated here because a rule that quietly
+stopped applying would be indistinguishable from a machine on which nothing ever
+stalls ([§REQ-001-boundary.1](../requirements/REQ-001-boundary.md#1-the-anatomy)). A runner that is bound and
 present but cannot detach — an older one, or a platform with no detached
 shape — runs attached, the terminal handed over, and a run's identity is
 whatever descriptor it leaves; where it leaves none there is no id to show

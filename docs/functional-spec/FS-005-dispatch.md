@@ -832,6 +832,16 @@ badge's business and not a verdict ([§FS-005-dispatch.15](FS-005-dispatch.md#15
 consulted to decide *whether* a run is live — only what the live one is
 doing, and what the last one did.
 
+**And what the last one did is read by the sweep, not only beneath a row.**
+*How each slot ended* and *when the run ended* are two of the four properties
+above, and they are the two a reader of a **finished** run wants: whether that
+run moved anything. The autorun sweep asks exactly that before starting another
+run on the same root
+([§24](#24-work-nobody-has-to-start-starts-itself)), so this record answers a
+question about a run nobody is watching as well as one about the run in front of
+somebody. The reading is the same reading either way — one run's own word about
+one run — which is why the sweep gets no witness of its own.
+
 **And it is read where work is shown, not only on the board.** The reader
 looking at a matter's rows sees the same word the board would show, because
 this is one reading narrowed to one matter rather than a second one of its
@@ -1795,6 +1805,129 @@ way a job's outcome does
 ([§17](#17-a-move-that-needs-nobody-runs-beneath-the-screen)), so a reader
 who never pressed anything still learns that the thing they did not press
 did not happen.
+
+**A run that started and advanced nothing is not started again immediately
+either.** The rest above covers the start that failed, and a root whose runs
+keep finishing without moving anything walks through the one door it leaves
+open: the start worked, so nothing is remembered, and every sweep for as long
+as the tickets stay open makes another run that does the same. It is the same
+loop at the same cost, and it reads worse than a failed start does — the row
+says *started* every time, so a batch with one stuck root in it looks healthy
+while a slot is held and nothing moves. So the sweep reads what the last run on
+each root actually did, and a root whose last run advanced nothing is left
+alone for a while, longer each time, exactly as a failed start is.
+
+**That is the second exception to *the sweep reads the world*, and it is said
+rather than left to be reconciled.** The paragraph above holds that what starts
+a run is a looking and not a memory, and then remembers one thing: a start that
+failed. This remembers a second, of the same kind and for the same reason — it
+is ephor's record of what ephor did, never the work's state, which is still the
+plan's ([§4](#4-the-ledger-is-ephors-record-and-never-the-truth-about-the-work)).
+Two exceptions to one sentence are two too many to leave to inference, so the
+sentence is read with both in it: the sweep reads the world for what is *due*,
+and consults its own record only for what it has already tried and got nothing
+for.
+
+**The witness is the finished run's own record of itself**
+([§15.2](#152-what-a-run-is-doing-is-read-from-the-runs-own-stream)). A root
+the sweep is considering has no live run, by the invariant above, so the record
+there is the last run's and is over. Nothing is inferred from the work: an open
+ticket count compared across sweeps would be work state cached in the ledger
+under another name, and a healthy run's ordinary act is moving a ticket from
+one state to another while leaving it open, so a count-based reading would rest
+exactly the roots that are working. Nor is it the run's exit status, which
+cannot tell a run that advanced two tickets and then stopped from one that
+advanced nothing at all. §15.2 already requires that the record say how each
+slot ended rather than leave the end to be deduced, and already scopes itself
+to the live run *and to what the last one did*; this is that second half read
+by the sweep rather than only beneath a row.
+
+**A run advanced something if it says a pass progressed, or if a slot it
+released ended in a completing outcome.** Either is enough on its own. The
+per-pass answer is the runtime's own answer to this exact question and is the
+first one asked; the slot outcomes are the floor beneath it, so a runner that
+records how its slots ended and nothing about its passes is still read. Reading
+both widens what counts as an advance and can therefore only rest fewer roots,
+which is the right direction for a rule whose one real risk is calling a
+working root stuck: a partial advance is an advance, and a run whose only
+movement was routing a failure onward or rescheduling a poll completes no slot
+but has moved. Which outcomes are completing is the binding's own grammar and is
+spelled in one place, inside the seam that reads it ([§REQ-001-boundary.5](../requirements/REQ-001-boundary.md#5-no-product-literal-outside-its-adapter)); of the
+handful it uses, one is. Any spelling this reader does not recognize makes the reading
+**inconclusive**, and an inconclusive reading rests no root, counts no miss, and
+leaves the sweep behaving exactly as it did before this paragraph. Unrecognized
+may never mean stuck, or the day the runtime learns a new outcome word is the
+day healthy roots start resting.
+
+**What ephor keeps of it is a record of its own beside the failed-start one**,
+never inside it: one successful launch would otherwise write and clear the same
+field, and one interval would be counting two unrelated things. It holds three
+facts and nothing else — which run was judged, so no run is ever counted twice;
+how many judged runs in a row advanced nothing; and when the last verdict was
+taken, which is what the rest is dated from. Nothing about tickets, states, or
+work ([§4](#4-the-ledger-is-ephors-record-and-never-the-truth-about-the-work)),
+and the record is dropped whole the moment a run there advances, mirroring what
+a successful start already does to the failed-start record. A verdict is taken
+only by a sweep that acts: a report held at the gate writes no ledger
+([§FS-011-command-line.10](FS-011-command-line.md#10-a-mutating-verb-above-one-project-reports-and-acts-under---act)), and reading one stream twice gives one answer either
+way.
+
+**The rest has an end, because a rest that only doubled would hide the stall it
+was written to expose.** The interval is the failed start's — five minutes,
+doubling with each consecutive miss, capped at two hours — so a root left alone
+is always tried again eventually. But past three consecutive runs that advanced
+nothing the root stops being rested and stops being admitted at all, until a run
+advances there or somebody starts one by hand, and every sweep from then on says
+so in the row where it used to say *started*. That is
+[§11](#11-a-failure-that-is-not-the-changes-fault-is-restarted-not-fixed)'s own
+fourth clause arriving here: past a small number of restarts the infrastructure
+is the thing that is wrong, and no amount of retrying is going to be the fix.
+Nothing is written into a plan or a ticket for it and nothing on the operations
+board changes — whether a *ticket* waits on a person is the machine's word and
+stays [§9](#9-work-that-stops-for-a-person-says-so-where-the-person-is-looking)'s.
+This is ephor's word about its own starting, and the reading it corrects is the
+sweep's own, which is the reading that was wrong.
+
+**It binds the sweep, and never a run asked for by name.** The reader keeps the
+key here as everywhere: `ephor work run` on that root starts a run and is never
+refused because a sweep has given up on it, and `--force` neither lifts this nor
+needs to, since the rest was never applied to a run somebody asked for. A rest
+that could refuse a named run would leave the reader no way back into a root
+ephor had stopped starting.
+
+**A root the reader excluded is passed over by name.** `ephor work run --due
+--except <root|item>` takes a work root on disk or, failing that, a matter id
+matched against the ledger, may be given more than once, and excludes each root
+it names from that one sweep with no judgement of any kind — it is for the
+driver that has worked out for itself which root to leave alone. It says what it
+did: every exclusion that actually applied is named in prose and in `--json`,
+while one that matched nothing due is silent, having excluded nothing. A value
+that resolves to neither a root nor a matter is refused by name, and so is
+`--except` without `--due`, which binds nothing and must not read as though it
+had ([§FS-011-command-line.9](FS-011-command-line.md#9-a-scope-selector-is-honoured-or-refused)). What it does **not** do is narrow the width the
+`--act` gate is counted over ([§FS-011-command-line.10](FS-011-command-line.md#10-a-mutating-verb-above-one-project-reports-and-acts-under---act)): a sweep over four
+projects that excludes three roots is still a sweep over four.
+
+**Both new skips are `passed-over` rows, and both happen before capacity is
+spent.** They are said in the same words and the same kind of row as a root
+another run's tree holds, with a reason naming which of them it was: the last
+run there having advanced nothing, and when the root is tried again or that it is
+now somebody's turn — or the exclusion the reader asked for. Passing a root over
+is not a failed launch and does not raise the reading's `failed` count. A rested
+or excluded root is never a candidate, so it consumes no slot, frees none, and
+counts toward no ceiling; an excluded root whose own run is **live** still counts
+live, because capacity is live work and not attempts. And a root two of these
+would refuse is refused once, by the first: a live run of its own is silent as
+ever, then the reader's `--except`, then the no-advance rest, then a tree another
+root's run holds, then the ceilings — one row, one reason, first match.
+
+**A runner that writes no such record leaves all of this inert.** Where there is
+no stream, or one this reader cannot understand, no verdict is taken, nothing is
+remembered, and sweeps behave exactly as they did before — which is the floor
+§15.2 already keeps, and never an error — the degrade every seam owes
+([§REQ-001-boundary.1](../requirements/REQ-001-boundary.md#1-the-anatomy)), stated because a rule that quietly stopped applying
+would be indistinguishable from a machine on which nothing ever stalls. A rule
+that cannot read its witness says nothing rather than guessing.
 
 **The reader keeps the key.** Starting a run by hand is unchanged and is
 never refused on the grounds that a sweep would have got there — a reader
