@@ -2399,3 +2399,17 @@ in that root can be called runnable
 root as the sweep does — it starts nothing there — and says so about the root,
 rather than reporting the matter finished. ephor installs a machine in every
 root it makes, so this reaches only a root somebody assembled by hand.
+The same holds where the root's checkout stands on a branch other than the one
+the record says the work belongs on: a run there would edit different code, so
+the key starts nothing and names the branch the root is actually on, exactly as
+dispatch refuses there
+([§3](#3-one-rhei-per-item-one-ticket-per-dispatch)).
+
+**A root the key will not start in is refused, never reported as empty.** Both
+of those are answered the way the run already in the way is answered: the
+sentence names the root, the reading counts it in `refused`, and the command
+exits non-zero. Neither may come back as the answer that says the matter holds
+nothing a run would advance, because that is the fault this whole point exists
+to end — one layer down, and told to a reader who named the matter. `--force`
+lifts neither: it lifts a run in the way, and these are facts about the root
+that another key press does not change.

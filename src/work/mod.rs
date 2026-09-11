@@ -2769,7 +2769,16 @@ pub fn due_among(
         // Finality and gating are the machine's words. With none to say
         // them, nothing here can be judged runnable, and the honest move
         // is to start nothing rather than to guess (§FS-005-dispatch.15).
+        //
+        // The sweep drops such a root in silence. The key may not: a reader
+        // who named this matter would otherwise be told its work holds
+        // nothing, which is this point's own fault one layer down. So the row
+        // comes back carrying the reason and the surface refuses on it
+        // (§FS-005-dispatch.30).
         let Some(machine) = WorkRoot::open(&group.root).ok().flatten() else {
+            if names_a_plan_here(group, reach) {
+                due.push(refused_root(ledger, group, no_machine_here(&group.root)));
+            }
             continue;
         };
         let mut plans: Vec<String> = Vec::new();
@@ -2894,13 +2903,20 @@ pub fn due_among(
             .values()
             .find(|entry| entry.root == group.root);
         let checkout = checkout_of(ledger, &group.root);
+        // Where a run may not be made here at all, and why. The key is told
+        // rather than dropped, for the reason the machine guard above is
+        // (§FS-005-dispatch.30).
+        let mut refusal = None;
         if let Some(wanted) = known.and_then(|entry| entry.branch.as_deref()) {
             // Only a branch that can be read and disagrees refuses: an
             // unreadable or detached HEAD is a fact nobody can establish,
             // and refusing on one is worse than the run — the same
             // latitude dispatch takes (§FS-005-dispatch.3).
-            if crate::git::head_branch(&checkout).is_some_and(|head| head != wanted) {
-                continue;
+            if let Some(head) = crate::git::head_branch(&checkout).filter(|head| head != wanted) {
+                if !key {
+                    continue;
+                }
+                refusal = Some(checkout_standing_elsewhere(&checkout, &head, wanted));
             }
         }
         due.push(Due {
@@ -2936,9 +2952,59 @@ pub fn due_among(
             // would see an empty sweep and go looking for a full ceiling
             // (§FS-005-dispatch.24). Nothing is started on it.
             held_by: held_by.cloned(),
+            refusal,
         });
     }
     due
+}
+
+/// Whether this reading's reader has a plan of their own in this root — the
+/// question asked of a root nothing can be read out of, where the plans
+/// cannot be walked for an answer (§FS-005-dispatch.30).
+///
+/// A plan's matter is what [`enumerate_roots`] wrote onto it from the ledger,
+/// so it is readable without the machine, without the plan file, and without
+/// the record being asked twice. False for the sweep, which drops such a root
+/// in silence and has nobody to say anything to.
+fn names_a_plan_here(group: &runtime::watch::RootPlans, reach: Reach<'_>) -> bool {
+    let Reach::Key(named) = reach else {
+        return false;
+    };
+    group.plans.iter().any(|plan_ref| {
+        plan_ref
+            .item
+            .as_deref()
+            .is_some_and(|about| named.is_none_or(|named| named == about))
+    })
+}
+
+/// A row for a root the key may start nothing in, carrying why
+/// (§FS-005-dispatch.30). No plans and no tickets: there is nothing here to
+/// point a run at, and the row exists so the refusal names the root.
+fn refused_root(ledger: &Ledger, group: &runtime::watch::RootPlans, says: String) -> Due {
+    let item = group.plans.iter().find_map(|plan| plan.item.clone());
+    Due {
+        project: group
+            .plans
+            .first()
+            .map(|plan| plan.project.clone())
+            .unwrap_or_default(),
+        projects: group
+            .plans
+            .iter()
+            .map(|plan| plan.project.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect(),
+        root: group.root.clone(),
+        checkout: checkout_of(ledger, &group.root),
+        plans: Vec::new(),
+        tickets: Vec::new(),
+        items: item.iter().cloned().collect(),
+        item,
+        held_by: None,
+        refusal: Some(says),
+    }
 }
 
 /// Ranked roots first, then every root the file did not distinguish in its
@@ -3328,6 +3394,15 @@ pub struct Due {
     /// one does (§FS-005-dispatch.24). Nothing may be started here while it
     /// is set: the row exists so the sweep can say so by name.
     pub held_by: Option<PathBuf>,
+    /// Why nothing may be started in this root at all, where the key's
+    /// reading returned it only so that the reader who named the matter is
+    /// told no (§FS-005-dispatch.30). Set on a root the sweep drops in
+    /// silence and the key may not: one whose machine will not read, and one
+    /// whose checkout stands on another branch. The row carries no plans a
+    /// run could be pointed at — it exists so the refusal names the root
+    /// rather than the matter coming back as finished. Never set for the
+    /// sweep, which drops both.
+    pub refusal: Option<String>,
 }
 
 /// What starting one due root came to (§FS-005-dispatch.24).
@@ -3922,6 +3997,62 @@ pub fn nothing_to_run(item: Option<&str>) -> String {
         None => "Nothing to run: no work holds a task that is open, unclaimed and not parked."
             .to_string(),
     }
+}
+
+/// What the screen's run key hands the runtime for one matter, or the one
+/// sentence it shows instead (§FS-005-dispatch.30).
+///
+/// The key and `ephor work run` are one ability (§REQ-002-parity.1), so the
+/// decision made from the reading is made once rather than at each surface:
+/// the plans the record named, a refusal where a root the reading returned may
+/// start nothing, and the matter's own no-work sentence where it returned
+/// nothing at all. The screen runs one matter over one root, so a refusal
+/// anywhere in this reading is a refusal of this key.
+pub fn plans_to_run(due: &[Due], item: &str) -> std::result::Result<Vec<String>, String> {
+    if let Some(refusal) = due.iter().find_map(|due| due.refusal.clone()) {
+        return Err(refusal);
+    }
+    let plans: Vec<String> = due.iter().flat_map(|due| due.plans.clone()).collect();
+    match plans.is_empty() {
+        true => Err(nothing_to_run(Some(item))),
+        false => Ok(plans),
+    }
+}
+
+/// The one sentence said where a run asked for by name lands on a root whose
+/// machine will not read (§FS-005-dispatch.30, §FS-005-dispatch.15).
+///
+/// Finality and gating are the machine's words and there are none, so nothing
+/// in the root can be called runnable. That is a refusal about the root and
+/// not a report that the matter is over: it names the root, and it names the
+/// move that ends it. It covers both ways the machine can be absent — no
+/// `states.yaml` there at all, and one that will not parse — because neither
+/// leaves anything to judge by.
+pub fn no_machine_here(root: &std::path::Path) -> String {
+    format!(
+        "{}: this work root has no state machine that will read, so nothing in it can be \
+         judged runnable. Install one with 'ephor work states > {}'.",
+        root.display(),
+        root.join("states.yaml").display()
+    )
+}
+
+/// The one sentence said where a run asked for by name lands on a root whose
+/// checkout is standing on another branch (§FS-005-dispatch.30,
+/// §FS-005-dispatch.3).
+///
+/// Work about a branch belongs in that branch's working tree, and a tree
+/// standing on another one holds different code. Dispatch refuses there
+/// naming the branch the root is actually on, and so does this: the sweep can
+/// drop such a root in silence because nobody is watching it, and a reader who
+/// asked for this matter by name is.
+pub fn checkout_standing_elsewhere(checkout: &std::path::Path, head: &str, wanted: &str) -> String {
+    format!(
+        "{}: this work belongs on {wanted} and the checkout is standing on {head}, so a run \
+         here would edit different code. Put the branch there:\n  git -C {} switch {wanted}",
+        checkout.display(),
+        checkout.display()
+    )
 }
 
 /// The one sentence said wherever a start is held back because a live run

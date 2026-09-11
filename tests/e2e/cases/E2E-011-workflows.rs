@@ -1847,4 +1847,227 @@ exit 1
         assert_eq!(reading["runs"][0]["plans"], json!([LAID]), "{reading}");
         assert_eq!(plans_run(&world), [LAID.to_string()]);
     }
+
+    /// Finality and gating are the machine's words, and a root with none to
+    /// say them can be judged by nobody. The sweep drops such a root in
+    /// silence; the key may not, because the answer a reader who named the
+    /// matter would otherwise get is the sentence saying its work is over —
+    /// this report's own fault one layer down. It is a refusal: named,
+    /// counted, and non-zero (§FS-005-dispatch.30, §FS-005-dispatch.15).
+    #[test]
+    fn a_root_whose_machine_will_not_read_is_refused_by_name_and_never_reported_empty() {
+        let world = world(
+            "acme-unread",
+            &format!("{RENDERS}{DETACHES}{REFUSES}"),
+            true,
+        );
+        world
+            .ephor()
+            .args(["work", "dispatch", "--limit", "1"])
+            .assert()
+            .success();
+        assert!(plan_of(&world, 13).join("tasks/01-fix.md").is_file());
+        forget_runs(&world);
+        // The plan is still there and still open; it is the root's machine
+        // that stops being readable.
+        std::fs::write(
+            work_root(&world).join("states.yaml"),
+            "this: [is not\n  valid: yaml\n",
+        )
+        .unwrap();
+
+        let output = run_item(&world, ITEM);
+        let reading = json_of(&output);
+        assert_eq!(output.status.code(), Some(1), "{reading}");
+        assert_eq!(reading["refused"], 1, "{reading}");
+        assert_eq!(reading["failed"], 0, "{reading}");
+        assert_eq!(reading["runs"][0]["outcome"], "refused", "{reading}");
+        let says = reading["runs"][0]["says"].as_str().unwrap_or_default();
+        assert!(
+            says.contains(&work_root(&world).display().to_string()),
+            "the refusal names the root: {reading}"
+        );
+        assert!(
+            reading["says"].is_null(),
+            "and it is not the sentence that says the matter holds nothing: {reading}"
+        );
+        assert!(plans_run(&world).is_empty(), "nothing was started");
+
+        // The prose says the same, on the error stream, with the same code.
+        let prose = world
+            .ephor()
+            .args(["work", "run", "--item", ITEM])
+            .output()
+            .expect("the key runs");
+        assert_eq!(prose.status.code(), Some(1));
+        let said = String::from_utf8_lossy(&prose.stderr).to_string();
+        assert!(
+            said.contains(&work_root(&world).display().to_string()),
+            "stderr: {said}"
+        );
+        assert!(
+            !String::from_utf8_lossy(&prose.stdout).contains("holds no task"),
+            "stdout: {}",
+            String::from_utf8_lossy(&prose.stdout)
+        );
+    }
+
+    /// Work about a branch belongs in that branch's working tree, and a tree
+    /// standing on another one holds different code. Dispatch refuses there
+    /// naming the branch the root is actually on (§FS-005-dispatch.3), and so
+    /// does the key — rather than reporting the matter as holding nothing,
+    /// which is what a guard written for a sweep nobody is watching would
+    /// have it say (§FS-005-dispatch.30).
+    #[test]
+    fn a_checkout_standing_on_another_branch_is_refused_by_name() {
+        let world = world(
+            "acme-branch",
+            &format!("{RENDERS}{DETACHES}{REFUSES}"),
+            true,
+        );
+        world
+            .ephor()
+            .args(["work", "dispatch", "--limit", "1"])
+            .assert()
+            .success();
+        forget_runs(&world);
+
+        // A working tree standing on `main`, and a record that says this
+        // work belongs on another branch.
+        let checkout = world.forest();
+        std::fs::create_dir_all(checkout.join(".git")).unwrap();
+        std::fs::write(checkout.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+        let work_json = world.path().join("state/ephor/work.json");
+        let mut ledger: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&work_json).unwrap()).unwrap();
+        ledger["entries"][ITEM]["branch"] = json!("fix/issue-13");
+        std::fs::write(&work_json, serde_json::to_string_pretty(&ledger).unwrap()).unwrap();
+
+        let output = run_item(&world, ITEM);
+        let reading = json_of(&output);
+        assert_eq!(output.status.code(), Some(1), "{reading}");
+        assert_eq!(reading["refused"], 1, "{reading}");
+        assert_eq!(reading["runs"][0]["outcome"], "refused", "{reading}");
+        let says = reading["runs"][0]["says"].as_str().unwrap_or_default();
+        assert!(
+            says.contains("main") && says.contains("fix/issue-13"),
+            "it names the branch the checkout is on and the one wanted: {reading}"
+        );
+        assert!(
+            reading["says"].is_null(),
+            "and it is not the sentence that says the matter holds nothing: {reading}"
+        );
+        assert!(plans_run(&world).is_empty(), "nothing was started");
+
+        // `--force` lifts the run in the way and does not lift this: a branch
+        // is a fact about the root, not a run another key press outlasts.
+        let forced = world
+            .ephor()
+            .args(["work", "run", "--item", ITEM, "--force", "--json"])
+            .output()
+            .expect("the key runs");
+        assert_eq!(forced.status.code(), Some(1), "{}", json_of(&forced));
+        assert!(plans_run(&world).is_empty(), "still nothing was started");
+
+        // Standing on the branch the record names, the same key starts it.
+        std::fs::write(checkout.join(".git/HEAD"), "ref: refs/heads/fix/issue-13\n").unwrap();
+        let output = run_item(&world, ITEM);
+        let reading = json_of(&output);
+        assert!(output.status.success(), "{reading}");
+        assert_eq!(reading["runs"][0]["outcome"], "started", "{reading}");
+        assert_eq!(plans_run(&world), [LAID.to_string()]);
+    }
+
+    /// One root is one run, because two over one working tree would refuse
+    /// each other (§FS-005-dispatch.30) — so where a root's matters want
+    /// different hands the run carries none of them, and the reader is told
+    /// rather than having one of them silently re-aimed
+    /// (§FS-005-dispatch.14). Unreachable with `--item`, which admits one
+    /// matter: this is the plain `work run`'s own case.
+    #[test]
+    fn two_matters_in_one_root_wanting_different_hands_run_once_carrying_neither() {
+        let world = world(
+            "acme-hands",
+            &format!("{RENDERS}{DETACHES}{REFUSES}"),
+            false,
+        );
+        // Two agents and no model profiles, so every hand here is agent-only
+        // and rides the run as flags rather than pinning the ticket.
+        std::fs::create_dir_all(world.path().join(".config/rhei")).unwrap();
+        std::fs::write(
+            world.path().join(".config/rhei/settings.json"),
+            r#"{ "agents": { "left-hand": { "command": ["sh"], "modes": { "high": [] } },
+                             "right-hand": { "command": ["sh"], "modes": { "high": [] } } } }"#,
+        )
+        .unwrap();
+        world.configure(json!({
+            "projects": { PROJECT: {
+                "providers": [ { "provider": "acmeforge", "user": "you", "repos": ["widget"] } ],
+                "work": { "hands": { "alpha": "left-hand", "beta": "right-hand" } }
+            } },
+            "work": {
+                "runner": "acme-hands",
+                "recipes": [
+                    { "id": "alpha", "icon": "◆", "description": "one way",
+                      "state": "fix", "when": { "kinds": ["issue"] }, "brief": "Look at {title}." },
+                    { "id": "beta", "icon": "◇", "description": "the other way",
+                      "state": "fix", "when": { "kinds": ["issue"] }, "brief": "Look at {title}." }
+                ]
+            }
+        }));
+        // Two matters, two recipes, one work root: their plans sit side by
+        // side under it, which is what makes them one run.
+        for (item, recipe) in [
+            ("acmeforge:acme/widget#12", "alpha"),
+            ("acmeforge:acme/widget#13", "beta"),
+        ] {
+            dispatch(&world, &["--item", item, "--recipe", recipe]);
+        }
+        forget_runs(&world);
+
+        let output = world
+            .ephor()
+            .args(["work", "run", "--json"])
+            .output()
+            .expect("a plain run runs");
+        let reading = json_of(&output);
+        assert!(output.status.success(), "{reading}");
+        let runs = reading["runs"].as_array().expect("a run reading");
+        assert_eq!(runs.len(), 1, "one root, one run: {reading}");
+        let mut named: Vec<String> = runs[0]["plans"]
+            .as_array()
+            .expect("the run names its plans")
+            .iter()
+            .map(|plan| plan.as_str().unwrap_or_default().to_string())
+            .collect();
+        named.sort();
+        assert_eq!(
+            named,
+            [
+                "acmeforge-acme-widget-12".to_string(),
+                "acmeforge-acme-widget-13".to_string()
+            ],
+            "{reading}"
+        );
+        assert!(
+            runs[0]["hand"].is_null(),
+            "neither hand rides a run that would re-aim the other: {reading}"
+        );
+        let handed = std::fs::read_to_string(world.path().join("runs.log")).unwrap_or_default();
+        assert!(
+            !handed.contains("--agent"),
+            "and the runtime is handed no agent flags: {handed}"
+        );
+        // Said rather than swallowed: the reader is told the run carries none.
+        let prose = world
+            .ephor()
+            .args(["work", "run"])
+            .output()
+            .expect("a plain run runs");
+        assert!(
+            String::from_utf8_lossy(&prose.stdout).contains("does not agree on one hand"),
+            "stdout: {}",
+            String::from_utf8_lossy(&prose.stdout)
+        );
+    }
 }

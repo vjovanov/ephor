@@ -724,21 +724,24 @@ impl App {
                 // pointed the runtime at a plan that is not on disk — a
                 // reader must not have to know which verb wrote the work in
                 // front of them (§REQ-002-parity.1).
-                let plans: Vec<String> = match &mut self.ctx.dispatcher {
+                let due = match &mut self.ctx.dispatcher {
                     Some(dispatcher) => dispatcher
                         .runnable_of(Some(&item), &[], chrono::Utc::now())
-                        .unwrap_or_default()
-                        .into_iter()
-                        .flat_map(|due| due.plans)
-                        .collect(),
+                        .unwrap_or_default(),
                     None => Vec::new(),
                 };
-                if plans.is_empty() {
-                    // The same sentence the command line gives this answer,
-                    // because they are one ability (§REQ-002-parity.1).
-                    self.message = crate::work::nothing_to_run(Some(&item));
-                    return Ok(false);
-                }
+                // And what that reading comes to, decided where the command
+                // line decides it: the plans, the refusal of a root nothing
+                // may start in, or the matter's own no-work sentence — the
+                // same words in each case, because the two are one ability
+                // (§REQ-002-parity.1, §FS-005-dispatch.30).
+                let plans = match crate::work::plans_to_run(&due, &item) {
+                    Ok(plans) => plans,
+                    Err(says) => {
+                        self.message = says;
+                        return Ok(false);
+                    }
+                };
                 // Who gets this run, resolved the way `work run` resolves it —
                 // a hand the plan language could not spell rides here as the
                 // runtime's own agent flags (§FS-005-dispatch.14). One matter,
