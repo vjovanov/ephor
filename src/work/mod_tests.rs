@@ -1478,6 +1478,7 @@ fn review_repro_shared_root_ranks_by_the_due_item() {
         &laying(&[]),
         &empty_ledger(),
         Utc::now(),
+        Reach::Sweep,
     );
     let ranked = rank_due(due, &["highest".to_string(), "second".to_string()]);
     assert_eq!(ranked[0].root, shared_root);
@@ -1500,6 +1501,7 @@ fn an_open_ticket_from_an_autorun_recipe_makes_its_root_due() {
         &laying(&[]),
         &empty_ledger(),
         Utc::now(),
+        Reach::Sweep,
     );
     assert_eq!(due.len(), 1);
     assert_eq!(due[0].root, root);
@@ -1524,6 +1526,7 @@ fn a_recipe_that_did_not_ask_is_never_due() {
         &laying(&[]),
         &empty_ledger(),
         Utc::now(),
+        Reach::Sweep,
     )
     .is_empty());
 }
@@ -1551,6 +1554,7 @@ fn finished_parked_and_claimed_tickets_make_nothing_due() {
         &laying(&[]),
         &empty_ledger(),
         Utc::now(),
+        Reach::Sweep,
     )
     .is_empty());
 }
@@ -1573,6 +1577,7 @@ fn a_root_a_run_already_holds_is_left_alone() {
             &laying(&[]),
             &empty_ledger(),
             Utc::now(),
+            Reach::Sweep,
         )
         .is_empty(),
         "a second run there would only wait for the first"
@@ -1588,6 +1593,7 @@ fn a_root_a_run_already_holds_is_left_alone() {
             &laying(&[]),
             &empty_ledger(),
             Utc::now(),
+            Reach::Sweep,
         )
         .len(),
         1
@@ -1619,6 +1625,7 @@ fn a_root_over_a_checkout_another_roots_run_holds_is_left_alone() {
         &laying(&[]),
         &empty_ledger(),
         Utc::now(),
+        Reach::Sweep,
     );
     // The root holding the run says nothing: it has one, and repeating that
     // every sweep would report the ordinary case for as long as it runs.
@@ -1645,6 +1652,7 @@ fn a_root_over_a_checkout_another_roots_run_holds_is_left_alone() {
         &laying(&[]),
         &empty_ledger(),
         Utc::now(),
+        Reach::Sweep,
     );
     assert_eq!(due.len(), 2);
     assert!(
@@ -1678,6 +1686,7 @@ fn a_second_spelling_of_the_busy_checkout_does_not_defeat_the_guard() {
         &laying(&[]),
         &empty_ledger(),
         Utc::now(),
+        Reach::Sweep,
     );
     assert_eq!(due.len(), 1, "the live root has its run and says nothing");
     assert_eq!(
@@ -1705,6 +1714,7 @@ fn a_root_with_no_machine_starts_nothing() {
         &laying(&[]),
         &empty_ledger(),
         Utc::now(),
+        Reach::Sweep,
     )
     .is_empty());
 }
@@ -1735,6 +1745,7 @@ fn a_root_whose_start_failed_rests_before_it_is_tried_again() {
             &laying(&[]),
             ledger,
             at,
+            Reach::Sweep,
         )
     };
     assert!(sweep(&ledger, now).is_empty(), "it has just failed");
@@ -1770,6 +1781,7 @@ fn a_ticket_nobody_dispatched_is_due_by_the_recipe_its_id_names() {
         &laying(&[]),
         &empty_ledger(),
         Utc::now(),
+        Reach::Sweep,
     );
     assert_eq!(due.len(), 1);
     assert_eq!(due[0].tickets, vec!["widget-42.fix-gate-7".to_string()]);
@@ -1823,6 +1835,7 @@ fn a_checkout_standing_on_another_branch_is_not_run_in() {
             &laying(&[]),
             ledger,
             Utc::now(),
+            Reach::Sweep,
         )
     };
     assert!(
@@ -1873,6 +1886,7 @@ fn a_branch_nobody_recorded_refuses_nothing() {
             &laying(&[]),
             &ledger,
             Utc::now(),
+            Reach::Sweep,
         )
         .len(),
         1
@@ -1919,6 +1933,7 @@ fn the_ledgers_recipe_answers_for_a_ticket_ephor_dispatched() {
         &laying(&[]),
         &ledger,
         Utc::now(),
+        Reach::Sweep,
     )
     .is_empty());
 }
@@ -2010,6 +2025,7 @@ fn a_laid_workflows_tasks_make_its_root_due_when_the_entry_asked() {
             &workflows,
             &ledger,
             Utc::now(),
+            Reach::Sweep,
         )
     };
     let due = sweep(laying(&["fix-issue"]));
@@ -2050,6 +2066,7 @@ fn a_laid_workflows_tasks_are_judged_by_the_plans_own_machine() {
             &laying(&["fix-issue"]),
             &ledger,
             Utc::now(),
+            Reach::Sweep,
         )
     };
     assert_eq!(sweep().len(), 1, "the plan's own machine says it is open");
@@ -2088,6 +2105,7 @@ fn finished_parked_and_claimed_tasks_of_a_laid_workflow_make_nothing_due() {
         &laying(&["fix-issue"]),
         &ledger,
         Utc::now(),
+        Reach::Sweep,
     )
     .is_empty());
 }
@@ -2108,6 +2126,7 @@ fn a_laid_workflow_with_no_task_files_makes_nothing_due() {
         &laying(&["fix-issue"]),
         &ledger,
         Utc::now(),
+        Reach::Sweep,
     )
     .is_empty());
 }
@@ -2135,6 +2154,7 @@ fn a_laid_workflow_whose_machine_cannot_be_read_starts_nothing() {
         &laying(&["fix-issue"]),
         &laid_ledger(&root, "fix-issue"),
         Utc::now(),
+        Reach::Sweep,
     )
     .is_empty());
 }
@@ -2157,6 +2177,7 @@ fn a_plan_nothing_in_the_ledger_laid_is_nobodys_to_start() {
             &laying(&["fix-issue"]),
             &empty_ledger(),
             Utc::now(),
+            Reach::Sweep,
         )
     };
     assert!(sweep(laid_root(
@@ -2207,6 +2228,7 @@ fn a_laid_workflow_that_declares_no_machine_is_judged_by_the_roots() {
             &laying(&["fix-issue"]),
             &ledger,
             Utc::now(),
+            Reach::Sweep,
         )
     };
     assert!(sweep().is_empty(), "the root's machine says both are over");
@@ -2242,6 +2264,7 @@ fn a_workflow_root_ranks_and_is_capped_beside_a_recipe_root() {
         &laying(&["fix-issue"]),
         &laid_ledger(&workflow_root, "fix-issue"),
         Utc::now(),
+        Reach::Sweep,
     );
     assert_eq!(due.len(), 2, "both roots are due");
     let ranked = rank_due(due, &["forge:widget/7".to_string()]);
@@ -2277,6 +2300,226 @@ fn the_back_off_doubles_and_is_capped() {
     assert_eq!(rest(3), chrono::Duration::minutes(20));
     // However long it has been failing, it is always tried again.
     assert_eq!(rest(99), chrono::Duration::hours(2));
+}
+
+// ---- the key, and what it reaches that the sweep does not
+// (§FS-005-dispatch.30) ----
+
+/// Silence means the key, and the key is a reader who is present: a plan
+/// whose entry never asked to run itself is no sweep's to start and is
+/// started by name (§FS-005-dispatch.30, §FS-005-dispatch.28). The plan is
+/// named as the record names it — the laid plan's own id, never the
+/// matter's, which on a matter like this one was never written to disk.
+#[test]
+fn the_key_reaches_a_laid_plan_the_sweep_passes_over() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("panta");
+    let group = laid_root(&root, "fix-issue", &[&ticket_at("ticket", "open")]);
+    let ledger = laid_ledger(&root, "fix-issue");
+    let read = |reach| {
+        due_among(
+            &work_config(),
+            std::slice::from_ref(&group),
+            &asking(&[]),
+            // Nothing asked to autorun: this entry is a menu entry.
+            &laying(&[]),
+            &ledger,
+            Utc::now(),
+            reach,
+        )
+    };
+
+    assert!(
+        read(Reach::Sweep).is_empty(),
+        "nothing autoruns unasked, and this entry did not ask"
+    );
+
+    let due = read(Reach::Key(Some("forge:widget/42")));
+    assert_eq!(due.len(), 1, "the reader who names it starts it");
+    assert_eq!(due[0].root, root);
+    assert_eq!(due[0].plans, vec!["forge-widget-42-fix-issue".to_string()]);
+    assert_eq!(
+        due[0].tickets,
+        vec!["forge-widget-42-fix-issue.ticket".to_string()]
+    );
+    assert_eq!(due[0].item.as_deref(), Some("forge:widget/42"));
+}
+
+/// The key is narrowed to the matter a reader named, and to no other — and
+/// with no matter named it is every matter the record knows, which is what
+/// a plain `ephor work run` asks for (§FS-005-dispatch.30).
+#[test]
+fn the_key_reaches_the_matter_it_names_and_every_matter_where_it_names_none() {
+    let tmp = tempfile::tempdir().unwrap();
+    let named_root = tmp.path().join("a-named/panta");
+    let named = due_root(&named_root, &ticket_at("review-1", "fix"));
+    let mut beside = due_root(
+        &tmp.path().join("b-beside/panta"),
+        &ticket_at("review-1", "fix"),
+    );
+    beside.plans[0].item = Some("forge:widget/7".to_string());
+    let read = |reach| {
+        due_among(
+            &work_config(),
+            &[named.clone(), beside.clone()],
+            // `review` never asked to run itself, so the sweep has nothing
+            // here at all and every row below is the key's own doing.
+            &asking(&[]),
+            &laying(&[]),
+            &empty_ledger(),
+            Utc::now(),
+            reach,
+        )
+    };
+
+    assert!(read(Reach::Sweep).is_empty());
+
+    let one = read(Reach::Key(Some("forge:widget/42")));
+    assert_eq!(one.len(), 1, "the matter named, and nothing beside it");
+    assert_eq!(one[0].root, named_root);
+
+    let every = read(Reach::Key(None));
+    assert_eq!(
+        every
+            .iter()
+            .filter_map(|due| due.item.as_deref())
+            .collect::<Vec<_>>(),
+        ["forge:widget/42", "forge:widget/7"],
+        "no matter named is every matter the record knows"
+    );
+}
+
+/// The failed-start back-off keeps a broken root from turning every sweep
+/// into another spawn, which is a rule about a decision nobody is watching.
+/// A reader who names the matter is watching, so the key is not held by it
+/// (§FS-005-dispatch.30, §FS-005-dispatch.24).
+#[test]
+fn a_root_resting_under_the_back_off_is_still_the_keys() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("panta");
+    let group = due_root(&root, &ticket_at("fix-gate-1", "collect"));
+    let now = Utc::now();
+    let mut ledger = empty_ledger();
+    ledger.starts.insert(
+        root.to_string_lossy().into_owned(),
+        ledger::Start {
+            at: now,
+            failures: 1,
+            says: "the runner refused".to_string(),
+        },
+    );
+    let read = |reach| {
+        due_among(
+            &work_config(),
+            std::slice::from_ref(&group),
+            &asking(&["fix-gate"]),
+            &laying(&[]),
+            &ledger,
+            now,
+            reach,
+        )
+    };
+
+    assert!(read(Reach::Sweep).is_empty(), "it has just failed");
+    assert_eq!(
+        read(Reach::Key(Some("forge:widget/42"))).len(),
+        1,
+        "a reader who asks for it now gets it now"
+    );
+}
+
+/// A root its own run holds is dropped by the sweep in silence, because
+/// saying so every sweep would report the ordinary case. The key must be
+/// given the row instead: a reader who asked for a run by name is owed the
+/// refusal that names the run in the way, with `--force` to lift it, rather
+/// than being told the matter holds nothing (§FS-005-dispatch.30,
+/// §FS-005-dispatch.24).
+#[test]
+fn a_root_its_own_run_holds_is_returned_to_the_key_to_be_refused_by_name() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("panta");
+    let group = due_root(&root, &ticket_at("fix-gate-1", "collect"));
+    let holder = hold(&root);
+    let read = |reach| {
+        due_among(
+            &work_config(),
+            std::slice::from_ref(&group),
+            &asking(&["fix-gate"]),
+            &laying(&[]),
+            &empty_ledger(),
+            Utc::now(),
+            reach,
+        )
+    };
+
+    assert!(
+        read(Reach::Sweep).is_empty(),
+        "the sweep says nothing of it"
+    );
+
+    let due = read(Reach::Key(Some("forge:widget/42")));
+    assert_eq!(
+        due.len(),
+        1,
+        "the key gets the row, and starts nothing on it"
+    );
+    assert_eq!(
+        due[0].held_by.as_deref(),
+        Some(root.as_path()),
+        "and it names the run that is in the way"
+    );
+    drop(holder);
+}
+
+/// What the key reaches is what ephor's record says is a matter's work, and
+/// nothing else: a plan a reader wrote by hand into a work root, or one
+/// merely found there, was laid by nobody and is nobody's to start — on
+/// either surface (§FS-005-dispatch.30, §FS-005-dispatch.28).
+#[test]
+fn a_plan_the_record_does_not_know_is_never_the_keys() {
+    // A store of its own that no laying in the ledger accounts for.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("panta");
+    let by_hand = laid_root(&root, "fix-issue", &[&ticket_at("ticket", "open")]);
+    let read = |group: &runtime::watch::RootPlans, ledger: &Ledger, reach| {
+        due_among(
+            &work_config(),
+            std::slice::from_ref(group),
+            &asking(&["fix-gate"]),
+            &laying(&["fix-issue"]),
+            ledger,
+            Utc::now(),
+            reach,
+        )
+    };
+    assert!(read(&by_hand, &empty_ledger(), Reach::Sweep).is_empty());
+    assert!(
+        read(
+            &by_hand,
+            &empty_ledger(),
+            Reach::Key(Some("forge:widget/42"))
+        )
+        .is_empty(),
+        "no record laid it, so no key starts it"
+    );
+    assert!(read(&by_hand, &empty_ledger(), Reach::Key(None)).is_empty());
+
+    // And a plan the roots hold that the record cannot say a matter for:
+    // the sweep judges it by what asked for its tickets, but the key is
+    // narrowed by the matter, and this plan is about none the record knows.
+    let other = tempfile::tempdir().unwrap();
+    let anonymous_root = other.path().join("panta");
+    let mut anonymous = due_root(&anonymous_root, &ticket_at("fix-gate-1", "collect"));
+    anonymous.plans[0].item = None;
+    assert_eq!(
+        read(&anonymous, &empty_ledger(), Reach::Sweep).len(),
+        1,
+        "the sweep starts it: its ticket is from a recipe that asked"
+    );
+    assert!(
+        read(&anonymous, &empty_ledger(), Reach::Key(None)).is_empty(),
+        "the key reaches the matters the record knows, and this is none of them"
+    );
 }
 /// Open and being worked on right now are different facts, and the row
 /// says which (§FS-005-dispatch.23): a ticket a live run holds is marked

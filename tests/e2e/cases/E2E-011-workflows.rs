@@ -1551,4 +1551,300 @@ exit 1
             .success()
             .stdout(predicate::str::contains("Nothing is due"));
     }
+
+    // ---- the key, and the whole of a matter's work (§FS-005-dispatch.30) ----
+
+    const ITEM: &str = "acmeforge:acme/widget#13";
+    /// An id the record has never heard of: the same forge, the same
+    /// repository, a number nobody opened.
+    const GHOST: &str = "acmeforge:acme/widget#999";
+    /// The plan a workflow laid about `ITEM`, and the matter's own plan id
+    /// beside it — two ids in two ledger fields, and only the first was ever
+    /// written to disk.
+    const LAID: &str = "acmeforge-acme-widget-13-fix-issue";
+    const OWN: &str = "acmeforge-acme-widget-13";
+
+    /// The plans the runtime was pointed at, in the order it was asked: the
+    /// `--rhei` arguments of every run the stub was asked to detach.
+    fn plans_run(world: &World) -> Vec<String> {
+        let text = std::fs::read_to_string(world.path().join("runs.log")).unwrap_or_default();
+        let mut plans = Vec::new();
+        for line in text.lines() {
+            let mut words = line.split_whitespace();
+            while let Some(word) = words.next() {
+                if word == "--rhei" {
+                    if let Some(plan) = words.next() {
+                        plans.push(plan.trim_matches('\'').to_string());
+                    }
+                }
+            }
+        }
+        plans
+    }
+
+    /// Forget the runs the fixture itself caused. A dispatch that lays an
+    /// entry which asked to run itself starts it too — the same continuation
+    /// the timer makes — so the log is emptied before the verb under test, and
+    /// every line left in it belongs to that verb.
+    fn forget_runs(world: &World) {
+        std::fs::write(world.path().join("runs.log"), "").expect("the stub's log of runs");
+    }
+
+    fn run_item(world: &World, item: &str) -> std::process::Output {
+        world
+            .ephor()
+            .args(["work", "run", "--item", item, "--json"])
+            .output()
+            .expect("the key runs")
+    }
+
+    /// The key reaches the plan a workflow laid, and names *that* plan to the
+    /// runtime (§FS-005-dispatch.30). The matter's own plan id is the other
+    /// field of the same ledger entry and nothing ever wrote it to disk, so a
+    /// start pointed there is a start into nothing — which is why this case
+    /// asserts what the runtime was handed and not only that a run began.
+    #[test]
+    fn the_key_starts_the_plan_a_workflow_laid_and_names_it() {
+        let world = world("acme-key", &format!("{RENDERS}{DETACHES}{REFUSES}"), true);
+        world
+            .ephor()
+            .args(["work", "dispatch", "--limit", "1"])
+            .assert()
+            .success();
+        assert!(plan_of(&world, 13).join("tasks/01-fix.md").is_file());
+        forget_runs(&world);
+
+        let output = run_item(&world, ITEM);
+        let reading = json_of(&output);
+        assert!(output.status.success(), "{reading}");
+        assert_eq!(reading["failed"], 0, "{reading}");
+        assert_eq!(reading["refused"], 0, "{reading}");
+        assert_eq!(reading["runs"][0]["outcome"], "started", "{reading}");
+        assert_eq!(reading["runs"][0]["plans"], json!([LAID]), "{reading}");
+        assert_eq!(plans_run(&world), [LAID.to_string()]);
+        assert!(
+            !plans_run(&world).iter().any(|plan| plan == OWN),
+            "the matter's own plan is not on disk and must never be named"
+        );
+    }
+
+    /// Silence means the key (§FS-005-dispatch.28), and this is the key: an
+    /// entry that never asked to run itself lays a plan the sweep passes over
+    /// and a reader who names the matter starts (§FS-005-dispatch.30). The
+    /// case that proves the change did not leak into the sweep.
+    #[test]
+    fn the_key_starts_a_laid_plan_the_sweep_passes_over() {
+        let world = world("acme-hand", &format!("{RENDERS}{DETACHES}{REFUSES}"), false);
+        world.ephor().args(["work", "dispatch"]).assert().success();
+        assert!(!plan_of(&world, 13).exists(), "nothing asked, nothing laid");
+
+        // The reader lays it by hand, which is the only way this plan exists.
+        world
+            .ephor()
+            .args(["work", "lay", "fix-issue", "--item", ITEM])
+            .assert()
+            .success();
+        assert!(plan_of(&world, 13).join("tasks/01-fix.md").is_file());
+        forget_runs(&world);
+
+        // The sweep still starts nothing: nothing autoruns unasked.
+        let swept = world
+            .ephor()
+            .args(["work", "run", "--due", "--json"])
+            .output()
+            .expect("the due sweep runs");
+        let swept = json_of(&swept);
+        assert!(
+            swept["runs"].as_array().is_none_or(|runs| runs.is_empty()),
+            "the sweep must not have gained a plan: {swept}"
+        );
+        assert!(plans_run(&world).is_empty(), "the sweep started nothing");
+
+        // And the key does.
+        let output = run_item(&world, ITEM);
+        let reading = json_of(&output);
+        assert!(output.status.success(), "{reading}");
+        assert_eq!(reading["runs"][0]["outcome"], "started", "{reading}");
+        assert_eq!(reading["runs"][0]["plans"], json!([LAID]), "{reading}");
+        assert_eq!(plans_run(&world), [LAID.to_string()]);
+    }
+
+    /// An id nothing is recorded about is an input that names nothing, and it
+    /// is refused by name and exits 2 (§FS-005-dispatch.30,
+    /// §FS-011-command-line.9). The fault this ends is that a real matter and
+    /// a typo were answered with the same bytes on both surfaces.
+    #[test]
+    fn an_item_no_work_is_recorded_about_is_refused_by_name() {
+        let world = world("acme-ghost", &format!("{RENDERS}{DETACHES}{REFUSES}"), true);
+        world
+            .ephor()
+            .args(["work", "dispatch", "--limit", "1"])
+            .assert()
+            .success();
+        forget_runs(&world);
+
+        let ghost = run_item(&world, GHOST);
+        assert_eq!(
+            ghost.status.code(),
+            Some(2),
+            "stdout: {} stderr: {}",
+            String::from_utf8_lossy(&ghost.stdout),
+            String::from_utf8_lossy(&ghost.stderr)
+        );
+        let refused = json_of(&ghost);
+        assert_eq!(refused["ok"], json!(false), "{refused}");
+        let says = refused["says"].as_str().unwrap_or_default();
+        assert!(says.contains(GHOST), "the refusal quotes the id: {refused}");
+        assert!(
+            says.contains("work dispatch") && says.contains("work lay"),
+            "and names the two verbs that would give it work: {refused}"
+        );
+        assert!(plans_run(&world).is_empty(), "nothing was started");
+
+        // The prose says it too, on the error stream, with the same code.
+        let prose = world
+            .ephor()
+            .args(["work", "run", "--item", GHOST])
+            .output()
+            .expect("the key runs");
+        assert_eq!(prose.status.code(), Some(2));
+        assert!(
+            String::from_utf8_lossy(&prose.stderr).contains(GHOST),
+            "stderr: {}",
+            String::from_utf8_lossy(&prose.stderr)
+        );
+
+        // And a matter the record does know is answered differently — which
+        // is the whole of the report: these two were byte for byte the same.
+        let real = run_item(&world, ITEM);
+        assert_ne!(
+            real.stdout, ghost.stdout,
+            "a real matter must not be answered as an id that names nothing is"
+        );
+        assert_ne!(real.status.code(), ghost.status.code());
+    }
+
+    /// A matter the record knows, holding nothing a run would advance, is not
+    /// a refusal: the command was understood and the answer is that there is
+    /// nothing to do. It names the matter, exits 0, and carries the sentence
+    /// into the reading as `says` (§FS-005-dispatch.30, §REQ-002-parity.3).
+    #[test]
+    fn a_matter_whose_work_is_over_says_so_and_is_not_a_refusal() {
+        let world = world("acme-over", &format!("{RENDERS}{DETACHES}{REFUSES}"), true);
+        world
+            .ephor()
+            .args(["work", "dispatch", "--limit", "1"])
+            .assert()
+            .success();
+        // The plan's own machine is what says it is over.
+        std::fs::write(
+            plan_of(&world, 13).join("tasks/01-fix.md"),
+            "### Task fix: fix the ticket\n**State:** done\n\nwork\n",
+        )
+        .unwrap();
+        forget_runs(&world);
+
+        let output = run_item(&world, ITEM);
+        let reading = json_of(&output);
+        assert!(output.status.success(), "{reading}");
+        assert!(
+            reading["runs"]
+                .as_array()
+                .is_some_and(|runs| runs.is_empty()),
+            "{reading}"
+        );
+        assert_eq!(reading["failed"], 0, "{reading}");
+        assert_eq!(reading["refused"], 0, "{reading}");
+        let says = reading["says"].as_str().unwrap_or_default();
+        assert!(
+            says.contains(ITEM),
+            "the reading names the matter: {reading}"
+        );
+        assert!(plans_run(&world).is_empty());
+
+        // The prose carries the same sentence, on standard output.
+        world
+            .ephor()
+            .args(["work", "run", "--item", ITEM])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains(ITEM));
+    }
+
+    /// Where a matter has a dispatched ticket in its own plan *and* a plan a
+    /// workflow laid beside it, the key starts one run naming both: one live
+    /// run per checkout means two would refuse each other, and a single key
+    /// producing a start and a refusal of its own making is an answer nobody
+    /// can act on (§FS-005-dispatch.30).
+    #[test]
+    fn both_kinds_of_work_in_one_root_come_out_as_one_run() {
+        let world = world("acme-both", &format!("{RENDERS}{DETACHES}{REFUSES}"), false);
+        world.configure(json!({
+            "projects": { PROJECT: {
+                "providers": [ { "provider": "acmeforge", "user": "you", "repos": ["widget"] } ]
+            } },
+            "work": {
+                "runner": "acme-both",
+                "recipes": [{
+                    "id": "triage",
+                    "icon": "◆",
+                    "description": "look at the issue",
+                    "state": "fix",
+                    "when": { "kinds": ["issue"] },
+                    "brief": "Look at {title}."
+                }]
+            }
+        }));
+        let swept = dispatch(&world, &["--item", ITEM]);
+        assert_eq!(swept["opened"], 1, "{swept}");
+        world
+            .ephor()
+            .args(["work", "lay", "fix-issue", "--item", ITEM])
+            .assert()
+            .success();
+        assert!(plan_of(&world, 13).join("tasks/01-fix.md").is_file());
+        forget_runs(&world);
+
+        let output = run_item(&world, ITEM);
+        let reading = json_of(&output);
+        assert!(output.status.success(), "{reading}");
+        let runs = reading["runs"].as_array().expect("a run reading");
+        assert_eq!(runs.len(), 1, "one checkout, one run: {reading}");
+        let mut named: Vec<String> = runs[0]["plans"]
+            .as_array()
+            .expect("the run names its plans")
+            .iter()
+            .map(|plan| plan.as_str().unwrap_or_default().to_string())
+            .collect();
+        named.sort();
+        assert_eq!(named, [OWN.to_string(), LAID.to_string()], "{reading}");
+        let mut handed = plans_run(&world);
+        handed.sort();
+        assert_eq!(handed, [OWN.to_string(), LAID.to_string()]);
+    }
+
+    /// `work run` and `work run --item X` disagreeing about what X's work is
+    /// would be this same fault one level up, so a plain run takes the same
+    /// reading and starts laid plans too (§FS-005-dispatch.30).
+    #[test]
+    fn a_plain_run_starts_what_a_workflow_laid_too() {
+        let world = world("acme-plain", &format!("{RENDERS}{DETACHES}{REFUSES}"), true);
+        world
+            .ephor()
+            .args(["work", "dispatch", "--limit", "1"])
+            .assert()
+            .success();
+        forget_runs(&world);
+
+        let output = world
+            .ephor()
+            .args(["work", "run", "--json"])
+            .output()
+            .expect("a plain run runs");
+        let reading = json_of(&output);
+        assert!(output.status.success(), "{reading}");
+        assert_eq!(reading["runs"][0]["outcome"], "started", "{reading}");
+        assert_eq!(reading["runs"][0]["plans"], json!([LAID]), "{reading}");
+        assert_eq!(plans_run(&world), [LAID.to_string()]);
+    }
 }
