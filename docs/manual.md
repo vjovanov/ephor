@@ -2592,8 +2592,10 @@ ephor work states
   said of itself — did any pass it recorded report progress, did any slot it
   released end in a completing outcome — and either is enough to count as
   movement, while an outcome word this reader does not recognize leaves the
-  reading inconclusive and rests nothing. The interval is the same five
-  minutes doubling to two hours, and it ends: past three consecutive runs that
+  reading inconclusive and rests nothing. The interval is the same arithmetic a
+  failed start rests under — five minutes, then ten, doubling to a two-hour cap
+  — though only its first two steps are ever reached here, because the rest
+  ends before the cap can bite: past three consecutive runs that
   advanced nothing the root is not started at all until one advances there or
   you start one by hand, and every sweep says so in the row where it used to
   say `started`. A run that moves something drops the memory at once. None of

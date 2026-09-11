@@ -52,8 +52,9 @@ ships, the previous "latest" section moves verbatim to
   progressed, or released a slot in a completing outcome, either being enough
   on its own. A root whose last run advanced nothing is **passed over** with
   the reason in the row where it used to say `started` — five minutes, then
-  ten, doubling to a two-hour cap, the same interval a failed start rests for
-  — and past three consecutive such runs it stops being started at all until
+  ten, on the same doubling arithmetic and the same two-hour cap a failed start
+  rests under, though the hold below arrives before that cap can — and past
+  three consecutive such runs it stops being started at all until
   one advances there or somebody starts one by hand. A run that moves
   something drops the memory whole. This changes the default for every
   existing `--due` caller, which is the point: the previous behaviour restarted

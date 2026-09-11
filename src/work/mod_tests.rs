@@ -1933,6 +1933,33 @@ fn the_same_run_is_judged_once_and_its_rest_lapses() {
     }
 }
 
+/// The last minute of a rest is said in words. The feed's interval answers
+/// *now* under a minute, which in this sentence would read as *tried again in
+/// now* about a moment that has not come yet (§FS-005-dispatch.24).
+#[test]
+fn the_last_minute_of_a_rest_is_said_in_words() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("panta");
+    let group = due_root(&root, &ticket_at("fix-gate-1", "collect"));
+    last_run(&root, "acme-run-1", "failed", false);
+    let at = Utc::now();
+
+    // Thirty seconds of a five-minute rest left: still resting, and less than
+    // the interval renderer has a number for.
+    let due = due_among(
+        &work_config(),
+        std::slice::from_ref(&group),
+        &asking(&["fix-gate"]),
+        &laying(&[]),
+        &remembering(&root, "acme-run-1", 1, at),
+        at + chrono::Duration::seconds(270),
+        Reach::Sweep,
+    );
+    let why = due[0].passed_over().expect("it is resting").to_string();
+    assert!(why.contains("tried again in under a minute"), "{why}");
+    assert!(!why.contains("in now"), "{why}");
+}
+
 /// Where the rest ends. Past three consecutive runs that advanced nothing the
 /// root stops being rested and stops being admitted at all, and no interval
 /// lifts that — another run is not the fix, and the root is somebody's
