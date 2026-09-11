@@ -33,6 +33,18 @@ const RELEASED: &str = "slot_released";
 /// The run loop ended. Closing diagnostics may follow it; no slot record
 /// does, so a reader that has seen this has seen every slot the run took.
 const FINISHED: &str = "run_finished";
+/// One scheduler pass ended, saying in `progressed` whether it moved
+/// anything. The runtime's own answer to the question the autorun sweep asks
+/// of a run that is over (§FS-005-dispatch.24).
+const PASSED: &str = "pass_ended";
+
+/// How the binding spells the end of a slot, and which of the handful is
+/// completing (§AR-007-runtime.1). Spelled here and nowhere else, as the rest
+/// of its artifact grammar is (§REQ-001-boundary.5): what goes up from this
+/// module is [`Advance`], never a word the sweep has to interpret.
+const OUTCOMES: [&str; 5] = ["completed", "failed", "cancelled", "timeout", "interrupted"];
+/// The one of them that is movement.
+const COMPLETED: &str = "completed";
 
 /// The record layout this reader was written against
 /// (`run_started.schema`). The binding moves it only when a field named in
@@ -69,6 +81,53 @@ impl Slot {
     }
 }
 
+/// Whether a run that is over moved anything (§FS-005-dispatch.24).
+///
+/// One folded answer rather than a list that grows with the run's length: the
+/// sweep asks *did it advance*, and every record that bears on it is read into
+/// this before it leaves the module.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Advance {
+    /// A pass reported progress, or a slot was released in a completing
+    /// outcome. Either is enough on its own.
+    Advanced,
+    /// The run said how it went, and none of it was movement. The default,
+    /// because a stream that says nothing about either is a run that moved
+    /// nothing as far as it ever said.
+    #[default]
+    Nothing,
+    /// Something the run said about how it went is in a language this reader
+    /// does not know. Never *stalled*: the day the runtime learns a new
+    /// outcome word must not be the day healthy roots start resting
+    /// (§FS-005-dispatch.24).
+    Unknown,
+}
+
+impl Advance {
+    /// Two readings of one run folded into one. An advance anywhere in a run
+    /// is an advance, and short of one, a word this reader does not know is
+    /// *cannot say* rather than a run that moved nothing.
+    fn with(self, other: Advance) -> Advance {
+        match (self, other) {
+            (Advance::Advanced, _) | (_, Advance::Advanced) => Advance::Advanced,
+            (Advance::Unknown, _) | (_, Advance::Unknown) => Advance::Unknown,
+            _ => Advance::Nothing,
+        }
+    }
+}
+
+/// What one slot's end says about whether the run moved (§FS-005-dispatch.24).
+/// A spelling outside the handful — or a release that named no outcome at
+/// all — is *cannot say*, because a reader that guessed at it would be
+/// guessing against the one root it is about to stop starting.
+fn ended(outcome: Option<&str>) -> Advance {
+    match outcome {
+        Some(COMPLETED) => Advance::Advanced,
+        Some(known) if OUTCOMES.contains(&known) => Advance::Nothing,
+        _ => Advance::Unknown,
+    }
+}
+
 /// What one run's stream says about that run (§FS-005-dispatch.15.2).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Progress {
@@ -88,6 +147,10 @@ pub struct Progress {
     pub finished: bool,
     /// The record layout the run declared, where it declared one.
     pub schema: Option<u64>,
+    /// Whether this run moved anything, folded from every record that bears
+    /// on it — the question the autorun sweep asks of a run that is over
+    /// (§FS-005-dispatch.24).
+    pub advanced: Advance,
 }
 
 impl Progress {
@@ -179,10 +242,28 @@ fn read(text: &str) -> Option<Progress> {
                 let Some(task) = word("task") else { continue };
                 let log = word("log_path").map(PathBuf::from);
                 open.retain(|(known, path, _)| !(known == &task && path == &log));
+                // How this slot ended is the floor beneath the per-pass
+                // answer below: a runner that records how its slots ended
+                // and nothing about its passes is still read
+                // (§FS-005-dispatch.24).
+                progress.advanced = progress.advanced.with(ended(word("outcome").as_deref()));
             }
             // The run loop is over. Closing notes may follow and are read
             // like any other record; no slot record ever does.
             Some(FINISHED) => progress.finished = true,
+            // The runtime's own answer to *did this pass move anything*, and
+            // the first one asked. A pass that says it did not adds nothing:
+            // an earlier pass may have moved something, and the slot records
+            // speak for the movement no pass claims (§FS-005-dispatch.24).
+            Some(PASSED) => {
+                if record
+                    .get("progressed")
+                    .and_then(serde_json::Value::as_bool)
+                    == Some(true)
+                {
+                    progress.advanced = progress.advanced.with(Advance::Advanced);
+                }
+            }
             _ => {}
         }
     }
@@ -359,6 +440,120 @@ mod tests {
     fn a_root_with_no_stream_has_none() {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(progress(dir.path()), None);
+    }
+
+    fn passed(seq: u64, progressed: bool) -> String {
+        format!(
+            r#"{{"seq":{seq},"ts":"2026-08-23T10:01:30Z","event":"pass_ended","pass":1,"progressed":{progressed}}}"#
+        )
+    }
+
+    /// A slot released in the one completing outcome is movement, whatever
+    /// the passes said — the floor beneath the per-pass answer
+    /// (§FS-005-dispatch.24).
+    #[test]
+    fn a_completing_release_is_a_run_that_advanced() {
+        let text = [
+            started("3f9a2c"),
+            assigned(2, "plan.fix-gate-1", "fix", "runtime/logs/a.log"),
+            released(
+                3,
+                "plan.fix-gate-1",
+                "fix",
+                "runtime/logs/a.log",
+                "completed",
+            ),
+        ]
+        .join("\n");
+        assert_eq!(read(&text).expect("legible").advanced, Advance::Advanced);
+    }
+
+    /// The per-pass record is the runtime's own answer to this exact
+    /// question, and it is enough on its own: a run whose only movement was
+    /// routing a failure onward completes no slot but has moved
+    /// (§FS-005-dispatch.24).
+    #[test]
+    fn a_pass_that_progressed_is_a_run_that_advanced_with_no_completing_slot() {
+        let text = [
+            started("3f9a2c"),
+            assigned(2, "plan.fix-gate-1", "fix", "runtime/logs/a.log"),
+            released(3, "plan.fix-gate-1", "fix", "runtime/logs/a.log", "failed"),
+            passed(4, true),
+        ]
+        .join("\n");
+        assert_eq!(read(&text).expect("legible").advanced, Advance::Advanced);
+    }
+
+    /// Neither, and the run moved nothing. This is the reading the whole rest
+    /// hangs on, and it is the shape the reproduction had: every slot failed,
+    /// no pass progressed, and the run reached its own end all the same
+    /// (§FS-005-dispatch.24).
+    #[test]
+    fn a_run_that_failed_every_slot_and_progressed_no_pass_advanced_nothing() {
+        let text = [
+            started("3f9a2c"),
+            assigned(2, "plan.fix-gate-1", "fix", "runtime/logs/a.log"),
+            released(3, "plan.fix-gate-1", "fix", "runtime/logs/a.log", "failed"),
+            passed(4, false),
+            r#"{"seq":5,"ts":"2026-08-23T10:02:00Z","event":"run_finished","summary":{"agents":1}}"#
+                .to_string(),
+        ]
+        .join("\n");
+        let progress = read(&text).expect("legible");
+        assert_eq!(progress.advanced, Advance::Nothing);
+        assert!(progress.finished, "it reached its own end all the same");
+    }
+
+    /// A sixth spelling, and a release that named no outcome at all: the
+    /// reading is *cannot say*, never *stalled*. The day the runtime learns a
+    /// new outcome word must not be the day healthy roots start resting
+    /// (§FS-005-dispatch.24).
+    #[test]
+    fn an_outcome_this_reader_does_not_know_makes_the_reading_inconclusive() {
+        let sixth = [
+            started("3f9a2c"),
+            assigned(2, "plan.fix-gate-1", "fix", "runtime/logs/a.log"),
+            released(
+                3,
+                "plan.fix-gate-1",
+                "fix",
+                "runtime/logs/a.log",
+                "deferred",
+            ),
+            passed(4, false),
+        ]
+        .join("\n");
+        assert_eq!(read(&sixth).expect("legible").advanced, Advance::Unknown);
+
+        let unsaid = [
+            started("3f9a2c"),
+            r#"{"seq":2,"ts":"2026-08-23T10:01:00Z","event":"slot_released","slot":0,"task":"plan.fix-gate-1","log_path":"runtime/logs/a.log"}"#.to_string(),
+        ]
+        .join("\n");
+        assert_eq!(read(&unsaid).expect("legible").advanced, Advance::Unknown);
+
+        // And a word it does not know never buries one it does: an advance
+        // anywhere in a run is an advance.
+        let both = [
+            started("3f9a2c"),
+            released(2, "plan.a", "fix", "runtime/logs/a.log", "deferred"),
+            released(3, "plan.b", "fix", "runtime/logs/b.log", "completed"),
+        ]
+        .join("\n");
+        assert_eq!(read(&both).expect("legible").advanced, Advance::Advanced);
+    }
+
+    /// A stream whose layout this reader does not understand is no reading at
+    /// all, which is what leaves the rest inert rather than resting a root on
+    /// a document in a language that moved (§AR-007-runtime.3).
+    #[test]
+    fn a_layout_this_reader_cannot_read_says_nothing_about_advancing() {
+        let text = [
+            r#"{"seq":1,"ts":"2026-08-23T09:59:00Z","event":"run_started","schema":9,"run_id":"3f9a2c"}"#.to_string(),
+            released(2, "plan.fix-gate-1", "fix", "runtime/logs/a.log", "failed"),
+        ]
+        .join("\n");
+        assert_eq!(read(&text), None);
     }
 
     #[test]

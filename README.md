@@ -431,7 +431,8 @@ ticket gets its run in the same breath it is written, and a timer running
 reads the world rather than a memory — a root is due when it holds an open,
 unclaimed, unparked ticket from such a recipe and no run is live on it — so it
 is safe to invoke as often as anything cares to, and starts nothing on a root
-that already has a run. Arguments after `--` on `work dispatch` pass unchanged
+that already has a run, and nothing on one whose last run advanced nothing
+until the rest it earns is out, or until you start one by hand. Arguments after `--` on `work dispatch` pass unchanged
 and in order to every autorun that invocation starts; they are not remembered
 for later sweeps, and a dry run still starts nothing. Everything that says
 nothing about this is still nobody's to start but yours.

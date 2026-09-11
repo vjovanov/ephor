@@ -37,6 +37,14 @@ pub struct Ledger {
     /// unchanged (§FS-006-project-interface.11).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub starts: BTreeMap<String, Start>,
+    /// What the last run ephor judged on a work root came to, keyed by the
+    /// root (§FS-005-dispatch.24). A record of its own beside `starts` and
+    /// never inside it: one successful launch would otherwise write and clear
+    /// the same field, and one interval would be counting two unrelated
+    /// things. An addition, so a ledger written before this field existed
+    /// reads unchanged (§FS-006-project-interface.11).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub advances: BTreeMap<String, Judged>,
     /// What is known about each provider pool, keyed by the pool
     /// (§FS-005-dispatch.29). The same kind of thing `starts` is — ephor's
     /// record of what it was told and of its own act, never work state
@@ -152,6 +160,66 @@ pub struct Entry {
 const BACK_OFF: chrono::TimeDelta = chrono::TimeDelta::minutes(5);
 const BACK_OFF_CAP: chrono::TimeDelta = chrono::TimeDelta::hours(2);
 
+/// How many runs in a row may advance nothing before the root stops being
+/// rested and stops being admitted at all (§FS-005-dispatch.24). A rest that
+/// only doubled would hide the stall it was written to expose: past a small
+/// number of restarts the infrastructure is the thing that is wrong, and no
+/// amount of retrying is going to be the fix (§FS-005-dispatch.11).
+const ENOUGH_MISSES: u32 = 3;
+
+/// The interval a root waits after `consecutive` of the same thing going
+/// wrong: doubling from the first, capped so that a root left alone is always
+/// tried again eventually (§FS-005-dispatch.24). One arithmetic, because a
+/// failed start and a run that advanced nothing are rested for the same
+/// reason and at the same rate.
+fn back_off(consecutive: u32) -> chrono::TimeDelta {
+    let doublings = consecutive.saturating_sub(1).min(16);
+    BACK_OFF
+        .checked_mul(1i32 << doublings)
+        .unwrap_or(BACK_OFF_CAP)
+        .min(BACK_OFF_CAP)
+}
+
+/// What the last run on one work root came to, as the run said it
+/// (§FS-005-dispatch.24).
+///
+/// Ephor's record of its own reading and of nothing else: three facts, none of
+/// them about tickets, states or work, which stay the plan's
+/// (§FS-005-dispatch.4). It is dropped whole the moment a run there advances,
+/// mirroring what a successful start already does to [`Start`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Judged {
+    /// The run this verdict was taken on, as it named itself — so one run is
+    /// never counted twice, however often the sweep runs over it.
+    pub run: String,
+    /// How many judged runs in a row advanced nothing. The interval grows
+    /// with it, and past [`ENOUGH_MISSES`] there is no interval left.
+    #[serde(default = "one")]
+    pub misses: u32,
+    /// When the last verdict was taken, which is what the rest is dated from.
+    pub at: DateTime<Utc>,
+}
+
+impl Judged {
+    /// When this root may be started again: the interval doubles with each
+    /// consecutive miss and stops growing at [`BACK_OFF_CAP`].
+    pub fn ready_at(&self) -> DateTime<Utc> {
+        self.at + back_off(self.misses)
+    }
+
+    /// Whether the rest is over: past [`ENOUGH_MISSES`] the root is not
+    /// rested at all but [`Judged::held`], which no interval ends.
+    pub fn resting(&self, now: DateTime<Utc>) -> bool {
+        !self.held() && now < self.ready_at()
+    }
+
+    /// Whether the sweep has stopped starting runs here altogether, until one
+    /// advances or somebody starts one by hand (§FS-005-dispatch.24).
+    pub fn held(&self) -> bool {
+        self.misses >= ENOUGH_MISSES
+    }
+}
+
 /// What the last attempt to start a run on one work root came to.
 ///
 /// Only failure is worth remembering. A start that worked leaves a run, and
@@ -181,12 +249,7 @@ impl Start {
     /// When this root may be tried again: the interval doubles with each
     /// consecutive failure and stops growing at [`BACK_OFF_CAP`].
     pub fn ready_at(&self) -> DateTime<Utc> {
-        let doublings = self.failures.saturating_sub(1).min(16);
-        let wait = BACK_OFF
-            .checked_mul(1i32 << doublings)
-            .unwrap_or(BACK_OFF_CAP)
-            .min(BACK_OFF_CAP);
-        self.at + wait
+        self.at + back_off(self.failures)
     }
 
     /// Whether a sweep should pass this root over for now.
@@ -392,6 +455,7 @@ pub fn load() -> Result<Ledger> {
             version: version(),
             entries: BTreeMap::new(),
             starts: BTreeMap::new(),
+            advances: BTreeMap::new(),
             pools: BTreeMap::new(),
         });
     }
@@ -613,6 +677,69 @@ mod compat_tests {
         assert_eq!(after["entries"], before["entries"]);
         assert_eq!(after["starts"], before["starts"]);
         assert!(after.get("pools").is_none());
+    }
+
+    /// A ledger written before the no-advance rest existed — no `advances`
+    /// map — still reads, and serializing it back adds no key, because there
+    /// is nothing to report (§FS-005-dispatch.24,
+    /// §FS-006-project-interface.11).
+    #[test]
+    fn a_ledger_from_before_the_no_advance_rest_reads_unchanged() {
+        let older = serde_json::json!({
+            "entries": {},
+            "starts": {
+                "/w": { "at": "2026-09-01T00:00:00Z", "failures": 2, "says": "the runner refused" }
+            }
+        });
+        let before = older.clone();
+        let ledger: Ledger = serde_json::from_value(older).expect("an old ledger still reads");
+        assert!(ledger.advances.is_empty());
+        assert_eq!(ledger.starts["/w"].failures, 2);
+
+        let after = serde_json::to_value(&ledger).expect("it serializes back");
+        assert_eq!(after["starts"], before["starts"]);
+        assert!(after.get("advances").is_none());
+    }
+
+    /// The rest's own arithmetic, and where it ends. Five minutes doubling to
+    /// the two-hour cap, exactly as a failed start rests — and past three
+    /// consecutive misses the root is held rather than rested, which no
+    /// interval lifts (§FS-005-dispatch.24).
+    #[test]
+    fn the_no_advance_rest_doubles_is_capped_and_then_gives_up() {
+        let at = Utc::now();
+        let judged = |misses| Judged {
+            run: "3f9a2c".to_string(),
+            misses,
+            at,
+        };
+
+        assert_eq!(judged(1).ready_at() - at, chrono::Duration::minutes(5));
+        assert_eq!(judged(2).ready_at() - at, chrono::Duration::minutes(10));
+        // The same arithmetic the failed-start rest uses, so the two cannot
+        // drift apart.
+        assert_eq!(
+            judged(9).ready_at() - at,
+            Start {
+                at,
+                failures: 9,
+                says: String::new()
+            }
+            .ready_at()
+                - at
+        );
+        assert_eq!(judged(99).ready_at() - at, chrono::Duration::hours(2));
+
+        // One miss rests and is tried again once the interval is out.
+        assert!(judged(1).resting(at));
+        assert!(!judged(1).resting(at + chrono::Duration::minutes(6)));
+        assert!(!judged(1).held());
+
+        // The third is not a longer rest: it is the end of resting. However
+        // long anyone waits, the sweep starts nothing there.
+        assert!(judged(3).held());
+        assert!(!judged(3).resting(at + chrono::Duration::days(7)));
+        assert!(judged(4).held());
     }
 
     /// A malformed ledger degrades to a `Result::Err` rather than a panic —

@@ -33,7 +33,7 @@ use crate::feed::model::Item;
 use crate::paths::for_shell;
 
 use dossier::Subject;
-use ledger::{Dispatch, Entry, Ledger, Snapshot};
+use ledger::{Dispatch, Entry, Judged, Ledger, Snapshot};
 use recipe::{HandList, OrganizationWorkConfig, ProjectWorkConfig, Recipe, WorkConfig};
 use runtime::plan::{self, Plan, Ticket, WorkRoot};
 
@@ -2919,6 +2919,22 @@ pub fn due_among(
                 refusal = Some(checkout_standing_elsewhere(&checkout, &head, wanted));
             }
         }
+        // And what the last run here actually did. The start worked, so the
+        // record above never saw it, and every sweep for as long as the
+        // tickets stay open made another run that did the same
+        // (§FS-005-dispatch.24). A root this rests is marked rather than
+        // dropped, so the sweep can say so in the row where it used to say
+        // *started* — which is the reading that was wrong.
+        //
+        // The sweep's alone, like the three guards above. The rest binds the
+        // sweep and never a run asked for by name, so a root the sweep is
+        // resting on is started at once for the reader who typed its matter,
+        // and no verdict is owed about a run they are asking after
+        // (§FS-005-dispatch.24, §FS-005-dispatch.30).
+        let (verdict, rested) = match key {
+            true => (None, None),
+            false => judge(ledger, &group.root, now),
+        };
         due.push(Due {
             project: group
                 .plans
@@ -2953,6 +2969,12 @@ pub fn due_among(
             // (§FS-005-dispatch.24). Nothing is started on it.
             held_by: held_by.cloned(),
             refusal,
+            // Read last, and only for a root that is actually due: the
+            // witness is one file per root, and a root with nothing to run is
+            // not a root a verdict is owed about (§FS-005-dispatch.24).
+            excluded: None,
+            rested,
+            verdict,
         });
     }
     due
@@ -3004,6 +3026,145 @@ fn refused_root(ledger: &Ledger, group: &runtime::watch::RootPlans, says: String
         item,
         held_by: None,
         refusal: Some(says),
+        // A root the key may start nothing in is not a root the sweep is
+        // resting or the reader excluded: this row exists to carry the
+        // refusal and nothing else (§FS-005-dispatch.24,
+        // §FS-005-dispatch.30).
+        excluded: None,
+        rested: None,
+        verdict: None,
+    }
+}
+
+/// What this sweep read of the last run on one root, and whether that leaves
+/// the root alone (§FS-005-dispatch.24).
+///
+/// The witness is the finished run's own record of itself and nothing else
+/// (§FS-005-dispatch.15.2): a root the sweep is considering has no live run,
+/// so the stream there is the last run's and is over. Where there is none,
+/// where its layout this reader cannot read, or where it never said which run
+/// it was — without which one run could be counted twice — no verdict is
+/// taken at all and the sweep behaves exactly as it did before this rule
+/// (§AR-007-runtime.3).
+fn judge(
+    ledger: &Ledger,
+    root: &std::path::Path,
+    now: DateTime<Utc>,
+) -> (Option<Verdict>, Option<String>) {
+    let Some(last) = runtime::events::progress(root) else {
+        return (None, None);
+    };
+    let Some(run) = last.id else {
+        return (None, None);
+    };
+    let kept = ledger.advances.get(&root_key(root));
+    match last.advanced {
+        // Dropped whole, at once: a root that moved deserves its next run
+        // now rather than at the end of an interval it no longer owes.
+        runtime::events::Advance::Advanced => (Some(Verdict::Advanced), None),
+        // Unrecognized may never mean stuck: no root rested, no miss
+        // counted, and whatever was remembered left exactly as it was.
+        runtime::events::Advance::Unknown => (None, None),
+        runtime::events::Advance::Nothing => {
+            let judged = match kept {
+                // The same run is never judged twice, however often the
+                // sweep runs: the verdict stands as it was taken, and the
+                // rest is still dated from then.
+                Some(kept) if kept.run == run => kept.clone(),
+                Some(kept) => Judged {
+                    run,
+                    misses: kept.misses.saturating_add(1),
+                    at: now,
+                },
+                None => Judged {
+                    run,
+                    misses: 1,
+                    at: now,
+                },
+            };
+            let why = rests(&judged, now);
+            (Some(Verdict::Nothing(judged)), why)
+        }
+    }
+}
+
+/// Why a root whose runs advance nothing gets no run this sweep, where it
+/// gets none (§FS-005-dispatch.24).
+///
+/// Louder than what it replaces, deliberately: the complaint this rule
+/// answers is that a row saying `started` every time hid a stalled root, and
+/// a rest that merely went quiet would hide it again. So the reason names the
+/// run it judged, so the reader can go and read it, and says when the root is
+/// tried again — or that it is now theirs.
+fn rests(judged: &Judged, now: DateTime<Utc>) -> Option<String> {
+    if judged.held() {
+        return Some(format!(
+            "{} runs in a row here advanced nothing, the last of them {} — nothing more will \
+             be started on this root until a run advances there or you start one by hand",
+            judged.misses, judged.run
+        ));
+    }
+    judged.resting(now).then(|| {
+        format!(
+            "the last run here ({}) advanced nothing — this root is tried again in {}",
+            judged.run,
+            crate::feed::render::age(judged.ready_at(), now)
+        )
+    })
+}
+
+/// What a sweep read of the last run on one root — what an acting sweep
+/// writes into its own record, and a report held at the gate does not
+/// (§FS-005-dispatch.24, §FS-011-command-line.10).
+///
+/// Carried on the row rather than written where it is read, because reading
+/// is [`due_among`]'s and writing is the act's, and a dry run that wrote one
+/// would be a dry run that was not dry.
+#[derive(Debug, Clone)]
+pub enum Verdict {
+    /// The run there advanced something: whatever was remembered is dropped.
+    Advanced,
+    /// It advanced nothing: this is the record to keep.
+    Nothing(Judged),
+}
+
+/// The work roots the reader told one sweep to leave alone
+/// (§FS-005-dispatch.24), each with the value they named it by.
+///
+/// No judgement of ephor's own is in here: it is for the driver that has
+/// worked out for itself which root is stuck. Which is why the sweep names
+/// the instruction back — a flag that changed what happened and said nothing
+/// is indistinguishable from one that did not bind at all.
+#[derive(Debug, Default, Clone)]
+pub struct Excluded(Vec<(PathBuf, String)>);
+
+impl Excluded {
+    /// Each root a value named, with the value itself. Resolving the value is
+    /// the command line's (§FS-011-command-line.9); what reaches the sweep is
+    /// a root that exists.
+    pub fn of(named: Vec<(PathBuf, String)>) -> Excluded {
+        Excluded(named)
+    }
+
+    /// Mark every root the reader excluded, rather than dropping it: a row
+    /// that is not there is a sweep that quietly did less
+    /// (§FS-005-dispatch.24).
+    pub fn mark(&self, due: Vec<Due>) -> Vec<Due> {
+        if self.0.is_empty() {
+            return due;
+        }
+        due.into_iter()
+            .map(|mut root| {
+                root.excluded = self
+                    .0
+                    .iter()
+                    .find(|(path, _)| canonical(path) == canonical(&root.root))
+                    .map(|(_, named)| {
+                        format!("--except {named} — left out of this sweep at your asking")
+                    });
+                root
+            })
+            .collect()
     }
 }
 
@@ -3082,6 +3243,7 @@ impl Dispatcher {
         projects: &[String],
         runner_args: &[String],
         max_concurrent: Option<usize>,
+        excluded: &Excluded,
         budget: spend::Budget,
     ) -> Result<Sweep> {
         // The runtime is a rung like any other capacity, and with nothing
@@ -3154,10 +3316,34 @@ impl Dispatcher {
         // (§FS-005-dispatch.24). A tree a run held *before* the sweep is not
         // in here — [`due_among`] wrote that on the root itself.
         let mut taken: BTreeMap<PathBuf, PathBuf> = BTreeMap::new();
-        let runs = self
-            .due_over(&roots, now, projects, Reach::Sweep)?
+        let due = excluded.mark(self.due_over(&roots, now, projects, Reach::Sweep)?);
+        // What this sweep read of the last run on each root, kept before
+        // anything is started. A verdict is the acting sweep's and only its:
+        // reading one stream twice gives one answer, so nothing is lost by a
+        // report that keeps none (§FS-005-dispatch.24,
+        // §FS-011-command-line.10).
+        for root in &due {
+            let key = root_key(&root.root);
+            match &root.verdict {
+                Some(Verdict::Advanced) => {
+                    self.ledger.advances.remove(&key);
+                }
+                Some(Verdict::Nothing(judged)) => {
+                    self.ledger.advances.insert(key, judged.clone());
+                }
+                None => {}
+            }
+        }
+        let runs = due
             .into_iter()
             .map(|root| {
+                // The reader's own instruction, then the rest ephor decided
+                // on: both are successful non-launch outcomes, both happen
+                // before capacity is spent, and both are said in the row
+                // where this used to say *started* (§FS-005-dispatch.24).
+                if let Some(why) = root.passed_over().map(str::to_string) {
+                    return Launched::passed_over(&root, why);
+                }
                 // A tree another root's run held before this sweep began, and
                 // a tree a launch in this same sweep has just taken: one
                 // condition, one sentence, one kind of row. Passed over with
@@ -3403,6 +3589,27 @@ pub struct Due {
     /// rather than the matter coming back as finished. Never set for the
     /// sweep, which drops both.
     pub refusal: Option<String>,
+    /// Why the reader's own `--except` leaves this root out, where it does
+    /// (§FS-005-dispatch.24). Set after the reading, because an exclusion is
+    /// the reader's instruction rather than anything ephor worked out.
+    pub excluded: Option<String>,
+    /// Why the last run here having advanced nothing leaves this root alone —
+    /// the rest, or the end of resting (§FS-005-dispatch.24).
+    pub rested: Option<String>,
+    /// What this sweep read of the last run here, where it could read one. A
+    /// sweep that acts keeps it; a report held at the gate keeps none
+    /// (§FS-011-command-line.10).
+    pub verdict: Option<Verdict>,
+}
+
+impl Due {
+    /// The one reason this root gets no run, where something says so: the
+    /// reader's own instruction first, because naming it back is what tells
+    /// them the flag took effect, and then the rest ephor decided on. One
+    /// row, one reason, first match (§FS-005-dispatch.24).
+    pub fn passed_over(&self) -> Option<&str> {
+        self.excluded.as_deref().or(self.rested.as_deref())
+    }
 }
 
 /// What starting one due root came to (§FS-005-dispatch.24).

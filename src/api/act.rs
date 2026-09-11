@@ -966,6 +966,10 @@ impl Session {
                                     std::slice::from_ref(&project),
                                     &[],
                                     None,
+                                    // The key is about one matter, not a
+                                    // sweep somebody narrowed
+                                    // (§FS-005-dispatch.24).
+                                    &crate::work::Excluded::default(),
                                     // A person pressed a key, so a full budget
                                     // is said and the run starts
                                     // (§FS-015-spend-ceiling.6). There is no
