@@ -143,6 +143,20 @@ the branch is not checked out, dispatch says so and offers the checkout,
 because writing a ticket about code that is not on the machine only moves the
 problem.
 
+**Not all work has an item behind it.** A sweep that replays every idle
+checkout onto its project's main branch
+([§FS-004-quick-actions.6.1](FS-004-quick-actions.md#61-the-same-replay-over-every-checkout-nobody-is-holding))
+is about checkouts rather than about matters, and a conflict it stops on names
+no pull request, no issue, and nothing any source filed. That work lives in one
+plan named after the sweep, in the project's own work root — where the scope
+rule already puts it
+([§FS-014-work-root-scopes.2](FS-014-work-root-scopes.md#2-reach-places-and-nothing-else-does):
+a sweep over one project's branches sees that project's checkouts) — with one
+ticket per conflicted checkout, appended to that same plan by every later sweep
+rather than starting a rival copy of the same work somewhere else. It is the
+rule above and not an exception to it: one plan per subject, and where no item
+is the subject the sweep is.
+
 A project that keeps a single checkout for every branch is not exempt from
 that. Its root is the branch's working tree only while it is standing on the
 branch; a root standing on another one is a checkout of different code, and a
@@ -401,6 +415,29 @@ is left where the algorithm left it, mid-rebase with the conflict in the
 working tree, because that is the state resolving it needs, and the ticket says
 which repository, which files, and which two sides
 ([§2](#2-the-ticket-carries-what-ephor-knows-not-a-link-to-it)).
+
+**Left where it stopped is a rule about a replay with a successor.** *The
+state resolving it needs* names somebody who is coming, and what makes them
+come is the ticket this dispatch is about to write. Where nobody is coming — a
+sweep a timer ran over every idle checkout with no reader in front of it
+([§FS-004-quick-actions.6.1](FS-004-quick-actions.md#61-the-same-replay-over-every-checkout-nobody-is-holding))
+— the reason has no referent, and what is left behind is not a situation handed
+over but a working tree somebody finds broken at nine in the morning with
+nothing saying why. So the disposition belongs to the caller: a replay that
+hands its stopping point to a successor leaves the conflict standing in the
+tree, and a replay nobody is waiting on puts the tree back on the commit it
+started from and reports the conflict instead. Where that report becomes a
+ticket, the ticket says the tree was restored — otherwise it sends its reader
+to look for a conflict that is not there, which is worse than saying nothing.
+
+**The one-implementation clause is what makes that safe, and it is
+strengthened rather than loosened.** The disposition is an argument to the
+single replay, chosen by the caller at the point of the call, never a second
+code path beside it: two dispositions in two implementations would disagree
+about what a clean rebase is exactly as two rebases would. And under neither
+value is a repository *already* stopped in a rebase touched — it is reported
+and left alone, because aborting it would destroy a resolution somebody had
+begun, which is the one thing worse than the drift any of this corrects.
 
 A move that costs no model costs no screen either: the replay runs beneath
 the interface as a job, and what the reader would have watched is in its log
@@ -1601,6 +1638,19 @@ free. That is what makes handing one down safe: a conflict written into the
 very tree that is stopped mid-rebase is a note for whoever gets there next,
 not a second agent in it. Nothing refuses at dispatch, at lay, or at sync for
 this reason.
+
+**A writer that is not a run is held by it all the same.** The permissive half
+above justifies itself with *writing a file is all ephor does there*, and that
+sentence is false of anything that moves the tree. An unattended sweep that
+replays branch checkouts onto main
+([§FS-004-quick-actions.6.1](FS-004-quick-actions.md#61-the-same-replay-over-every-checkout-nobody-is-holding))
+is exactly such a writer: it is not a run, so nothing above claims it, and it
+rewrites the very files a live run's agent has open. So the invariant is read
+over the tree and never over the kind of caller — a checkout a live run holds
+is passed over by that sweep, said in the same words and the same kind of row a
+held work root is passed over in, and it is never forced. `--force` is the
+reader's word about a run they asked for by name; it reaches no sweep, and it
+does not reach this one.
 
 **A run the reader asks for by name is refused by name.** `ephor work run` on
 a plan whose checkout a live run holds starts nothing and says *a run is live

@@ -263,25 +263,31 @@ fn a_scoped_dispatch_stays_inside_its_organization() {
     );
 }
 
-/// The ticket's fourth reproducer: `rebase` advertised the selectors and read
-/// none of them. It now refuses by name, exits 2 — the code an empty selection
+/// The ticket's fourth reproducer: a verb that advertised the selectors and
+/// read none of them. It refuses by name, exits 2 — the code an empty selection
 /// and every other usage-shaped refusal takes, so "the scope was refused" is
 /// one comparison — and answers a program the way every other refusal does: an
 /// outcome on standard output (§FS-011-command-line.7).
+///
+/// `checkout` stands for the class here. `rebase` was this case's example until
+/// it became the one verb that honours a selector on a condition — given one it
+/// sweeps, given none it is about the checkout it was given
+/// (§FS-004-quick-actions.6.1) — and both halves of that are pinned in
+/// `E2E-024`, where the sweep they enter is.
 #[test]
 fn a_verb_that_will_not_scope_says_so() {
     let world = two_organizations();
 
     world
         .ephor()
-        .args(["rebase", "--org", "foundation"])
+        .args(["checkout", "--org", "foundation"])
         .assert()
         .code(2)
-        .stderr(predicate::str::contains("rebase does not take --org"));
+        .stderr(predicate::str::contains("checkout does not take --org"));
 
     let refused = world
         .ephor_raw()
-        .args(["rebase", "--org", "foundation", "--json"])
+        .args(["checkout", "--org", "foundation", "--json"])
         .output()
         .expect("ran");
     assert_eq!(refused.status.code(), Some(2));

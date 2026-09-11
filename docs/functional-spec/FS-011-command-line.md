@@ -174,7 +174,8 @@ The three project selectors — `--workspace`, `--tag`, `--org` — name a set o
 projects, read from the registry. The verbs that read a set of projects honour
 them: `list`, `status`, `feed`, `refresh`, `mark-read`, `branches`, the screen,
 `work list`, `work dispatch`, `work sync`, `work run`, and the managed-workspace
-verbs `validate`, `ensure-agents` and `update`. Every other verb refuses each
+verbs `validate`, `ensure-agents` and `update` — and `rebase`, on the condition
+below. Every other verb refuses each
 selector it was given, naming itself and the flag and saying which selectors it
 does take. Most of them refuse because they are about what they are given — one
 item, one checkout, one file — and have no set of projects for a selector to
@@ -183,6 +184,32 @@ they *do* read every project the site is configured with, but they answer for
 the site itself rather than for a group the registry names, and their refusal
 says so instead of denying the project set their own output prints. The
 classification is total: every verb is on one side of it or the other.
+
+`rebase` is in that enumeration on a condition, and it is the only verb that
+is. Given a selector it sweeps every branch checkout of the projects the
+selector names
+([§FS-004-quick-actions.6.1](FS-004-quick-actions.md#61-the-same-replay-over-every-checkout-nobody-is-holding));
+given none it is the one-checkout verb it has always been — the working
+directory, `--checkout`, or `--item` — and a bare invocation inside a checkout
+is unchanged. Both halves are this rule rather than an exception to it: a
+selector that is there is honoured, and a selector that is not there is nothing
+given, which is the distinction the rest of this section turns on. What changes
+for a caller is the three wide forms: `--workspace`, `--tag` and `--org` on
+`rebase` exit 2 today and sweep after, so anyone reading that exit code as a
+permanent refusal is answered differently.
+
+`--project` on `rebase` keeps the meaning it has — *which project the one
+checkout belongs to* — and does not become a fourth selector: making it one
+would silently change what `ephor rebase --project X` already does. Beside a
+selector it is refused by name and exits 2, because it names one checkout's
+project and a sweep has no one checkout. So is every other flag that names one
+checkout or one matter: `--checkout`, `--item`, `--dispatch`, `--hand`,
+`--onto` and `--upstream`, the last because a project declares its own main
+branch and one base named across a sweep would be wrong for most of it. Every
+one of those command lines exits 2 today for the selector alone, so no
+invocation that works now gains a refusal. `--report` is the exception and
+needs none: it writes the sweep's own report, one file, the same contract it
+has for one checkout.
 
 The registry and the site's watch list are two different files, and the
 selectors name rows of the first while `status`, `feed`, `refresh`,
@@ -321,11 +348,29 @@ sweep would have said, exclusions and rests included — a root that would be
 passed over is reported as passed over rather than as `would-run` — and it still
 writes nothing, the ledger included.
 
+**A verb whose pre-rule unit was narrower than one project is above the gate
+the moment it sweeps, and its width is not counted.** The count above is in
+projects because one project resolved is what those command lines did before
+the rule, byte for byte — and that reason does not carry to a verb whose
+byte-for-byte was one *checkout*. `ephor rebase --workspace <one project>`
+resolves to one project and would replay every branch checkout in it, which is
+not the act the count was protecting. So `rebase` reports and writes only under
+`--act` whenever it sweeps at all, at any width
+([§FS-004-quick-actions.6.1](FS-004-quick-actions.md#61-the-same-replay-over-every-checkout-nobody-is-holding)),
+and the project count is not asked there. Where it sweeps nothing it is the
+one-checkout verb it was, outside this rule entirely. The clause is written as
+the general one rather than as `rebase`'s own, because the next verb whose unit
+is smaller than a project belongs on the same side of it.
+
 `--act` is global, declared beside the selectors and for their reason: a flag
 each verb had to remember is a flag the next mutating verb forgets, and in the
 selector forgetting is impossible. It is accepted exactly where the gate can
-fire — `work dispatch`, `work sync`, `work run` — and refused **by name**
-everywhere else, exiting **2** like a refused selector. A flag that parses,
+fire — `work dispatch`, `work sync`, `work run`, and `rebase` where a selector
+makes it sweep — and refused **by name** everywhere else, exiting **2** like a
+refused selector. A `rebase` that sweeps nothing is one of those elsewheres: the
+gate cannot fire on one checkout, so the flag would parse and change nothing,
+which is the fault [§9](#9-a-scope-selector-is-honoured-or-refused) exists to
+end. A flag that parses,
 prints in its help and changes nothing is the fault [§9](#9-a-scope-selector-is-honoured-or-refused) exists to end, and it
 does not become acceptable one rule later.
 

@@ -184,6 +184,108 @@ does not decide. A rebase that stops in a conflict has arrived at a question
 about the code, which is
 [§FS-005-dispatch.12](FS-005-dispatch.md#12-work-an-algorithm-can-finish-does-not-start-with-a-model).
 
+What becomes of the stopped tree is the caller's to say, and only that much is
+the caller's. A replay somebody is waiting on leaves the conflict standing
+where git left it and hands the situation over, which is what §12 describes and
+what every caller this move has today asks for — the reader's key, a program
+state, `--dispatch`, and the interface. A replay nobody is waiting on puts the
+tree back on the commit it started from and reports the conflict instead, and
+[§6.1](#61-the-same-replay-over-every-checkout-nobody-is-holding) is the only
+caller that asks for it. The choice is an argument to this one replay and never
+a second implementation of it, for the reason §12 gives: two of them would
+eventually disagree about what a clean rebase is.
+
+### 6.1 The same replay, over every checkout nobody is holding
+
+A checkout nobody has opened for a day is a checkout whose base has moved
+without it, and work started in it is work against a layout that is no longer
+there. The move that corrects it is the one above, and the only thing missing
+is that somebody has to think of running it — which is discovered at the end,
+when the change will not land, rather than at the start, when it was free.
+
+So **the same per-checkout replay is swept over every branch checkout in a
+scope**. It is not a second rebase and not a second implementation of one: per
+checkout it is exactly the move this section describes, guarded by exactly the
+guards above, and what is new is only which checkouts it is asked about and
+what it refuses to ask about.
+
+**A selector is what enters it, and nothing else.** Given `--workspace`,
+`--tag` or `--org` the verb sweeps the projects that selector names
+([§FS-011-command-line.9](FS-011-command-line.md#9-a-scope-selector-is-honoured-or-refused));
+given none it is the one-checkout verb it has always been, and a bare
+invocation inside a checkout is unchanged. Sweeping writes into trees, so it
+reports and acts only under `--act`, at every width it sweeps at
+([§FS-011-command-line.10](FS-011-command-line.md#10-a-mutating-verb-above-one-project-reports-and-acts-under---act)).
+
+**What it enumerates** is each project's branch checkouts as the project
+already describes them — the branches its registry row names and the
+workspaces on disk beside them, which is the same enumeration the branch rows
+are built from. A project's main-branch checkout is not one of them: that
+directory belongs to `ephor update`, and where both could claim it, `update`
+wins, because branch drift is the whole subject here.
+
+**Four questions are asked before any git runs**, and each one that answers
+produces a *passed over* outcome naming its reason rather than a silence — a
+sweep that says nothing about a checkout it decided not to touch is
+indistinguishable from one that never saw it.
+
+1. It is the project's main branch.
+2. A live run holds the tree. This is the invariant over checkouts that
+   [§FS-005-dispatch.24](FS-005-dispatch.md#24-work-nobody-has-to-start-starts-itself)
+   states, read here for a writer that is not a run, and it is never forced.
+3. The branch has an open pull request that is not a draft. A branch under
+   review is somebody's to move.
+4. A conflict ticket from an earlier sweep is still open about this checkout.
+   Otherwise an hourly sweep retries one conflict forever.
+
+**The pull-request answer comes from what the watch already knows**, never from
+a forge call per branch: a cached matter, not finished, whose head branch is
+this branch. Per project the reading is freshened once where the cache is older
+than the configured interval, the way a status reading is, and never once per
+branch. Where after that there is still no current reading — no cached feed, or
+a slot flagged stale — **no checkout of that project is replayed at all**: the
+project is reported as not reached, with the reason, and the sweep exits
+non-zero. *Could not tell* is not *no*, and the branch this question protects is
+exactly the one nobody is present to protect by hand. For the same reason an
+open pull request whose draft state is unknown protects the branch: only a
+pull request *known* to be out of draft passes it over, and a draft one does
+not protect, because a draft is not yet anybody's to review. One project that
+cannot be read stops that project and no other, because the drift this exists to
+correct goes on everywhere else.
+
+**A conflict restores the tree and is always reported.** The replay is asked
+for the restoring disposition above, so a checkout it stopped on is left on the
+commit it was on with a clean working tree, and the conflict is in the sweep's
+own report — in prose and under `--json` alike
+([§REQ-002-parity.3](../requirements/REQ-002-parity.md#3-every-reading-answers-a-program)),
+with no configuration required for that much. Where the project's work
+configuration names a recipe for it, the conflict is **also** a ticket, in that
+project's own work root and in one plan named after the sweep
+([§FS-005-dispatch.3](FS-005-dispatch.md#3-one-rhei-per-item-one-ticket-per-dispatch)),
+carrying the checkout, the branch, the ref it was replaying onto, the
+repositories that conflicted with their unmerged paths, both sides by ref, and
+one sentence that the tree was restored — without which a reader sent to find a
+conflicted working tree finds a clean one and doubts the ticket. A ticket that
+could not be opened does not swallow the report
+([§REQ-001-boundary.1](../requirements/REQ-001-boundary.md#1-the-anatomy)).
+
+**Forty checkouts become one exit code**, and conflict wins, which is the
+precedence one rebase already has: **3** where any checkout conflicted, **1**
+otherwise where any was refused or any project could not be read, and **0**
+otherwise — *replayed*, *level* and *passed over* are all good ends. The counts
+behind it are in the report either way.
+
+**And it runs with nobody watching.** A service and timer pair ships beside the
+ones that already refresh the watch and re-sync work, hourly, passing `--act` on
+the verb for the reason those do — the reader's consent is at adopting the unit
+rather than at each run
+([§FS-005-dispatch.24](FS-005-dispatch.md#24-work-nobody-has-to-start-starts-itself)) —
+ordered after the refresh so the pull-request reading is usually current when
+the sweep asks for it, and enable-able on its own. Usually current is the whole
+claim: a checkout somebody opens is *usually* fresh, which is what this
+sweep is for, and a base fresh at the exact moment work starts is a different
+promise that nothing here makes.
+
 ## 7. A workspace that is not there is offered the checkout
 
 A branch ephor watches, on a project whose checkouts are one per branch, is
@@ -248,6 +350,22 @@ repositories where those are absent, and the store
 in either case, since a store is part of what makes a directory a workspace
 rather than a pile of repositories. Asking twice is how a half-made workspace
 is repaired, not a no-op the reader has to work around.
+
+**And it says how far behind the workspace is.** The distance is already
+measured and already said: the branch row for that very workspace reads
+`115 behind main as of Sep 10`
+([§6](#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase)), one
+command away from a checkout that reuses the directory and reports only that it
+is there. Somebody who asks for a checkout is about to work in it, so this is
+the moment that fact is worth something and the only moment it is free — found
+afterwards, it is found by the change that will not land. So the line a reused
+workspace prints carries §6's reading in §6's own words: the count, the base it
+trails, and the day the local copy of that base last moved. It is the same fold
+over the same forest rather than a second measurement, which is what keeps the
+two surfaces from ever saying different things about one directory, and a
+workspace on which nothing could be measured says no distance rather than a
+made-up one. Under `--json` it is a field like any other fact the prose gives
+([§REQ-002-parity.3](../requirements/REQ-002-parity.md#3-every-reading-answers-a-program)).
 
 ### 7.2 The offer is a key on the row that says the workspace is missing
 
