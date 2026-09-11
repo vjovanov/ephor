@@ -168,6 +168,29 @@ pub struct Distance {
     pub as_of: Option<DateTime<Utc>>,
 }
 
+impl Distance {
+    /// The sentence a reader is told a distance in: the count, what it trails,
+    /// and the day the local copy of that last moved here
+    /// (§FS-004-quick-actions.6).
+    ///
+    /// One renderer, because two surfaces state this about the same directory
+    /// — the branch row, and the checkout that reused the workspace the row is
+    /// about (§FS-004-quick-actions.7.1) — and two wordings of one fact
+    /// eventually say different things about it. A distance with no day on it
+    /// says the count alone: a day nothing recorded is not invented to fill
+    /// the sentence out.
+    pub fn says(&self, base: &str) -> String {
+        match self.as_of {
+            Some(seen) => format!(
+                "{} behind {base} (as of {})",
+                self.behind,
+                seen.format("%b %-d")
+            ),
+            None => format!("{} behind {base}", self.behind),
+        }
+    }
+}
+
 impl From<crate::forest::Trail> for Distance {
     fn from(trail: crate::forest::Trail) -> Distance {
         Distance {

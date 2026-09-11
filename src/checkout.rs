@@ -239,19 +239,34 @@ pub fn checkout(args: &CheckoutArgs) -> Result<ExitCode> {
     // (§AR-009-surfaces.1).
     let (made, source) = make(&placement, &project, &branch, from.as_deref())?;
     if made.already {
-        let summary = format!("{} is already checked out", made.target.display());
+        let behind = distance(&placement, &made.target);
+        let summary = match &behind {
+            Some(behind) => format!(
+                "{} is already checked out, {}",
+                made.target.display(),
+                behind.says(placement.main_branch.as_deref().unwrap_or("its base"))
+            ),
+            None => format!("{} is already checked out", made.target.display()),
+        };
         if args.json {
+            let mut view = serde_json::json!({
+                "workspace": made.target,
+                "branch": branch,
+                "ready": true,
+                "summary": summary,
+                "repos": [],
+                "store": made.store.as_ref().map(Store::view),
+            });
+            // Absent rather than `null` typed as the fact would have been: the
+            // published shape says a distance is an object, and a workspace on
+            // which nothing could be measured states none
+            // (§FS-004-quick-actions.7.1, §REQ-002-parity.4).
+            if let (Some(object), Some(behind)) = (view.as_object_mut(), &behind) {
+                object.insert("behind".to_string(), serde_json::json!(behind));
+            }
             println!(
                 "{}",
-                serde_json::to_string_pretty(&serde_json::json!({
-                    "workspace": made.target,
-                    "branch": branch,
-                    "ready": true,
-                    "summary": summary,
-                    "repos": [],
-                    "store": made.store.as_ref().map(Store::view),
-                }))
-                .unwrap_or_else(|_| "null".to_string())
+                serde_json::to_string_pretty(&view).unwrap_or_else(|_| "null".to_string())
             );
         } else {
             println!("{summary}.");
@@ -313,6 +328,24 @@ pub fn checkout(args: &CheckoutArgs) -> Result<ExitCode> {
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// How far a workspace that is already there trails the project's main branch
+/// (§FS-004-quick-actions.7.1).
+///
+/// The same fold over the same forest the branch row for this very directory
+/// is rendered from (§AR-004-forest.1) — not a second measurement, which is
+/// what keeps the two surfaces from ever saying different things about one
+/// workspace. Gated exactly as the row is: a project that names no main branch
+/// has no distance to state, and a forest on which nothing could be measured
+/// says none rather than a made-up zero.
+fn distance(placement: &Placement, workspace: &Path) -> Option<crate::api::views::Distance> {
+    placement.main_branch.as_deref()?;
+    placement
+        .forest(workspace)
+        .staleness()
+        .trail()
+        .map(crate::api::views::Distance::from)
 }
 
 /// This project's work configuration, read once at the three tiers a work root

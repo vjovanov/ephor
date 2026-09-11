@@ -711,6 +711,10 @@
         "branch": { "type": "string" },
         "ready": { "type": "boolean", "description": "Every repository of the forest has a working tree there." },
         "summary": { "type": "string" },
+        "behind": {
+          "$ref": "#/$defs/distance",
+          "description": "How far a workspace that was already there trails the project's main branch (FS-004-quick-actions.7.1) — the same fold the branch row for that directory renders, so the two surfaces cannot say different things about it. Absent where nothing could be measured, or where the project names no main branch to measure against."
+        },
         "report": { "type": "string", "description": "The same account in markdown — what `--report` writes, carried here so a state machine reads one document (FS-005-dispatch.12)." },
         "repos": {
           "type": "array",

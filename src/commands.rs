@@ -482,21 +482,14 @@ pub fn branches(args: &BranchesArgs, scope: &crate::scope::Projects) -> Result<E
         let mut says: Vec<String> = Vec::new();
         // A distance with no day on it is a claim about now that nothing
         // measured, so every one of them carries its own (§FS-004-quick-actions.6).
+        // Said through the one renderer the reused checkout also says it
+        // through, so the two surfaces cannot come apart about one directory
+        // (§FS-004-quick-actions.7.1).
         if let Some(behind) = row.behind {
-            says.push(format!(
-                "{} behind {}{}",
-                behind.behind,
-                row.main_branch.as_deref().unwrap_or("its base"),
-                as_of(behind)
-            ));
+            says.push(behind.says(row.main_branch.as_deref().unwrap_or("its base")));
         }
         if let Some(behind) = row.behind_upstream {
-            says.push(format!(
-                "{} behind {}{}",
-                behind.behind,
-                row.published.as_deref().unwrap_or("its published copy"),
-                as_of(behind)
-            ));
+            says.push(behind.says(row.published.as_deref().unwrap_or("its published copy")));
         }
         if row.items > 0 {
             says.push(format!("{} here", row.items));
@@ -510,13 +503,6 @@ pub fn branches(args: &BranchesArgs, scope: &crate::scope::Projects) -> Result<E
         );
     }
     Ok(ExitCode::SUCCESS)
-}
-
-fn as_of(distance: views::Distance) -> String {
-    match distance.as_of {
-        Some(seen) => format!(" (as of {})", seen.format("%b %-d")),
-        None => String::new(),
-    }
 }
 
 /// `ephor operations` (§FS-011-command-line.3).

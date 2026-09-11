@@ -1379,6 +1379,18 @@ it says `already checked out` and then `task store at <dir>` if it made one.
 Where the runner is not on `PATH`, ephor writes the store it can and says on
 standard error what it could not do; the checkout itself still succeeds.
 
+**And it says how far behind that workspace is** —
+`/w/widget/you/ABC-42 is already checked out, 115 behind main (as of Sep 10).`
+The distance was measured already: the branch row for that very directory
+states it, one command away, and somebody asking for a checkout is about to
+work in it, which is the moment the fact is worth something and the only
+moment it is free. Found afterwards, it is found by the change that will not
+land. It is the same fold over the same forest the row renders, so the two
+surfaces cannot say different things about one workspace, and under `--json` it
+is a `behind` field like any other fact the prose gives. A project that names
+no `main_branch`, and a workspace on which nothing could be measured, state no
+distance rather than an invented zero.
+
 It is also the step that runs *before* any other action on a missing workspace.
 Pick `⧉ open the diff` on a branch you have never checked out and ephor checks
 it out first, then runs what you picked in it. Configure a `checkout` command
