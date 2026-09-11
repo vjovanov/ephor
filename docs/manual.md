@@ -2858,39 +2858,94 @@ reason, never silently skipped — when:
    review is somebody's to move. A draft does not protect it, because a draft
    is not yet anybody's to review;
 3. **a conflict ticket from an earlier sweep is still open about it.**
-   Otherwise an hourly timer retries one conflict forever.
+   Otherwise an hourly timer retries one conflict forever. The ticket's id is
+   the branch's — a readable slug and a fingerprint of the exact name, so that
+   `clash/here` and `clash-here` are two tickets rather than one checkout
+   passed over on the other's.
 
 **The review answer comes from what the watch already knows** — a cached
 matter, not finished, whose head branch is this branch — freshened once per
 project where the cache has aged past the TTL, the way a `status` reading is,
-and never once per branch. Where after that there is still no current reading —
-no cached feed, or a slot stale or failed — **none of that project's checkouts
+and never once per branch. A run held at the gate freshens nothing: fetching
+calls the forge and rewrites the cache, and a run that is only reporting writes
+nothing, so it reads what the last `ephor refresh` left. Where there is still
+no current reading — no cached feed, or a stale or failed slot **of a source
+that could have carried a pull request** — **none of that project's checkouts
 is replayed**: it is reported as not reached and the sweep exits non-zero.
 *Could not tell* is not *no*, and the branch that question protects is exactly
-the one nobody is present to protect by hand. For the same reason an open pull
-request whose draft state the forge never reported protects the branch. One
-project that cannot be read stops that project and no other.
+the one nobody is present to protect by hand. Which slots those are is read
+from the source's name: `github-prs`, `github-ci`, `github-threads` and any
+forge extension block, because an extension declares `pull_requests` among its
+capabilities and *could not tell* governs there too. A source that reports
+messages, a status line, or the project's own tasks stops nothing however it
+failed — it could never have answered the question, and one expired credential
+on such a source would otherwise stop every rebase in that project, hourly,
+forever. For the same reason an open pull request whose draft state the forge
+never reported protects the branch. One project that cannot be read stops that
+project and no other.
 
 **A conflict puts the tree back and is always reported.** The sweep asks the
 replay for the restoring disposition ([§8.11](#811-rebasing-a-branch-that-has-fallen-behind)),
 so a checkout it stopped on is left on the commit it was on with a clean
 working tree, and the conflict is in the sweep's own report, in prose and under
-`--json` alike. Where the project's work configuration names a `rebase-sweep`
-recipe, the conflict is **also** a ticket, in that project's own work root and
-in one plan named after the sweep, with one ticket per conflicted checkout
-appended by every later sweep. The ticket says the tree was restored — without
-which a reader sent to find a conflicted working tree finds a clean one and
-doubts the ticket. A ticket that could not be opened does not swallow the
-report.
+`--json` alike. One checkout is not put back: one the sweep found *already*
+stopped in a rebase somebody else began. Nothing touches that tree, so its row
+reads `conflicted and left as found` rather than `conflicted and put back`, and
+the reading's `restored` is `false`.
+
+Where the project's work configuration names a `rebase-sweep` recipe, the
+conflict is **also** a ticket, in that project's own work root and in one plan
+named after the sweep, with one ticket per conflicted checkout appended by
+every later sweep. The ticket closes with what became of the tree — restored,
+or left as it was found and the conflict still standing in it — without which a
+reader sent to find a conflicted working tree finds a clean one, or a clean one
+and finds a conflict, and doubts the ticket either way. A ticket that could not
+be opened does not swallow the report: the row says what stopped it, in prose
+and as `note` under `--json`.
+
+The recipe is the sweep's alone, and the manual owes you what it looks like:
+
+```json
+{
+  "projects": {
+    "ephor": {
+      "work": {
+        "recipes": [
+          {
+            "id": "rebase-sweep",
+            "description": "resolve the sweep conflict",
+            "state": "fix",
+            "needs_checkout": false,
+            "brief": "A rebase onto main stopped in this checkout. Resolve it."
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+`rebase-sweep` is a **reserved id**: the sweep looks it up by name, and no
+matter is its subject — it is about a checkout, and the feed has no row for a
+tree. So it is never offered as an action on an item, whatever its `when` says,
+and `ephor work offers` names it among the recipes it excluded with that as the
+reason. Its `state` has to be one the work root's machine declares, or the
+write-up refuses and says so on the row.
 
 **Forty checkouts become one exit code**, and conflict wins, which is the
 precedence one rebase already has.
 
 | Exit | Means |
 |---|---|
-| `0` | every checkout is replayed, level, or passed over — all good ends |
-| `1` | a checkout was refused, or a project's review reading could not be had |
-| `3` | a checkout conflicted; its tree was put back and the report says so |
+| `0` | every checkout is replayed, level, passed over, or refused — all good ends |
+| `1` | a project's review reading could not be had, so it was not swept at all |
+| `3` | a checkout conflicted, and the report says what became of its tree |
+
+A refusal is a good end here and only here: uncommitted work is reported and
+left alone, and a tree somebody is working in has uncommitted work most of the
+time — an hourly unit that went red for that would read failed on every machine
+anybody uses, and an exit code that is always `1` says nothing. The refused
+checkout is still a row with its reason.
 
 The counts are in the report either way, and under `--json` the reading carries
 one row per checkout with `outcome` — `replayed`, `level`, `passed-over`,

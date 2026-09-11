@@ -157,6 +157,19 @@ rather than starting a rival copy of the same work somewhere else. It is the
 rule above and not an exception to it: one plan per subject, and where no item
 is the subject the sweep is.
 
+**What ephor writes into a ticket is prose inside somebody else's document.**
+A brief that carries a report — what a replay stopped at, what a gate said —
+carries that report's own headings with it, and a heading inside a plan is a
+node rather than a line of text: the plan language reads it as a task and
+refuses the file. So the headings of an embedded report are flattened to plain
+emphasis before it is written into a body, and what is already fenced is left
+exactly as it is. The rule is about the writer and not about any one caller,
+because the reader who finds out is the runtime, and it finds out by not
+loading the plan at all — which on the one writer nobody is watching
+([§FS-004-quick-actions.6.1](FS-004-quick-actions.md#61-the-same-replay-over-every-checkout-nobody-is-holding))
+means a ticket that can never be worked and a checkout passed over on it
+forever.
+
 A project that keeps a single checkout for every branch is not exempt from
 that. Its root is the branch's working tree only while it is standing on the
 branch; a root standing on another one is a checkout of different code, and a

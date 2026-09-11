@@ -224,34 +224,45 @@ are built from. A project's main-branch checkout is not one of them: that
 directory belongs to `ephor update`, and where both could claim it, `update`
 wins, because branch drift is the whole subject here.
 
-**Four questions are asked before any git runs**, and each one that answers
+**Three questions are asked before any git runs**, and each one that answers
 produces a *passed over* outcome naming its reason rather than a silence — a
 sweep that says nothing about a checkout it decided not to touch is
 indistinguishable from one that never saw it.
 
-1. It is the project's main branch.
-2. A live run holds the tree. This is the invariant over checkouts that
+1. A live run holds the tree. This is the invariant over checkouts that
    [§FS-005-dispatch.24](FS-005-dispatch.md#24-work-nobody-has-to-start-starts-itself)
    states, read here for a writer that is not a run, and it is never forced.
-3. The branch has an open pull request that is not a draft. A branch under
+2. The branch has an open pull request that is not a draft. A branch under
    review is somebody's to move.
-4. A conflict ticket from an earlier sweep is still open about this checkout.
-   Otherwise an hourly sweep retries one conflict forever.
+3. A conflict ticket from an earlier sweep is still open about this checkout.
+   Otherwise an hourly sweep retries one conflict forever. Which checkout a
+   ticket is about is read from its identifier, so that identifier names the
+   branch *exactly*: two branches whose names differ only in punctuation are
+   two checkouts, and one passed over on the other's ticket would never be
+   replayed again and would say so in words about a tree somewhere else.
 
 **The pull-request answer comes from what the watch already knows**, never from
 a forge call per branch: a cached matter, not finished, whose head branch is
 this branch. Per project the reading is freshened once where the cache is older
 than the configured interval, the way a status reading is, and never once per
-branch. Where after that there is still no current reading — no cached feed, or
-a slot flagged stale — **no checkout of that project is replayed at all**: the
-project is reported as not reached, with the reason, and the sweep exits
-non-zero. *Could not tell* is not *no*, and the branch this question protects is
-exactly the one nobody is present to protect by hand. For the same reason an
-open pull request whose draft state is unknown protects the branch: only a
-pull request *known* to be out of draft passes it over, and a draft one does
-not protect, because a draft is not yet anybody's to review. One project that
-cannot be read stops that project and no other, because the drift this exists to
-correct goes on everywhere else.
+branch — and a run held at the gate freshens nothing at all, because a run that
+reports writes nothing, and a fetch writes the cache
+([§FS-011-command-line.10](FS-011-command-line.md#10-a-mutating-verb-above-one-project-reports-and-acts-under---act)).
+Where after that there is still no current reading — no cached feed, or a stale
+or failed slot **of a source that could have carried a pull request** — **no
+checkout of that project is replayed at all**: the project is reported as not
+reached, with the reason, and the sweep exits non-zero. *Could not tell* is not
+*no*, and the branch this question protects is exactly the one nobody is present
+to protect by hand. Which slots those are is asked of the source's name, the way
+everything else about a source is: a source that reports messages, a status
+line, or the project's own tasks could not have answered this question however
+it failed, so it stops nothing, while a forge that ephor does not implement
+itself blocks — it declares pull requests among its capabilities, and *could not
+tell* governs there too. For the same reason an open pull request whose draft
+state is unknown protects the branch: only a pull request *known* to be out of
+draft passes it over, and a draft one does not protect, because a draft is not
+yet anybody's to review. One project that cannot be read stops that project and
+no other, because the drift this exists to correct goes on everywhere else.
 
 **A conflict restores the tree and is always reported.** The replay is asked
 for the restoring disposition above, so a checkout it stopped on is left on the
@@ -264,16 +275,38 @@ project's own work root and in one plan named after the sweep
 ([§FS-005-dispatch.3](FS-005-dispatch.md#3-one-rhei-per-item-one-ticket-per-dispatch)),
 carrying the checkout, the branch, the ref it was replaying onto, the
 repositories that conflicted with their unmerged paths, both sides by ref, and
-one sentence that the tree was restored — without which a reader sent to find a
-conflicted working tree finds a clean one and doubts the ticket. A ticket that
-could not be opened does not swallow the report
-([§REQ-001-boundary.1](../requirements/REQ-001-boundary.md#1-the-anatomy)).
+one sentence saying **what became of the tree** — without which a reader sent to
+find a conflicted working tree finds a clean one and doubts the ticket. Usually
+that sentence says it was restored. It says the opposite where the sweep found
+the checkout *already* stopped in a rebase somebody else began: that tree is
+touched under neither disposition
+([§FS-005-dispatch.12](FS-005-dispatch.md#12-work-an-algorithm-can-finish-does-not-start-with-a-model)),
+so the conflict is still standing in it, and both the row and the ticket say so
+and send the reader to finish it — a report that claimed a restoration the
+sweep never performed would be a falsehood about a working tree, written by a
+machine at three in the morning with nobody to catch it. A ticket that could not
+be opened does not swallow the report
+([§REQ-001-boundary.1](../requirements/REQ-001-boundary.md#1-the-anatomy)):
+what stopped the write-up is carried on that checkout's own row and in the
+reading, so a program learns it too.
+
+**The recipe is the sweep's alone.** It names one because a conflict in an idle
+checkout is work like any other, but no *matter* is its subject — it is about a
+tree, and the feed has no row for a tree. So it is never offered on an item: a
+menu entry a reader could press would dispatch it against something it says
+nothing about ([§FS-005-dispatch.1](FS-005-dispatch.md#1-a-recipe-decides-which-items-deserve-work-and-what-to-ask-for)).
 
 **Forty checkouts become one exit code**, and conflict wins, which is the
 precedence one rebase already has: **3** where any checkout conflicted, **1**
-otherwise where any was refused or any project could not be read, and **0**
-otherwise — *replayed*, *level* and *passed over* are all good ends. The counts
-behind it are in the report either way.
+otherwise where any project could not be read, and **0** otherwise — *replayed*,
+*level*, *passed over* and *refused* are all good ends. A refusal is a good end
+here and only here: uncommitted work is reported and left alone
+([§6](#6-a-branch-that-trails-its-main-branch-is-offered-the-rebase)), and a tree
+somebody is working in has uncommitted work most of the time, so a timer that
+went red for it would read failed on every machine anybody uses and its exit
+code would stop meaning anything. What is left for non-zero is the thing the
+sweep could not do its job over. The counts behind it are in the report either
+way, and the refused checkout is still a row with its reason.
 
 **And it runs with nobody watching.** A service and timer pair ships beside the
 ones that already refresh the watch and re-sync work, hourly, passing `--act` on
