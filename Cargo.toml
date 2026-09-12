@@ -122,6 +122,10 @@ name = "e2e_024_every_idle_checkout_onto_main"
 path = "tests/e2e/cases/E2E-024-every-idle-checkout-onto-main.rs"
 
 [[test]]
+name = "e2e_025_named_run_refusals"
+path = "tests/e2e/cases/E2E-025-named-run-refusals.rs"
+
+[[test]]
 name = "agents_test"
 path = "tests/integration/agents_test.rs"
 
