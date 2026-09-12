@@ -6,7 +6,7 @@
 //! work whose item has moved (§FS-005-dispatch.5) — which is what a timer
 //! runs.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::process::ExitCode;
 
 use chrono::Utc;
@@ -1724,13 +1724,21 @@ fn run_work(
     }
     // A run a reader explicitly starts keeps being the reader's move, so a
     // budget that is full is said here and refuses nothing: the person is
-    // present, is deciding, and can see the warning
-    // (§FS-015-spend-ceiling.6). Said where a run is actually about to
-    // start, so a ceiling is never announced over a command that would have
-    // run nothing anyway.
-    let over: Vec<String> = due.iter().map(|root| root.project.clone()).collect();
-    if let Some(full) = dispatcher.budgets(Utc::now()).over(&over) {
-        eprintln!("note: {}", full.says);
+    // present, is deciding, and can see the warning. Only groups whose roots
+    // passed validation reach that warning; an invalid root has no ordinary
+    // start to warn about, while a valid root remains eligible even when the
+    // later live-run safety decision refuses it (§FS-015-spend-ceiling.6).
+    let over: Vec<String> = due
+        .iter()
+        .filter(|root| root.refusal.is_none())
+        .flat_map(|root| root.projects.iter().cloned())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    if !over.is_empty() {
+        if let Some(full) = dispatcher.budgets(Utc::now()).over(&over) {
+            eprintln!("note: {}", full.says);
+        }
     }
 
     let mut failed = 0usize;
@@ -1769,7 +1777,7 @@ fn run_work(
             false => println!("note: {}", Style::detect().dim(&note)),
         }
     }
-    for group in &roots {
+    for (index, group) in roots.iter().enumerate() {
         let Group {
             root,
             checkout,
@@ -1799,37 +1807,28 @@ fn run_work(
             }
             row
         };
-        // A root the reading returned only to be refused: its machine will not
-        // read, or its checkout is standing on a branch the record does not
-        // expect. Refused by name and counted as a refusal, before the run in
-        // the way is even looked for — `--force` lifts that one and lifts
-        // neither of these, which are facts about the root rather than a run
-        // another key press could outlast (§FS-005-dispatch.30).
-        if let Some(says) = refusal {
-            refused += 1;
-            runs.push(landed("refused", Some(says.clone()), None));
-            eprintln!("error: {says}");
-            continue;
-        }
-        // One live run per checkout, whichever root that run was started from:
-        // two runs in one working tree are two agents editing the same files.
-        // Refused by name, so the reader is sent to the run in the way, and
-        // lifted by `--force` for the reader who knows what that run is doing
-        // (§FS-005-dispatch.24).
-        if let Some(held_by) = (!args.force)
-            .then(|| {
-                // The run that was already there, or the one this command
-                // just made: a tree is as busy from a run one second old as
-                // from one that was there all along.
+        // Root validity and live-run safety are the shared named-run decision,
+        // in that order: the lock lookup is lazy so an invalid root answers
+        // without even probing it, and `--force` skips only that lookup
+        // (§FS-005-dispatch.30). This loop renders the answer; it does not
+        // impose another guard order of its own.
+        let decision = crate::work::named_run_decision(
+            std::slice::from_ref(&due[index]),
+            args.item.as_deref(),
+            args.force,
+            || {
                 crate::work::holding(&busy, checkout)
                     .or_else(|| crate::work::holding(&taken, checkout))
-            })
-            .flatten()
-        {
-            let says = crate::work::live_in_this_checkout(&config.work, held_by);
+                    .map(|held_by| crate::work::live_in_this_checkout(&config.work, held_by))
+            },
+        );
+        if let Err(says) = decision {
             refused += 1;
             runs.push(landed("refused", Some(says.clone()), None));
-            eprintln!("error: {says} — {}", root.display());
+            match refusal {
+                Some(_) => eprintln!("error: {says}"),
+                None => eprintln!("error: {says} — {}", root.display()),
+            }
             continue;
         }
         if !args.json {

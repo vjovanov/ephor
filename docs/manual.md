@@ -2410,10 +2410,13 @@ rather than handing the terminal to a command that cannot start. Everything
 else on the screen is unchanged: the ticket is written, read, reopened and
 edited whether or not anything can run it.
 
-The key is a place a run starts, so it is guarded as the command line is: on a
-matter whose working tree a live run holds it starts nothing and says `a run is
-live in this checkout: <id>`. It is still taught, and the way past a busy tree
-is `ephor work run --item <id> --force` from a shell.
+The key is a place a run starts, so it makes the same ordered decision as the
+command line: a work root whose state machine will not read, or whose checkout
+stands on the wrong branch, is refused before a live run in its working tree is
+considered. Only a root that passes those checks can answer `a run is live in
+this checkout: <id>`. The key is still taught, and the way past a busy tree is
+`ephor work run --item <id> --force` from a shell; that flag never lifts a root
+refusal.
 
 It is the same run `ephor work run` starts, over this one plan: the hand is
 resolved before the terminal is ceded and rides the run as the runtime's own
@@ -2566,9 +2569,12 @@ ephor work states
   start it (§8.15.1). Both kinds in one root come out as **one run** naming both
   plans, because two would refuse each other. The key inherits none of the
   ceilings, budget refusals or back-offs `--due` reads below: you are present
-  and deciding, so a full budget warns and refuses nothing. The one rule that
-  survives is one live run per checkout, refused by name and lifted by
-  `--force`. Three answers you can tell apart
+  and deciding, so a full budget warns and refuses nothing for each selected
+  group whose root passed validation. A root refused before ordinary start
+  handling is excluded from that lookup; if every selected root is refused
+  there, no budget warning is printed. A valid root remains warning-eligible
+  when a live run later refuses it. The one rule that survives is one live run
+  per checkout, refused by name and lifted by `--force`. Three answers you can tell apart
   ([§FS-005-dispatch.30](functional-spec/FS-005-dispatch.md#30-a-run-asked-for-by-name-reaches-the-whole-of-that-matters-work)):
   an id **no work is recorded about** is refused by name on the error stream and
   exits `2`, naming `work dispatch` and `work lay` as the verbs that would give
@@ -2591,7 +2597,9 @@ ephor work states
   other than the one the record says the work belongs on, which is named. Both
   count in `refused` and exit non-zero, because a reader who asked for a matter
   by name must never be told its work holds nothing when the truth is that the
-  root was never looked into.
+  root was never looked into. This root refusal is settled before live-run
+  safety on both the command line and the work screen; `--force` skips only the
+  later live-run refusal.
   `--due` is the other question entirely: not "run this item's work" but
   "start whatever should be running and is not"
   ([§FS-005-dispatch.24](functional-spec/FS-005-dispatch.md#24-work-nobody-has-to-start-starts-itself)).
