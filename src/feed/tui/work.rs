@@ -60,14 +60,11 @@ pub(crate) struct WorkScreen {
     /// (§FS-005-dispatch.20). Read from the descriptor beside the lock when the
     /// screen was built, never remembered from a keypress.
     run: Option<String>,
-    /// Why `R` cannot start a run in this matter's working tree right now: a
-    /// live run holds it, from this root or from another work root over the
-    /// same tree (§FS-005-dispatch.24). One live run per checkout is an
-    /// invariant about the files an agent edits, so it holds wherever a run
-    /// starts — this key as much as the command line. Unlike `refusal` it
-    /// withholds nothing: a busy tree is a fact about this minute, not a rung
-    /// this machine lacks, so the key stays taught and answers when pressed.
-    held: Option<String>,
+    /// The shared named-run decision's refusal, where its reading found one:
+    /// root validity before live-run safety (§FS-005-dispatch.30). Unlike the
+    /// runtime-rung `refusal`, it withholds nothing: the key stays taught and
+    /// answers when pressed, then the action boundary takes a fresh reading.
+    named_refusal: Option<String>,
     /// Tickets that are over are collected behind one line until the reader
     /// asks for them (§FS-005-dispatch.18). A reading, never a change to the
     /// plan: `z` shows every one of them, in their place in the order.
@@ -130,7 +127,7 @@ impl WorkScreen {
             picking: None,
             jobs,
             run,
-            held: None,
+            named_refusal: None,
             folded: true,
             scroll: 0,
             viewport: 0,
@@ -142,7 +139,7 @@ impl WorkScreen {
     /// built, because it is the one thing here that is about a tree rather
     /// than about this item's own work.
     pub fn held_by(mut self, said: Option<String>) -> Self {
-        self.held = said;
+        self.named_refusal = said;
         self
     }
 
@@ -274,13 +271,12 @@ impl WorkScreen {
             // terminal over to a command that cannot start: the footer already
             // stopped teaching the key, and this is what answers a reader who
             // knew it anyway (§AR-005-capabilities.2).
-            KeyCode::Char('R') => match (&self.refusal, &self.held, &self.status) {
+            KeyCode::Char('R') => match (&self.refusal, &self.named_refusal, &self.status) {
                 (Some(refusal), _, _) => Action::SetMessage(refusal.clone()),
-                // One live run per checkout, wherever a run starts — a second
-                // run in this tree is a second agent editing the same files,
-                // and the key is a place a run starts (§FS-005-dispatch.24).
-                // The run in the way is named, as the command line names it.
-                (None, Some(held), _) => Action::SetMessage(held.clone()),
+                // Root validity and then live-run safety were decided below
+                // both named-run surfaces, so this screen only renders the
+                // shared answer (§FS-005-dispatch.30).
+                (None, Some(says), _) => Action::SetMessage(says.clone()),
                 (None, None, Some(status)) => Action::RunWork {
                     item: self.item.id.clone(),
                     root: status.root.clone(),

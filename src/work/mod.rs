@@ -4236,12 +4236,43 @@ pub fn nothing_to_run(item: Option<&str>) -> String {
 /// nothing at all. The screen runs one matter over one root, so a refusal
 /// anywhere in this reading is a refusal of this key.
 pub fn plans_to_run(due: &[Due], item: &str) -> std::result::Result<Vec<String>, String> {
+    named_run_plans(due, Some(item))
+}
+
+/// What one reader-started named run may do, after root validity and live-run
+/// safety have been considered in their one shared order (§FS-005-dispatch.30).
+///
+/// Root validity belongs to the work reading, so it answers before the live
+/// lock is even probed and `--force` can never lift it. A root that passed that
+/// reading reaches ordinary start safety; only there is a live run a refusal,
+/// and only that refusal is lifted by `--force`. Both the command line and the
+/// work screen call this decision, leaving each surface only to render its
+/// answer (§REQ-002-parity.1).
+pub fn named_run_decision<F>(
+    due: &[Due],
+    item: Option<&str>,
+    force: bool,
+    live_refusal: F,
+) -> std::result::Result<Vec<String>, String>
+where
+    F: FnOnce() -> Option<String>,
+{
+    let plans = named_run_plans(due, item)?;
+    if !force {
+        if let Some(says) = live_refusal() {
+            return Err(says);
+        }
+    }
+    Ok(plans)
+}
+
+fn named_run_plans(due: &[Due], item: Option<&str>) -> std::result::Result<Vec<String>, String> {
     if let Some(refusal) = due.iter().find_map(|due| due.refusal.clone()) {
         return Err(refusal);
     }
     let plans: Vec<String> = due.iter().flat_map(|due| due.plans.clone()).collect();
     match plans.is_empty() {
-        true => Err(nothing_to_run(Some(item))),
+        true => Err(nothing_to_run(item)),
         false => Ok(plans),
     }
 }

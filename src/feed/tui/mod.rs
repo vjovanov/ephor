@@ -702,17 +702,7 @@ impl App {
                 // second line of defence: a screen built before the runtime
                 // left `PATH` can still send the action.
                 //
-                // Beside it, the other reason this key starts nothing: one
-                // live run per checkout, wherever a run starts
-                // (§FS-005-dispatch.24). Both are refusals of the run and
-                // neither is a failure of the session, so they are one arm.
-                // The screen ahead already answers `R` with the same sentence
-                // off the reading it was built from; this is the probe at the
-                // moment of the start, because a run can take the tree
-                // between the two.
-                if let Some(refusal) = crate::work::runtime::refusal(&config.work)
-                    .or_else(|| self.held_run(&config.work, &item, &checkout))
-                {
+                if let Some(refusal) = crate::work::runtime::refusal(&config.work) {
                     self.message = refusal;
                     return Ok(false);
                 }
@@ -735,7 +725,14 @@ impl App {
                 // may start in, or the matter's own no-work sentence — the
                 // same words in each case, because the two are one ability
                 // (§REQ-002-parity.1, §FS-005-dispatch.30).
-                let plans = match crate::work::plans_to_run(&due, &item) {
+                // Root validity and live-run safety are decided together below
+                // both named-run surfaces, in that order. The live probe is
+                // deliberately lazy, so an invalid root answers before the
+                // lock is consulted; the screen has no `--force` escape
+                // (§FS-005-dispatch.30).
+                let plans = match crate::work::named_run_decision(&due, Some(&item), false, || {
+                    self.held_run(&config.work, &item, &checkout)
+                }) {
                     Ok(plans) => plans,
                     Err(says) => {
                         self.message = says;
@@ -1078,15 +1075,26 @@ impl App {
                 crate::work::runtime::stop_command(&self.work, &id)
             ))
         });
-        // And whether a live run holds the tree this item's plan would be run
-        // in — its own root's run, or one in another work root over the same
-        // checkout (§FS-005-dispatch.24). Answered before the key is pressed,
-        // as the runtime rung above is.
-        let held = status
-            .as_ref()
-            .and_then(|status| self.held_run(&self.work, &item.id, &status.checkout));
+        // The same named-run decision the command line makes, cached for the
+        // screen's immediate answer and made again at the action boundary so a
+        // lock that changes while the reader looks cannot be missed. Its live
+        // probe is lazy: an invalid root wins before the lock is consulted
+        // (§FS-005-dispatch.30).
+        let due = match &mut self.ctx.dispatcher {
+            Some(dispatcher) => dispatcher
+                .runnable_of(Some(&item.id), &[], chrono::Utc::now())
+                .unwrap_or_default(),
+            None => Vec::new(),
+        };
+        let named_refusal = crate::work::named_run_decision(&due, Some(&item.id), false, || {
+            status
+                .as_ref()
+                .and_then(|status| self.held_run(&self.work, &item.id, &status.checkout))
+        })
+        .err();
         self.screen = Screen::Work(
-            WorkScreen::new(item, status, offers, unavailable, refusal, jobs, run).held_by(held),
+            WorkScreen::new(item, status, offers, unavailable, refusal, jobs, run)
+                .held_by(named_refusal),
         );
     }
 
