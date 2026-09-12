@@ -193,6 +193,16 @@ error stream where a warning belongs ([§REQ-002-parity.3](../requirements/REQ-0
 by it, because the difference is not what the sweep does but who asked: a
 person is at the terminal for one and nobody is for the other.
 
+For a reader-started named run, warning eligibility begins only after root
+validation and before live-run safety. A selected root that is refused because
+its machine will not read or its checkout is on the wrong branch contributes
+no project to the budget lookup. If every selected root is refused there, no
+full-spend or full-token warning is emitted. If any selected root reaches the
+ordinary start and safety path, its project remains eligible for the warning
+even when a live run later refuses it. In a mixed selection only those
+non-root-refused roots contribute projects. The warning remains information:
+it neither replaces the chosen refusal nor permits a run.
+
 The cap is the human's leash on the machine, not on the human. A person who
 types the command is present, is deciding, and can see the warning; refusing
 them would turn a budget into a lock-out and would make the first thing

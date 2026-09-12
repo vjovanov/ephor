@@ -2609,3 +2609,13 @@ nothing a run would advance, because that is the fault this whole point exists
 to end — one layer down, and told to a reader who named the matter. `--force`
 lifts neither: it lifts a run in the way, and these are facts about the root
 that another key press does not change.
+
+**One decision orders every refusal of the key.** For each selected root, the
+reading first answers whether the root itself may be started in. Only a root
+that passes that answer reaches the live-run safety question, and only a root
+that passes both is runnable. `ephor work run --item …`, a plain named
+`ephor work run`, and the work screen's `R` key render that one decision; none
+orders the guards again at its own surface. Thus a root with both an unreadable
+machine or wrong checkout branch and a live run is refused for the root fact
+on every surface. `--force` changes only the live-run answer: it never turns a
+root refusal into a runnable root.
