@@ -358,9 +358,14 @@ fn issue_90_cli_and_work_screen_render_the_same_root_refusal() {
 }
 
 /// Run `jwRqq` through a real pseudo-terminal: down to the project, open its
-/// work, press the run key, then leave both screens. Python's standard-library
-/// PTY is the test-only scaffold; the ephor binary and every seam it calls are
-/// the real path under test.
+/// work, press the run key, then leave both screens. Each key waits out a
+/// fixed settle window first, so a slower renderer (seen under load on the
+/// macOS runner) gets to finish one redraw before the next key lands
+/// mid-frame, the way a real reader's keystrokes are spaced out rather than
+/// arriving as one burst. The window is fixed rather than "wait for quiet"
+/// because the screen redraws on its own tick and is never actually quiet.
+/// Python's standard-library PTY is the test-only scaffold; the ephor binary
+/// and every seam it calls are the real path under test.
 #[cfg(unix)]
 fn screen(world: &World) -> Output {
     let ephor = world.ephor_raw();
@@ -379,9 +384,29 @@ master, slave = pty.openpty()
 fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 120, 0, 0))
 child = subprocess.Popen([sys.argv[1], "tui"], stdin=slave, stdout=slave, stderr=slave)
 os.close(slave)
-os.write(master, b"jwRqq")
 chunks = []
 deadline = time.monotonic() + 15
+
+def settle(seconds):
+    end = min(time.monotonic() + seconds, deadline)
+    while time.monotonic() < end:
+        ready, _, _ = select.select([master], [], [], 0.05)
+        if ready:
+            try:
+                chunk = os.read(master, 65536)
+            except OSError:
+                return
+            if not chunk:
+                return
+            chunks.append(chunk)
+        if child.poll() is not None:
+            return
+
+settle(0.5)
+for key in b"jwRqq":
+    os.write(master, bytes([key]))
+    settle(0.5)
+
 while time.monotonic() < deadline:
     ready, _, _ = select.select([master], [], [], 0.1)
     if ready:
@@ -392,8 +417,9 @@ while time.monotonic() < deadline:
         if not chunk:
             break
         chunks.append(chunk)
-    if child.poll() is not None and not ready:
+    if child.poll() is not None:
         break
+
 if child.poll() is None:
     child.terminate()
     child.wait(timeout=2)
