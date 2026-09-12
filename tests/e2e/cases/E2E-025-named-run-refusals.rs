@@ -436,32 +436,97 @@ sys.exit(status)
         .expect("drive the work screen through a pseudo-terminal")
 }
 
-/// Remove terminal control sequences and turn wrapping into spaces, leaving
-/// the words a reader saw. The assertion is on the answer, not on a renderer's
-/// cursor movement.
+/// Replay the raw stream onto a fixed grid the size of the pty
+/// (§FS-005-dispatch.30's TIOCSWINSZ above, 24x120) and read back the cells,
+/// rather than concatenating bytes in write order. A full-screen renderer
+/// repaints by moving the cursor and writing only the cells that changed, so
+/// two halves of one line can be written with an unrelated, later-changing
+/// region of the screen (a header clock, say) landing in between them; write
+/// order is not reading order. Replaying cursor moves and erases onto a grid
+/// gets back what a person watching the terminal actually saw. The
+/// assertion is on that answer, not on a renderer's cursor movement.
 fn terminal_text(bytes: &[u8]) -> String {
-    let mut plain = Vec::new();
+    const ROWS: usize = 24;
+    const COLS: usize = 120;
+    let mut grid = vec![vec![' '; COLS]; ROWS];
+    let mut row = 0usize;
+    let mut col = 0usize;
+
+    let chars: Vec<char> = String::from_utf8_lossy(bytes).chars().collect();
     let mut at = 0;
-    while at < bytes.len() {
-        if bytes[at] == 0x1b && bytes.get(at + 1) == Some(&b'[') {
-            at += 2;
-            while at < bytes.len() {
-                let byte = bytes[at];
-                at += 1;
-                if (0x40..=0x7e).contains(&byte) {
-                    break;
+    while at < chars.len() {
+        let c = chars[at];
+        if c != '\u{1b}' {
+            match c {
+                '\r' => col = 0,
+                '\n' => row = (row + 1).min(ROWS - 1),
+                _ if (c as u32) < 0x20 => {}
+                _ => {
+                    grid[row][col] = c;
+                    col = (col + 1).min(COLS - 1);
                 }
             }
+            at += 1;
             continue;
         }
-        match bytes[at] {
-            b'\r' | b'\n' => plain.push(b' '),
-            byte if byte >= b' ' => plain.push(byte),
+        if chars.get(at + 1) != Some(&'[') {
+            at += 1;
+            continue;
+        }
+        let mut end = at + 2;
+        while end < chars.len() && !('\u{40}'..='\u{7e}').contains(&chars[end]) {
+            end += 1;
+        }
+        if end >= chars.len() {
+            break;
+        }
+        let final_byte = chars[end];
+        let params: Vec<Option<i64>> = chars[at + 2..end]
+            .iter()
+            .collect::<String>()
+            .trim_start_matches('?')
+            .split(';')
+            .map(|param| param.parse::<i64>().ok())
+            .collect();
+        let moved_by = |index: usize| -> usize {
+            params
+                .get(index)
+                .copied()
+                .flatten()
+                .filter(|value| *value > 0)
+                .unwrap_or(1) as usize
+        };
+        let erase_mode =
+            |index: usize| -> i64 { params.get(index).copied().flatten().unwrap_or(0) };
+        match final_byte {
+            'H' | 'f' => {
+                row = (moved_by(0) - 1).min(ROWS - 1);
+                col = (moved_by(1) - 1).min(COLS - 1);
+            }
+            'A' => row = row.saturating_sub(moved_by(0)),
+            'B' => row = (row + moved_by(0)).min(ROWS - 1),
+            'C' => col = (col + moved_by(0)).min(COLS - 1),
+            'D' => col = col.saturating_sub(moved_by(0)),
+            'J' => {
+                if matches!(erase_mode(0), 2 | 3) {
+                    grid = vec![vec![' '; COLS]; ROWS];
+                }
+            }
+            'K' => match erase_mode(0) {
+                0 => grid[row][col..].fill(' '),
+                1 => grid[row][..=col].fill(' '),
+                _ => grid[row].fill(' '),
+            },
+            'h' if erase_mode(0) == 1049 => grid = vec![vec![' '; COLS]; ROWS],
             _ => {}
         }
-        at += 1;
+        at = end + 1;
     }
-    String::from_utf8_lossy(&plain).into_owned()
+
+    grid.into_iter()
+        .map(|line| line.into_iter().collect::<String>())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn terminal_has(transcript: &str, phrase: &str) -> bool {
