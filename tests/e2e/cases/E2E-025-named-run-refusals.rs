@@ -364,8 +364,17 @@ fn issue_90_cli_and_work_screen_render_the_same_root_refusal() {
 /// mid-frame, the way a real reader's keystrokes are spaced out rather than
 /// arriving as one burst. The window is fixed rather than "wait for quiet"
 /// because the screen redraws on its own tick and is never actually quiet.
-/// Python's standard-library PTY is the test-only scaffold; the ephor binary
-/// and every seam it calls are the real path under test.
+///
+/// The pty is unusually wide (see `COLS` on `terminal_text` below): the work
+/// screen's header is one fixed row with no wrap, and the refusal names the
+/// work root's absolute path twice. macOS hands out a `/private/var/folders/…`
+/// world path far longer than Linux's `/tmp/…`, long enough on its own to
+/// clip the message before the words this case checks for — a fact about
+/// where the operating system puts a temp directory, not about the decision
+/// under test, so the terminal is sized to never clip it rather than
+/// narrowed to whatever a real reader's window happens to be. Python's
+/// standard-library PTY is the test-only scaffold; the ephor binary and
+/// every seam it calls are the real path under test.
 #[cfg(unix)]
 fn screen(world: &World) -> Output {
     let ephor = world.ephor_raw();
@@ -381,7 +390,7 @@ fn screen(world: &World) -> Output {
         .arg(
             r#"import fcntl, os, pty, select, struct, subprocess, sys, termios, time
 master, slave = pty.openpty()
-fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 120, 0, 0))
+fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 400, 0, 0))
 child = subprocess.Popen([sys.argv[1], "tui"], stdin=slave, stdout=slave, stderr=slave)
 os.close(slave)
 chunks = []
@@ -436,18 +445,18 @@ sys.exit(status)
         .expect("drive the work screen through a pseudo-terminal")
 }
 
-/// Replay the raw stream onto a fixed grid the size of the pty
-/// (§FS-005-dispatch.30's TIOCSWINSZ above, 24x120) and read back the cells,
-/// rather than concatenating bytes in write order. A full-screen renderer
-/// repaints by moving the cursor and writing only the cells that changed, so
-/// two halves of one line can be written with an unrelated, later-changing
-/// region of the screen (a header clock, say) landing in between them; write
-/// order is not reading order. Replaying cursor moves and erases onto a grid
-/// gets back what a person watching the terminal actually saw. The
-/// assertion is on that answer, not on a renderer's cursor movement.
+/// Replay the raw stream onto a fixed grid the size of the pty (the
+/// TIOCSWINSZ above) and read back the cells, rather than concatenating
+/// bytes in write order. A full-screen renderer repaints by moving the
+/// cursor and writing only the cells that changed, so two halves of one line
+/// can be written with an unrelated, later-changing region of the screen (a
+/// header clock, say) landing in between them; write order is not reading
+/// order. Replaying cursor moves and erases onto a grid gets back what a
+/// person watching the terminal actually saw. The assertion is on that
+/// answer, not on a renderer's cursor movement.
 fn terminal_text(bytes: &[u8]) -> String {
     const ROWS: usize = 24;
-    const COLS: usize = 120;
+    const COLS: usize = 400;
     let mut grid = vec![vec![' '; COLS]; ROWS];
     let mut row = 0usize;
     let mut col = 0usize;
@@ -462,8 +471,12 @@ fn terminal_text(bytes: &[u8]) -> String {
                 '\n' => row = (row + 1).min(ROWS - 1),
                 _ if (c as u32) < 0x20 => {}
                 _ => {
+                    if col >= COLS {
+                        row = (row + 1).min(ROWS - 1);
+                        col = 0;
+                    }
                     grid[row][col] = c;
-                    col = (col + 1).min(COLS - 1);
+                    col += 1;
                 }
             }
             at += 1;
